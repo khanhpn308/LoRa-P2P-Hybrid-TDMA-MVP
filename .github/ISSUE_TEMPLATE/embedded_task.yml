@@ -1,0 +1,37 @@
+name: Embedded firmware task
+description: ESP-IDF C / SX1276 / Gateway / Node development
+title: "[FW] "
+labels: ["type:feature"]
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Target component
+      options:
+        - Gateway / TDMA Master
+        - Sensor Node
+        - Shared SX1276 Driver
+        - Shared MAC / Air Time
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Requirement and problem
+      description: Link requirement ID and relevant contract/ADR.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      placeholder: "- [ ] Given ... when ... then ..."
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Verification plan
+      placeholder: "Build, test fixture, UART/SPI log, HIL timing evidence, RF limits"
+    validations:
+      required: true

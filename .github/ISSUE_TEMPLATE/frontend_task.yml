@@ -1,0 +1,26 @@
+name: Client task
+description: React/TypeScript UI or Flutter mobile client
+title: "[CLIENT] "
+labels: ["type:feature"]
+body:
+  - type: dropdown
+    id: client
+    attributes:
+      label: Client
+      options:
+        - Web Dashboard
+        - Mobile App
+    validations:
+      required: true
+  - type: textarea
+    id: requirements
+    attributes:
+      label: UX and API contract requirement
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria and tests
+    validations:
+      required: true

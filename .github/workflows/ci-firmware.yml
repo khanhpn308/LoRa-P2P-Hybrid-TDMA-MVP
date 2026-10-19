@@ -1,0 +1,27 @@
+name: CI - Firmware Scaffolds
+on: [pull_request, push, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  gateway-build:
+    name: gateway-esp32-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ESP-IDF Gateway scaffold build
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: "release-v5.4"
+          target: esp32
+          path: firmware/gateway_master
+  node-build:
+    name: node-esp32-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ESP-IDF Node scaffold build
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: "release-v5.4"
+          target: esp32
+          path: firmware/sensor_node

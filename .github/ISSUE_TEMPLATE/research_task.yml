@@ -1,0 +1,25 @@
+name: Research / feasibility
+description: Investigate an unverified RF, timing, security or integration assumption
+title: "[RESEARCH] "
+labels: ["type:research"]
+body:
+  - type: textarea
+    id: hypothesis
+    attributes:
+      label: Hypothesis and current uncertainty
+    validations:
+      required: true
+  - type: textarea
+    id: approach
+    attributes:
+      label: Reproducible method and evidence
+      placeholder: "Parameters, hardware revision, instrument, dataset, metrics"
+    validations:
+      required: true
+  - type: textarea
+    id: criteria
+    attributes:
+      label: PASS/FAIL criteria
+      description: State what must be measured rather than asserting a result.
+    validations:
+      required: true

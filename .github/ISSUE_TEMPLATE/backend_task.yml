@@ -1,0 +1,26 @@
+name: Backend task
+description: Go, MQTT, PostgreSQL, schedule planning or API
+title: "[GO] "
+labels: ["type:feature", "layer:backend-go"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Requirement / contract reference
+      description: Reference MQTT schema / OpenAPI / DB migration when relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      placeholder: "- [ ] Unit and integration test conditions"
+    validations:
+      required: true
+  - type: textarea
+    id: failure
+    attributes:
+      label: Idempotency, security and failure modes
+      placeholder: "Retry, duplicate, timeout, rollback, authentication"
+    validations:
+      required: true
