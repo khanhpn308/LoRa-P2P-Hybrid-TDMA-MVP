@@ -1,0 +1,22 @@
+openapi: 3.0.3
+info:
+  title: LoRa TDMA MVP API
+  version: 0.0.0-draft
+  description: Draft HTTP API contract. No business endpoints have been implemented.
+servers:
+  - url: http://localhost:8080
+paths:
+  /healthz:
+    get:
+      summary: Process liveness (planned)
+      responses:
+        "200":
+          description: Service responds
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+    # All telemetry, schedule, node and user endpoints are TBD pending authorization design.

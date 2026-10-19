@@ -1,0 +1,17 @@
+name: CI - Contract Syntax
+on: [pull_request, push, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  contract-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate schema and test-vector JSON syntax
+        run: |
+          find contracts -type f -name '*.json' -print0 | xargs -0 -r -n1 python3 -m json.tool >/dev/null
+      - name: Schema behavioral conformance remains unimplemented
+        run: echo "::notice::Syntax-only check; golden vectors and cross-language contract tests are NOT VERIFIED."

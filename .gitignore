@@ -1,0 +1,46 @@
+# Credentials and secrets
+.env
+.env.*
+!.env.example
+secrets/
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+**/mosquitto.passwd
+
+# ESP-IDF
+**/build/
+**/sdkconfig
+**/sdkconfig.old
+**/managed_components/
+
+# Go
+*.test
+*.out
+coverage/
+backend-go/bin/
+
+# React / Dart / Flutter
+**/node_modules/
+**/dist/
+**/.dart_tool/
+**/flutter_*.log
+**/.flutter-plugins*
+**/build/
+
+# Python / tooling
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Editors & system
+.vscode/
+.idea/
+.DS_Store
+
+# RF test artifacts
+artifacts/
+*.pcap
+*.pcapng

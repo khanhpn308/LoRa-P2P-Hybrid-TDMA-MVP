@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/contracts/mqtt/telemetry/v0",
+  "title": "Gateway telemetry event (draft)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event_id", "gateway_id", "node_id", "received_at", "data"],
+  "properties": {
+    "schema_version": {"type": "string", "const": "0"},
+    "event_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "gateway_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "node_id": {"type": "integer", "minimum": 1},
+    "received_at": {"type": "string", "format": "date-time"},
+    "data": {"type": "object", "additionalProperties": true}
+  }
+}

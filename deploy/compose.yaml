@@ -1,0 +1,39 @@
+# DEVELOPMENT-ONLY infrastructure baseline. Not a secured production deployment.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Unsafe for real Gateway connections. Local host-only development opt-in.
+  mqtt-dev:
+    image: eclipse-mosquitto:2.0
+    profiles: ["dev-insecure"]
+    ports:
+      - "127.0.0.1:1883:1883"
+    volumes:
+      - ./mosquitto/dev.conf:/mosquitto/config/mosquitto.conf:ro
+
+  # TLS profile requires locally provisioned certificates (gitignored).
+  mqtt-tls:
+    image: eclipse-mosquitto:2.0
+    profiles: ["tls"]
+    ports:
+      - "8883:8883"
+    volumes:
+      - ./mosquitto/tls.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./secrets:/mosquitto/certs:ro
+
+volumes:
+  pg_data:

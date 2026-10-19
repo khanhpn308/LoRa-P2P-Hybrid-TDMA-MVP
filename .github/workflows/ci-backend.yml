@@ -1,0 +1,24 @@
+name: CI - Backend Go Scaffold
+on: [pull_request, push, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  backend:
+    name: go-format-vet-test-build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend-go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend-go/go.mod
+          cache: false
+      - name: Go formatting
+        run: test -z "$(gofmt -l cmd)"
+      - run: go vet ./...
+      - run: go test ./...
+      - run: go build ./cmd/server
+      - name: Scaffold warning
+        run: echo "::notice::Only main.go logging stub exists. No MQTT, PostgreSQL, scheduler, or API tests yet."

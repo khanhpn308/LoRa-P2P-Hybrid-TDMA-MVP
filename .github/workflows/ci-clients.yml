@@ -1,0 +1,15 @@
+name: CI - Clients Scaffold
+on: [pull_request, push, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  client-scaffolds:
+    name: client-scaffold-inventory-only
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check placeholders until client source is bootstrapped
+        run: |
+          test -f clients/web-dashboard/README.md
+          test -f clients/mobile-app/README.md
+          echo "::warning::No React or Flutter project exists. This is NOT a client build verification."
