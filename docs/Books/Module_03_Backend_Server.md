@@ -362,8 +362,8 @@ graph TB
    - Dựa trên giá trị biên dư này, Network Server sinh lệnh MAC `LinkADRReq` (được nhúng tự động vào trường `FOpts` của gói Downlink tiếp theo) để yêu cầu thiết bị tăng Data Rate (giảm SF từ SF12 về SF7) và giảm công suất phát sóng $P_T$ xuống mức tối thiểu đủ dùng, giúp tiết kiệm triệt để năng lượng pin cho cảm biến.
 5. **Điều phối Cửa sổ thu Downlink (Downlink Scheduling):**
    - Căn cứ vào mốc `tmst` do Gateway gửi lên trong bản tin Uplink, Network Server tính toán chính xác thời điểm Gateway phải phát sóng:
-     $$T_{\text{TX\_RX1}} = tmst + 1\,000\,000\,\mu\text{s} \quad (\text{Mặc định RX1 Delay} = 1\text{ s})$$
-     $$T_{\text{TX\_RX2}} = tmst + 2\,000\,000\,\mu\text{s} \quad (\text{Mặc định RX2 Delay} = 2\text{ s})$$
+     $$T_{\text{TX-RX1}} = tmst + 1\,000\,000\,\mu\text{s} \quad (\text{Mặc định RX1 Delay} = 1\text{ s})$$
+     $$T_{\text{TX-RX2}} = tmst + 2\,000\,000\,\mu\text{s} \quad (\text{Mặc định RX2 Delay} = 2\text{ s})$$
    - Gói lệnh phát `PULL_RESP` phải được gửi xuống Gateway trước thời điểm này trừ đi độ trễ mạng Internet (Network Latency), đảm bảo Gateway kịp nạp lệnh vào hàng đợi phần cứng.
 
 #### 2.3.2. Các nhiệm vụ cốt lõi của Application Server (AS)
@@ -1515,7 +1515,7 @@ Một cảm biến môi trường truyền dữ liệu định kỳ với gói `
   ```
 
   *Bước 2: Trình bày sơ đồ luồng dữ liệu chi tiết:*
-  $$\text{Gateway} \xrightarrow{\text{UDP 1700 (PUSH\_DATA)}} \text{Gateway Bridge} \xrightarrow{\text{MQTT (eu868/gateway/...)}} \text{Mosquitto}$$
+  $$\text{Gateway} \xrightarrow{\text{UDP 1700 (PUSH-DATA)}} \text{Gateway Bridge} \xrightarrow{\text{MQTT (eu868/gateway/...)}} \text{Mosquitto}$$
   $$\text{Mosquitto} \xrightarrow{\text{MQTT Internal Bus}} \text{ChirpStack v4 (NS: Deduplication/MIC $\rightarrow$ AS: Codec JS)} \xrightarrow{\text{MQTT (application/1/...)}} \text{Mosquitto}$$
   $$\text{Mosquitto} \xrightarrow{\text{MQTT Subscribe}} \text{Telegraf (Parse JSON to Line Protocol)} \xrightarrow{\text{HTTP POST 8086}} \text{InfluxDB v2 (Lưu trữ TSDB)}$$
 
@@ -1543,7 +1543,7 @@ Một cảm biến môi trường truyền dữ liệu định kỳ với gói `
        *(Subscriber sẽ nhận tất cả các thiết bị trong tòa nhà, sau đó phần mềm client kiểm tra trường tên `deviceInfo.deviceName` bắt đầu bằng `"floor_05_"` để hiển thị)*.  
      - Nếu cấu hình ChirpStack v4 sử dụng mẫu Topic tùy biến gán thêm nhãn (Topic Template with Tags):  
        `application/1/device/floor_05_+/event/up` (nếu Broker hỗ trợ pattern) hoặc chuẩn nhất là Client subscribe:
-       $$\text{Filter A} = \text{application/1/device/+/event/up} \quad (\text{Kết hợp bộ lọc JSON: } \text{deviceName} == \text{"floor\_05\_*"})$$
+       $$\text{Filter A} = \text{application/1/device/+/event/up} \quad (\text{Kết hợp bộ lọc JSON: } \text{deviceName} == \text{"floor-05-*"})$$
   2. *Hệ thống B (Trung tâm báo cháy PCCC toàn tòa nhà):*  
      Trung tâm PCCC cần nhận **toàn bộ mọi loại sự kiện** (`event/up`, `event/status`, `event/join`, `event/ack`) của **tất cả mọi thiết bị** thuộc ứng dụng tòa nhà (`application_id = 1`).  
      Áp dụng ký tự đại diện đa cấp `#`:
@@ -1678,7 +1678,7 @@ Phần này trích xuất nguyên văn 100% danh mục checklist của **Module 
 > - *Quy trình đồng bộ 3 bước thực tế:*
 >   1. **Bước 1 (Xác định chuẩn khu vực):** Chọn đúng mã vùng tần số theo quy định quốc gia (ví dụ: `EU868` tại Châu Âu, `US915_0` đến `US915_7` tại Mỹ, `AS923-2` tại Việt Nam).
 >   2. **Bước 2 (Cấu hình trên Gateway):** Mở tệp cấu hình Packet Forwarder trên Gateway, khai báo tần số trung tâm cho Radio 0 và Radio 1, sau đó thiết lập độ lệch tần trung gian `if` (Intermediate Frequency) cho từng kênh con logic (`chan_multiSF_0` đến `chan_multiSF_7`) sao cho:
->      $$\text{Tần số kênh thu } f_i = \text{Radio\_Freq} + \text{if}_i$$
+>      $$\text{Tần số kênh thu } f_i = \text{Radio-Freq} + \text{if}_i$$
 >   3. **Bước 3 (Cấu hình trên Network Server):**
 >      - Trên ChirpStack v4: Mở tệp `region_eu868.toml` (hoặc cấu hình tương ứng trong thư mục `/etc/chirpstack/`), kích hoạt đúng danh sách 8 kênh Uplink và chỉ định thông số kênh Downlink cho cửa sổ RX2 (mặc định EU868 là $869.525\text{ MHz}$, Data Rate `DR0` / SF12).
 >      - Gán đúng `Device Profile` chứa Frequency Plan này cho toàn bộ thiết bị khi đăng ký trên Web Console.

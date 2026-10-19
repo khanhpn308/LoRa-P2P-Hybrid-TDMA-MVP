@@ -703,7 +703,7 @@ Tổng điện lượng tiêu thụ trong một chu kỳ $T_{\text{cycle}} = 900
 $$Q_{\text{cycle}} = Q_{\text{active}} + Q_{\text{TX}} + Q_{\text{sleep}}$$
 Trong đó:
 - $Q_{\text{active}} = I_{\text{active}} \times t_{\text{active}}$
-- $Q_{\text{TX}} = (I_{\text{MCU\_TX}} + I_{\text{RF\_TX}}) \times T_{\text{ToA}}$
+- $Q_{\text{TX}} = (I_{\text{MCU-TX}} + I_{\text{RF-TX}}) \times T_{\text{ToA}}$
 - $Q_{\text{sleep}} = I_{\text{sleep}} \times (T_{\text{cycle}} - t_{\text{active}} - T_{\text{ToA}})$
 - Dòng điện tiêu thụ trung bình:
   $$I_{\text{avg}} = \frac{Q_{\text{cycle}}}{T_{\text{cycle}}}$$
@@ -718,9 +718,9 @@ Trong đó:
   * Điện lượng ngủ sâu ($I_{\text{sleep}} = 15\ \mu\text{A}$):
     $$Q_{\text{sleep}} = 15\ \mu\text{A} \times 899.735\ \text{s} = 13496\ \mu\text{As} \approx 13.496\ \text{mAs}$$
   * Tổng điện lượng một chu kỳ:
-    $$Q_{\text{total\_A}} = 9000 + 4095 + 13496 = 26591\ \mu\text{As} \approx 26.59\ \text{mAs}$$
+    $$Q_{\text{total-A}} = 9000 + 4095 + 13496 = 26591\ \mu\text{As} \approx 26.59\ \text{mAs}$$
   * Dòng điện trung bình:
-    $$I_{\text{avg\_A}} = \frac{26591\ \mu\text{As}}{900\ \text{s}} \approx 29.55\ \mu\text{A}$$
+    $$I_{\text{avg-A}} = \frac{26591\ \mu\text{As}}{900\ \text{s}} \approx 29.55\ \mu\text{A}$$
 
 - **Bước 2: Tính toán cho Cấu hình B (Wireless SoC STM32WLE5):**
   * Điện lượng đo cảm biến:
@@ -731,12 +731,12 @@ Trong đó:
   * Điện lượng ngủ sâu ($I_{\text{sleep}} = 1.5\ \mu\text{A}$):
     $$Q_{\text{sleep}} = 1.5\ \mu\text{A} \times 899.735\ \text{s} \approx 1349.6\ \mu\text{As} \approx 1.35\ \text{mAs}$$
   * Tổng điện lượng một chu kỳ:
-    $$Q_{\text{total\_B}} = 1100 + 1365 + 1349.6 = 3814.6\ \mu\text{As} \approx 3.81\ \text{mAs}$$
+    $$Q_{\text{total-B}} = 1100 + 1365 + 1349.6 = 3814.6\ \mu\text{As} \approx 3.81\ \text{mAs}$$
   * Dòng điện trung bình:
-    $$I_{\text{avg\_B}} = \frac{3814.6\ \mu\text{As}}{900\ \text{s}} \approx 4.24\ \mu\text{A}$$
+    $$I_{\text{avg-B}} = \frac{3814.6\ \mu\text{As}}{900\ \text{s}} \approx 4.24\ \mu\text{A}$$
 
 - **Bước 3: Tỷ số so sánh hiệu suất:**
-  $$\text{Tỷ lệ tiết kiệm} = \frac{I_{\text{avg\_A}}}{I_{\text{avg\_B}}} = \frac{29.55\ \mu\text{A}}{4.24\ \mu\text{A}} \approx 6.97\ \text{lần}$$
+  $$\text{Tỷ lệ tiết kiệm} = \frac{I_{\text{avg-A}}}{I_{\text{avg-B}}} = \frac{29.55\ \mu\text{A}}{4.24\ \mu\text{A}} \approx 6.97\ \text{lần}$$
 
 #### [Đáp số chuẩn & Bài học kỹ thuật rút ra]:
 - **Kết quả tính toán:**

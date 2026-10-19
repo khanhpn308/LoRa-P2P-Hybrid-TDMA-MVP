@@ -164,7 +164,7 @@ Sự khác biệt quan trọng nhất giữa hai thế hệ giao thức nằm �
 | **Cơ chế bắt tay tái kết nối (Re-keying)** | Không hỗ trợ (phải thực hiện lại toàn bộ thủ tục Join) | Hỗ trợ 3 kiểu bản tin **`Rejoin-Request`** (Type 0, 1, 2) | Cho phép khôi phục kết nối, cập nhật tham số mạng hoặc đổi bộ khóa phiên mà không làm đứt quãng phiên ứng dụng. |
 
 #### 2.2.2. Cây phái sinh khóa (Key Derivation Tree) trong LoRaWAN 1.1
-Trong LoRaWAN 1.1, quy trình phái sinh khóa từ hai khóa gốc `NwkKey` và `AppKey` được chuẩn hóa bằng thuật toán mã hóa khối AES-128 ở chế độ mã hóa cơ bản (AES-128 Encryption Function, ký hiệu là $\text{aes128\_encrypt}(K, \text{Block})$):
+Trong LoRaWAN 1.1, quy trình phái sinh khóa từ hai khóa gốc `NwkKey` và `AppKey` được chuẩn hóa bằng thuật toán mã hóa khối AES-128 ở chế độ mã hóa cơ bản (AES-128 Encryption Function, ký hiệu là $\text{aes128-encrypt}(K, \text{Block})$):
 
 ```mermaid
 flowchart TD
@@ -211,19 +211,19 @@ flowchart TD
 Các khóa phiên được phái sinh từ một chuỗi khối đầu vào $16\text{ bytes}$ chuẩn hóa như sau:
 
 1. **Khóa phiên toàn vẹn chuyển tiếp (`FNwkSIntKey`):**
-   $$\text{FNwkSIntKey} = \text{aes128\_encrypt}(\text{NwkKey}, 0x01 \mid \text{JoinNonce} \mid \text{JoinEUI} \mid \text{DevNonce} \mid \text{pad}_{16})$$
+   $$\text{FNwkSIntKey} = \text{aes128-encrypt}(\text{NwkKey}, 0x01 \mid \text{JoinNonce} \mid \text{JoinEUI} \mid \text{DevNonce} \mid \text{pad}_{16})$$
 2. **Khóa phiên ứng dụng (`AppSKey`):**
    - Trong LoRaWAN 1.0.x:
-     $$\text{AppSKey} = \text{aes128\_encrypt}(\text{AppKey}, 0x02 \mid \text{AppNonce} \mid \text{NetID} \mid \text{DevNonce} \mid \text{pad}_{16})$$
+     $$\text{AppSKey} = \text{aes128-encrypt}(\text{AppKey}, 0x02 \mid \text{AppNonce} \mid \text{NetID} \mid \text{DevNonce} \mid \text{pad}_{16})$$
    - Trong LoRaWAN 1.1:
-     $$\text{AppSKey} = \text{aes128\_encrypt}(\text{AppKey}, 0x02 \mid \text{JoinNonce} \mid \text{JoinEUI} \mid \text{DevNonce} \mid \text{pad}_{16})$$
+     $$\text{AppSKey} = \text{aes128-encrypt}(\text{AppKey}, 0x02 \mid \text{JoinNonce} \mid \text{JoinEUI} \mid \text{DevNonce} \mid \text{pad}_{16})$$
 3. **Khóa phiên toàn vẹn mạng phục vụ (`SNwkSIntKey`):**
-   $$\text{SNwkSIntKey} = \text{aes128\_encrypt}(\text{NwkKey}, 0x03 \mid \text{JoinNonce} \mid \text{JoinEUI} \mid \text{DevNonce} \mid \text{pad}_{16})$$
+   $$\text{SNwkSIntKey} = \text{aes128-encrypt}(\text{NwkKey}, 0x03 \mid \text{JoinNonce} \mid \text{JoinEUI} \mid \text{DevNonce} \mid \text{pad}_{16})$$
 4. **Khóa phiên mã hóa quản trị mạng (`NwkSEncKey`):**
-   $$\text{NwkSEncKey} = \text{aes128\_encrypt}(\text{NwkKey}, 0x04 \mid \text{JoinNonce} \mid \text{JoinEUI} \mid \text{DevNonce} \mid \text{pad}_{16})$$
+   $$\text{NwkSEncKey} = \text{aes128-encrypt}(\text{NwkKey}, 0x04 \mid \text{JoinNonce} \mid \text{JoinEUI} \mid \text{DevNonce} \mid \text{pad}_{16})$$
 5. **Cặp khóa phụ trợ của Join Server (`JSEncKey` và `JSIntKey`):**
-   $$\text{JSIntKey} = \text{aes128\_encrypt}(\text{NwkKey}, 0x06 \mid \text{DevEUI} \mid \text{pad}_{16})$$
-   $$\text{JSEncKey} = \text{aes128\_encrypt}(\text{NwkKey}, 0x05 \mid \text{DevEUI} \mid \text{pad}_{16})$$
+   $$\text{JSIntKey} = \text{aes128-encrypt}(\text{NwkKey}, 0x06 \mid \text{DevEUI} \mid \text{pad}_{16})$$
+   $$\text{JSEncKey} = \text{aes128-encrypt}(\text{NwkKey}, 0x05 \mid \text{DevEUI} \mid \text{pad}_{16})$$
 
 *Trong đó:* Byte đầu tiên ($0x01 \dots 0x06$) đóng vai trò là hằng số phân biệt mục đích phái sinh (Domain Separator); $\text{pad}_{16}$ là chuỗi các byte $0x00$ chèn vào đuôi để đảm bảo độ dài khối vừa đủ $16\text{ bytes}$ ($128\text{ bits}$).
 
@@ -239,7 +239,7 @@ Các khóa phiên được phái sinh từ một chuỗi khối đầu vào $16\
     *Ý nghĩa:* Mạng chuyển tiếp (fNS) có thể thẩm định ngay lập tức $2\text{ bytes}$ đầu của MIC bằng khóa `FNwkSIntKey` mà không cần biết khóa riêng tư `SNwkSIntKey` của mạng phục vụ gốc (sNS).
 - **Mã hóa vùng dữ liệu người dùng (`FRMPayload`):**
   Thực hiện bằng giải thuật **AES-128 ở chế độ đếm (CTR mode)** sử dụng `AppSKey` (đối với dữ liệu ứng dụng trên $FPort \ge 1$) hoặc `NwkSEncKey` (đối với các lệnh MAC trên $FPort = 0$). Chuỗi khối đếm $A_i$ ($16\text{ bytes}$) được tạo ra cho từng khối dữ liệu $i = 1 \dots k$, sau đó mã hóa qua AES và XOR với bản rõ để tạo thành bản mã:
-  $$S_i = \text{aes128\_encrypt}(K, A_i)$$
+  $$S_i = \text{aes128-encrypt}(K, A_i)$$
   $$\text{Ciphertext}_i = \text{Plaintext}_i \oplus S_i$$
 
 ---
@@ -287,7 +287,7 @@ flowchart TD
 2. **Từ LoRaWAN 1.0.4 và 1.1 trở đi (Cơ chế Bộ đếm Tăng dần - Monotonic Counter):**
    - Đặc tả quy định: **`DevNonce` là một bộ đếm tăng dần nghiêm ngặt (Strictly Incrementing Counter)**, bắt đầu từ $0$ khi xuất xưởng và tăng thêm $1$ sau mỗi lần phát `Join-Request`.
    - Phía Join Server chỉ cần lưu trữ duy nhất **một giá trị số nguyên**: `Last_DevNonce`. Khi nhận được `Join-Request` mới, Join Server chỉ kiểm tra một điều kiện toán học duy nhất:
-     $$\text{DevNonce}_{\text{mới}} > \text{Last\_DevNonce}$$
+     $$\text{DevNonce}_{\text{mới}} > \text{Last-DevNonce}$$
    - **Cải tiến vượt bậc:** Phía Server tối ưu hóa tuyệt đối bộ nhớ (chỉ tốn $2\text{ bytes}$ lưu biến trạng thái thay vì bảng lịch sử khổng lồ). Xóa bỏ hoàn toàn hiện tượng xung đột ngẫu nhiên.
    - **BẪY KỸ THUẬT BẮT BUỘC:** Thiết bị đầu cuối **bắt buộc phải lưu trữ giá trị `DevNonce` hiện tại vào bộ nhớ bất biến (NVRAM / EEPROM / Flash)**. Nếu thiết bị khởi động lại mà quên mất `DevNonce` và quay trở về $0$, toàn bộ các bản tin `Join-Request` tiếp theo sẽ vĩnh viễn bị Join Server từ chối vì không thỏa mãn điều kiện lớn hơn `Last_DevNonce` đã lưu trên hệ thống!
 
@@ -296,7 +296,7 @@ Không chỉ bảo vệ chiều Uplink, chiều Downlink của thủ tục Join 
 - Trong bản tin phản hồi `Join-Accept`, Join Server đóng gói một trường số nguyên $3\text{ bytes}$ ($24\text{ bits}$) mang tên **`JoinNonce`** (thay thế cho `AppNonce` ngẫu nhiên trong 1.0.x).
 - `JoinNonce` cũng là một bộ đếm tăng dần do Join Server quản lý.
 - Thiết bị đầu cuối lưu trữ giá trị `Last_JoinNonce` trong bộ nhớ bất biến. Khi nhận được bản tin `Join-Accept`, sau khi giải mã thành công, thiết bị sẽ kiểm tra:
-  $$\text{JoinNonce} > \text{Last\_JoinNonce}$$
+  $$\text{JoinNonce} > \text{Last-JoinNonce}$$
 - Nếu điều kiện trên thỏa mãn, thiết bị mới chấp nhận cập nhật khóa phiên và ghi nhận `Last_JoinNonce` mới. Nếu kẻ tấn công ghi âm bản tin `Join-Accept` cũ và phát lại, thiết bị sẽ lập tức phát hiện và loại bỏ.
 
 ---
@@ -703,7 +703,7 @@ Phần này chuẩn hóa toàn bộ các bài toán kỹ thuật từ Chương 5
      - Tiền tố nhị phân: gồm $L-1$ bit `1` và kết thúc bằng bit `0`.
      - Độ dài trường định danh: $M$ bits cho `NWKID` và $P = 32 - (L + M)$ bits cho `NWK ADDR`.
   3. Dải địa chỉ mạng Subnet ký hiệu CIDR:
-     $$\text{DevAddr Subnet} = \text{Base\_Address} \ / \ (L + M)$$
+     $$\text{DevAddr Subnet} = \text{Base-Address} \ / \ (L + M)$$
 
 - **[Lời giải chi tiết từng bước (Step-by-step)]:**
 
@@ -785,7 +785,7 @@ Phần này chuẩn hóa toàn bộ các bài toán kỹ thuật từ Chương 5
   * **Bước 2: Phân tích trạng thái thiết bị khi chạm ngưỡng:**
     - Khi `DevNonce` đạt giá trị lớn nhất $65535$ ($0xFFFF$), nếu thiết bị tiếp tục tăng biến đếm, hiện tượng tràn số nguyên nhị phân $16\text{ bits}$ sẽ xảy ra:
       $$65535 + 1 \equiv 0 \pmod{2^{16}}$$
-    - Nếu thiết bị phát bản tin `Join-Request` với $\text{DevNonce} = 0$, Join Server đang lưu giữ $\text{Last\_DevNonce} = 65535$ sẽ kiểm tra:
+    - Nếu thiết bị phát bản tin `Join-Request` với $\text{DevNonce} = 0$, Join Server đang lưu giữ $\text{Last-DevNonce} = 65535$ sẽ kiểm tra:
       $$0 > 65535 \implies \text{FALSE (Sai)}$$
     - Join Server sẽ từ chối bản tin. Kể từ thời điểm này, thiết bị **vĩnh viễn không thể gia nhập mạng được nữa**, rơi vào trạng thái "chết lâm sàng" (Permanent Denial of Service).
 
@@ -877,7 +877,7 @@ D. Sử dụng chuẩn LoRaWAN 1.1 nhưng nạp chung một giá trị ngẫu nh
 **Câu 2: [Sự cố Kích hoạt & Cơ chế Quản lý DevNonce]**  
 Một kỹ sư IoT lập trình cho bo mạch ESP32 chạy thư viện LoRaWAN mã nguồn mở tuân thủ chuẩn LoRaWAN 1.0.4. Thiết bị kết nối thành công với The Things Stack (TTS) và truyền dữ liệu bình thường. Sau khi thay pin mới cho thiết bị, kỹ sư quan sát thấy thiết bị gửi bản tin `Join-Request` nhưng The Things Stack liên tục từ chối bản tin với mã lỗi `DevNonce has already been used or is too small`. Nguyên nhân kỹ thuật cốt lõi là gì?  
 A. Pin mới có điện áp cao hơn làm sai lệch tần số phát của bộ dao động thạch anh trên transceiver SX1276.  
-B. Kỹ sư lưu biến `DevNonce` trong bộ nhớ RAM tạm thời; khi tháo pin, biến `DevNonce` bị reset về `0`, vi phạm quy tắc bắt buộc $\text{DevNonce} > \text{Last\_DevNonce}$ của chuẩn LoRaWAN 1.0.4.  
+B. Kỹ sư lưu biến `DevNonce` trong bộ nhớ RAM tạm thời; khi tháo pin, biến `DevNonce` bị reset về `0`, vi phạm quy tắc bắt buộc $\text{DevNonce} > \text{Last-DevNonce}$ của chuẩn LoRaWAN 1.0.4.  
 C. The Things Stack yêu cầu phải nạp lại khóa `AppKey` mới sau mỗi lần thiết bị ngắt nguồn điện.  
 D. Bộ đếm khung truyền `FCntUp` của thiết bị chưa được xóa về `0` trước khi gửi bản tin `Join-Request`.
 
@@ -1068,27 +1068,27 @@ Một nút cảm biến môi trường truyền thông tin đo đạc định k�
 
   * **Trường hợp 1: Khi chưa có Roaming (Hoạt động ở SF12, $P_T = +14\text{ dBm}$):**
     - Thời gian phát sóng mỗi ngày:
-      $$T_{\text{TX\_daily\_1}} = 96 \times 1.4828\text{ s} = 142.3488\text{ giây} = \frac{142.3488}{3600} \approx 0.03954\text{ giờ}$$
+      $$T_{\text{TX-daily-1}} = 96 \times 1.4828\text{ s} = 142.3488\text{ giây} = \frac{142.3488}{3600} \approx 0.03954\text{ giờ}$$
     - Điện lượng tiêu thụ cho việc phát sóng:
-      $$Q_{\text{TX\_1}} = I_{\text{TX\_1}} \times T_{\text{TX\_1}} = 45\text{ mA} \times 0.03954\text{ h} \approx 1.7793\text{ mAh/ngày}$$
+      $$Q_{\text{TX-1}} = I_{\text{TX-1}} \times T_{\text{TX-1}} = 45\text{ mA} \times 0.03954\text{ h} \approx 1.7793\text{ mAh/ngày}$$
     - Thời gian ngủ sâu mỗi ngày:
-      $$T_{\text{sleep\_1}} = 86,400\text{ s} - 142.35\text{ s} = 86,257.65\text{ giây} = \frac{86,257.65}{3600} \approx 23.9605\text{ giờ}$$
+      $$T_{\text{sleep-1}} = 86,400\text{ s} - 142.35\text{ s} = 86,257.65\text{ giây} = \frac{86,257.65}{3600} \approx 23.9605\text{ giờ}$$
     - Điện lượng tiêu thụ ở chế độ ngủ:
-      $$Q_{\text{sleep\_1}} = 0.005\text{ mA} \times 23.9605\text{ h} \approx 0.1198\text{ mAh/ngày}$$
+      $$Q_{\text{sleep-1}} = 0.005\text{ mA} \times 23.9605\text{ h} \approx 0.1198\text{ mAh/ngày}$$
     - Tổng điện năng tiêu thụ mỗi ngày ở SF12:
-      $$Q_{\text{daily\_SF12}} = 1.7793 + 0.1198 = \textbf{1.8991 mAh/ngày}$$
+      $$Q_{\text{daily-SF12}} = 1.7793 + 0.1198 = \textbf{1.8991 mAh/ngày}$$
 
   * **Trường hợp 2: Khi có Roaming (Hoạt động ở SF7, $P_T = +2\text{ dBm}$):**
     - Thời gian phát sóng mỗi ngày:
-      $$T_{\text{TX\_daily\_2}} = 96 \times 0.0617\text{ s} = 5.9232\text{ giây} = \frac{5.9232}{3600} \approx 0.001645\text{ giờ}$$
+      $$T_{\text{TX-daily-2}} = 96 \times 0.0617\text{ s} = 5.9232\text{ giây} = \frac{5.9232}{3600} \approx 0.001645\text{ giờ}$$
     - Điện lượng tiêu thụ cho việc phát sóng:
-      $$Q_{\text{TX\_2}} = I_{\text{TX\_2}} \times T_{\text{TX\_2}} = 20\text{ mA} \times 0.001645\text{ h} \approx 0.0329\text{ mAh/ngày}$$
+      $$Q_{\text{TX-2}} = I_{\text{TX-2}} \times T_{\text{TX-2}} = 20\text{ mA} \times 0.001645\text{ h} \approx 0.0329\text{ mAh/ngày}$$
     - Thời gian ngủ sâu mỗi ngày:
-      $$T_{\text{sleep\_2}} = 86,400\text{ s} - 5.92\text{ s} = 86,394.08\text{ giây} = \frac{86,394.08}{3600} \approx 23.9984\text{ giờ}$$
+      $$T_{\text{sleep-2}} = 86,400\text{ s} - 5.92\text{ s} = 86,394.08\text{ giây} = \frac{86,394.08}{3600} \approx 23.9984\text{ giờ}$$
     - Điện lượng tiêu thụ ở chế độ ngủ:
-      $$Q_{\text{sleep\_2}} = 0.005\text{ mA} \times 23.9984\text{ h} \approx 0.1200\text{ mAh/ngày}$$
+      $$Q_{\text{sleep-2}} = 0.005\text{ mA} \times 23.9984\text{ h} \approx 0.1200\text{ mAh/ngày}$$
     - Tổng điện năng tiêu thụ mỗi ngày ở SF7:
-      $$Q_{\text{daily\_SF7}} = 0.0329 + 0.1200 = \textbf{0.1529 mAh/ngày}$$
+      $$Q_{\text{daily-SF7}} = 0.0329 + 0.1200 = \textbf{0.1529 mAh/ngày}$$
 
 - **Bước 2: Tính toán tuổi thọ pin ước tính:**
   Dung lượng pin khả dụng: $C = 2,400\text{ mAh}$.
@@ -1124,7 +1124,7 @@ Một nút cảm biến môi trường truyền thông tin đo đạc định k�
   - Tác dụng của chip bảo mật phần cứng **Secure Element (SE - VD: ATECC608A)** trên thiết bị đầu cuối và **HSM (Hardware Security Module)** trên server để chống trích xuất khóa qua phân tích điện năng (side-channel attack).
   - Quy trình xác nhận quyền sở hữu thiết bị (**Device Claiming / Onboarding**) bằng QR Code hoặc cặp `DevEUI` / Pin Token.
   > 🔑 **[KEY & GIẢI THÍCH CHUẨN]:**
-  > 1. **Cơ chế chống Replay Attack bằng DevNonce tăng dần:** Trong LoRaWAN 1.0.4 và 1.1, `DevNonce` không còn là số ngẫu nhiên mà bắt buộc là một **bộ đếm tăng dần nghiêm ngặt (Monotonic Counter)** kích thước 16-bit ($0 \dots 65535$). Join Server chỉ chấp nhận `Join-Request` nếu $\text{DevNonce}_{\text{mới}} > \text{Last\_DevNonce}$. Thiết bị bắt buộc phải lưu giá trị `DevNonce` vào bộ nhớ bất biến (EEPROM/Flash NVRAM). Nếu thiết bị mất nguồn mà không lưu `DevNonce`, biến này quay về 0 và toàn bộ các yêu cầu Join tiếp theo sẽ bị Join Server từ chối vĩnh viễn (Lockout). Phía Downlink cũng được bảo vệ tương tự bởi bộ đếm tăng dần `JoinNonce` (24-bit) trong `Join-Accept`.
+  > 1. **Cơ chế chống Replay Attack bằng DevNonce tăng dần:** Trong LoRaWAN 1.0.4 và 1.1, `DevNonce` không còn là số ngẫu nhiên mà bắt buộc là một **bộ đếm tăng dần nghiêm ngặt (Monotonic Counter)** kích thước 16-bit ($0 \dots 65535$). Join Server chỉ chấp nhận `Join-Request` nếu $\text{DevNonce}_{\text{mới}} > \text{Last-DevNonce}$. Thiết bị bắt buộc phải lưu giá trị `DevNonce` vào bộ nhớ bất biến (EEPROM/Flash NVRAM). Nếu thiết bị mất nguồn mà không lưu `DevNonce`, biến này quay về 0 và toàn bộ các yêu cầu Join tiếp theo sẽ bị Join Server từ chối vĩnh viễn (Lockout). Phía Downlink cũng được bảo vệ tương tự bởi bộ đếm tăng dần `JoinNonce` (24-bit) trong `Join-Accept`.
   > 2. **Tác dụng của Secure Element và HSM:**
   >    - *Secure Element (SE - như Microchip ATECC608A/B):* Gắn trên bo mạch nút cảm biến, lưu trữ an toàn các khóa gốc trong vùng nhớ có lưới bảo vệ chủ động chống can thiệp vật lý. Toàn bộ thuật toán mã hóa và phái sinh khóa AES-128 được thực thi bên trong lõi phần cứng của SE, không để lộ khóa lên bus SPI/I2C. Tích hợp mạch cân bằng dòng điện tiêu thụ, miễn nhiễm hoàn toàn trước các kỹ thuật tấn công kênh kề phân tích điện năng (DPA/SPA) và phân tích bức xạ điện từ (EMA).
   >    - *Hardware Security Module (HSM):* Thiết bị phần cứng chuyên dụng đạt chuẩn FIPS 140-2 Level 3/4 đặt tại máy chủ Join Server, bảo vệ an toàn kho lưu trữ hàng triệu khóa gốc của hệ thống và tăng tốc xử lý hàng chục ngàn yêu cầu xác thực mỗi giây trong môi trường phần cứng biệt lập.

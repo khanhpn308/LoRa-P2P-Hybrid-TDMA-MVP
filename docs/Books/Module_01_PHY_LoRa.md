@@ -461,7 +461,7 @@ Khung truyền tầng vật lý của LoRa (PHY Frame) trên sóng vô tuyến c
      * Giá trị `0x12` ($18$ thập phân): Dành cho mạng LoRa riêng độc lập (Private Network).
      * Giá trị `0x34` ($52$ thập phân): Dành cho mạng LoRaWAN công cộng chuẩn quốc tế (Public LoRaWAN Network).
    - **Ký hiệu đánh dấu khung (Frame Sync Symbols):** Gồm chính xác **$2.25$ down-chirps**. Sự chuyển đổi đột ngột từ Up-chirp sang Down-chirp báo hiệu cho bộ giải điều chế biết phần Preamble đã kết thúc và byte dữ liệu đầu tiên của Header/Payload sẽ bắt đầu ngay sau đó.
-   - Tổng độ dài phần Preamble trên sóng: $n_{\text{preamble\_total}} = n_{\text{preamble}} + 4.25\text{ symbols}$ (với mặc định là $8 + 4.25 = 12.25\text{ symbols}$).
+   - Tổng độ dài phần Preamble trên sóng: $n_{\text{preamble-total}} = n_{\text{preamble}} + 4.25\text{ symbols}$ (với mặc định là $8 + 4.25 = 12.25\text{ symbols}$).
 
 2. **Tiêu đề tầng vật lý (PHY Header):**
    - **Chế độ Header tường minh (Explicit Header Mode - Mặc định):** Header được mã hóa với tỷ lệ sửa lỗi tối đa ($\text{CR} = 4/8$) và luôn chiếm một khoảng thời gian cố định tương đương $20\text{ symbols}$ (hoặc $8$ symbols payload). Header chứa: Độ dài Payload (Payload Length tính bằng byte), Tỷ lệ mã hóa (Coding Rate của phần payload), và Cờ báo sự hiện diện của trường CRC (CRC Flag).
@@ -552,7 +552,7 @@ Trong đó:
 - Hàm $\lceil x \rceil$: Phép toán làm tròn lên số nguyên gần nhất (Ceiling function).
 
 ##### 3. Tổng thời gian chiếm sóng (Time on Air):
-$$T_{\text{ToA}} = (n_{\text{preamble\_total}} + n_{\text{payload}}) \cdot T_{\text{symbol}} = \left[ (n_{\text{preamble}} + 4.25) + n_{\text{payload}} \right] \cdot \left(\frac{2^{\text{SF}}}{\text{BW}}\right)$$
+$$T_{\text{ToA}} = (n_{\text{preamble-total}} + n_{\text{payload}}) \cdot T_{\text{symbol}} = \left[ (n_{\text{preamble}} + 4.25) + n_{\text{payload}} \right] \cdot \left(\frac{2^{\text{SF}}}{\text{BW}}\right)$$
 
 ---
 
@@ -918,13 +918,13 @@ Toàn bộ 12 bài tập có biểu tượng Búa & Cờ-lê (🛠️) từ Chư
   Tỷ lệ mã hóa $\text{CR} = 4/5$ có hệ số dôi dư (Overhead Ratio) là:
   $$\text{Overhead} = \frac{5}{4} = 1.25$$
   Tốc độ bit hiệu dụng sau mã hóa:
-  $$R_{\text{bit\_CR}} = \frac{R_{\text{raw}}}{\text{Overhead}} = R_{\text{raw}} \cdot \left(\frac{4}{5}\right)$$
+  $$R_{\text{bit-CR}} = \frac{R_{\text{raw}}}{\text{Overhead}} = R_{\text{raw}} \cdot \left(\frac{4}{5}\right)$$
 
 - **[Lời giải chi tiết từng bước (Step-by-step)]:**
   1. *Trường hợp 1 ($\text{SF7}, \text{BW125}, \text{CR} = 4/5$):*
-     $$R_{\text{bit\_CR1}} = \frac{6835.94\text{ bps}}{1.25} = 6835.94 \times 0.8 = \mathbf{5468.75\text{ bps}} \approx \mathbf{5469\text{ bps}}$$
+     $$R_{\text{bit-CR1}} = \frac{6835.94\text{ bps}}{1.25} = 6835.94 \times 0.8 = \mathbf{5468.75\text{ bps}} \approx \mathbf{5469\text{ bps}}$$
   2. *Trường hợp 2 ($\text{SF12}, \text{BW125}, \text{CR} = 4/5$):*
-     $$R_{\text{bit\_CR2}} = \frac{366.21\text{ bps}}{1.25} = 366.21 \times 0.8 = \mathbf{292.97\text{ bps}} \approx \mathbf{293\text{ bps}}$$
+     $$R_{\text{bit-CR2}} = \frac{366.21\text{ bps}}{1.25} = 366.21 \times 0.8 = \mathbf{292.97\text{ bps}} \approx \mathbf{293\text{ bps}}$$
 
 - **[Đáp số chuẩn & Bài học kỹ thuật rút ra]:**
   $$\mathbf{\text{Case 1 (SF7, CR 4/5): } 5469\text{ bps} \quad\mid\quad \text{Case 2 (SF12, CR 4/5): } 293\text{ bps}}$$
@@ -1078,10 +1078,10 @@ Toàn bộ 12 bài tập có biểu tượng Búa & Cờ-lê (🛠️) từ Chư
        $$\frac{\text{Tử số}}{\text{Mẫu số}} = \frac{128}{28} \approx 4.5714$$
        $$\left\lceil 4.5714 \right\rceil = \mathbf{5}$$
   2. *Tính số symbol phần Payload:*
-     $$n_{\text{payload\_core}} = 5 \cdot (\text{CR} + 4) = 5 \cdot (1 + 4) = 5 \cdot 5 = \mathbf{25\text{ symbols}}$$
+     $$n_{\text{payload-core}} = 5 \cdot (\text{CR} + 4) = 5 \cdot (1 + 4) = 5 \cdot 5 = \mathbf{25\text{ symbols}}$$
      $$n_{\text{payload}} = 8 + 25 = \mathbf{33\text{ symbols}}$$
   3. *Tính tổng số symbol của toàn bộ khung LoRa ($n_{\text{symbol}}$):*
-     $$n_{\text{preamble\_total}} = 8 + 4.25 = \mathbf{12.25\text{ symbols}}$$
+     $$n_{\text{preamble-total}} = 8 + 4.25 = \mathbf{12.25\text{ symbols}}$$
      $$n_{\text{symbol}} = 12.25 + 33 = \mathbf{45.25\text{ symbols}}$$
   4. *Tính thời gian truyền 1 symbol ($T_{\text{symbol}}$):*
      $$T_{\text{symbol}} = \frac{2^7}{125\,000} = \frac{128}{125\,000} = 0.001024\text{ s} = \mathbf{1.024\text{ ms}}$$
@@ -1139,7 +1139,7 @@ Một hệ thống IoT truyền thông điểm-điểm (P2P) ngoài trời sử 
 - Ăng-ten phát có độ lợi: $G_T = +3\text{ dBi}$, suy hao cáp nối phát: $L_{\text{cable1}} = 1\text{ dB}$.
 - Ăng-ten thu có độ lợi: $G_R = +3\text{ dBi}$, suy hao cáp nối thu: $L_{\text{cable2}} = 1\text{ dB}$.
 
-Hỏi tổng quỹ suy hao đường truyền trong không gian tự do tối đa ($L_{\text{air\_max}}$) mà hệ thống có thể chịu đựng được là bao nhiêu để tín hiệu vẫn đến được đầu vào máy thu ở mức tối thiểu bằng độ nhạy thu?
+Hỏi tổng quỹ suy hao đường truyền trong không gian tự do tối đa ($L_{\text{air-max}}$) mà hệ thống có thể chịu đựng được là bao nhiêu để tín hiệu vẫn đến được đầu vào máy thu ở mức tối thiểu bằng độ nhạy thu?
 A. $162\text{ dB}$  
 B. $164\text{ dB}$  
 C. $166\text{ dB}$  
@@ -1222,11 +1222,11 @@ Yêu cầu:
 
 - **Câu 4: Đáp án đúng là C**
   * *Tại sao C đúng:* Phương trình ngân sách đường truyền tại biên thu tối thiểu:
-    $$P_R = P_T + G_T - L_{\text{cable1}} - L_{\text{air\_max}} + G_R - L_{\text{cable2}} = \text{Sensitivity}$$
+    $$P_R = P_T + G_T - L_{\text{cable1}} - L_{\text{air-max}} + G_R - L_{\text{cable2}} = \text{Sensitivity}$$
     Suy ra:
-    $$L_{\text{air\_max}} = P_T - \text{Sensitivity} + (G_T - L_{\text{cable1}}) + (G_R - L_{\text{cable2}})$$
+    $$L_{\text{air-max}} = P_T - \text{Sensitivity} + (G_T - L_{\text{cable1}}) + (G_R - L_{\text{cable2}})$$
     Thay số:
-    $$L_{\text{air\_max}} = 14 - (-148) + (3 - 1) + (3 - 1) = 162 + 2 + 2 = \mathbf{166\text{ dB}}$$
+    $$L_{\text{air-max}} = 14 - (-148) + (3 - 1) + (3 - 1) = 162 + 2 + 2 = \mathbf{166\text{ dB}}$$
   * *Tại sao các phương án khác sai:*
     - Phương án A ($162\text{ dB}$) sai vì bỏ quên độ lợi ròng của hệ thống ăng-ten hai đầu ($+4\text{ dB}$).
     - Phương án B ($164\text{ dB}$) sai do chỉ cộng độ lợi của một đầu ăng-ten.
@@ -1278,7 +1278,7 @@ Yêu cầu:
 
 2. **Tính toán ToA tại cấu hình $\text{SF} = 7$ ($\text{DE} = 0, H = 0, \text{CRC} = 1, \text{CR} = 1$):**
    - Số symbol phần mở đầu:
-     $$n_{\text{preamble\_total}} = 8 + 4.25 = \mathbf{12.25\text{ symbols}}$$
+     $$n_{\text{preamble-total}} = 8 + 4.25 = \mathbf{12.25\text{ symbols}}$$
    - Tính biểu thức số nguyên trong hàm trần (Ceiling):
      $$\text{Tử số} = 8 \cdot 31 - 4 \cdot 7 + 28 + 16 \cdot 1 - 20 \cdot 0 = 248 - 28 + 28 + 16 = \mathbf{264}$$
      $$\text{Mẫu số} = 4 \cdot (7 - 2 \cdot 0) = \mathbf{28}$$

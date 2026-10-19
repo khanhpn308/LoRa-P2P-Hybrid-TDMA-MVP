@@ -171,7 +171,7 @@ Toàn bộ các lệnh trong gói Clock Synchronization đều tuân thủ quy t
 
 > [!NOTE]
 > Khi nhận được `AppTimeAns`, vi điều khiển phải cộng trực tiếp giá trị có dấu `TimeCorrection` vào thanh ghi thời gian của nó:
-> $$T_{\text{node\_corrected}} = T_{\text{node\_current}} + \text{TimeCorrection}$$
+> $$T_{\text{node-corrected}} = T_{\text{node-current}} + \text{TimeCorrection}$$
 > Toàn bộ quá trình tính toán phải tính đến độ trễ truyền dẫn (Time on Air + trễ xử lý Gateway) nếu yêu cầu độ chính xác cao mức mili-giây.
 
 ---
@@ -233,7 +233,7 @@ flowchart TD
    $$\text{McKEKey} = \text{AES-128-Encrypt}(\text{McRootKey}, \text{0x00} \mid \text{pad})$$
    Khóa `McKEKey` là duy nhất cho mỗi thiết bị đầu cuối.
 3. **Mã hóa khóa nhóm (`McKey_encrypted`):** Máy chủ tạo ngẫu nhiên một khóa nhóm bí mật `McKey` chung cho toàn bộ đội tàu thiết bị. Khi gửi bản tin thiết lập nhóm `McGroupSetupReq` đến từng thiết bị cụ thể qua Unicast, Server dùng `McKEKey` riêng của thiết bị đó để mã hóa:
-   $$\text{McKey\_encrypted} = \text{AES-128-ECB-Encrypt}(\text{McKEKey}, \text{McKey})$$
+   $$\text{McKey-encrypted} = \text{AES-128-ECB-Encrypt}(\text{McKEKey}, \text{McKey})$$
 4. **Giải mã trên thiết bị:** Khi nhận được bản tin, vi điều khiển dùng `McKEKey` tự sinh trong lòng nó để giải mã `McKey_encrypted` lấy ra khóa gốc `McKey`.
 5. **Dẫn xuất cặp khóa phiên Multicast:** Cả Server và Node đều tính toán độc lập:
    $$\text{McAppSKey} = \text{AES-128-Encrypt}(\text{McKey}, \text{0x01} \mid \text{McAddr} \mid \text{pad}_{11\text{ bytes}})$$
@@ -588,8 +588,8 @@ Toàn bộ các cảnh báo dưới đây được trích xuất trực tiếp t
 >
 > **3. Giải pháp kỹ thuật khắc phục & Best Practice:**
 > - **Tính toán chính xác `SessionTimeOut`:** Chỉ tính toán thời lượng phiên Class C vừa đủ cho số lượng mảnh phát ra dựa trên Time on Air (ToA) cộng với biên an toàn trễ mạng (Inter-frame Delay), theo công thức:
->   $$T_{\text{session\_duration}} = (N + M) \times (T_{\text{ToA}} + T_{\text{delay\_gw}}) + T_{\text{guard}}$$
->   Chọn giá trị số nguyên $k$ nhỏ nhất sao cho $2^k \ge T_{\text{session\_duration}}$.
+>   $$T_{\text{session-duration}} = (N + M) \times (T_{\text{ToA}} + T_{\text{delay-gw}}) + T_{\text{guard}}$$
+>   Chọn giá trị số nguyên $k$ nhỏ nhất sao cho $2^k \ge T_{\text{session-duration}}$.
 > - **Cơ chế ngắt sớm (Early Termination):** Ngay khi thiết bị nhận đủ $N$ mảnh độc lập và tái tạo thành công tệp firmware (hoặc khi phát hiện hết thời gian phiên), mã nguồn nhúng phải chủ động gọi hàm chuyển đổi lớp lập tức ép modem RF về lại Class A mà không cần chờ hết bộ đếm `SessionTimeOut`.
 > - **Bảo vệ bằng Hardware Timer:** Khởi động một bộ định thời phần cứng độc lập (Low Power Timer - LPTIM) đếm lùi thời gian phiên Class C. Khi bộ đếm ngắt tràn, vi điều khiển cưỡng chế tắt khối thu RF và đưa hệ thống vào trạng thái ngủ sâu ngay lập tức.
 
@@ -680,7 +680,7 @@ Toàn bộ các cảnh báo dưới đây được trích xuất trực tiếp t
 > **3. Giải pháp kỹ thuật khắc phục & Best Practice:**
 > - **Kiểm tra dung lượng ngay từ lệnh khởi tạo:** Khi nhận bản tin `FragSessionSetupReq`, vi điều khiển phải lập tức tính toán:
 >   $$\text{TotalExpectedSize} = \text{NbFrag} \times \text{FragSize}$$
->   Nếu $\text{TotalExpectedSize} > \text{FLASH\_SLOT\_MAX\_SIZE}$, thiết bị phải **từ chối phiên ngay lập tức** bằng cách gửi bản tin `FragSessionSetupAns` với cờ `NotEnoughMemory = 1` và từ chối ghi dữ liệu vào Flash.
+>   Nếu $\text{TotalExpectedSize} > \text{FLASH-SLOT-MAX-SIZE}$, thiết bị phải **từ chối phiên ngay lập tức** bằng cách gửi bản tin `FragSessionSetupAns` với cờ `NotEnoughMemory = 1` và từ chối ghi dữ liệu vào Flash.
 > - **Kiến trúc Bootloader không hoán đổi vật lý (Direct Execution via Remap):** Thay vì sao chép vật lý toàn bộ hàng trăm KB dữ liệu giữa 2 phân vùng Flash (rất dễ hỏng nếu mất điện giữa chừng), vi điều khiển nên hỗ trợ cơ chế Remap địa chỉ thực thi (như tính năng Dual-Bank Flash Swap của STM32WL hoặc phân vùng `otadata` của ESP-IDF). Việc chuyển đổi firmware chỉ là thay đổi địa chỉ của một con trỏ thanh ghi duy nhất diễn ra trong vài micro-giây, miễn nhiễm với sự cố mất điện.
 > - **Tích hợp mạch giám sát điện áp thấp (BOD - Brown-Out Detector):** Vi điều khiển phải bật mạch phát hiện sụt nguồn phần cứng BOD. Nếu điện áp pin thấp hơn ngưỡng an toàn (ví dụ $< 2.4\text{ V}$), thiết bị lập tức hủy lệnh nạp firmware và gửi cảnh báo pin yếu về Server.
 
@@ -814,7 +814,7 @@ Toàn bộ 4 bài tập thực chiến dưới đây được thiết kế và g
      $$\text{McRootKey} = \text{AES-128}_{\text{GenAppKey}}(\text{0x00} \mid \text{0x00}^{15})$$
      $$\text{McKEKey} = \text{AES-128}_{\text{McRootKey}}(\text{0x00} \mid \text{0x00}^{15})$$
   2. Mã hóa khóa nhóm `McKey`:
-     $$\text{McKey\_encrypted} = \text{AES-128-ECB-Encrypt}_{\text{McKEKey}}(\text{McKey})$$
+     $$\text{McKey-encrypted} = \text{AES-128-ECB-Encrypt}_{\text{McKEKey}}(\text{McKey})$$
   3. Dẫn xuất cặp khóa phiên từ `McKey` và `McAddr`:
      $$\text{McAppSKey} = \text{AES-128}_{\text{McKey}}(\text{0x01} \mid \text{McAddr} \mid \text{0x00}^{11})$$
      $$\text{McNwkSKey} = \text{AES-128}_{\text{McKey}}(\text{0x02} \mid \text{McAddr} \mid \text{0x00}^{11})$$
@@ -825,7 +825,7 @@ Toàn bộ 4 bài tập thực chiến dưới đây được thiết kế và g
   * **Bước 1: Cơ chế dẫn xuất trên hai đầu:**
     - Server và Node dùng chung thuật toán AES-128 chuẩn với khóa gốc `GenAppKey` để cùng sinh ra một giá trị `McKEKey` duy nhất.
     - Server dùng `McKEKey` mã hóa `McKey` thành chuỗi 16 byte `McKey_encrypted`. Giả sử kết quả mã hóa thu được là:
-      $$\text{McKey\_encrypted} = \text{\texttt{5A 7B 9C 1D 3E 2F 4A 6B 8C 0D 2E 4F 6A 8B 0C 2E}}$$
+      $$\text{McKey-encrypted} = \text{\texttt{5A 7B 9C 1D 3E 2F 4A 6B 8C 0D 2E 4F 6A 8B 0C 2E}}$$
   * **Bước 2: Phân tích Endianness cho các trường số nguyên:**
     - `McGroupIDHeader`: Nhóm 0 $\rightarrow \text{0x00}$.
     - `McAddr`: Giá trị mạng là `0x22334455` (Big Endian: `22 33 44 55`).
@@ -992,9 +992,9 @@ Toàn bộ 4 bài tập thực chiến dưới đây được thiết kế và g
     Tổng thời gian phát sóng thực tế của Gateway:
     $$\sum T_{\text{ToA}} = 733 \times 0.676864\text{ s} \approx 496.14\text{ giây}$$
     - **Trường hợp 1: Kênh chuyên dụng $869.525\text{ MHz}$ (Duty Cycle $10\%$):**
-      $$T_{\text{campaign\_10\%}} \ge \frac{496.14}{0.10} = 4\text{,}961.4\text{ giây} \approx 82.69\text{ phút} \approx 1.38\text{ giờ}$$
+      $$T_{\text{campaign-10\%}} \ge \frac{496.14}{0.10} = 4\text{,}961.4\text{ giây} \approx 82.69\text{ phút} \approx 1.38\text{ giờ}$$
     - **Trường hợp 2: Kênh thông thường (Duty Cycle $1\%$):**
-      $$T_{\text{campaign\_1\%}} \ge \frac{496.14}{0.01} = 49\text{,}614\text{ giây} \approx 826.9\text{ phút} \approx 13.78\text{ giờ}$$
+      $$T_{\text{campaign-1\%}} \ge \frac{496.14}{0.01} = 49\text{,}614\text{ giây} \approx 826.9\text{ phút} \approx 13.78\text{ giờ}$$
 
   * **Bước 4: Cấu hình tham số `SessionTimeOut`:**
     Với kênh $10\%$ Duty Cycle, thời gian tối thiểu là $4961.4\text{ s}$. Cộng thêm $300\text{ s}$ biên an toàn: $T_{\text{safe}} \approx 5262\text{ s}$.
@@ -1082,7 +1082,7 @@ Một Network Server cần thiết lập phiên Multicast Class C cho nhóm $\te
 **Yêu cầu:**
 1. Xác định giá trị chính xác của các trường dữ liệu: `SessionTime`, `SessionTimeOut`, `DLFrequency`, `DR`.
 2. Lập bảng cấu trúc chi tiết và biểu diễn chuỗi byte Hexadecimal của bản tin `McClassCSessionReq` (10 bytes) tuân thủ quy tắc Little Endian.
-3. Giả sử thiết bị nhận được bản tin trên sau đó 12 giây ($T_{\text{device\_recv}} = 1\text{,}720\text{,}000\text{,}012\text{ s}$). Hãy tính toán giá trị trường `TimeToSession` (3 bytes) và viết chuỗi byte Hexadecimal của bản tin phản hồi `McClassCSessionAns` (4 bytes).
+3. Giả sử thiết bị nhận được bản tin trên sau đó 12 giây ($T_{\text{device-recv}} = 1\text{,}720\text{,}000\text{,}012\text{ s}$). Hãy tính toán giá trị trường `TimeToSession` (3 bytes) và viết chuỗi byte Hexadecimal của bản tin phản hồi `McClassCSessionAns` (4 bytes).
 
 ---
 
@@ -1187,7 +1187,7 @@ Một thiết bị đo thông minh sử dụng vi điều khiển STM32WL55JC c�
     $$\text{Chuỗi Hex hoàn chỉnh: } \text{\texttt{04 02 08 0D 87 66 0B 12 AD 84 03}}$$
   * **Bước 3: Tính toán phản hồi `McClassCSessionAns`:**
     - Thời gian còn lại:
-      $$\text{TimeToSession} = \text{SessionTime} - T_{\text{device\_recv}} = 1\text{,}720\text{,}001\text{,}800 - 1\text{,}720\text{,}000\text{,}012 = 1788\text{ giây}$$
+      $$\text{TimeToSession} = \text{SessionTime} - T_{\text{device-recv}} = 1\text{,}720\text{,}001\text{,}800 - 1\text{,}720\text{,}000\text{,}012 = 1788\text{ giây}$$
       Đổi sang Hex: $1788_{10} = \text{0x0006FC}$.
       Sắp xếp **Little Endian (3B)**: `FC 06 00`.
     - `Status`: Thành công $\implies \text{0x00}$.
@@ -1292,7 +1292,7 @@ Dưới đây là toàn bộ $100\%$ các tiêu chí kiểm tra kiến thức b�
   >    - Node và Server độc lập tính toán:
   >      $$\text{McRootKey} = \text{AES-128}(\text{GenAppKey}, \text{0x00} \mid \text{pad})$$
   >      $$\text{McKEKey} = \text{AES-128}(\text{McRootKey}, \text{0x00} \mid \text{pad})$$
-  >    - Server tạo khóa nhóm `McKey` chung và mã hóa thành $\text{McKey\_encrypted} = \text{AES-128-ECB}(\text{McKEKey}, \text{McKey})$, sau đó gửi cho Node qua lệnh Unicast `McGroupSetupReq` trên cổng `FPort = 200`.
+  >    - Server tạo khóa nhóm `McKey` chung và mã hóa thành $\text{McKey-encrypted} = \text{AES-128-ECB}(\text{McKEKey}, \text{McKey})$, sau đó gửi cho Node qua lệnh Unicast `McGroupSetupReq` trên cổng `FPort = 200`.
   >    - Node dùng `McKEKey` giải mã lấy `McKey`, rồi dẫn xuất ra cặp khóa phiên làm việc của nhóm:
   >      $$\text{McAppSKey} = \text{AES-128}(\text{McKey}, \text{0x01} \mid \text{McAddr} \mid \text{pad})$$
   >      $$\text{McNwkSKey} = \text{AES-128}(\text{McKey}, \text{0x02} \mid \text{McAddr} \mid \text{pad})$$

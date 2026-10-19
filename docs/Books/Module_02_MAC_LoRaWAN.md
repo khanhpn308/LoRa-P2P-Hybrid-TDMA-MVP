@@ -187,8 +187,8 @@ timeline
 
 #### 1. Class A (All - Bắt buộc trên 100% thiết bị):
 - **Cơ chế hoạt động:** Hoạt động hoàn toàn bất đồng bộ dựa trên biến thể của giải thuật Pure ALOHA. Node chỉ thức dậy phát Uplink khi có sự kiện (cảm biến đo xong hoặc định kỳ hẹn giờ), sau đó mở chính xác hai cửa sổ nhận Downlink ngắn hạn:
-  * **Cửa sổ RX1:** Mở sau thời điểm phát xong Uplink đúng $1.0\text{ s}$ ($\text{RECEIVE\_DELAY1}$). Tần số nhận trùng với tần số của kênh Uplink vừa phát. Tốc độ dữ liệu (Data Rate) là hàm phụ thuộc vào Data Rate phát của Uplink và giá trị cấu hình `RX1DROffset` (mặc định Offset = 0, tức cùng DR với Uplink).
-  * **Cửa sổ RX2:** Mở sau thời điểm phát xong Uplink đúng $2.0\text{ s}$ ($\text{RECEIVE\_DELAY2}$). Tần số và Data Rate của RX2 được cố định theo cấu hình hệ thống (Tại châu Âu EU868, mặc định là tần số $869.525\text{ MHz}$ với $\text{DR0} = \text{SF12} / 125\text{ kHz}$ hoặc $\text{DR3} = \text{SF9} / 125\text{ kHz}$ theo quy định mạng).
+  * **Cửa sổ RX1:** Mở sau thời điểm phát xong Uplink đúng $1.0\text{ s}$ (`RECEIVE_DELAY1`). Tần số nhận trùng với tần số của kênh Uplink vừa phát. Tốc độ dữ liệu (Data Rate) là hàm phụ thuộc vào Data Rate phát của Uplink và giá trị cấu hình `RX1DROffset` (mặc định Offset = 0, tức cùng DR với Uplink).
+  * **Cửa sổ RX2:** Mở sau thời điểm phát xong Uplink đúng $2.0\text{ s}$ (`RECEIVE_DELAY2`). Tần số và Data Rate của RX2 được cố định theo cấu hình hệ thống (Tại châu Âu EU868, mặc định là tần số $869.525\text{ MHz}$ với $\text{DR0} = \text{SF12} / 125\text{ kHz}$ hoặc $\text{DR3} = \text{SF9} / 125\text{ kHz}$ theo quy định mạng).
 
 ```mermaid
 sequenceDiagram
@@ -359,9 +359,9 @@ sequenceDiagram
 **Quy tắc kiểm tra bất biến trên Network Server:**
 Khi nhận được một bản tin Uplink từ một thiết bị, Network Server chỉ chấp nhận gói tin đó nếu và chỉ nếu:
 
-$$\text{FCnt}_{\text{received}} > \text{FCnt}_{\text{last\_valid}}$$
+$$\text{FCnt}_{\text{received}} > \text{FCnt}_{\text{last-valid}}$$
 
-Nếu $\text{FCnt}_{\text{received}} \le \text{FCnt}_{\text{last\_valid}}$, Network Server sẽ **lập tức hủy bỏ gói tin trong im lặng (Silently Drop)** mà không chuyển tiếp lên Application Server.
+Nếu $\text{FCnt}_{\text{received}} \le \text{FCnt}_{\text{last-valid}}$, Network Server sẽ **lập tức hủy bỏ gói tin trong im lặng (Silently Drop)** mà không chuyển tiếp lên Application Server.
 
 Nếu kẻ tấn công cố tình sửa đổi giá trị `FCnt` trong gói tin thành một số lớn hơn (Ví dụ sửa từ 100 thành 200), mã toàn vẹn `MIC` ở cuối gói tin sẽ lập tức bị sai lệch (vì giá trị `FCnt` tham gia trực tiếp vào khối tính toán AES-CMAC của MIC). Kết quả là gói tin vẫn bị loại bỏ vì lỗi xác thực tính toàn vẹn (Integrity Failure).
 
@@ -725,7 +725,7 @@ Dưới đây là lời giải chi tiết 100% các bài tập kỹ thuật có 
   1. Điều kiện tiếp nhận bản tin Uplink chuẩn của Network Server:
      $$\text{FCnt}_{\text{rx}} > \text{FCnt}_{\text{last}}$$
   2. Thuật toán xác thực tính toàn vẹn gói tin (MIC) dựa trên khóa bí mật `NwkSKey`:
-     $$\text{MIC} = \text{aes128\_cmac}\left(\text{NwkSKey},\ B_0 \mid \text{MHDR} \mid \text{FHDR} \mid \text{FPort} \mid \text{FRMPayload}\right)[0..3]$$
+     $$\text{MIC} = \text{aes128-cmac}\left(\text{NwkSKey},\ B_0 \mid \text{MHDR} \mid \text{FHDR} \mid \text{FPort} \mid \text{FRMPayload}\right)[0..3]$$
      Khối $B_0$ được định nghĩa chuẩn như sau:
      $$B_0 = [0x49 \mid 0x00\ 0x00\ 0x00\ 0x00 \mid \text{Dir} \mid \text{DevAddr} \mid \text{FCntUp} \mid 0x00 \mid \text{len}(\text{msg})]$$
      *Nhận xét:* Biến `FCntUp` tham gia trực tiếp vào việc tính mã `MIC`. Do đó, kẻ tấn công không thể sửa đổi số `FCnt` nếu không nắm giữ khóa bí mật `NwkSKey`.
@@ -1030,23 +1030,23 @@ Một trạm Gateway thu được một bản tin vô tuyến từ một cảm b
 1. **Trường hợp thiết bị hoạt động ở Class A:**  
    - *Chu kỳ hàng ngày:* Node gửi 4 bản tin Uplink mỗi ngày.  
      Thời gian phát trong 1 ngày:  
-     $$T_{\text{tx\_day}} = 4 \times 50\text{ ms} = 200\text{ ms} = 0.2\text{ s}$$  
+     $$T_{\text{tx-day}} = 4 \times 50\text{ ms} = 200\text{ ms} = 0.2\text{ s}$$  
    - *Thời gian mở cửa sổ thu RX1 và RX2 trong 1 ngày:*  
-     $$T_{\text{rx\_day}} = 4 \times 100\text{ ms} = 400\text{ ms} = 0.4\text{ s}$$  
+     $$T_{\text{rx-day}} = 4 \times 100\text{ ms} = 400\text{ ms} = 0.4\text{ s}$$  
    - *Thời gian ngủ sâu (Deep Sleep) trong 1 ngày:*  
-     $$T_{\text{sleep\_day}} = 86400\text{ s} - (0.2\text{ s} + 0.4\text{ s}) = 86399.4\text{ s}$$  
+     $$T_{\text{sleep-day}} = 86400\text{ s} - (0.2\text{ s} + 0.4\text{ s}) = 86399.4\text{ s}$$  
    - *Điện năng tiêu thụ của cơ cấu van cơ khí trung bình 1 ngày:*  
      Mỗi tuần van chạy 1 lần mất $2\text{ s}$ ở dòng $150\text{ mA}$.  
-     Thời gian van chạy trung bình mỗi ngày: $T_{\text{valve\_day}} = \frac{2\text{ s}}{7} \approx 0.2857\text{ s}$.  
+     Thời gian van chạy trung bình mỗi ngày: $T_{\text{valve-day}} = \frac{2\text{ s}}{7} \approx 0.2857\text{ s}$.  
    - *Tính tổng điện lượng tiêu thụ trung bình trong một ngày ($Q_{\text{day}}$ tính bằng $\text{mAh}$):*  
-     $$Q_{\text{tx}} = I_{\text{tx}} \times \frac{T_{\text{tx\_day}}}{3600} = 30\text{ mA} \times \frac{0.2}{3600} \approx 0.00167\text{ mAh}$$  
-     $$Q_{\text{rx}} = I_{\text{rx}} \times \frac{T_{\text{rx\_day}}}{3600} = 12\text{ mA} \times \frac{0.4}{3600} \approx 0.00133\text{ mAh}$$  
-     $$Q_{\text{valve}} = I_{\text{valve}} \times \frac{T_{\text{valve\_day}}}{3600} = 150\text{ mA} \times \frac{0.2857}{3600} \approx 0.01190\text{ mAh}$$  
-     $$Q_{\text{sleep}} = I_{\text{sleep}} \times \frac{T_{\text{sleep\_day}}}{3600} = 0.003\text{ mA} \times \frac{86399.4}{3600} \approx 0.07200\text{ mAh}$$  
+     $$Q_{\text{tx}} = I_{\text{tx}} \times \frac{T_{\text{tx-day}}}{3600} = 30\text{ mA} \times \frac{0.2}{3600} \approx 0.00167\text{ mAh}$$  
+     $$Q_{\text{rx}} = I_{\text{rx}} \times \frac{T_{\text{rx-day}}}{3600} = 12\text{ mA} \times \frac{0.4}{3600} \approx 0.00133\text{ mAh}$$  
+     $$Q_{\text{valve}} = I_{\text{valve}} \times \frac{T_{\text{valve-day}}}{3600} = 150\text{ mA} \times \frac{0.2857}{3600} \approx 0.01190\text{ mAh}$$  
+     $$Q_{\text{sleep}} = I_{\text{sleep}} \times \frac{T_{\text{sleep-day}}}{3600} = 0.003\text{ mA} \times \frac{86399.4}{3600} \approx 0.07200\text{ mAh}$$  
      Tổng điện lượng tiêu thụ mỗi ngày:  
-     $$Q_{\text{total\_day}} = 0.00167 + 0.00133 + 0.01190 + 0.07200 \approx 0.0869\text{ mAh/ngày}$$  
+     $$Q_{\text{total-day}} = 0.00167 + 0.00133 + 0.01190 + 0.07200 \approx 0.0869\text{ mAh/ngày}$$  
    - *Dòng điện tiêu thụ trung bình của hệ thống ($I_{\text{avg}}$):*  
-     $$I_{\text{avg}} = \frac{Q_{\text{total\_day}}}{24\text{ h}} = \frac{0.0869\text{ mAh}}{24\text{ h}} \approx 0.00362\text{ mA} = 3.62\ \mu\text{A}$$  
+     $$I_{\text{avg}} = \frac{Q_{\text{total-day}}}{24\text{ h}} = \frac{0.0869\text{ mAh}}{24\text{ h}} \approx 0.00362\text{ mA} = 3.62\ \mu\text{A}$$  
    - *Ước tính tuổi thọ viên pin $8500\text{ mAh}$:*  
      $$\text{Tuổi thọ (ngày)} = \frac{8500\text{ mAh}}{0.0869\text{ mAh/ngày}} \approx 97.813\text{ ngày} \approx 267.9\text{ năm}$$  
      *Đánh giá thực tế:* Xét tỷ lệ tự xả của pin Lithium (khoảng $1 - 2\%$ mỗi năm) và lão hóa hóa học, viên pin đảm bảo vận hành vượt mức **10 đến 15 năm**.
@@ -1135,7 +1135,7 @@ Một trạm Gateway thu được một bản tin vô tuyến từ một cảm b
    - Trong bản tin `Join-Request`, toàn bộ các trường `AppEUI`, `DevEUI` và `DevNonce` được truyền **dưới dạng văn bản rõ (Plaintext)** không mã hóa. Kẻ tấn công nghe lén trên sóng có thể đọc được địa chỉ định danh của thiết bị.  
    - Tuy nhiên, hệ thống vẫn an toàn tuyệt đối trước nguy cơ giả mạo và giải mã vì:  
      1. **Khóa gốc `AppKey` không bao giờ xuất hiện trên sóng:** Mã toàn vẹn `MIC` 4 byte ở cuối bản tin được tính bằng thuật toán AES-CMAC sử dụng khóa bí mật `AppKey` (vốn chỉ được lưu an toàn bên trong phần cứng Node và Join Server):  
-        $$\text{MIC} = \text{aes128\_cmac}(\text{AppKey},\ \text{MHDR} \mid \text{AppEUI} \mid \text{DevEUI} \mid \text{DevNonce})[0..3]$$  
+        $$\text{MIC} = \text{aes128-cmac}(\text{AppKey},\ \text{MHDR} \mid \text{AppEUI} \mid \text{DevEUI} \mid \text{DevNonce})[0..3]$$  
         Kẻ tấn công không thể tạo ra mã `MIC` hợp lệ cho một bản tin giả mạo.  
      2. **Chống Replay Attack bằng `DevNonce`:** Mỗi lần Join, `DevNonce` phải là một số mới (tăng dần tuần tự từ LoRaWAN 1.0.4). Join Server lưu giữ toàn bộ lịch sử các số `DevNonce` đã dùng. Nếu kẻ xấu thu lại bản tin này và phát lại, Join Server sẽ lập tức từ chối vì trùng số `DevNonce`.  
      3. **Bản tin phản hồi `Join-Accept` được mã hóa đối xứng:** Toàn bộ thông tin cấp phát nhạy cảm (`DevAddr`, các khóa phiên phái sinh) đều được mã hóa bằng `AppKey`. Kẻ nghe lén không thể giải mã được gói tin phản hồi từ Server.
@@ -1165,7 +1165,7 @@ Dưới đây là việc đối chiếu 100% các mục checklist bắt buộc c
   - **Class C:** Thiết bị mở `RX2` liên tục khi không phát; ưu điểm độ trễ Downlink tức thì nhưng nhược điểm tiêu thụ năng lượng cao.
   > 🔑 **[KEY & GIẢI THÍCH CHUẨN]:**  
   > 1. **Giản đồ thời gian Class A:**  
-  >    $$\text{Uplink End} \xrightarrow{\quad 1.0\text{ s} \ (\text{RECEIVE\_DELAY1})\quad} \mathbf{RX1} \xrightarrow{\quad 1.0\text{ s}\quad} \mathbf{RX2}$$  
+  >    $$\text{Uplink End} \xrightarrow{\quad 1.0\text{ s} \ (\text{RECEIVE-DELAY1})\quad} \mathbf{RX1} \xrightarrow{\quad 1.0\text{ s}\quad} \mathbf{RX2}$$  
   >    - *RX1:* Mở tại $t_0 + 1.0\text{ s}$, tần số trùng với kênh Uplink, Data Rate phụ thuộc `RX1DROffset`.  
   >    - *RX2:* Mở tại $t_0 + 2.0\text{ s}$, tần số cố định ($869.525\text{ MHz}$ ở EU868), Data Rate cố định (mặc định DR0 hoặc DR3).  
   >    - *Nguyên tắc cốt tử:* Server không thể chủ động đánh thức Node Class A. Downlink bắt buộc phải xếp hàng chờ một gói Uplink từ Node kích hoạt mở hai cửa sổ RX.  
