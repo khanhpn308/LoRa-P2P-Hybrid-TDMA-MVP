@@ -343,16 +343,18 @@ Trình tự nên dùng:
 
 Không đưa production keys, token, thông tin nhạy cảm hoặc toàn bộ log chứa bí mật vào AI không được tổ chức phê duyệt. Không tin kết quả “AI simulator passed” thay cho test thật.
 
-## 14. Quy hoạch phát triển theo giai đoạn
+## 14. Workstreams kỹ thuật và thứ tự triển khai
 
-| Phase | Chủ đích | Thư mục ưu tiên |
+**Workstream** là nhóm lĩnh vực kỹ thuật để định tuyến công việc, không phải Phase bắt buộc hoàn thành tuần tự. **Wave** dùng để gom đợt công việc (ví dụ `W1-05` = Issue thứ 05 trong Wave 1), còn **Gate G0–G6** là điều kiện nghiệm thu. Thứ tự triển khai dựa vào dependencies, khả năng sẵn sàng và nhân lực, không dựa vào thứ tự số Issue.
+
+| Workstream | Chủ đích | Thư mục ưu tiên |
 |---|---|---|
-| F0 — Repo Foundation | Chính sách Git, Issue, CI, docs/ADR, hợp đồng sơ bộ | .github/, docs/, contracts/ |
-| F1 — RF/Driver Feasibility | SX1276 SPI, IRQ, ToA, an toàn RF, 2-board TX/RX | firmware/components/, tests/hil/ |
-| F2 — MAC & TDMA | Frame authenticated, sync, Master/Client, alert contention | contracts/radio-mac/, firmware/ |
-| F3 — Network ↔ Backend | MQTT TLS, idempotency, Go scheduler, Postgres schema | contracts/mqtt/, backend-go/, deploy/ |
-| F4 — Frontends | API/RBAC, Dashboard và sau đó Mobile | contracts/api/, clients/ |
-| F5 — Reliability & Pilot | RF/HIL load, offline, power reset, compliance/evidence | tests/, docs/verification/ |
+| Repo / Governance | Chính sách Git, Issue, CI, docs/ADR, hợp đồng sơ bộ | .github/, docs/, contracts/ |
+| RF / Driver | SX1276 SPI, IRQ, ToA, an toàn RF, 2-board TX/RX | firmware/components/, tests/hil/ |
+| Protocol / MAC / TDMA | Frame authenticated, sync, Master/Client, alert contention | contracts/radio-mac/, firmware/ |
+| Network / Backend | MQTT TLS, idempotency, Go scheduler, Postgres schema | contracts/mqtt/, backend-go/, deploy/ |
+| Frontend / Clients | API/RBAC, Dashboard và sau đó Mobile | contracts/api/, clients/ |
+| Reliability / Pilot | RF/HIL load, offline, power reset, compliance/evidence | tests/, docs/verification/ |
 
 Các nhóm có thể làm song song khi **interface phiên bản hóa đã chốt**. Không biến kế hoạch tuần từ tài liệu đề xuất thành deadline chắc chắn nếu chưa có nguồn lực/capacity và bằng chứng.
 
