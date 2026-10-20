@@ -956,7 +956,7 @@ Toàn bộ 12 bài tập có biểu tượng Búa & Cờ-lê (🛠️) từ Chư
     2\text{ W} = 2000\text{ mW} = 1\text{ mW} \times 10 \times 10 \times 10 \times 2
 ```
 
-    Tương đương trong miền $\text{dBm}$:
+  Tương đương trong miền $\text{dBm}$:
 
 ```math
     P(\text{dBm}) = 0\text{ dBm} + 10\text{ dB} + 10\text{ dB} + 10\text{ dB} + 3\text{ dB} = \mathbf{33\text{ dBm}}
@@ -1020,7 +1020,7 @@ Toàn bộ 12 bài tập có biểu tượng Búa & Cờ-lê (🛠️) từ Chư
      \text{Margin} = -43 - (-80) = +37\text{ dB}
 ```
 
-     $\implies$ **Tín hiệu hoàn toàn được thu nhận thành công với chất lượng rất tốt.**
+  $\implies$ **Tín hiệu hoàn toàn được thu nhận thành công với chất lượng rất tốt.**
   3. *Tính Ngân sách đường truyền (Link Budget):*
 
 ```math
@@ -1425,21 +1425,21 @@ Yêu cầu:
 #### Đáp án Phần A (Trắc nghiệm Tình huống):
 
 - **Câu 1: Đáp án đúng là B**
-  * *Tại sao B đúng:* Điều kiện thu nhận sóng LoRa đòi hỏi đồng thời cả hai yếu tố: $`\text{RSSI} \ge \text{Sensitivity}`$` VÀ `$`\text{SNR} \ge \text{SNR}_{\text{limit}}`$`. Ở cấu hình SF9, ngưỡng SNR tối thiểu để bộ giải điều chế có thể khôi phục tín hiệu là `$`\text{SNR}_{\text{limit}} = -12.5\text{ dB}`$`. Giá trị đo được thực tế là `$`\text{SNR} = -16.2\text{ dB} < -12.5\text{ dB}`$`, nghĩa là tín hiệu bị chìm quá sâu dưới tầng nhiễu môi trường so với năng lực giải mã của SF9. Để giải mã được mức `$`\text{SNR} = -16.2\text{ dB}`$`, thiết bị bắt buộc phải tăng lên `$`\text{SF} = 11`$` (ngưỡng chịu đựng `$`-17.5\text{ dB}`$`) hoặc `$`\text{SF} = 12`$` (ngưỡng chịu đựng `$`-20.0\text{ dB}`$).
+  * *Tại sao B đúng:* Điều kiện thu nhận sóng LoRa đòi hỏi đồng thời cả hai yếu tố: $`\text{RSSI} \ge \text{Sensitivity}`$ VÀ $`\text{SNR} \ge \text{SNR}_{\text{limit}}`$. Ở cấu hình SF9, ngưỡng SNR tối thiểu để bộ giải điều chế có thể khôi phục tín hiệu là $`\text{SNR}_{\text{limit}} = -12.5\text{ dB}`$. Giá trị đo được thực tế là $`\text{SNR} = -16.2\text{ dB} < -12.5\text{ dB}`$, nghĩa là tín hiệu bị chìm quá sâu dưới tầng nhiễu môi trường so với năng lực giải mã của SF9. Để giải mã được mức $`\text{SNR} = -16.2\text{ dB}`$, thiết bị bắt buộc phải tăng lên $`\text{SF} = 11`$ (ngưỡng chịu đựng $`-17.5\text{ dB}`$) hoặc $`\text{SF} = 12`$ (ngưỡng chịu đựng $`-20.0\text{ dB}`$).
   * *Tại sao các phương án khác sai:*
-    - Phương án A sai vì $`\text{RSSI} = -118\text{ dBm}`$` vẫn lớn hơn nhiều so với độ nhạy thu tối thiểu của SF9 (`$`-128.5\text{ dBm}`$).
-    - Phương án C sai vì cự ly $`12\text{ km}`$` hoàn toàn nằm trong tầm phủ của LoRa với Link Budget `$`150 - 160\text{ dB}`$.
+    - Phương án A sai vì $`\text{RSSI} = -118\text{ dBm}`$ vẫn lớn hơn nhiều so với độ nhạy thu tối thiểu của SF9 ($`-128.5\text{ dBm}`$).
+    - Phương án C sai vì cự ly $`12\text{ km}`$ hoàn toàn nằm trong tầm phủ của LoRa với Link Budget $`150 - 160\text{ dB}`$.
     - Phương án D sai vì vi phạm Duty Cycle chỉ bị xử lý trên máy chủ hoặc quản lý kênh, không làm cho modem vật lý tại Gateway mất khả năng giải điều chế một gói tin đang bay tới.
 
 - **Câu 2: Đáp án đúng là B**
-  * *Tại sao B đúng:* Khi chạy ở $`\text{SF} = 12`$` và `$`\text{BW} = 125\text{ kHz}`$`, thời gian truyền 1 symbol là `$`T_{\text{symbol}} = \frac{2^{12}}{125\,000} = 32.768\text{ ms} > 16.38\text{ ms}`$`. Đặc tả của Semtech quy định bắt buộc phải bật cờ `LowDataRateOptimize` (Bit 3 trong thanh ghi `RegModemConfig3` của SX1276) để bộ giải mã kích hoạt cơ chế bù trôi dạt tần số thạch anh. Nếu thiếu cờ này, bộ đồng bộ giải điều chế sẽ tính toán sai cấu trúc bit dẫn đến lỗi CRC hoặc không thể khóa được khung truyền. Ở SF7, SF8 và SF10, `$`T_{\text{symbol}} \le 8.192\text{ ms} < 16.38\text{ ms}`$ nên không cần bật cờ này, giải thích vì sao thiết bị vẫn chạy bình thường ở SF thấp.
+  * *Tại sao B đúng:* Khi chạy ở $`\text{SF} = 12`$ và $`\text{BW} = 125\text{ kHz}`$, thời gian truyền 1 symbol là $`T_{\text{symbol}} = \frac{2^{12}}{125\,000} = 32.768\text{ ms} > 16.38\text{ ms}`$. Đặc tả của Semtech quy định bắt buộc phải bật cờ `LowDataRateOptimize` (Bit 3 trong thanh ghi `RegModemConfig3` của SX1276) để bộ giải mã kích hoạt cơ chế bù trôi dạt tần số thạch anh. Nếu thiếu cờ này, bộ đồng bộ giải điều chế sẽ tính toán sai cấu trúc bit dẫn đến lỗi CRC hoặc không thể khóa được khung truyền. Ở SF7, SF8 và SF10, $`T_{\text{symbol}} \le 8.192\text{ ms} < 16.38\text{ ms}`$ nên không cần bật cờ này, giải thích vì sao thiết bị vẫn chạy bình thường ở SF thấp.
   * *Tại sao các phương án khác sai:*
-    - Phương án A sai vì khoảng cách test chỉ $`50\text{ mét}`$`, công suất thấp `$`+2\text{ dBm}`$ vẫn thu nhận tốt.
+    - Phương án A sai vì khoảng cách test chỉ $`50\text{ mét}`$, công suất thấp $`+2\text{ dBm}`$ vẫn thu nhận tốt.
     - Phương án C sai vì SF12 hoàn toàn hỗ trợ và mặc định sử dụng Explicit Header trong chuẩn LoRaWAN.
     - Phương án D sai vì Sync Word `0x34` là chuẩn chung cho LoRaWAN công cộng ở mọi mức SF.
 
 - **Câu 3: Đáp án đúng là C**
-  * *Tại sao C đúng:* Quy định Duty Cycle 1% của ETSI được áp dụng độc lập cho từng phân băng (Sub-band). Kênh $`868.1\text{ MHz}`$` thuộc Sub-band g (`$`868.0 - 868.6\text{ MHz}`$`). Trong khi thiết bị đang chịu thời gian im lặng bắt buộc `$`T_{\text{off}}`$` trên Sub-band g, nó hoàn toàn được phép phát sóng ngay lập tức trên Sub-band g1 (`$`863.0 - 868.0\text{ MHz}`$`) hoặc Sub-band g3 (`$`869.4 - 869.65\text{ MHz}`$) mà không vi phạm pháp luật viễn thông.
+  * *Tại sao C đúng:* Quy định Duty Cycle 1% của ETSI được áp dụng độc lập cho từng phân băng (Sub-band). Kênh $`868.1\text{ MHz}`$ thuộc Sub-band g ($`868.0 - 868.6\text{ MHz}`$). Trong khi thiết bị đang chịu thời gian im lặng bắt buộc $`T_{\text{off}}`$ trên Sub-band g, nó hoàn toàn được phép phát sóng ngay lập tức trên Sub-band g1 ($`863.0 - 868.0\text{ MHz}`$) hoặc Sub-band g3 ($`869.4 - 869.65\text{ MHz}`$) mà không vi phạm pháp luật viễn thông.
   * *Tại sao các phương án khác sai:*
     - Phương án A sai vì luật ETSI không có ngoại lệ miễn trừ Duty Cycle cho tin khẩn cấp dân sự trong băng tần ISM dùng chung.
     - Phương án B sai vì chờ $`9.9\text{ giây}`$ sẽ làm mất tính thời khắc của cảnh báo lũ khẩn cấp, trong khi có giải pháp kỹ thuật chuyển kênh cho phép phát ngay.
@@ -1453,12 +1453,12 @@ Yêu cầu:
     Thay số:
     $`\displaystyle L_{\text{air-max}} = 14 - (-148) + (3 - 1) + (3 - 1) = 162 + 2 + 2 = \mathbf{166\text{ dB}}`$
   * *Tại sao các phương án khác sai:*
-    - Phương án A ($`162\text{ dB}`$`) sai vì bỏ quên độ lợi ròng của hệ thống ăng-ten hai đầu (`$`+4\text{ dB}`$).
+    - Phương án A ($`162\text{ dB}`$) sai vì bỏ quên độ lợi ròng của hệ thống ăng-ten hai đầu ($`+4\text{ dB}`$).
     - Phương án B ($`164\text{ dB}`$) sai do chỉ cộng độ lợi của một đầu ăng-ten.
     - Phương án D ($`158\text{ dB}`$) sai do trừ nhầm độ lợi ăng-ten thay vì cộng.
 
 - **Câu 5: Đáp án đúng là B**
-  * *Tại sao B đúng:* Khi chuyển từ SF7 lên SF12, thời gian chiếm sóng ToA tăng từ $`\approx 46\text{ ms}`$` lên `$`\approx 1155\text{ ms}`$` (tăng gấp gần `$`25`$` lần). Theo lý thuyết hàng đợi và mô hình truy cập ngẫu nhiên ALOHA thuần túy, xác suất xảy ra xung đột va chạm giữa các gói tin tỷ lệ thuận với thời gian chiếm sóng (`$`P_{\text{collision}} \propto 1 - e^{-2 \cdot G \cdot \text{ToA}}`$`). Việc `$`1000`$` thiết bị cùng phát ở SF12 sẽ làm môi trường vô tuyến bị nghẽn nghẹt, tỷ lệ rớt gói tăng vọt lên trên `$`60 - 80\%`$`, đồng thời năng lượng tiêu thụ trên mỗi nút tăng `$`25`$ lần làm cạn kiệt pin nhanh chóng.
+  * *Tại sao B đúng:* Khi chuyển từ SF7 lên SF12, thời gian chiếm sóng ToA tăng từ $`\approx 46\text{ ms}`$ lên $`\approx 1155\text{ ms}`$ (tăng gấp gần $`25`$ lần). Theo lý thuyết hàng đợi và mô hình truy cập ngẫu nhiên ALOHA thuần túy, xác suất xảy ra xung đột va chạm giữa các gói tin tỷ lệ thuận với thời gian chiếm sóng ($`P_{\text{collision}} \propto 1 - e^{-2 \cdot G \cdot \text{ToA}}`$). Việc $`1000`$ thiết bị cùng phát ở SF12 sẽ làm môi trường vô tuyến bị nghẽn nghẹt, tỷ lệ rớt gói tăng vọt lên trên $`60 - 80\%`$, đồng thời năng lượng tiêu thụ trên mỗi nút tăng $`25`$ lần làm cạn kiệt pin nhanh chóng.
   * *Tại sao các phương án khác sai:*
     - Phương án A sai vì tính trực giao trong thực tế không hoàn hảo (hiệu ứng Near-Far) và các node cùng dùng SF12 sẽ va chạm trực tiếp với nhau.
     - Phương án C sai vì dù 1 symbol mang 12 bits nhưng thời gian phát 1 symbol lại dài gấp 32 lần, khiến tốc độ bit thực tế giảm đi 19 lần.
@@ -1471,10 +1471,10 @@ Yêu cầu:
 #### Lời giải Bài toán 1: Thiết kế Phao biển Quan trắc
 1. **Đổi công suất phát sang mili-Watt:**
    $`\displaystyle P_T(\text{mW}) = 10^{\frac{P_T(\text{dBm})}{10}} = 10^{\frac{14}{10}} = 10^{1.4} \approx \mathbf{25.12\text{ mW}} \approx \mathbf{25\text{ mW}}`$
-2. **Tính suy hao không gian tự do $`L_{\text{air}}`$` trên cự ly `$`D = 22\text{ km}`$:**
+2. **Tính suy hao không gian tự do $`L_{\text{air}}`$ trên cự ly $`D = 22\text{ km}`$:**
    Áp dụng công thức USMB:
    $`\displaystyle L_{\text{air}} = 10 \log_{10}\left(D^2 \cdot F^2 \cdot 1755\right)`$
-   Với $`D = 22\text{ km}`$`, `$`F = 868\text{ MHz}`$:
+   Với $`D = 22\text{ km}`$, $`F = 868\text{ MHz}`$:
    $`\displaystyle D^2 = 22^2 = 484`$
    $`\displaystyle F^2 = 868^2 = 753\,424`$
    $`\displaystyle \text{Tích số} = 484 \times 753\,424 \times 1755 \approx 6.4002 \times 10^{11}`$
@@ -1490,14 +1490,14 @@ Yêu cầu:
    - Ở **SF7**: Độ nhạy thu là $`-123.0\text{ dBm}`$.
    Vì $`-123.0\text{ dBm} \le -110.06\text{ dBm}`$, cấu hình **SF7** hoàn toàn thỏa mãn và đem lại Fade Margin thực tế lên tới:
    $`\displaystyle \text{Margin}_{\text{SF7}} = -98.06 - (-123.0) = \mathbf{+24.94\text{ dB}} \ge 12\text{ dB}`$
-   $`\implies`$` **Kết luận:** Spreading Factor tối thiểu cần chọn là **`$`\text{SF} = 7`$**. Việc chọn SF7 giúp tối ưu thời gian phát sóng, giảm thiểu điện năng tiêu thụ và giảm tối đa nguy cơ xung đột trên biển.
+   $`\implies`$ **Kết luận:** Spreading Factor tối thiểu cần chọn là **$`\text{SF} = 7`$**. Việc chọn SF7 giúp tối ưu thời gian phát sóng, giảm thiểu điện năng tiêu thụ và giảm tối đa nguy cơ xung đột trên biển.
 
 ---
 
 #### Lời giải Bài toán 2: Tính Time on Air & Quy chế TTN FAP
 1. **Tính kích thước LoRa PHY Payload:**
    $`\displaystyle \text{PL} = 18\text{ bytes (User Data)} + 13\text{ bytes (LoRaWAN Header)} = \mathbf{31\text{ bytes}}`$
-2. **Tính toán ToA tại cấu hình $`\text{SF} = 7`$` (`$`\text{DE} = 0, H = 0, \text{CRC} = 1, \text{CR} = 1`$):**
+2. **Tính toán ToA tại cấu hình $`\text{SF} = 7`$ ($`\text{DE} = 0, H = 0, \text{CRC} = 1, \text{CR} = 1`$):**
    - Số symbol phần mở đầu:
      $`\displaystyle n_{\text{preamble-total}} = 8 + 4.25 = \mathbf{12.25\text{ symbols}}`$
    - Tính biểu thức số nguyên trong hàm trần (Ceiling):
@@ -1512,7 +1512,7 @@ Yêu cầu:
      $`\displaystyle T_{\text{symbol}} = \frac{2^7}{125\,000} = \mathbf{1.024\text{ ms}}`$
    - Thời gian Time on Air ở SF7:
      $`\displaystyle T_{\text{ToA (SF7)}} = 70.25 \times 1.024\text{ ms} = \mathbf{71.936\text{ ms}} \approx \mathbf{71.94\text{ ms}}`$
-3. **Tính toán ToA tại cấu hình $`\text{SF} = 12`$` (`$`\text{DE} = 1, H = 0, \text{CRC} = 1, \text{CR} = 1`$):**
+3. **Tính toán ToA tại cấu hình $`\text{SF} = 12`$ ($`\text{DE} = 1, H = 0, \text{CRC} = 1, \text{CR} = 1`$):**
    - Biểu thức số học trong hàm trần (Lưu ý $`\text{DE} = 1`$):
      $`\displaystyle \text{Tử số} = 8 \cdot 31 - 4 \cdot 12 + 28 + 16 \cdot 1 - 20 \cdot 0 = 248 - 48 + 28 + 16 = \mathbf{244}`$
      $`\displaystyle \text{Mẫu số} = 4 \cdot (12 - 2 \cdot 1) = 4 \cdot 10 = \mathbf{40}`$
@@ -1569,9 +1569,9 @@ Dung lượng pin hữu ích: $`C_{\text{eff}} = 1920\text{ mAh} = 1920 \times 3
      $`\displaystyle \text{Tuổi thọ (SF12)} = \frac{6\,912\,000}{62.9674} \approx 109\,771\text{ chu kỳ}`$
      $`\displaystyle \text{Tuổi thọ (SF12)} = \frac{109\,771 \times 15}{60 \times 24 \times 365.25} \approx \mathbf{3.13\text{ năm}}.`$
 3. **Bài học Kỹ thuật & Giá trị Cốt lõi của ADR:**
-   - Dòng tiêu thụ trung bình ở SF12 cao gấp hơn **$`10.6`$` lần** so với SF7 (`$`69.96\text{ }\mu\text{A}`$` so với `$`6.60\text{ }\mu\text{A}`$).
-   - Năng lượng phát sóng RF ở SF12 chiếm tới **$`94.3\%`$`** tổng năng lượng toàn chu kỳ, trong khi ở SF7 nó chỉ chiếm `$`39\%`$.
-   - Kích hoạt cơ chế ADR để tự động kéo các node về SF7 khi điều kiện kênh truyền cho phép là giải pháp sống còn giúp kéo dài tuổi thọ thiết bị từ $`3`$` năm lên trên `$`10`$ năm.
+   - Dòng tiêu thụ trung bình ở SF12 cao gấp hơn **$`10.6`$ lần** so với SF7 ($`69.96\text{ }\mu\text{A}`$ so với $`6.60\text{ }\mu\text{A}`$).
+   - Năng lượng phát sóng RF ở SF12 chiếm tới **$`94.3\%`$** tổng năng lượng toàn chu kỳ, trong khi ở SF7 nó chỉ chiếm $`39\%`$.
+   - Kích hoạt cơ chế ADR để tự động kéo các node về SF7 khi điều kiện kênh truyền cho phép là giải pháp sống còn giúp kéo dài tuổi thọ thiết bị từ $`3`$ năm lên trên $`10`$ năm.
 
 ---
 
@@ -1582,71 +1582,71 @@ Dưới đây là bảng đối chiếu kiểm định năng lực hoàn thành 
 ---
 
 ### - [x] **Đơn vị & Ngân sách đường truyền (Link Budget):**
-- Phân biệt rõ $`\text{dB}`$` (tỷ lệ tương đối) và `$`\text{dBm}`$` (công suất tuyệt đối so với `$`1\text{ mW}`$).
-- Tự tính nhẩm nhanh các mốc: $`+3\text{ dB}`$` (tăng gấp đôi công suất), `$`-3\text{ dB}`$` (giảm một nửa công suất), `$`+10\text{ dB}`$ (tăng gấp 10 lần).
+- Phân biệt rõ $`\text{dB}`$ (tỷ lệ tương đối) và $`\text{dBm}`$ (công suất tuyệt đối so với $`1\text{ mW}`$).
+- Tự tính nhẩm nhanh các mốc: $`+3\text{ dB}`$ (tăng gấp đôi công suất), $`-3\text{ dB}`$ (giảm một nửa công suất), $`+10\text{ dB}`$ (tăng gấp 10 lần).
 - Tính được Link Budget từ công suất phát ($`P_T`$) và độ nhạy thu (Sensitivity):
   $`\displaystyle \text{Link Budget} = P_T - \text{Sensitivity}`$
 > 🔑 **[KEY & GIẢI THÍCH CHUẨN]:**
 > 1. **Bản chất đại lượng:**
->    - $`\text{dB}`$` là đơn vị logarit không thứ nguyên biểu thị tỷ số giữa hai mức công suất: `$`\text{Ratio(dB)} = 10 \log_{10}(P_R / P_T)`$. Đại lượng này dùng để đo độ lợi (khuếch đại) hoặc độ suy hao trên đường truyền.
->    - $`\text{dBm}`$` là đơn vị công suất tuyệt đối quy chiếu theo mốc `$`1\text{ mW}`$`: `$`P(\text{dBm}) = 10 \log_{10}(P(\text{mW}) / 1\text{ mW})`$`. Quy ước: `$`0\text{ dBm} = 1\text{ mW}`$`, `$`+30\text{ dBm} = 1\text{ W}`$`, `$`+14\text{ dBm} \approx 25\text{ mW}`$.
+>    - $`\text{dB}`$ là đơn vị logarit không thứ nguyên biểu thị tỷ số giữa hai mức công suất: $`\text{Ratio(dB)} = 10 \log_{10}(P_R / P_T)`$. Đại lượng này dùng để đo độ lợi (khuếch đại) hoặc độ suy hao trên đường truyền.
+>    - $`\text{dBm}`$ là đơn vị công suất tuyệt đối quy chiếu theo mốc $`1\text{ mW}`$: $`P(\text{dBm}) = 10 \log_{10}(P(\text{mW}) / 1\text{ mW})`$. Quy ước: $`0\text{ dBm} = 1\text{ mW}`$, $`+30\text{ dBm} = 1\text{ W}`$, $`+14\text{ dBm} \approx 25\text{ mW}`$.
 > 2. **Mốc tính nhẩm logarit vàng:**
->    - Cộng $`+3\text{ dB} \iff \times 2`$` công suất. Trừ `$`-3\text{ dB} \iff \div 2`$ công suất.
->    - Cộng $`+10\text{ dB} \iff \times 10`$` công suất. Trừ `$`-10\text{ dB} \iff \div 10`$ công suất.
+>    - Cộng $`+3\text{ dB} \iff \times 2`$ công suất. Trừ $`-3\text{ dB} \iff \div 2`$ công suất.
+>    - Cộng $`+10\text{ dB} \iff \times 10`$ công suất. Trừ $`-10\text{ dB} \iff \div 10`$ công suất.
 >    - Ví dụ: Một máy phát có công suất $`2\text{ W} = 2000\text{ mW} = 1\text{ mW} \times 10 \times 10 \times 10 \times 2 \implies 0\text{ dBm} + 10 + 10 + 10 + 3 = \mathbf{33\text{ dBm}}`$.
 > 3. **Công thức Link Budget:**
 >
 $`\displaystyle \text{Link Budget (dB)} = P_T(\text{dBm}) - \text{Sensitivity}(\text{dBm})`$
 >
->    - Chip Semtech SX1272 ($`P_T = +20\text{ dBm}`$`, Sensitivity = `$`-137\text{ dBm}`$`) cho `$`\text{Link Budget} = 20 - (-137) = \mathbf{157\text{ dB}}`$.
->    - Chip Semtech SX1262 ($`P_T = +22\text{ dBm}`$`, Sensitivity = `$`-148\text{ dBm}`$`) cho `$`\text{Link Budget} = 22 - (-148) = \mathbf{170\text{ dB}}`$.
->    - Tại EU868 giới hạn $`P_T = +14\text{ dBm}`$`, `$`\text{Link Budget} = 14 - (-148) = \mathbf{162\text{ dB}}`$`, vượt trội hoàn toàn so với 4G LTE (`$`\approx 130\text{ dB}`$).
+>    - Chip Semtech SX1272 ($`P_T = +20\text{ dBm}`$, Sensitivity = $`-137\text{ dBm}`$) cho $`\text{Link Budget} = 20 - (-137) = \mathbf{157\text{ dB}}`$.
+>    - Chip Semtech SX1262 ($`P_T = +22\text{ dBm}`$, Sensitivity = $`-148\text{ dBm}`$) cho $`\text{Link Budget} = 22 - (-148) = \mathbf{170\text{ dB}}`$.
+>    - Tại EU868 giới hạn $`P_T = +14\text{ dBm}`$, $`\text{Link Budget} = 14 - (-148) = \mathbf{162\text{ dB}}`$, vượt trội hoàn toàn so với 4G LTE ($`\approx 130\text{ dB}`$).
 
 ---
 
 ### - [x] **Thông số SNR & RSSI:**
 - Hiểu bản chất RSSI là công suất thu thực tế và SNR là tỷ số tín hiệu trên nhiễu.
-- Giải thích được tại sao sóng LoRa có thể giải điều chế thành công ngay cả khi tín hiệu chìm dưới nền nhiễu ($`\text{SNR} < 0\text{ dB}`$`, xuống tới `$`-20\text{ dB}`$` ở `$`\text{SF12}`$).
+- Giải thích được tại sao sóng LoRa có thể giải điều chế thành công ngay cả khi tín hiệu chìm dưới nền nhiễu ($`\text{SNR} < 0\text{ dB}`$, xuống tới $`-20\text{ dB}`$ ở $`\text{SF12}`$).
 
 > 🔑 **[KEY & GIẢI THÍCH CHUẨN]:**
 > 1. **Bản chất RSSI & SNR:**
->    - **RSSI (Received Signal Strength Indication):** Là tổng công suất tín hiệu vô tuyến mà máy thu đo được tại cổng ăng-ten, bao gồm cả tín hiệu hữu ích $`P_R`$` và tạp âm môi trường `$`P_N`$` (đơn vị `$`\text{dBm}`$).
->    - **SNR (Signal-to-Noise Ratio):** Là tỷ số giữa công suất tín hiệu mong muốn $`P_R`$` và công suất nhiễu nền `$`P_N`$`: `$`\text{SNR(dB)} = 10 \log_{10}(P_R / P_N) = P_{R(\text{dBm})} - P_{N(\text{dBm})}`$.
+>    - **RSSI (Received Signal Strength Indication):** Là tổng công suất tín hiệu vô tuyến mà máy thu đo được tại cổng ăng-ten, bao gồm cả tín hiệu hữu ích $`P_R`$ và tạp âm môi trường $`P_N`$ (đơn vị $`\text{dBm}`$).
+>    - **SNR (Signal-to-Noise Ratio):** Là tỷ số giữa công suất tín hiệu mong muốn $`P_R`$ và công suất nhiễu nền $`P_N`$: $`\text{SNR(dB)} = 10 \log_{10}(P_R / P_N) = P_{R(\text{dBm})} - P_{N(\text{dBm})}`$.
 > 2. **Cơ chế giải mã tín hiệu dưới nền nhiễu ($`\text{SNR} < 0\text{ dB}`$):**
->    - Trong điều chế truyền thống (FSK/BPSK), $`\text{SNR} < 0\text{ dB}`$` đồng nghĩa với tín hiệu bị nhiễu vùi lấp hoàn toàn, máy thu không thể phân biệt được bit `$`0`$` hay `$`1`$.
->    - Trong LoRa CSS, tín hiệu được trải phổ trên toàn bộ băng thông $`\text{BW}`$` với `$`2^{\text{SF}}`$ chips/symbol. Khi qua bộ giải điều chế (De-chirping), tín hiệu thu được nhân với Down-chirp chuẩn:
+>    - Trong điều chế truyền thống (FSK/BPSK), $`\text{SNR} < 0\text{ dB}`$ đồng nghĩa với tín hiệu bị nhiễu vùi lấp hoàn toàn, máy thu không thể phân biệt được bit $`0`$ hay $`1`$.
+>    - Trong LoRa CSS, tín hiệu được trải phổ trên toàn bộ băng thông $`\text{BW}`$ với $`2^{\text{SF}}`$ chips/symbol. Khi qua bộ giải điều chế (De-chirping), tín hiệu thu được nhân với Down-chirp chuẩn:
 >      * Năng lượng của ký hiệu LoRa được **nén phổ (Despreading)** tập trung lại thành một xung đỉnh nhọn duy nhất (Peak) trong miền tần số (qua thuật toán FFT).
 >      * Trong khi đó, tạp âm nhiệt môi trường và nhiễu ngẫu nhiên không có tính tương quan quét tần sẽ bị **trải rộng phổ ra toàn dải $`\text{BW}`$**, biên độ nhiễu bị san bằng xuống mức thấp.
->    - Độ lợi xử lý trải phổ (Processing Gain): $`G_p = 10 \log_{10}\left(\frac{\text{BW}}{R_{\text{bit}}}\right) \approx 10 \log_{10}(2^{\text{SF}})`$`. Độ lợi này cho phép đỉnh phổ tín hiệu LoRa nhô cao vượt lên trên sàn nhiễu, giúp giải điều chế thành công ở mức `$`\text{SNR} = -7.5\text{ dB}`$` (SF7), `$`-10\text{ dB}`$` (SF8), `$`-15\text{ dB}`$` (SF10) và xuống tới `$`\mathbf{-20\text{ dB}}`$` ở **SF12** (tín hiệu yếu hơn nhiễu `$`100`$ lần).
+>    - Độ lợi xử lý trải phổ (Processing Gain): $`G_p = 10 \log_{10}\left(\frac{\text{BW}}{R_{\text{bit}}}\right) \approx 10 \log_{10}(2^{\text{SF}})`$. Độ lợi này cho phép đỉnh phổ tín hiệu LoRa nhô cao vượt lên trên sàn nhiễu, giúp giải điều chế thành công ở mức $`\text{SNR} = -7.5\text{ dB}`$ (SF7), $`-10\text{ dB}`$ (SF8), $`-15\text{ dB}`$ (SF10) và xuống tới $`\mathbf{-20\text{ dB}}`$ ở **SF12** (tín hiệu yếu hơn nhiễu $`100`$ lần).
 
 ---
 
 ### - [x] **Điều chế CSS (Chirp Spread Spectrum):**
 - Phân biệt Up-chirp và Down-chirp; giải thích được cơ chế trải phổ bằng chirp thay vì mã giả ngẫu nhiên thông thường.
-- Hiểu mối quan hệ giữa **Spreading Factor ($`\text{SF7} \rightarrow \text{SF12}`$`)**, **Bandwidth (`$`\text{BW}`$`)** và **Coding Rate (`$`\text{CR}`$)**.
+- Hiểu mối quan hệ giữa **Spreading Factor ($`\text{SF7} \rightarrow \text{SF12}`$)**, **Bandwidth ($`\text{BW}`$)** và **Coding Rate ($`\text{CR}`$)**.
 - Thuộc lòng và giải thích được công thức thời gian truyền 1 symbol:
   $`\displaystyle T_{\text{symbol}} = \frac{2^{\text{SF}}}{\text{BW}}`$
 > 🔑 **[KEY & GIẢI THÍCH CHUẨN]:**
 > 1. **Up-chirp vs Down-chirp & Trải phổ CSS:**
->    - **Up-chirp:** Xung quét tần có tần số tăng tuyến tính từ $`F_{\text{channel}} - \text{BW}/2`$` đến `$`F_{\text{channel}} + \text{BW}/2`$. Dùng để mã hóa dữ liệu và dẫn đường trong preamble.
->    - **Down-chirp:** Xung quét tần có tần số giảm tuyến tính từ $`F_{\text{channel}} + \text{BW}/2`$` về `$`F_{\text{channel}} - \text{BW}/2`$. Dùng để đánh dấu kết thúc preamble (2.25 symbol) và làm tín hiệu chuẩn hạ tần de-chirping tại máy thu.
+>    - **Up-chirp:** Xung quét tần có tần số tăng tuyến tính từ $`F_{\text{channel}} - \text{BW}/2`$ đến $`F_{\text{channel}} + \text{BW}/2`$. Dùng để mã hóa dữ liệu và dẫn đường trong preamble.
+>    - **Down-chirp:** Xung quét tần có tần số giảm tuyến tính từ $`F_{\text{channel}} + \text{BW}/2`$ về $`F_{\text{channel}} - \text{BW}/2`$. Dùng để đánh dấu kết thúc preamble (2.25 symbol) và làm tín hiệu chuẩn hạ tần de-chirping tại máy thu.
 >    - Khác với DSSS/CDMA dùng chuỗi bit giả ngẫu nhiên (yêu cầu đồng bộ thời gian khắt khe cỡ nano-giây), CSS trải phổ bằng tần số quét liên tục, có khả năng miễn nhiễm tự nhiên cực cao với hiệu ứng dịch tần Doppler và hiện tượng đa đường (Multipath Fading) mà không đòi hỏi phần cứng phức tạp.
 > 2. **Tam giác tham số: SF, BW và CR:**
 >    - **Spreading Factor (SF):** Số bit nhị phân mã hóa trong 1 symbol ($`7 \le \text{SF} \le 12`$). SF tăng thêm 1 bậc làm thời gian truyền tăng gấp đôi, cự ly truyền tăng xa hơn, nhưng tốc độ dữ liệu giảm một nửa.
->    - **Bandwidth (BW):** Độ rộng dải thông kênh ($`125, 250, 500\text{ kHz}`$`). BW tỷ lệ thuận với tốc độ truyền và tốc độ chip: `$`R_c = \text{BW}`$.
->    - **Coding Rate (CR):** Tỷ lệ sửa lỗi Hamming FEC ($`4/5, 4/6, 4/7, 4/8`$`). CR tăng cường độ tin cậy khi đường truyền có nhiễu xung nhưng làm tăng phụ phí thời gian phát từ `$`25\%`$` đến `$`100\%`$.
+>    - **Bandwidth (BW):** Độ rộng dải thông kênh ($`125, 250, 500\text{ kHz}`$). BW tỷ lệ thuận với tốc độ truyền và tốc độ chip: $`R_c = \text{BW}`$.
+>    - **Coding Rate (CR):** Tỷ lệ sửa lỗi Hamming FEC ($`4/5, 4/6, 4/7, 4/8`$). CR tăng cường độ tin cậy khi đường truyền có nhiễu xung nhưng làm tăng phụ phí thời gian phát từ $`25\%`$ đến $`100\%`$.
 > 3. **Công thức thời gian truyền 1 symbol:**
 >
 $`\displaystyle T_{\text{symbol}} = \frac{2^{\text{SF}}}{\text{BW}}`$
 >
->    - Ý nghĩa vật lý: Một symbol gồm chính xác $`2^{\text{SF}}`$` chips, và mỗi chip có độ rộng thời gian là `$`T_{\text{chip}} = 1/\text{BW}`$`. Do đó, thời gian quét hết một symbol là `$`2^{\text{SF}} \times (1/\text{BW}) = 2^{\text{SF}} / \text{BW}`$.
->    - Tại $`\text{BW} = 125\text{ kHz}`$`: `$`\text{SF7} \implies T_{\text{sym}} = 1.024\text{ ms}`$`; `$`\text{SF8} \implies 2.048\text{ ms}`$`; `$`\text{SF12} \implies 32.768\text{ ms}`$.
+>    - Ý nghĩa vật lý: Một symbol gồm chính xác $`2^{\text{SF}}`$ chips, và mỗi chip có độ rộng thời gian là $`T_{\text{chip}} = 1/\text{BW}`$. Do đó, thời gian quét hết một symbol là $`2^{\text{SF}} \times (1/\text{BW}) = 2^{\text{SF}} / \text{BW}`$.
+>    - Tại $`\text{BW} = 125\text{ kHz}`$: $`\text{SF7} \implies T_{\text{sym}} = 1.024\text{ ms}`$; $`\text{SF8} \implies 2.048\text{ ms}`$; $`\text{SF12} \implies 32.768\text{ ms}`$.
 
 ---
 
 ### - [x] **Time on Air (ToA) & Quy định Duty Cycle:**
 - Biết cách sử dụng công cụ *LoRa Modem Calculator* hoặc công thức tổng quát để tính ToA dựa trên số lượng symbol preamble, header, payload và CRC.
-- Nắm vững quy định pháp lý **1% Duty Cycle** trên băng tần EU868 (ví dụ: phát gói tin mất $`46.3\text{ ms}`$` thì phải chờ tối thiểu `$`4.58\text{ s}`$ trên sub-band đó trước khi phát tiếp).
+- Nắm vững quy định pháp lý **1% Duty Cycle** trên băng tần EU868 (ví dụ: phát gói tin mất $`46.3\text{ ms}`$ thì phải chờ tối thiểu $`4.58\text{ s}`$ trên sub-band đó trước khi phát tiếp).
 
 > 🔑 **[KEY & GIẢI THÍCH CHUẨN]:**
 > 1. **Công thức giải tích tính Time on Air (ToA):**
@@ -1657,7 +1657,7 @@ $`\displaystyle T_{\text{ToA}} = (n_{\text{preamble}} + 4.25 + n_{\text{payload}
 >
 $`\displaystyle n_{\text{payload}} = 8 + \max\left( \left\lceil \frac{8 \cdot \text{PL} - 4 \cdot \text{SF} + 28 + 16 \cdot \text{CRC} - 20 \cdot H}{4(\text{SF} - 2 \cdot \text{DE})} \right\rceil (\text{CR} + 4), \; 0 \right)`$
 >
->    - Ví dụ tính mẫu: Gói Uplink LoRaWAN $`14\text{ bytes}`$` (SF7, BW125, CR4/5, Preamble 8, Explicit Header `$`H=0`$`, `$`\text{CRC}=1`$`, `$`\text{DE}=0`$):
+>    - Ví dụ tính mẫu: Gói Uplink LoRaWAN $`14\text{ bytes}`$ (SF7, BW125, CR4/5, Preamble 8, Explicit Header $`H=0`$, $`\text{CRC}=1`$, $`\text{DE}=0`$):
 >      * Tử số: $`8\cdot 14 - 4\cdot 7 + 28 + 16 - 0 = 128`$.
 >      * Mẫu số: $`4\cdot(7 - 0) = 28`$.
 >      * $`\lceil 128 / 28 \rceil = \lceil 4.571 \rceil = 5`$.
@@ -1665,7 +1665,7 @@ $`\displaystyle n_{\text{payload}} = 8 + \max\left( \left\lceil \frac{8 \cdot \t
 >      * Tổng số symbol: $`n_{\text{symbol}} = (8 + 4.25) + 33 = \mathbf{45.25\text{ symbols}}`$.
 >      * $`T_{\text{ToA}} = 45.25 \times 1.024\text{ ms} = \mathbf{46.336\text{ ms}} \approx \mathbf{46.3\text{ ms}}`$ (khớp tuyệt đối với LoRa Modem Calculator).
 > 2. **Quy định 1% Duty Cycle trên EU868:**
->    - Viện Tiêu chuẩn ETSI EN 300 220 bắt buộc thiết bị phát không quá $`1\%`$` thời gian trên mỗi phân băng tần (`$`868.0 - 868.6\text{ MHz}`$` và `$`863.0 - 868.0\text{ MHz}`$).
+>    - Viện Tiêu chuẩn ETSI EN 300 220 bắt buộc thiết bị phát không quá $`1\%`$ thời gian trên mỗi phân băng tần ($`868.0 - 868.6\text{ MHz}`$ và $`863.0 - 868.0\text{ MHz}`$).
 >    - Công thức tính thời gian im lặng bắt buộc:
 >
 $`\displaystyle T_{\text{off}} = T_{\text{on}} \cdot \left(\frac{1 - 0.01}{0.01}\right) = \mathbf{99 \cdot T_{\text{on}}}`$
