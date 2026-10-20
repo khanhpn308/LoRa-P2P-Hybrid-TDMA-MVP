@@ -1,12 +1,12 @@
-# Pre-Task-Breakdown Readiness — Hybrid TDMA Monorepo
+# Mức độ sẵn sàng trước khi phân rã nhiệm vụ (Task Breakdown) — Hybrid TDMA Monorepo
 
-**Status:** PARTIAL_WITH_FINDINGS. Owner: Project Lead. Branch: `research/ready-for-taskbreakdown`.
+**Trạng thái:** `PARTIAL_WITH_FINDINGS`. **Người phụ trách:** Project Lead. **Nhánh được ghi trong bản gốc:** `research/ready-for-taskbreakdown`.
 
-This checklist is a prerequisite to generating team tasks and AI work orders. It does **not** assert that the RF, MAC, security or latency requirements are fulfilled.
+Danh sách kiểm tra này là điều kiện chuẩn bị trước khi tạo nhiệm vụ cho các nhóm và giao việc cho AI. Tài liệu **không** khẳng định rằng các yêu cầu về RF, MAC, bảo mật hoặc độ trễ đã được đáp ứng.
 
-## A. Firmware shared-component discovery
+## A. Kiểm tra khả năng nhận diện các ESP-IDF component dùng chung
 
-The following lines must appear in **both**:
+Dòng cấu hình sau phải xuất hiện trong **cả hai** tệp:
 - `firmware/gateway_master/CMakeLists.txt`
 - `firmware/sensor_node/CMakeLists.txt`
 
@@ -14,56 +14,57 @@ The following lines must appear in **both**:
 set(EXTRA_COMPONENT_DIRS "../components")
 ```
 
-Four planned shared components are:
+Bốn component dùng chung được quy hoạch gồm:
 `sx1276_driver`, `lora_mac`, `tdma_common`, `airtime_policy`.
 
-**Critical distinction:** The CMake variable identifies a search directory, but `firmware/components/*/` currently holds scaffold READMEs only. ESP-IDF will treat each as a buildable component **only after it has a valid component `CMakeLists.txt` plus registered source/include files**. Therefore, initial firmware tasks must create their minimal component manifests, real sources/tests and prove **both** Gateway and Node `idf.py build`. No fake empty implementation, no premature HIL/PHY PASS claim.
+**Điểm phân biệt quan trọng:** Biến CMake trên chỉ xác định thư mục tìm kiếm component, trong khi các thư mục `firmware/components/*/` hiện mới chứa tệp README khung (scaffold). ESP-IDF chỉ coi mỗi thư mục là component có thể build **sau khi có `CMakeLists.txt` hợp lệ cùng các tệp mã nguồn/thư mục include được đăng ký**. Vì vậy, những nhiệm vụ firmware đầu tiên phải tạo cấu hình component tối thiểu, mã nguồn và kiểm thử thực tế; đồng thời chứng minh lệnh `idf.py build` thành công cho **cả Gateway lẫn Node**. Không tạo implementation rỗng để giả lập tiến độ và không tuyên bố `HIL/PHY PASS` khi chưa có bằng chứng.
 
-## B. Gate field — exact seven GitHub Projects options
+## B. Trường Gate — chính xác bảy lựa chọn trong GitHub Projects
 
 Project: https://github.com/users/khanhpn308/projects/1
 
-Create a **single-select Custom Field named `Gate`**, matching this exact mapping (not seven GitHub Labels):
+Tạo **một Custom Field kiểu single-select có tên `Gate`** với đúng các giá trị sau (không phải bảy GitHub Labels):
 
-| Option string | Purpose | Source gate |
+| Giá trị lựa chọn | Mục đích | Gate tương ứng |
 |---|---|---|
-| `G0: Scope` | Baseline requirements, ownership and RTM | G0 |
-| `G1: RF` | RF, airtime and legal feasibility | G1 |
-| `G2: Protocol` | MAC, TDMA, security design, vectors | G2 |
-| `G3: Embedded` | ESP-IDF Gateway/Node behavior and HIL | G3 |
-| `G4: Integration` | MQTT, Go, PostgreSQL, client interfaces | G4 |
-| `G5: Security/Reliability` | Threat model, failures, soak tests | G5 |
-| `G6: Pilot Acceptance` | Field tests and approval | G6 |
+| `G0: Scope` | Thiết lập yêu cầu cơ sở, trách nhiệm sở hữu và ma trận truy vết yêu cầu (RTM) | G0 |
+| `G1: RF` | Xác minh tính khả thi của RF, airtime và yêu cầu pháp lý | G1 |
+| `G2: Protocol` | Thiết kế MAC, TDMA, bảo mật và test vectors | G2 |
+| `G3: Embedded` | Kiểm chứng hoạt động của ESP-IDF Gateway/Node và HIL | G3 |
+| `G4: Integration` | Tích hợp MQTT, Go, PostgreSQL và các giao diện Client | G4 |
+| `G5: Security/Reliability` | Threat model, các tình huống lỗi và soak tests | G5 |
+| `G6: Pilot Acceptance` | Kiểm thử thực địa và phê duyệt nghiệm thu | G6 |
 
-To inspect or create the field **using credentials belonging to the Project owner**:
+Để kiểm tra hoặc tạo trường này, hãy sử dụng **thông tin xác thực thuộc tài khoản sở hữu Project**:
 
 ```bash
 gh auth status
-gh auth refresh -s project      # only if Project scope is missing
+gh auth refresh -s project      # Chỉ thực hiện nếu thiếu quyền truy cập Project
 bash scripts/setup_project_gate.sh
 gh project field-list 1 --owner khanhpn308 --format json
 ```
 
-The script **checks for an existing `Gate` field first**. If the options do not match, it stops instead of overwriting or deleting data. Do not report this field as CREATED/VERIFIED unless the command succeeds on the live Project or the project owner confirms it in the UI.
+Script sẽ **kiểm tra xem trường `Gate` đã tồn tại hay chưa** trước khi thực hiện thao tác tạo. Nếu danh sách lựa chọn không khớp, script sẽ dừng thay vì ghi đè hoặc xóa dữ liệu. Không báo cáo trường này là `CREATED/VERIFIED` nếu lệnh chưa chạy thành công trên Project thực tế hoặc chủ sở hữu Project chưa xác nhận trên giao diện GitHub.
 
-Each task's Project Gate value must be set to one of these seven options; gate completion remains controlled by evidence in `docs/verification/acceptance-gates.md`.
+Giá trị Gate của mỗi nhiệm vụ trong GitHub Project phải là một trong bảy lựa chọn nêu trên. Việc công nhận Gate đã hoàn thành vẫn phải dựa trên bằng chứng theo `docs/verification/acceptance-gates.md`.
 
-## C. CODEOWNERS — invitation dependency
+## C. CODEOWNERS — phụ thuộc vào việc thành viên chấp nhận lời mời
 
-File: `.github/CODEOWNERS`. It currently uses `@khanhpn308` as a *valid temporary owner* on all path groups. Do **not** invent usernames or replace these entries with unaccepted collaborator handles.
+Tệp: `.github/CODEOWNERS`. Hiện tài liệu ghi nhận `@khanhpn308` là **người phụ trách tạm thời hợp lệ** cho tất cả các nhóm đường dẫn. **Không** tự đặt GitHub username hoặc thay thế bằng tài khoản của thành viên chưa chấp nhận lời mời cộng tác.
 
-Once all five other members accept invitations and have repository permissions:
-1. Confirm each GitHub username exactly (profile URL + access permission).
-2. Assign real owners to Firmware common, Gateway, Node, Go, Infrastructure, Web, Mobile, Contracts, Docs and Tests, allowing some people to cover multiple paths.
-3. Edit `.github/CODEOWNERS` by reviewable PR; the user listed for each path must have valid repository access.
-4. For `contracts/` and timing/security-critical changes, include reviewer(s) for all affected producer/consumer interfaces.
-5. Enable CODEOWNERS/PR reviewer enforcement using the repository's available ruleset/branch protection. A CODEOWNERS file alone does not enforce approvals.
+Sau khi năm thành viên còn lại chấp nhận lời mời và được cấp quyền truy cập repository:
 
-**Blocking dependency:** Actual five accepted usernames are not currently in the architecture documents. This remains `PENDING_TEAM_IDENTITIES`; it cannot be completed automatically merely by waiting.
+1. Xác nhận chính xác GitHub username của từng người (URL trang cá nhân và quyền truy cập repository).
+2. Phân công owner thực tế cho các khu vực Firmware dùng chung, Gateway, Node, Go, Infrastructure, Web, Mobile, Contracts, Docs và Tests. Một người có thể phụ trách nhiều khu vực.
+3. Cập nhật `.github/CODEOWNERS` thông qua Pull Request để có thể review; tài khoản được khai báo cho mỗi đường dẫn phải có quyền truy cập repository hợp lệ.
+4. Với các thay đổi trong `contracts/` hoặc liên quan đến timing/bảo mật, bổ sung reviewer đại diện cho tất cả giao diện producer/consumer bị ảnh hưởng.
+5. Bật cơ chế yêu cầu review/approval theo CODEOWNERS thông qua ruleset hoặc branch protection mà repository hỗ trợ. Chỉ có tệp CODEOWNERS **không đồng nghĩa** việc phê duyệt đã được hệ thống bắt buộc thực thi.
 
-## D. Path-Scoped Issue Policy (mandatory from now on)
+**Phụ thuộc đang chặn:** Tài liệu kiến trúc hiện chưa cung cấp đầy đủ năm GitHub username đã chấp nhận lời mời. Trạng thái này vẫn là `PENDING_TEAM_IDENTITIES`; không thể tự động coi là hoàn thành chỉ bằng cách chờ đợi.
 
-Every Task, Research or Bug Issue must include a required field **`Target Directories (allowed paths)`**.
+## D. Quy định phạm vi đường dẫn của Issue (Path-Scoped Issue) — bắt buộc từ thời điểm này
+
+Mỗi Issue thuộc loại Task, Research hoặc Bug phải có trường bắt buộc **`Target Directories (allowed paths)`**.
 
 ```markdown
 ### Target Directories (allowed paths)
@@ -71,29 +72,30 @@ Every Task, Research or Bug Issue must include a required field **`Target Direct
 - tests/hil/
 
 ### Out of Scope
-- firmware/sensor_node/ (unless explicitly added to this Issue)
+- firmware/sensor_node/ (trừ khi được bổ sung rõ ràng vào Issue)
 - backend-go/
 ```
 
-Rules:
-- Use **repository-root-relative explicit paths**. Include related test, doc, migration or contract paths up front when genuinely necessary.
-- The owner/AI may edit **only** the listed paths. No repo-wide formatter/refactor without explicit approval.
-- If another directory must change, **update the Issue scope first** and request cross-team owner approval before editing. Comments alone are not a silent permission grant.
-- PR template repeats Target Directories and reviewers compare `Files changed` to the approved Issue scope.
-- Path-Scoped Issues are enforced as a *documented workflow + required Issue Forms + human PR review*. No automated GitHub rule currently proves that every changed file matches the Issue's allowed paths.
+**Quy tắc:**
 
-The five Issue Forms under `.github/ISSUE_TEMPLATE/` contain the required field. For manually authored Issues or AI-created Issues, the same section is **mandatory**.
+- Khai báo **đường dẫn tường minh, tính từ thư mục gốc của repository**. Liệt kê trước các đường dẫn liên quan đến tests, docs, migrations hoặc contracts khi thực sự cần thiết.
+- Owner hoặc AI **chỉ được chỉnh sửa** những đường dẫn đã khai báo. Không tự ý format hoặc refactor toàn repository nếu chưa được phê duyệt rõ ràng.
+- Nếu cần thay đổi thêm thư mục ngoài phạm vi, **phải cập nhật phạm vi Issue trước** và xin phê duyệt của owner liên quan giữa các nhóm trước khi sửa. Chỉ trao đổi trong comment không mặc nhiên được coi là quyền thay đổi phạm vi.
+- PR template phải nhắc lại danh sách `Target Directories`; reviewer đối chiếu mục `Files changed` với phạm vi đã được chấp thuận trong Issue.
+- Quy định Path-Scoped Issue hiện được áp dụng thông qua **quy trình được ghi thành văn bản + Issue Forms có trường bắt buộc + review của con người**. Chưa có GitHub rule tự động nào được xác nhận là có thể chứng minh mọi tệp thay đổi đều thuộc danh sách đường dẫn cho phép của Issue.
 
-## E. Readiness status and verification
+Năm Issue Forms trong `.github/ISSUE_TEMPLATE/` có trường bắt buộc này. Với Issue được tạo thủ công hoặc do AI tạo, phần khai báo tương tự cũng **bắt buộc**.
 
-| Check | Current assessment | Closure evidence |
+## E. Trạng thái sẵn sàng và yêu cầu xác minh
+
+| Hạng mục kiểm tra | Đánh giá ghi nhận | Bằng chứng để hoàn tất |
 |---|---|---|
-| CMake EXTRA_COMPONENT_DIRS (both projects) | PRESENT | File diff + CI structure check |
-| Four fully buildable shared libraries | **NOT_IMPLEMENTED** | Component CMakeLists, source, dual idf.py build |
-| Gate field G0–G6 on live GitHub Project | **NOT_VERIFIED** | gh output or Project UI screenshot |
-| CODEOWNERS fallback mapping | PRESENT | Reviewed file |
-| Five accepted team usernames in CODEOWNERS | **PENDING_TEAM_IDENTITIES** | Accepted collaborators + reviewed owner mapping |
-| Path-Scoped Issue Forms (five) | PREPARED | Repo YAML + GitHub Issue Form UI |
-| PR/AI scope policies | PREPARED | Policy diff + owner approval |
+| Cấu hình CMake `EXTRA_COMPONENT_DIRS` trong cả hai project | `PRESENT` | Diff của tệp và kiểm tra cấu trúc trên CI |
+| Bốn thư viện dùng chung có thể build đầy đủ | **`NOT_IMPLEMENTED`** | Component `CMakeLists.txt`, mã nguồn và kết quả `idf.py build` cho cả hai ứng dụng |
+| Trường Gate G0–G6 trên GitHub Project thực tế | **`NOT_VERIFIED`** | Kết quả lệnh `gh` hoặc ảnh chụp giao diện Project |
+| Ánh xạ CODEOWNERS dự phòng | `PRESENT` | Tệp đã được review |
+| Năm GitHub username thực tế đã chấp nhận quyền cộng tác trong CODEOWNERS | **`PENDING_TEAM_IDENTITIES`** | Xác nhận thành viên và bảng ánh xạ owner đã review |
+| Năm Issue Forms có trường Path-Scoped | `PREPARED` | Tệp YAML trong repo và kiểm tra giao diện GitHub Issue Form |
+| Quy định phạm vi chỉnh sửa trong PR/AI | `PREPARED` | Diff quy định và phê duyệt của owner |
 
-Proceed to Task Breakdown only with open prerequisites called out. The first firmware initialization Issue must test the shared ESP-IDF component discovery; creating an entire protocol is **not** implied by a successful scaffold build.
+Chỉ triển khai Task Breakdown khi đã nêu rõ những điều kiện tiên quyết còn chưa hoàn tất. Issue khởi tạo firmware đầu tiên phải kiểm thử khả năng ESP-IDF nhận diện các component dùng chung; việc build thành công scaffold **không** đồng nghĩa đã triển khai đầy đủ một giao thức.
