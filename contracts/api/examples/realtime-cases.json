@@ -1,0 +1,116 @@
+{
+  "revision": "1.0-draft",
+  "cases": [
+    {
+      "id": "WS-ALERT-VALID",
+      "valid": true,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "srv:0001",
+        "type": "ALERT_TRIGGERED",
+        "emitted_at": "2026-10-20T08:00:01Z",
+        "cursor": "opaque:001",
+        "payload": {
+          "gateway_id": "gw01",
+          "node_id": 1,
+          "alert_id": "123",
+          "severity": "P0_EMERGENCY",
+          "triggered_at": "2026-10-20T08:00:00Z"
+        }
+      }
+    },
+    {
+      "id": "WS-ALERT-MISSING-ID",
+      "valid": false,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "",
+        "type": "ALERT_TRIGGERED",
+        "emitted_at": "2026-10-20T08:00:01Z",
+        "cursor": "opaque:001",
+        "payload": {
+          "gateway_id": "gw01",
+          "node_id": 1,
+          "alert_id": "123",
+          "severity": "P0_EMERGENCY",
+          "triggered_at": "2026-10-20T08:00:00Z"
+        }
+      }
+    },
+    {
+      "id": "WS-ALERT-UNKNOWN-TYPE",
+      "valid": false,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "srv:0001",
+        "type": "BEEP",
+        "emitted_at": "2026-10-20T08:00:01Z",
+        "cursor": "opaque:001",
+        "payload": {
+          "gateway_id": "gw01",
+          "node_id": 1,
+          "alert_id": "123",
+          "severity": "P0_EMERGENCY",
+          "triggered_at": "2026-10-20T08:00:00Z"
+        }
+      }
+    },
+    {
+      "id": "WS-SCHEDULE-VALID",
+      "valid": true,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "srv:0001",
+        "type": "SCHEDULE_STATE_CHANGED",
+        "emitted_at": "2026-10-20T08:00:01Z",
+        "cursor": "opaque:001",
+        "payload": {
+          "gateway_id": "gw01",
+          "schedule_id": "9",
+          "version": 6,
+          "state": "STAGED"
+        }
+      }
+    },
+    {
+      "id": "WS-TELEMETRY-VALID",
+      "valid": true,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "srv:0001",
+        "type": "TELEMETRY_UPDATE",
+        "emitted_at": "2026-10-20T08:00:01Z",
+        "cursor": "opaque:001",
+        "payload": {
+          "gateway_id": "gw01",
+          "node_id": 1,
+          "reading_id": "50",
+          "event_id": "gw01:boot:42",
+          "observed_at": "2026-10-20T08:00:00Z",
+          "data": {
+            "ch1_raw": 2575,
+            "ch2_raw": 620,
+            "ch3_raw": 50,
+            "battery_mv": 3600
+          }
+        }
+      }
+    },
+    {
+      "id": "WS-STATUS-VALID",
+      "valid": true,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "srv:0001",
+        "type": "GATEWAY_STATUS_CHANGED",
+        "emitted_at": "2026-10-20T08:00:01Z",
+        "cursor": "opaque:001",
+        "payload": {
+          "gateway_id": "gw01",
+          "mode": "ACTIVE",
+          "last_seen_at": "2026-10-20T08:00:00Z"
+        }
+      }
+    }
+  ]
+}

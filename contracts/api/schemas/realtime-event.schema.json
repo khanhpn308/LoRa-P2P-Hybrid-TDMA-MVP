@@ -1,0 +1,290 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:loratdma:api:realtime-event:v1-draft",
+  "title": "Backend→clients WSS events — draft",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "type",
+    "emitted_at",
+    "payload"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0-draft",
+      "type": "string"
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "type": {
+      "enum": [
+        "TELEMETRY_UPDATE",
+        "ALERT_TRIGGERED",
+        "SCHEDULE_STATE_CHANGED",
+        "GATEWAY_STATUS_CHANGED"
+      ]
+    },
+    "emitted_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "cursor": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "TELEMETRY_UPDATE"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "gateway_id",
+              "node_id",
+              "reading_id",
+              "event_id",
+              "observed_at",
+              "data"
+            ],
+            "properties": {
+              "gateway_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,32}$"
+              },
+              "node_id": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 254
+              },
+              "reading_id": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]{0,19})$"
+              },
+              "event_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "observed_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "data": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "ch1_raw",
+                  "ch2_raw",
+                  "ch3_raw",
+                  "battery_mv"
+                ],
+                "properties": {
+                  "ch1_raw": {
+                    "type": "integer",
+                    "minimum": -32768,
+                    "maximum": 32767
+                  },
+                  "ch2_raw": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 65535
+                  },
+                  "ch3_raw": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 65535
+                  },
+                  "battery_mv": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 65535
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "ALERT_TRIGGERED"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "gateway_id",
+              "node_id",
+              "alert_id",
+              "severity",
+              "triggered_at"
+            ],
+            "properties": {
+              "gateway_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,32}$"
+              },
+              "node_id": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 254
+              },
+              "alert_id": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]{0,19})$"
+              },
+              "severity": {
+                "enum": [
+                  "P0_EMERGENCY",
+                  "P1_HIGH",
+                  "P2_MEDIUM",
+                  "P3_NORMAL"
+                ]
+              },
+              "triggered_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "SCHEDULE_STATE_CHANGED"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "gateway_id",
+              "schedule_id",
+              "version",
+              "state"
+            ],
+            "properties": {
+              "gateway_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,32}$"
+              },
+              "schedule_id": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]{0,19})$"
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4294967295
+              },
+              "state": {
+                "enum": [
+                  "PROPOSED",
+                  "SENT",
+                  "STAGED",
+                  "ACTIVE",
+                  "REJECTED",
+                  "EXPIRED"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "GATEWAY_STATUS_CHANGED"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "gateway_id",
+              "mode",
+              "last_seen_at"
+            ],
+            "properties": {
+              "gateway_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,32}$"
+              },
+              "mode": {
+                "enum": [
+                  "BOOTSTRAP",
+                  "ACTIVE",
+                  "AUTONOMOUS",
+                  "RECOVERY",
+                  "FAULT",
+                  "OFFLINE"
+                ]
+              },
+              "last_seen_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
