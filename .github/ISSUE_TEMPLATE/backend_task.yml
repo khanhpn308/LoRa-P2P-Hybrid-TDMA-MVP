@@ -4,6 +4,16 @@ title: "[GO] "
 labels: ["type:feature", "layer:backend-go"]
 body:
   - type: textarea
+    id: target_directories
+    attributes:
+      label: "Target Directories (allowed paths)"
+      description: "REQUIRED. List every repository-relative directory or specific file this Issue permits changing. Cross-path changes need Issue scope update and reviewer approval."
+      placeholder: |
+        firmware/components/sx1276_driver/
+        tests/hil/
+    validations:
+      required: true
+  - type: textarea
     id: problem
     attributes:
       label: Requirement / contract reference
