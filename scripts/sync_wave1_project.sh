@@ -90,7 +90,13 @@ while IFS='|' read -r number gate; do
   if [ -z "$item_id" ]; then
     echo "Linking #$number to Project $PROJECT..."
     added="$(gh project item-add "$PROJECT" --owner "$OWNER" --url "$url" --format json)"
-    item_id="$(python3 -c 'import sys,json; print(json.load(sys.stdin).get("id",""))' <<< "$added")"
+    item_id="$(python3 -c 'import sys,json
+try:
+  v=json.load(sys.stdin)
+  print(v.get("id","") or v.get("item",{}).get("id",""))
+except (ValueError,AttributeError):
+  print("")
+' <<< "$added")"
     if [ -z "$item_id" ]; then
       gh project item-list "$PROJECT" --owner "$OWNER" --format json --limit 500 > "$TMP_DIR/items.json"
       item_id="$(existing_item_id "$url")"
