@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:loratdma:mqtt:status:v1-draft",
+  "title": "LoRa TDMA status (proposed contract)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0-draft",
+      "type": "string"
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "gateway_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,32}$"
+    },
+    "gateway_epoch": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "event_seq": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$"
+    },
+    "observed_at": {
+      "oneOf": [
+        {
+          "type": "string",
+          "format": "date-time"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "observed_time_source": {
+      "enum": [
+        "gateway_utc",
+        "node_utc",
+        "estimated",
+        "unknown"
+      ]
+    },
+    "radio_rx_monotonic_us": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$"
+    },
+    "buffered": {
+      "type": "boolean"
+    },
+    "active_schedule_version": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "mode": {
+      "enum": [
+        "BOOTSTRAP",
+        "ACTIVE",
+        "AUTONOMOUS",
+        "RECOVERY",
+        "FAULT"
+      ]
+    },
+    "rf_duty_permille": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000
+    },
+    "free_heap_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "offline_queue_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "offline_dropped_telemetry": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$"
+    },
+    "offline_dropped_alert": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$"
+    },
+    "node_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 254
+    }
+  },
+  "required": [
+    "schema_version",
+    "event_id",
+    "gateway_id",
+    "gateway_epoch",
+    "event_seq",
+    "observed_at",
+    "observed_time_source",
+    "radio_rx_monotonic_us",
+    "buffered",
+    "active_schedule_version",
+    "mode",
+    "rf_duty_permille",
+    "free_heap_bytes",
+    "offline_queue_count",
+    "offline_dropped_telemetry",
+    "offline_dropped_alert",
+    "node_count"
+  ]
+}

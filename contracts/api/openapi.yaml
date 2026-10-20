@@ -1,22 +1,971 @@
-openapi: 3.0.3
+# OpenAPI 3.0.3 — PROPOSED, NOT IMPLEMENTED. Issue #15
+openapi: "3.0.3"
 info:
-  title: LoRa TDMA MVP API
-  version: 0.0.0-draft
-  description: Draft HTTP API contract. No business endpoints have been implemented.
+  title: "LoRa Hybrid TDMA MVP — Backend/Client REST Contract"
+  version: "1.0.0-draft"
+  description: "Proposed contract only. No business endpoints implemented. Security/auth token lifecycle pending ADR; see contracts/api/websocket.md for WSS."
 servers:
-  - url: http://localhost:8080
+  -
+    url: "http://localhost:8080"
+    description: "Loopback development only; deployment requires HTTPS"
+security:
+  -
+    bearerAuth:
+      []
+tags:
+  -
+    name: "health"
+  -
+    name: "auth"
+  -
+    name: "gateways"
+  -
+    name: "nodes"
+  -
+    name: "alerts"
+  -
+    name: "schedules"
+  -
+    name: "audit"
 paths:
-  /healthz:
+  "/healthz":
     get:
-      summary: Process liveness (planned)
+      operationId: "health_liveness"
+      summary: "Process liveness (not Gateway/RF readiness)"
+      tags:
+        - "health"
+      security:
+        []
       responses:
         "200":
-          description: Service responds
+          description: "Process alive"
           content:
-            application/json:
+            "application/json":
               schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-    # All telemetry, schedule, node and user endpoints are TBD pending authorization design.
+                "$ref": "#/components/schemas/Health"
+  "/api/v1/auth/login":
+    post:
+      operationId: "auth_login"
+      summary: "PROVISIONAL username/password → short-lived bearer token"
+      tags:
+        - "auth"
+      security:
+        []
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: "Successful operation"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/TokenResponse"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "422":
+          "$ref": "#/components/responses/Unprocessable"
+  "/api/v1/gateways/{gw_id}/status":
+    get:
+      operationId: "gateways_status"
+      summary: "Gateway last-known state; does not imply online now"
+      tags:
+        - "gateways"
+      x-roles:
+        - "ADMIN"
+        - "OPERATOR"
+        - "VIEWER"
+      parameters:
+        -
+          "$ref": "#/components/parameters/GatewayId"
+      responses:
+        "200":
+          description: "Successful operation"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/GatewayStatus"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "404":
+          "$ref": "#/components/responses/NotFound"
+        "422":
+          "$ref": "#/components/responses/Unprocessable"
+  "/api/v1/nodes":
+    get:
+      operationId: "nodes_list"
+      summary: "Cursor-paginated nodes"
+      tags:
+        - "nodes"
+      x-roles:
+        - "ADMIN"
+        - "OPERATOR"
+        - "VIEWER"
+      parameters:
+        -
+          "$ref": "#/components/parameters/Cursor"
+        -
+          "$ref": "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: "Successful operation"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/NodePage"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "422":
+          "$ref": "#/components/responses/Unprocessable"
+  "/api/v1/nodes/{node_id}/telemetry":
+    get:
+      operationId: "nodes_telemetry"
+      summary: "Cursor-paginated telemetry; UTC filter"
+      tags:
+        - "nodes"
+      x-roles:
+        - "ADMIN"
+        - "OPERATOR"
+        - "VIEWER"
+      parameters:
+        -
+          "$ref": "#/components/parameters/NodeId"
+        -
+          "$ref": "#/components/parameters/Cursor"
+        -
+          "$ref": "#/components/parameters/Limit"
+        -
+          name: "from"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            format: "date-time"
+        -
+          name: "to"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            format: "date-time"
+      responses:
+        "200":
+          description: "Successful operation"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/TelemetryPage"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "404":
+          "$ref": "#/components/responses/NotFound"
+        "422":
+          "$ref": "#/components/responses/Unprocessable"
+  "/api/v1/alerts":
+    get:
+      operationId: "alerts_list"
+      summary: "Cursor-paginated alerts"
+      tags:
+        - "alerts"
+      x-roles:
+        - "ADMIN"
+        - "OPERATOR"
+        - "VIEWER"
+      parameters:
+        -
+          "$ref": "#/components/parameters/Cursor"
+        -
+          "$ref": "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: "Successful operation"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/AlertPage"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "422":
+          "$ref": "#/components/responses/Unprocessable"
+  "/api/v1/alerts/{alert_id}/acknowledge":
+    post:
+      operationId: "alerts_acknowledge"
+      summary: "Acknowledge alert in Backend; not an RF ACK"
+      tags:
+        - "alerts"
+      x-roles:
+        - "ADMIN"
+        - "OPERATOR"
+      parameters:
+        -
+          "$ref": "#/components/parameters/AlertId"
+      responses:
+        "200":
+          description: "Successful operation"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Alert"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "404":
+          "$ref": "#/components/responses/NotFound"
+        "409":
+          "$ref": "#/components/responses/Conflict"
+        "422":
+          "$ref": "#/components/responses/Unprocessable"
+  "/api/v1/gateways/{gw_id}/schedules/generate":
+    post:
+      operationId: "schedules_generate"
+      summary: "Generate/propose versioned TDMA schedule; NOT instantly ACTIVE"
+      tags:
+        - "schedules"
+      x-roles:
+        - "ADMIN"
+      parameters:
+        -
+          "$ref": "#/components/parameters/GatewayId"
+      responses:
+        "202":
+          description: "Successful operation"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ScheduleSummary"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "404":
+          "$ref": "#/components/responses/NotFound"
+        "409":
+          "$ref": "#/components/responses/Conflict"
+        "422":
+          "$ref": "#/components/responses/Unprocessable"
+        "503":
+          "$ref": "#/components/responses/Unavailable"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/GenerateScheduleRequest"
+  "/api/v1/gateways/{gw_id}/schedules/{schedule_id}":
+    get:
+      operationId: "schedules_get"
+      summary: "Read schedule lifecycle state; ACTIVE requires Gateway ACTIVE_REPORT"
+      tags:
+        - "schedules"
+      x-roles:
+        - "ADMIN"
+        - "OPERATOR"
+        - "VIEWER"
+      parameters:
+        -
+          "$ref": "#/components/parameters/GatewayId"
+        -
+          "$ref": "#/components/parameters/ScheduleId"
+      responses:
+        "200":
+          description: "Successful operation"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ScheduleSummary"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "404":
+          "$ref": "#/components/responses/NotFound"
+        "422":
+          "$ref": "#/components/responses/Unprocessable"
+  "/api/v1/nodes/{node_id}/commands":
+    post:
+      operationId: "nodes_command"
+      summary: "Queue downlink command with application expiry"
+      tags:
+        - "nodes"
+      x-roles:
+        - "ADMIN"
+        - "OPERATOR"
+      parameters:
+        -
+          "$ref": "#/components/parameters/NodeId"
+      responses:
+        "202":
+          description: "Successful operation"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/CommandTicket"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "404":
+          "$ref": "#/components/responses/NotFound"
+        "409":
+          "$ref": "#/components/responses/Conflict"
+        "422":
+          "$ref": "#/components/responses/Unprocessable"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/CommandRequest"
+  "/api/v1/audit":
+    get:
+      operationId: "audit_list"
+      summary: "Read administrative audit log"
+      tags:
+        - "audit"
+      x-roles:
+        - "ADMIN"
+      parameters:
+        -
+          "$ref": "#/components/parameters/Cursor"
+        -
+          "$ref": "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: "Successful operation"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/AuditPage"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "422":
+          "$ref": "#/components/responses/Unprocessable"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: "http"
+      scheme: "bearer"
+      bearerFormat: "JWT"
+      description: "PROVISIONAL: bearer/JWT lifecycle requires security ADR. Never use in URL query."
+  parameters:
+    GatewayId:
+      name: "gw_id"
+      in: "path"
+      required: true
+      schema:
+        type: "string"
+        pattern: "^[A-Za-z0-9_-]{1,32}$"
+    NodeId:
+      name: "node_id"
+      in: "path"
+      required: true
+      schema:
+        type: "integer"
+        minimum: 1
+        maximum: 254
+    AlertId:
+      name: "alert_id"
+      in: "path"
+      required: true
+      schema:
+        type: "string"
+        pattern: "^(0|[1-9][0-9]{0,19})$"
+    ScheduleId:
+      name: "schedule_id"
+      in: "path"
+      required: true
+      schema:
+        type: "string"
+        pattern: "^(0|[1-9][0-9]{0,19})$"
+    Cursor:
+      name: "cursor"
+      in: "query"
+      required: false
+      schema:
+        type: "string"
+        minLength: 1
+        maxLength: 512
+    Limit:
+      name: "limit"
+      in: "query"
+      required: false
+      schema:
+        type: "integer"
+        minimum: 1
+        maximum: 200
+  schemas:
+    Error:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "code"
+        - "message"
+        - "request_id"
+      properties:
+        code:
+          type: "string"
+          minLength: 1
+          maxLength: 64
+        message:
+          type: "string"
+          minLength: 1
+          maxLength: 512
+        request_id:
+          type: "string"
+          minLength: 1
+          maxLength: 128
+        details:
+          type: "object"
+          additionalProperties: true
+    Health:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "status"
+      properties:
+        status:
+          type: "string"
+          enum:
+            - "ok"
+    LoginRequest:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "username"
+        - "password"
+      properties:
+        username:
+          type: "string"
+          minLength: 1
+          maxLength: 64
+        password:
+          type: "string"
+          minLength: 1
+          maxLength: 512
+    TokenResponse:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "access_token"
+        - "token_type"
+        - "expires_in"
+        - "role"
+      properties:
+        access_token:
+          type: "string"
+          minLength: 1
+          maxLength: 4096
+        token_type:
+          type: "string"
+          enum:
+            - "Bearer"
+        expires_in:
+          type: "integer"
+          minimum: 1
+          maximum: 86400
+        role:
+          type: "string"
+          enum:
+            - "ADMIN"
+            - "OPERATOR"
+            - "VIEWER"
+    GatewayStatus:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "gateway_id"
+        - "mode"
+        - "active_schedule_version"
+        - "last_seen_at"
+        - "rf_duty_permille"
+        - "node_count"
+      properties:
+        gateway_id:
+          type: "string"
+          pattern: "^[A-Za-z0-9_-]{1,32}$"
+        mode:
+          type: "string"
+          enum:
+            - "BOOTSTRAP"
+            - "ACTIVE"
+            - "AUTONOMOUS"
+            - "RECOVERY"
+            - "FAULT"
+            - "OFFLINE"
+        active_schedule_version:
+          type: "integer"
+          minimum: 0
+          maximum: 4294967295
+        last_seen_at:
+          type: "string"
+          format: "date-time"
+          nullable: true
+        rf_duty_permille:
+          type: "integer"
+          minimum: 0
+          maximum: 1000
+        node_count:
+          type: "integer"
+          minimum: 0
+          maximum: 254
+    NodeSummary:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "node_id"
+        - "gateway_id"
+        - "assigned_slot_id"
+        - "last_seen_at"
+        - "status"
+      properties:
+        node_id:
+          type: "integer"
+          minimum: 1
+          maximum: 254
+        gateway_id:
+          type: "string"
+          pattern: "^[A-Za-z0-9_-]{1,32}$"
+        name:
+          type: "string"
+          minLength: 1
+          maxLength: 100
+        assigned_slot_id:
+          type: "integer"
+          minimum: 1
+          maximum: 15
+          nullable: true
+        last_seen_at:
+          type: "string"
+          format: "date-time"
+          nullable: true
+        last_rssi_dbm:
+          type: "integer"
+          minimum: -200
+          maximum: 0
+          nullable: true
+        last_snr_db:
+          type: "number"
+          nullable: true
+        battery_mv:
+          type: "integer"
+          minimum: 0
+          maximum: 65535
+          nullable: true
+        status:
+          type: "string"
+          enum:
+            - "ONLINE"
+            - "OFFLINE"
+            - "UNSYNCED"
+            - "UNKNOWN"
+    TelemetryReading:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "reading_id"
+        - "node_id"
+        - "gateway_id"
+        - "event_id"
+        - "observed_at"
+        - "received_at"
+        - "buffered"
+        - "superframe_seq"
+        - "seq_num"
+        - "data"
+      properties:
+        reading_id:
+          type: "string"
+          pattern: "^(0|[1-9][0-9]{0,19})$"
+        node_id:
+          type: "integer"
+          minimum: 1
+          maximum: 254
+        gateway_id:
+          type: "string"
+          pattern: "^[A-Za-z0-9_-]{1,32}$"
+        event_id:
+          type: "string"
+          minLength: 1
+          maxLength: 128
+        observed_at:
+          type: "string"
+          format: "date-time"
+          nullable: true
+        received_at:
+          type: "string"
+          format: "date-time"
+        buffered:
+          type: "boolean"
+        superframe_seq:
+          type: "integer"
+          minimum: 0
+          maximum: 4294967295
+        seq_num:
+          type: "integer"
+          minimum: 0
+          maximum: 255
+        data:
+          type: "object"
+          additionalProperties: false
+          required:
+            - "slot_id"
+            - "sensor_status_mask"
+            - "ch1_raw"
+            - "ch2_raw"
+            - "ch3_raw"
+            - "battery_mv"
+            - "node_duty_permille"
+          properties:
+            slot_id:
+              type: "integer"
+              minimum: 1
+              maximum: 15
+            sensor_status_mask:
+              type: "integer"
+              minimum: 0
+              maximum: 255
+            ch1_raw:
+              type: "integer"
+              minimum: -32768
+              maximum: 32767
+            ch2_raw:
+              type: "integer"
+              minimum: 0
+              maximum: 65535
+            ch3_raw:
+              type: "integer"
+              minimum: 0
+              maximum: 65535
+            battery_mv:
+              type: "integer"
+              minimum: 0
+              maximum: 65535
+            node_duty_permille:
+              type: "integer"
+              minimum: 0
+              maximum: 1000
+    Alert:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "alert_id"
+        - "node_id"
+        - "gateway_id"
+        - "severity"
+        - "triggered_at"
+        - "received_at"
+        - "ack_status"
+        - "acked_at"
+      properties:
+        alert_id:
+          type: "string"
+          pattern: "^(0|[1-9][0-9]{0,19})$"
+        node_id:
+          type: "integer"
+          minimum: 1
+          maximum: 254
+        gateway_id:
+          type: "string"
+          pattern: "^[A-Za-z0-9_-]{1,32}$"
+        severity:
+          type: "string"
+          enum:
+            - "P0_EMERGENCY"
+            - "P1_HIGH"
+            - "P2_MEDIUM"
+            - "P3_NORMAL"
+        triggered_at:
+          type: "string"
+          format: "date-time"
+          nullable: true
+        received_at:
+          type: "string"
+          format: "date-time"
+        ack_status:
+          type: "string"
+          enum:
+            - "UNACKNOWLEDGED"
+            - "ACKNOWLEDGED"
+        acked_at:
+          type: "string"
+          format: "date-time"
+          nullable: true
+        trigger:
+          type: "object"
+          additionalProperties: false
+          properties:
+            channel:
+              type: "integer"
+              minimum: 1
+              maximum: 3
+            observed_raw:
+              type: "integer"
+              minimum: -2147483648
+              maximum: 2147483647
+            threshold_raw:
+              type: "integer"
+              minimum: -2147483648
+              maximum: 2147483647
+          required:
+            - "channel"
+            - "observed_raw"
+            - "threshold_raw"
+    ScheduleSummary:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "schedule_id"
+        - "gateway_id"
+        - "version"
+        - "state"
+        - "activate_at_superframe_seq"
+        - "created_at"
+        - "activated_at"
+      properties:
+        schedule_id:
+          type: "string"
+          pattern: "^(0|[1-9][0-9]{0,19})$"
+        gateway_id:
+          type: "string"
+          pattern: "^[A-Za-z0-9_-]{1,32}$"
+        version:
+          type: "integer"
+          minimum: 0
+          maximum: 4294967295
+        state:
+          type: "string"
+          enum:
+            - "PROPOSED"
+            - "SENT"
+            - "STAGED"
+            - "ACTIVE"
+            - "REJECTED"
+            - "EXPIRED"
+        activate_at_superframe_seq:
+          type: "integer"
+          minimum: 0
+          maximum: 4294967295
+          nullable: true
+        created_at:
+          type: "string"
+          format: "date-time"
+        activated_at:
+          type: "string"
+          format: "date-time"
+          nullable: true
+        reject_reason:
+          type: "string"
+          maxLength: 2000
+          nullable: true
+    GenerateScheduleRequest:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "profile_id"
+      properties:
+        profile_id:
+          type: "string"
+          enum:
+            - "P-10S-15"
+        min_announce_superframes:
+          type: "integer"
+          minimum: 3
+          maximum: 30
+    CommandRequest:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "action"
+        - "params"
+        - "expires_at"
+      properties:
+        action:
+          type: "string"
+          enum:
+            - "SET_THRESHOLD"
+            - "SET_SAMPLE_PERIOD"
+            - "SET_RELAY"
+        params:
+          type: "object"
+          additionalProperties:
+            oneOf:
+              -
+                type: "integer"
+              -
+                type: "boolean"
+          minProperties: 1
+          maxProperties: 4
+        expires_at:
+          type: "string"
+          format: "date-time"
+    CommandTicket:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "command_id"
+        - "node_id"
+        - "state"
+        - "created_at"
+      properties:
+        command_id:
+          type: "string"
+          format: "uuid"
+        node_id:
+          type: "integer"
+          minimum: 1
+          maximum: 254
+        state:
+          type: "string"
+          enum:
+            - "QUEUED"
+            - "DISPATCHED"
+            - "NODE_ACKED"
+            - "REJECTED"
+            - "EXPIRED"
+            - "UNKNOWN"
+        created_at:
+          type: "string"
+          format: "date-time"
+    AuditEntry:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "id"
+        - "action"
+        - "actor_id"
+        - "target"
+        - "occurred_at"
+      properties:
+        id:
+          type: "string"
+          pattern: "^(0|[1-9][0-9]{0,19})$"
+        action:
+          type: "string"
+          minLength: 1
+          maxLength: 64
+        actor_id:
+          type: "string"
+          minLength: 1
+          maxLength: 128
+        target:
+          type: "string"
+          minLength: 1
+          maxLength: 128
+        occurred_at:
+          type: "string"
+          format: "date-time"
+    NodePage:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "items"
+        - "next_cursor"
+      properties:
+        items:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/NodeSummary"
+        next_cursor:
+          type: "string"
+          minLength: 1
+          maxLength: 512
+          nullable: true
+    TelemetryPage:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "items"
+        - "next_cursor"
+      properties:
+        items:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/TelemetryReading"
+        next_cursor:
+          type: "string"
+          minLength: 1
+          maxLength: 512
+          nullable: true
+    AlertPage:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "items"
+        - "next_cursor"
+      properties:
+        items:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/Alert"
+        next_cursor:
+          type: "string"
+          minLength: 1
+          maxLength: 512
+          nullable: true
+    AuditPage:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "items"
+        - "next_cursor"
+      properties:
+        items:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/AuditEntry"
+        next_cursor:
+          type: "string"
+          minLength: 1
+          maxLength: 512
+          nullable: true
+  responses:
+    Unauthorized:
+      description: "Authentication required"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/Error"
+    Forbidden:
+      description: "Role forbidden"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/Error"
+    NotFound:
+      description: "Resource not found"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/Error"
+    Conflict:
+      description: "State conflict or stale version"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/Error"
+    Unprocessable:
+      description: "Validation error"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/Error"
+    Unavailable:
+      description: "Upstream unavailable"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/Error"

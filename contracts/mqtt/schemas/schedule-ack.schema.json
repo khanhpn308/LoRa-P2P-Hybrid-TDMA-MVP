@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:loratdma:mqtt:schedule-ack:v1-draft",
+  "title": "LoRa TDMA schedule-ack (proposed contract)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0-draft",
+      "type": "string"
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "gateway_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,32}$"
+    },
+    "gateway_epoch": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "event_seq": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$"
+    },
+    "observed_at": {
+      "oneOf": [
+        {
+          "type": "string",
+          "format": "date-time"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "observed_time_source": {
+      "enum": [
+        "gateway_utc",
+        "node_utc",
+        "estimated",
+        "unknown"
+      ]
+    },
+    "radio_rx_monotonic_us": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$"
+    },
+    "buffered": {
+      "type": "boolean"
+    },
+    "request_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "schedule_id": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$"
+    },
+    "schedule_version": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "stage": {
+      "enum": [
+        "STAGE_ACK",
+        "VERIFY_NACK",
+        "ACTIVE_REPORT"
+      ]
+    },
+    "activate_at_superframe_seq": {
+      "oneOf": [
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reason_code": {
+      "enum": [
+        "NONE",
+        "BAD_SCHEMA",
+        "BAD_AUTH",
+        "BAD_VERSION",
+        "STALE_VERSION",
+        "EXPIRED",
+        "OVERLAPPING_SLOT",
+        "AIRTIME_LIMIT",
+        "WRONG_GATEWAY",
+        "UNSUPPORTED_PROFILE",
+        "PERSIST_FAILED",
+        "INSUFFICIENT_ANNOUNCEMENT_HORIZON",
+        "INTERNAL_ERROR"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "event_id",
+    "gateway_id",
+    "gateway_epoch",
+    "event_seq",
+    "observed_at",
+    "observed_time_source",
+    "radio_rx_monotonic_us",
+    "buffered",
+    "request_id",
+    "schedule_id",
+    "schedule_version",
+    "stage",
+    "activate_at_superframe_seq",
+    "reason_code"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "stage": {
+            "const": "VERIFY_NACK"
+          }
+        },
+        "required": [
+          "stage"
+        ]
+      },
+      "then": {
+        "properties": {
+          "reason_code": {
+            "not": {
+              "const": "NONE"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "stage": {
+            "enum": [
+              "STAGE_ACK",
+              "ACTIVE_REPORT"
+            ]
+          }
+        },
+        "required": [
+          "stage"
+        ]
+      },
+      "then": {
+        "properties": {
+          "activate_at_superframe_seq": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          }
+        }
+      }
+    }
+  ]
+}
