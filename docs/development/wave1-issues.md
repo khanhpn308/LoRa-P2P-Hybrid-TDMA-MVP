@@ -4,7 +4,7 @@
 > **Project #1:** Việc thêm Project Item/Gate cần chạy `scripts/sync_wave1_project.sh` bằng tài khoản GitHub có quyền `project`, sau đó nhận dòng `SUCCESS: 12/12...`. Chỉ sau bước đó mới xác nhận chúng thực sự nằm trong Project.
 > **Phạm vi Wave 1:** Repository Governance, RF/Driver Feasibility, Protocol/Shared MAC, Backend/Simulator Preparation. **Không** có nghĩa đã hoàn thành toàn bộ Gateway Master, Node TDMA Client hoặc hệ thống RF end-to-end.
 >
-> **Quy ước quản lý:** `W1-05` là Issue thứ 05 của Wave 1, **không** phải bước thực hiện thứ năm. `Workstream` phân loại miền kỹ thuật; `Gate` G0–G6 là cổng nghiệm thu; dependencies và mức sẵn sàng quyết định thứ tự thực thi. Không sử dụng mã Phase `F0–F3` trong Task ID/Issue title.
+> **Quy ước quản lý:** `W1-05` là Issue thứ 05 của Wave 1, **không** phải bước thực hiện thứ năm. `Workstream` phân loại miền kỹ thuật; `Gate` G0–G6 là cổng nghiệm thu; dependencies và mức sẵn sàng quyết định thứ tự thực thi. Không sử dụng tiền tố Phase trong Task ID hoặc Issue title.
 
 ## 1. Danh mục Issues chính thức
 
