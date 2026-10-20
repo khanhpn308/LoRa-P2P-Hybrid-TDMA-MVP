@@ -197,7 +197,17 @@ Không dùng lệnh git add . một cách mù quáng khi workspace chứa creden
 
 **Lưu ý:** PR/GitHub workflow mới chỉ thực sự enforced nếu repository có ruleset/branch protection phù hợp; tài liệu này là chính sách nhóm, không khẳng định enforcement đã bật.
 
+### 6.4. Quy tắc Path-Scoped Issues bắt buộc
+
+Từ trước Task Breakdown, mọi Issue (kể cả Bug/Research, tạo thủ công hoặc bằng AI) đều phải có mục **`Target Directories (allowed paths)`**, ghi rõ từng thư mục/tệp từ root repository. Chỉ được sửa các đường dẫn này. Nếu cần cập nhật thêm contract, tests, tài liệu hoặc migration, phải sửa scope Issue và xin phê duyệt trước; không mặc định `docs/` hoặc `tests/` luôn được phép.
+
+Ví dụ: `firmware/components/sx1276_driver/` và `tests/hil/` cho nhiệm vụ thử driver; ngoài phạm vi: `backend-go/`, `clients/`. Pull Request phải nhắc lại các đường dẫn được phép và reviewer đối chiếu `Files changed`.
+
+Cơ chế hiện tại là **required Issue Forms + policy AI + human PR review**, chưa có máy kiểm chứng tự động phạm vi theo Issue. Đọc [Pre-Task-Breakdown Readiness](task-breakdown-readiness.md).
+
 ## 7. GitHub Projects và Labels
+
+**Gate field:** Project #1 phải có Custom Field single-select tên `Gate` với đúng `G0: Scope`, `G1: RF`, `G2: Protocol`, `G3: Embedded`, `G4: Integration`, `G5: Security/Reliability`, `G6: Pilot Acceptance`. Chạy `bash scripts/setup_project_gate.sh` khi GitHub CLI có Project scope; chưa coi là đã áp dụng trên GitHub nếu chưa kiểm tra lại kết quả. Mỗi Issue chọn đúng một Gate, không dùng bảy nhãn `gate:*`.
 
 Theo dõi nhiệm vụ trên [LoRa P2P Hybrid TDMA — MVP Development](https://github.com/users/khanhpn308/projects/1). Tạo Issue bằng .github/ISSUE_TEMPLATE/ trong đúng repository, không để công việc quan trọng chỉ trong chat.
 
