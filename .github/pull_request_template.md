@@ -3,6 +3,17 @@
 Closes #
 
 ## Scope
+**Linked Issue:** #
+
+**Target Directories (allowed paths approved in Issue):**
+```text
+# One repository-relative path per line, e.g.
+# firmware/components/sx1276_driver/
+# tests/hil/
+```
+
+- [ ] Each changed file is within the allowed Issue scope (or Issue scope was updated and reapproved before changes).
+- [ ] Reviewers verified actual `Files changed` against the Target Directories.
 - [ ] Scoped change (no unrelated refactors)
 - [ ] Cross-layer impacts and `contracts/` changes disclosed
 

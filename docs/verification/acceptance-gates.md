@@ -15,3 +15,19 @@ Evidence includes issue ID, commit or firmware hash, board revision, ESP-IDF/too
 Permitted status: PASS, PARTIAL_WITH_FINDINGS, FAIL, NOT_VERIFIED. No automatic promotion on code-only check for RF, security or HIL gates.
 
 Use `docs/verification/` for small measurement reports and GitHub Actions artifacts or controlled lab storage for large traces.
+
+## GitHub Projects Gate single-select field (exact options)
+
+Project #1 must use a **single** Custom Field named `Gate` with precisely seven values:
+
+| Project field option | Gate meaning |
+|---|---|
+| `G0: Scope` | Scope, requirements and responsibility baseline |
+| `G1: RF` | RF feasibility and regulatory evidence |
+| `G2: Protocol` | MAC and TDMA design verification |
+| `G3: Embedded` | Firmware and hardware integration |
+| `G4: Integration` | MQTT/Backend/Client E2E |
+| `G5: Security/Reliability` | Security and reliability evidence |
+| `G6: Pilot Acceptance` | Field-test acceptance |
+
+Use `bash scripts/setup_project_gate.sh` from the repository root after GitHub CLI has authorized Project access. The repository cannot guarantee the live Project field exists until GitHub confirms it. Gate classification on an Issue is not the same as technical PASS of the gate.
