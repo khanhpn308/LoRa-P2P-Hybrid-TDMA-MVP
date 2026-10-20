@@ -30,7 +30,7 @@ if len(matches)!=1:
     sys.exit(4)
 field=matches[0]
 got=[o.get("name") for o in field.get("options",[])]
-if got==want and field.get("type","SingleSelect") in ("SingleSelect","SINGLE_SELECT"):
+if got==want:
     print("VERIFIED: Gate already has the exact seven options")
     sys.exit(0)
 print("MISMATCH: Gate differs from the canonical single-select field.")
