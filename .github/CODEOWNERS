@@ -1,20 +1,43 @@
-# Temporary CODEOWNERS baseline. Real team usernames are not yet confirmed.
-# After the five collaborators ACCEPT invitations and gain repo write access,
-# replace the owner below per path with actual GitHub usernames through a reviewed PR.
-# Never insert dummy @user placeholders that would break automatic review requests.
+# CODEOWNERS — LoRa P2P Hybrid TDMA MVP
+# Team usernames and repository write/admin permissions verified for Issue #8.
+# A matching path can have multiple owners, but GitHub normally requires
+# approval from only one of them; cross-team sign-off needs a separate rule.
+# Keep the default owner for unassigned paths.
 * @khanhpn308
+
+# Repository governance and architecture
 /.github/ @khanhpn308
 /docs/architecture/ @khanhpn308
 /docs/development/ @khanhpn308
 /docs/requirements/ @khanhpn308
 /docs/verification/ @khanhpn308
-/contracts/ @khanhpn308
-/firmware/components/ @khanhpn308
-/firmware/gateway_master/ @khanhpn308
-/firmware/sensor_node/ @khanhpn308
-/backend-go/ @khanhpn308
+
+# Hardware / RF (hardware/ is a planned directory)
+/hardware/ @phuocan847-hub @Quaan12 @khanhpn308
+
+# ESP32 + SX1276 shared components, Gateway and Sensor Node firmware
+/firmware/components/ @phuocan847-hub @Quaan12 @khanhpn308
+/firmware/gateway_master/ @phuocan847-hub @Quaan12 @khanhpn308
+/firmware/sensor_node/ @phuocan847-hub @Quaan12 @khanhpn308
+
+# Go backend and service deployment
+/backend-go/ @khanhpn308 @ngojames91-glitch
+/deploy/ @khanhpn308 @ngojames91-glitch
+
+# React Web and Flutter Mobile
 /clients/ @khanhpn308
-/simulator/ @khanhpn308
+/clients/web-dashboard/ @khanhpn308
+/clients/mobile-app/ @hieuvocong15
+
+# Versioned interface contracts: producer and consumer reviewers
+/contracts/ @khanhpn308
+/contracts/radio-mac/ @phuocan847-hub @Quaan12 @khanhpn308
+/contracts/mqtt/ @phuocan847-hub @Quaan12 @khanhpn308 @ngojames91-glitch
+/contracts/api/ @khanhpn308 @ngojames91-glitch @hieuvocong15
+
+# Tests, simulation and automation
 /tests/ @khanhpn308
-/deploy/ @khanhpn308
+/tests/hil/ @phuocan847-hub @Quaan12 @khanhpn308
+/tests/integration/ @khanhpn308 @ngojames91-glitch @hieuvocong15
+/simulator/ @khanhpn308
 /scripts/ @khanhpn308
