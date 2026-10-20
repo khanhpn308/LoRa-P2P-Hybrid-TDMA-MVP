@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:loratdma:mqtt:alert:v1-draft",
+  "title": "LoRa TDMA alert (proposed contract)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0-draft",
+      "type": "string"
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "gateway_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,32}$"
+    },
+    "gateway_epoch": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "event_seq": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$"
+    },
+    "observed_at": {
+      "oneOf": [
+        {
+          "type": "string",
+          "format": "date-time"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "observed_time_source": {
+      "enum": [
+        "gateway_utc",
+        "node_utc",
+        "estimated",
+        "unknown"
+      ]
+    },
+    "radio_rx_monotonic_us": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$"
+    },
+    "buffered": {
+      "type": "boolean"
+    },
+    "node_id": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 254
+    },
+    "superframe_seq": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "seq_num": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "schedule_version": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "severity": {
+      "enum": [
+        "P0_EMERGENCY",
+        "P1_HIGH",
+        "P2_MEDIUM",
+        "P3_NORMAL"
+      ]
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot_id",
+        "sensor_status_mask",
+        "ch1_raw",
+        "ch2_raw",
+        "ch3_raw",
+        "battery_mv",
+        "node_duty_permille"
+      ],
+      "properties": {
+        "slot_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 15
+        },
+        "sensor_status_mask": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "ch1_raw": {
+          "type": "integer",
+          "minimum": -32768,
+          "maximum": 32767
+        },
+        "ch2_raw": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "ch3_raw": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "battery_mv": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "node_duty_permille": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        }
+      }
+    },
+    "trigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "channel",
+        "observed_raw",
+        "threshold_raw"
+      ],
+      "properties": {
+        "channel": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "observed_raw": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "threshold_raw": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        }
+      }
+    },
+    "radio_ack_sent": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "schema_version",
+    "event_id",
+    "gateway_id",
+    "gateway_epoch",
+    "event_seq",
+    "observed_at",
+    "observed_time_source",
+    "radio_rx_monotonic_us",
+    "buffered",
+    "node_id",
+    "superframe_seq",
+    "seq_num",
+    "schedule_version",
+    "severity",
+    "data",
+    "radio_ack_sent"
+  ]
+}

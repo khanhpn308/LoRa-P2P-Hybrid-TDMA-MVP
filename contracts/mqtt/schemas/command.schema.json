@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:loratdma:mqtt:command:v1-draft",
+  "title": "LoRa TDMA command (proposed contract)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0-draft",
+      "type": "string"
+    },
+    "command_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "gateway_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,32}$"
+    },
+    "node_id": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 254
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "action": {
+      "enum": [
+        "SET_THRESHOLD",
+        "SET_SAMPLE_PERIOD",
+        "SET_RELAY"
+      ]
+    },
+    "params": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 4,
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "boolean"
+          }
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "command_id",
+    "gateway_id",
+    "node_id",
+    "created_at",
+    "expires_at",
+    "action",
+    "params"
+  ]
+}

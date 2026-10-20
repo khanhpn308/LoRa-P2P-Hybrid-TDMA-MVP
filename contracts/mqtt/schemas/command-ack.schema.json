@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:loratdma:mqtt:command-ack:v1-draft",
+  "title": "LoRa TDMA command-ack (proposed contract)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0-draft",
+      "type": "string"
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "gateway_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,32}$"
+    },
+    "gateway_epoch": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "event_seq": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$"
+    },
+    "observed_at": {
+      "oneOf": [
+        {
+          "type": "string",
+          "format": "date-time"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "observed_time_source": {
+      "enum": [
+        "gateway_utc",
+        "node_utc",
+        "estimated",
+        "unknown"
+      ]
+    },
+    "radio_rx_monotonic_us": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$"
+    },
+    "buffered": {
+      "type": "boolean"
+    },
+    "command_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "node_id": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 254
+    },
+    "status": {
+      "enum": [
+        "QUEUED",
+        "DISPATCHED",
+        "NODE_ACKED",
+        "REJECTED",
+        "EXPIRED",
+        "UNKNOWN"
+      ]
+    },
+    "reason_code": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    }
+  },
+  "required": [
+    "schema_version",
+    "event_id",
+    "gateway_id",
+    "gateway_epoch",
+    "event_seq",
+    "observed_at",
+    "observed_time_source",
+    "radio_rx_monotonic_us",
+    "buffered",
+    "command_id",
+    "node_id",
+    "status",
+    "reason_code"
+  ]
+}
