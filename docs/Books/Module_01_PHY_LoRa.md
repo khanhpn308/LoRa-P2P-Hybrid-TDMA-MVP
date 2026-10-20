@@ -175,7 +175,9 @@ Môi trường truyền dẫn của tất cả các hệ thống IoT không dây
 Dải phổ tần được chia thành nhiều kênh con có tần số trung tâm xác định. Ví dụ: Dải FM radio chia từ $87.5\text{ MHz}$ đến $108\text{ MHz}$. 
 Trong mạng LoRaWAN EU868, băng tần $868\text{ MHz}$ được phân chia thành nhiều kênh tần số với độ rộng băng thông mỗi kênh $125\text{ kHz}$ (ví dụ 3 kênh mặc định bắt buộc: $868.1\text{ MHz}$, $868.3\text{ MHz}$, $868.5\text{ MHz}$):
 
-$$\text{Kênh 0: } 868.1\text{ MHz} \quad\mid\quad \text{Kênh 1: } 868.3\text{ MHz} \quad\mid\quad \text{Kênh 2: } 868.5\text{ MHz}$$
+```math
+\text{Kênh 0: } 868.1\text{ MHz} \quad\mid\quad \text{Kênh 1: } 868.3\text{ MHz} \quad\mid\quad \text{Kênh 2: } 868.5\text{ MHz}
+```
 
 Các thiết bị phát trên các kênh khác nhau sẽ không gây can nhiễu lẫn nhau.
 
@@ -188,12 +190,14 @@ Trải phổ là phương thức truyền thông tiên tiến cho phép **nhiề
 #### 2.2.4. Bản chất toán học của Trải phổ bằng Mã trực giao (Code Spread Spectrum / CDMA)
 Để hiểu vì sao các tín hiệu có thể phát chồng lấn lên nhau mà không bị mất dữ liệu, giáo trình USMB (Cuốn 1, Trang 12–14) đưa ra mô hình toán học sử dụng **Ma trận trực giao Hadamard bậc 4**:
 
-$$H_4 = \begin{bmatrix}
+```math
+H_4 = \begin{bmatrix}
 1 & 1 & 1 & 1 \\
 1 & -1 & 1 & -1 \\
 1 & 1 & -1 & -1 \\
 1 & -1 & -1 & 1
-\end{bmatrix}$$
+\end{bmatrix}
+```
 
 Mỗi người dùng (User) được cấp phát một hàng của ma trận làm chuỗi mã trải phổ (Spreading Code):
 - $\text{User 1}: \mathbf{C_1} = [1, -1, 1, -1]$
@@ -202,17 +206,35 @@ Mỗi người dùng (User) được cấp phát một hàng của ma trận là
 
 **Đặc tính trực giao toán học:**
 Tích vô hướng giữa hai chuỗi mã của hai người dùng khác nhau luôn bằng 0:
-$$\mathbf{C_i} \cdot \mathbf{C_j} = \sum_{k=1}^4 C_{i,k} \cdot C_{j,k} = 0 \quad (\forall i \neq j)$$
+
+```math
+\mathbf{C_i} \cdot \mathbf{C_j} = \sum_{k=1}^4 C_{i,k} \cdot C_{j,k} = 0 \quad (\forall i \neq j)
+```
+
 Và tích vô hướng của một chuỗi mã với chính nó bằng đúng độ dài chuỗi ($N = 4$):
-$$\mathbf{C_i} \cdot \mathbf{C_i} = \sum_{k=1}^4 C_{i,k}^2 = 4$$
+
+```math
+\mathbf{C_i} \cdot \mathbf{C_i} = \sum_{k=1}^4 C_{i,k}^2 = 4
+```
 
 ##### Quy trình truyền và nhận đồng thời 3 người dùng (Simultaneous Transmission):
 1. **Tại máy phát:** Mỗi bit dữ liệu $b \in \{0, 1\}$ (quy ước mức logic $1 \rightarrow +1$, mức logic $0 \rightarrow 0$) được nhân với vector chuỗi mã $\mathbf{C}$:
-   $$\mathbf{S} = b \cdot \mathbf{C}$$
+
+   ```math
+   \mathbf{S} = b \cdot \mathbf{C}
+   ```
+
 2. **Trên ăng-ten máy thu:** Sóng điện từ của 3 người dùng cộng tuyến tính trong không gian:
-   $$\mathbf{R} = \mathbf{S_1} + \mathbf{S_2} + \mathbf{S_3}$$
+
+   ```math
+   \mathbf{R} = \mathbf{S_1} + \mathbf{S_2} + \mathbf{S_3}
+   ```
+
 3. **Tại bộ giải điều chế máy thu:** Để khôi phục dữ liệu của User $i$, máy thu nhân tín hiệu tổng hợp $\mathbf{R}$ với chuỗi mã $\mathbf{C_i}$ rồi chia cho độ dài chuỗi $N = 4$:
-   $$b_{\text{rec}} = \frac{1}{4} (\mathbf{R} \cdot \mathbf{C_i}) = \frac{1}{4} \left( (\mathbf{S_i} \cdot \mathbf{C_i}) + \sum_{j \neq i} (\mathbf{S_j} \cdot \mathbf{C_i}) \right) = \frac{1}{4} (4 \cdot b_i + 0) = b_i$$
+
+   ```math
+   b_{\text{rec}} = \frac{1}{4} (\mathbf{R} \cdot \mathbf{C_i}) = \frac{1}{4} \left( (\mathbf{S_i} \cdot \mathbf{C_i}) + \sum_{j \neq i} (\mathbf{S_j} \cdot \mathbf{C_i}) \right) = \frac{1}{4} (4 \cdot b_i + 0) = b_i
+   ```
 
 Nhờ tính chất trực giao, toàn bộ năng lượng của các người dùng khác bị triệt tiêu về 0, giúp máy thu khôi phục chính xác 100% bit dữ liệu ban đầu.
 
@@ -230,17 +252,30 @@ Trong kỹ thuật viễn thông vô tuyến, công suất sóng điện từ su
 
 ##### 1. Đơn vị $\text{dB}$ (Decibel) — Thước đo Tỷ lệ tương đối:
 $\text{dB}$ không biểu diễn một mức công suất cụ thể, mà là tỷ số so sánh giữa hai mức công suất (công suất thu $P_R$ so với công suất phát $P_T$, hoặc hệ số khuếch đại / suy hao):
-$$\text{Tỷ số công suất (dB)} = 10 \log_{10}\left(\frac{P_R}{P_T}\right)$$
+
+```math
+\text{Tỷ số công suất (dB)} = 10 \log_{10}\left(\frac{P_R}{P_T}\right)
+```
+
 - Nếu kết quả là số dương ($+$): Tuyến truyền dẫn có độ lợi (Gain / Khuếch đại).
 - Nếu kết quả là số âm ($-$): Tuyến truyền dẫn bị suy hao (Attenuation / Loss).
 
 Công thức đảo để tìm tỷ số công suất từ giá trị $\text{dB}$:
-$$\frac{P_R}{P_T} = 10^{\frac{\text{Tỷ số (dB)}}{10}}$$
+
+```math
+\frac{P_R}{P_T} = 10^{\frac{\text{Tỷ số (dB)}}{10}}
+```
 
 ##### 2. Đơn vị $\text{dBm}$ (Decibel-milliwatt) — Thước đo Công suất tuyệt đối:
 $\text{dBm}$ là mức công suất tuyệt đối được quy chiếu theo mốc chuẩn $1\text{ mW}$ ($0\text{ dBm} = 1\text{ mW}$):
-$$P(\text{dBm}) = 10 \log_{10}\left(\frac{P(\text{W})}{0.001\text{ W}}\right) = 10 \log_{10}\left(\frac{P(\text{mW})}{1\text{ mW}}\right)$$
-$$P(\text{W}) = 0.001 \times 10^{\frac{P(\text{dBm})}{10}}$$
+
+```math
+P(\text{dBm}) = 10 \log_{10}\left(\frac{P(\text{W})}{0.001\text{ W}}\right) = 10 \log_{10}\left(\frac{P(\text{mW})}{1\text{ mW}}\right)
+```
+
+```math
+P(\text{W}) = 0.001 \times 10^{\frac{P(\text{dBm})}{10}}
+```
 
 ##### 3. Bảng quy tắc tính nhẩm Logarit thần tốc (Mốc chuẩn kỹ sư):
 Nhờ tính chất logarit biến phép nhân/chia thành phép cộng/trừ, kỹ sư có thể tính nhẩm ngân sách đường truyền cực nhanh dựa trên bảng mốc vàng sau:
@@ -269,7 +304,11 @@ flowchart LR
 1. **RSSI (Received Signal Strength Indication):** Là tổng công suất vô tuyến đo được tại cổng ăng-ten của máy thu trong dải thông kênh: $\text{RSSI} \equiv P_R$ (tính bằng $\text{dBm}$). Giá trị RSSI càng gần 0 thì tín hiệu càng mạnh (ví dụ: $-30\text{ dBm}$ là rất mạnh, $-110\text{ dBm}$ là rất yếu).
 2. **Sensitivity (Độ nhạy thu):** Là mức công suất tín hiệu tối thiểu tại đầu vào máy thu mà thiết bị có thể giải mã được dữ liệu mà không bị lỗi. Nếu $\text{RSSI} < \text{Sensitivity}$, tín hiệu hoàn toàn không thể phát hiện.
 3. **SNR (Signal-to-Noise Ratio):** Tỷ số giữa công suất tín hiệu thu được $P_R$ và công suất nhiễu nền $P_N$:
-   $$\text{SNR (dB)} = 10 \log_{10}\left(\frac{P_R}{P_N}\right) = P_{R(\text{dBm})} - P_{N(\text{dBm})}$$
+
+   ```math
+   \text{SNR (dB)} = 10 \log_{10}\left(\frac{P_R}{P_N}\right) = P_{R(\text{dBm})} - P_{N(\text{dBm})}
+   ```
+
    - Trong các hệ thống điều chế số truyền thống (FSK, ASK, Wi-Fi): Bắt buộc $\text{SNR} > 0\text{ dB}$ (tức $P_R > P_N$, công suất tín hiệu phải lớn hơn công suất nhiễu thì máy thu mới tách được bit).
    - **Đột phá mang tính cách mạng của LoRa CSS:** Nhờ kỹ thuật trải phổ, modem LoRa có thể giải điều chế thành công ngay cả khi **tín hiệu chìm sâu dưới đáy tầng nhiễu** ($\text{SNR} < 0\text{ dB}$, tức $P_R < P_N$):
 
@@ -291,7 +330,9 @@ flowchart LR
 #### 2.3.3. Ngân sách đường truyền (Link Budget) & Khoảng cách truyền tối đa
 **Ngân sách đường truyền (Link Budget)** là thước đo tổng thể mạnh mẽ nhất cho năng lực phủ sóng của một công nghệ vô tuyến. Nó biểu diễn quỹ suy hao tối đa cho phép trên toàn tuyến truyền sóng trước khi tín hiệu bị mất hoàn toàn:
 
-$$\text{Link Budget (dB)} = P_T(\text{dBm}) - \text{Sensitivity}(\text{dBm})$$
+```math
+\text{Link Budget (dB)} = P_T(\text{dBm}) - \text{Sensitivity}(\text{dBm})
+```
 
 ##### So sánh Link Budget giữa các công nghệ:
 - **4G LTE:** $P_T \approx +23\text{ dBm}$, Sensitivity $\approx -107\text{ dBm} \implies \text{Link Budget} \approx \mathbf{130\text{ dB}}$.
@@ -303,14 +344,21 @@ Khoảng chênh lệch $32\text{ dB}$ giữa LoRa ($162\text{ dB}$) và 4G ($130
 
 ##### Mô hình tính toán cự ly truyền sóng lý thuyết (USMB Simplified Path Loss Model):
 Theo giáo trình USMB (Cuốn 1, Trang 18), trong điều kiện không gian tự do lý tưởng, công suất suy hao giữa máy phát và máy thu được tính theo công thức:
-$$\text{Loss (dB)} = 10 \log_{10}\left(D^2 \cdot F^2 \cdot 1755\right)$$
+
+```math
+\text{Loss (dB)} = 10 \log_{10}\left(D^2 \cdot F^2 \cdot 1755\right)
+```
+
 Trong đó:
 - $\text{Loss}$: Độ suy hao không gian (tính bằng $\text{dB}$).
 - $D$: Khoảng cách đường truyền (tính bằng $\text{km}$).
 - $F$: Tần số sóng mang (tính bằng $\text{MHz}$).
 
 Khi toàn bộ Link Budget bị tiêu hao hoàn toàn vào không gian ($\text{Loss} = \text{Link Budget}$), ta suy ra cự ly truyền tối đa lý thuyết:
-$$D_{\max} = \sqrt{\frac{10^{\frac{\text{Link Budget}}{10}}}{1755 \cdot F^2}}$$
+
+```math
+D_{\max} = \sqrt{\frac{10^{\frac{\text{Link Budget}}{10}}}{1755 \cdot F^2}}
+```
 
 ##### Đánh giá thực nghiệm cự ly truyền:
 - Với chip SX1272 ($\text{Link Budget} = 157\text{ dB}$, tần số $868\text{ MHz}$): $D_{\max} = 1946\text{ km}$.
@@ -339,7 +387,9 @@ flowchart LR
 #### 2.4.2. Quy luật biểu diễn Bit nhị phân và Hệ số trải phổ (Spreading Factor - SF)
 Trong các hệ thống viễn thông truyền thống (như FSK hay BPSK), mỗi symbol thường chỉ mang 1 hoặc 2 bits. Trong công nghệ LoRa, mối quan hệ giữa symbol và bit tuân theo một quy tắc vàng bất biến:
 
-$$\mathbf{\text{Số bit nhị phân được mã hóa trong 1 Symbol}} = \mathbf{\text{Spreading Factor (SF)}}$$
+```math
+\mathbf{\text{Số bit nhị phân được mã hóa trong 1 Symbol}} = \mathbf{\text{Spreading Factor (SF)}}
+```
 
 Ví dụ:
 - Khi cấu hình $\text{SF} = 7$: Mỗi symbol mang chính xác $7\text{ bits}$ dữ liệu nhị phân.
@@ -376,14 +426,22 @@ Tần số (Hz)
 #### 2.4.3. Thời gian truyền Symbol ($T_{\text{symbol}}$), Tốc độ Symbol ($R_s$) & Tốc độ Chip ($R_c$)
 Thời gian cần thiết để truyền trọn vẹn một ký hiệu LoRa ($T_{\text{symbol}}$) phụ thuộc chặt chẽ vào hai tham số: Hệ số trải phổ $\text{SF}$ và Băng thông $\text{BW}$:
 
-$$T_{\text{symbol}} = \frac{2^{\text{SF}}}{\text{BW}}$$
+```math
+T_{\text{symbol}} = \frac{2^{\text{SF}}}{\text{BW}}
+```
 
 Tốc độ phát symbol (Symbol Rate $R_s$):
-$$R_s = \frac{1}{T_{\text{symbol}}} = \frac{\text{BW}}{2^{\text{SF}}} \quad (\text{symbols/s})$$
+
+```math
+R_s = \frac{1}{T_{\text{symbol}}} = \frac{\text{BW}}{2^{\text{SF}}} \quad (\text{symbols/s})
+```
 
 Tốc độ trải chip (Chip Rate $R_c$):
 Trong điều chế LoRa CSS, mỗi symbol được chia thành chính xác $2^{\text{SF}}$ lát cắt thời gian gọi là **chip**. Do đó, tốc độ chip luôn bằng đúng độ rộng băng thông vật lý:
-$$R_c = R_s \cdot 2^{\text{SF}} = \frac{\text{BW}}{2^{\text{SF}}} \cdot 2^{\text{SF}} = \mathbf{\text{BW}} \quad (\text{chips/s})$$
+
+```math
+R_c = R_s \cdot 2^{\text{SF}} = \frac{\text{BW}}{2^{\text{SF}}} \cdot 2^{\text{SF}} = \mathbf{\text{BW}} \quad (\text{chips/s})
+```
 
 ##### Bảng đối chiếu các thông số thời gian Symbol tại băng thông chuẩn $\text{BW} = 125\text{ kHz}$:
 
@@ -429,13 +487,28 @@ flowchart LR
 
 **Bản chất toán học của phép khử quét tần (De-chirping):**
 Tín hiệu thu $\text{symbol}(t)$ là một Up-chirp có tần số tức thời:
-$$f_{\text{up}}(t) = f_0 + \left( \frac{\text{BW}}{T_{\text{symbol}}} \right) t$$
+
+```math
+f_{\text{up}}(t) = f_0 + \left( \frac{\text{BW}}{T_{\text{symbol}}} \right) t
+```
+
 Bộ tạo xung nội tại máy thu phát ra một Down-chirp chuẩn liên hợp $\text{down}(t)$ có tần số quét ngược chiều:
-$$f_{\text{down}}(t) = F_{\max} - \left( \frac{\text{BW}}{T_{\text{symbol}}} \right) t$$
+
+```math
+f_{\text{down}}(t) = F_{\max} - \left( \frac{\text{BW}}{T_{\text{symbol}}} \right) t
+```
+
 Khi nhân hai tín hiệu này trong miền thời gian:
-$$\text{demod}(t) = \text{symbol}(t) \cdot \text{down}(t)$$
+
+```math
+\text{demod}(t) = \text{symbol}(t) \cdot \text{down}(t)
+```
+
 Độ dốc quét tần (Chirp Rate $\mu = \frac{\text{BW}}{T_{\text{symbol}}}$) của Up-chirp và Down-chirp hoàn toàn triệt tiêu lẫn nhau. Kết quả của phép nhân là một **sóng hình sin thuần túy có tần số không đổi** $f_{\text{tone}}$ tỷ lệ tuyến tính với chỉ số $n$:
-$$f_{\text{tone}} = \left( \frac{n}{2^{\text{SF}}} \right) \cdot \text{BW}$$
+
+```math
+f_{\text{tone}} = \left( \frac{n}{2^{\text{SF}}} \right) \cdot \text{BW}
+```
 
 **Biến đổi Fourier nhanh (FFT) trích xuất dữ liệu:**
 Máy thu lấy mẫu tín hiệu $\text{demod}(t)$ với tần số lấy mẫu $f_s = \text{BW}$ ($2^{\text{SF}}$ mẫu trên mỗi symbol) và đưa qua thuật toán FFT. 
@@ -482,7 +555,9 @@ Khung truyền tầng vật lý của LoRa (PHY Frame) trên sóng vô tuyến c
 #### 2.5.1. Tốc độ bit tức thời của LoRa (Raw Bitrate)
 Tốc độ bit thô của modem LoRa (chưa tính đến mã hóa sửa lỗi và các byte tiêu đề) được tính bằng tích của số bit trên mỗi symbol ($\text{SF}$) và tốc độ phát symbol ($R_s$):
 
-$$R_{\text{raw}} = \text{SF} \cdot R_s = \text{SF} \cdot \left(\frac{\text{BW}}{2^{\text{SF}}}\right) \quad (\text{bps})$$
+```math
+R_{\text{raw}} = \text{SF} \cdot R_s = \text{SF} \cdot \left(\frac{\text{BW}}{2^{\text{SF}}}\right) \quad (\text{bps})
+```
 
 - Khi $\text{SF}$ tăng: Tốc độ bit **giảm mạnh theo cấp số nhân**, vì mẫu số $2^{\text{SF}}$ tăng nhanh hơn nhiều so với tử số $\text{SF}$.
 - Khi $\text{BW}$ tăng: Tốc độ bit **tăng tỷ lệ thuận tuyến tính**.
@@ -490,7 +565,9 @@ $$R_{\text{raw}} = \text{SF} \cdot R_s = \text{SF} \cdot \left(\frac{\text{BW}}{
 #### 2.5.2. Ảnh hưởng của Tỷ lệ Mã hóa sửa lỗi (Coding Rate - CR)
 Để bảo vệ các bit dữ liệu khỏi can nhiễu xung trên đường truyền, modem LoRa tích hợp bộ mã hóa kênh sửa lỗi tiến Hamming FEC (Forward Error Correction). Tỷ lệ mã hóa $\text{CR}$ được biểu diễn dưới dạng phân số:
 
-$$\text{CR} = \frac{4}{4 + n} \quad \text{với } n \in \{1, 2, 3, 4\}$$
+```math
+\text{CR} = \frac{4}{4 + n} \quad \text{với } n \in \{1, 2, 3, 4\}
+```
 
 Quy ước trong mã nguồn và thanh ghi Semtech:
 - $\text{CR} = 1 \iff 4/5$ (Cứ mỗi 4 bit dữ liệu hữu ích, chèn thêm 1 bit chẵn lẻ parity $\rightarrow$ tổng truyền đi 5 bits).
@@ -499,9 +576,16 @@ Quy ước trong mã nguồn và thanh ghi Semtech:
 - $\text{CR} = 4 \iff 4/8$ (Cứ 4 bit dữ liệu, chèn 4 bit kiểm tra $\rightarrow$ truyền đi 8 bits, tăng gấp đôi số lượng bit truyền).
 
 ##### Hệ số dôi dư tải (Overhead Ratio) và Tốc độ bit hữu ích:
-$$\text{Overhead Ratio} = \frac{4 + n}{4} = \frac{1}{\text{CR}}$$
+
+```math
+\text{Overhead Ratio} = \frac{4 + n}{4} = \frac{1}{\text{CR}}
+```
+
 Tốc độ bit hữu ích sau khi tính đến mã hóa sửa lỗi:
-$$R_{\text{bit}} = R_{\text{raw}} \cdot \text{CR} = \text{SF} \cdot \left(\frac{\text{BW}}{2^{\text{SF}}}\right) \cdot \left(\frac{4}{4 + n}\right)$$
+
+```math
+R_{\text{bit}} = R_{\text{raw}} \cdot \text{CR} = \text{SF} \cdot \left(\frac{\text{BW}}{2^{\text{SF}}}\right) \cdot \left(\frac{4}{4 + n}\right)
+```
 
 ##### Bảng đối chiếu tốc độ bit LoRa PHY tại băng thông $\text{BW} = 125\text{ kHz}$:
 
@@ -524,7 +608,10 @@ Người dùng cuối chỉ quan tâm đến dữ liệu thực sự cần truy�
 - $\text{MIC}$ (Message Integrity Code): $4\text{ bytes}$ chữ ký bảo mật AES-CMAC.
 
 Do đó, khi người dùng gửi $1\text{ byte}$ dữ liệu cảm biến, tầng vật lý LoRa thực tế phải vận chuyển một khối PHY Payload dài:
-$$\text{PHY Payload} = 13\text{ bytes (MAC Overhead)} + 1\text{ byte (User Data)} = \mathbf{14\text{ bytes}}$$
+
+```math
+\text{PHY Payload} = 13\text{ bytes (MAC Overhead)} + 1\text{ byte (User Data)} = \mathbf{14\text{ bytes}}
+```
 
 Hệ quả là tốc độ bit thực tế mà người dùng cảm nhận được (User Useful Bitrate) bị sụt giảm nghiêm trọng so với tốc độ danh định của modem:
 - Ở **SF7** ($\text{ToA} = 46.3\text{ ms}$): Tốc độ bit người dùng $= \frac{8\text{ bits}}{46.3\text{ ms}} \approx \mathbf{172.7\text{ bps}}$.
@@ -533,14 +620,22 @@ Hệ quả là tốc độ bit thực tế mà người dùng cảm nhận đư�
 #### 2.5.4. Công thức Giải tích Semtech tính toán Time on Air (ToA) Toàn phần
 Tổng thời gian truyền một gói tin LoRa trên không gian (Time on Air) được tính bằng tổng thời gian truyền phần Preamble và thời gian truyền phần Payload:
 
-$$T_{\text{ToA}} = T_{\text{preamble}} + T_{\text{payload}}$$
+```math
+T_{\text{ToA}} = T_{\text{preamble}} + T_{\text{payload}}
+```
 
 ##### 1. Thời gian truyền Preamble ($T_{\text{preamble}}$):
-$$T_{\text{preamble}} = (n_{\text{preamble}} + 4.25) \cdot T_{\text{symbol}} = (n_{\text{preamble}} + 4.25) \cdot \left(\frac{2^{\text{SF}}}{\text{BW}}\right)$$
+
+```math
+T_{\text{preamble}} = (n_{\text{preamble}} + 4.25) \cdot T_{\text{symbol}} = (n_{\text{preamble}} + 4.25) \cdot \left(\frac{2^{\text{SF}}}{\text{BW}}\right)
+```
 
 ##### 2. Số lượng Symbol của Payload ($n_{\text{payload}}$):
 Theo đặc tả kỹ thuật giải tích của Semtech (được trích dẫn chính xác tại Trang 30 Cuốn 1):
-$$n_{\text{payload}} = 8 + \max\left( \left\lceil \frac{8 \cdot \text{PL} - 4 \cdot \text{SF} + 28 + 16 \cdot \text{CRC} - 20 \cdot H}{4(\text{SF} - 2 \cdot \text{DE})} \right\rceil (\text{CR} + 4), \; 0 \right)$$
+
+```math
+n_{\text{payload}} = 8 + \max\left( \left\lceil \frac{8 \cdot \text{PL} - 4 \cdot \text{SF} + 28 + 16 \cdot \text{CRC} - 20 \cdot H}{4(\text{SF} - 2 \cdot \text{DE})} \right\rceil (\text{CR} + 4), \; 0 \right)
+```
 
 Trong đó:
 - $\text{PL}$: Số lượng byte của LoRa PHY Payload ($1 \le \text{PL} \le 255$).
@@ -552,7 +647,10 @@ Trong đó:
 - Hàm $\lceil x \rceil$: Phép toán làm tròn lên số nguyên gần nhất (Ceiling function).
 
 ##### 3. Tổng thời gian chiếm sóng (Time on Air):
-$$T_{\text{ToA}} = (n_{\text{preamble-total}} + n_{\text{payload}}) \cdot T_{\text{symbol}} = \left[ (n_{\text{preamble}} + 4.25) + n_{\text{payload}} \right] \cdot \left(\frac{2^{\text{SF}}}{\text{BW}}\right)$$
+
+```math
+T_{\text{ToA}} = (n_{\text{preamble-total}} + n_{\text{payload}}) \cdot T_{\text{symbol}} = \left[ (n_{\text{preamble}} + 4.25) + n_{\text{payload}} \right] \cdot \left(\frac{2^{\text{SF}}}{\text{BW}}\right)
+```
 
 ---
 
@@ -561,11 +659,15 @@ $$T_{\text{ToA}} = (n_{\text{preamble-total}} + n_{\text{payload}}) \cdot T_{\te
 #### 2.6.1. Quy định Pháp lý 1% Duty Cycle trên Băng tần ISM Châu Âu (EU868)
 Băng tần $868\text{ MHz}$ là dải phổ chung miễn giấy phép, do đó Viện Tiêu chuẩn Viễn thông Châu Âu (ETSI - chuẩn EN 300 220) ban hành quy định pháp lý bắt buộc về **Chu kỳ làm việc (Duty Cycle)** nhằm ngăn ngừa tình trạng một thiết bị chiếm dụng kênh liên tục gây nghẽn toàn mạng:
 
-$$\text{Duty Cycle} = \frac{\sum T_{\text{on}}}{T_{\text{observation}}} \le 1\%$$
+```math
+\text{Duty Cycle} = \frac{\sum T_{\text{on}}}{T_{\text{observation}}} \le 1\%
+```
 
 Quy định $1\%$ có nghĩa là: **Nếu thiết bị chiếm sóng phát tín hiệu trong khoảng thời gian $T_{\text{on}}$, nó bắt buộc phải im lặng tuyệt đối (Off-Time) trên phân băng đó ít nhất $99$ lần khoảng thời gian vừa phát**:
 
-$$T_{\text{off}} = T_{\text{on}} \cdot \left(\frac{1 - \text{Duty Cycle}}{\text{Duty Cycle}}\right) = T_{\text{on}} \cdot \left(\frac{1 - 0.01}{0.01}\right) = \mathbf{99 \cdot T_{\text{on}}}$$
+```math
+T_{\text{off}} = T_{\text{on}} \cdot \left(\frac{1 - \text{Duty Cycle}}{\text{Duty Cycle}}\right) = T_{\text{on}} \cdot \left(\frac{1 - 0.01}{0.01}\right) = \mathbf{99 \cdot T_{\text{on}}}
+```
 
 ##### Bảng phân chia các Sub-bands trong băng tần EU868 và giới hạn Duty Cycle:
 Giáo trình USMB (Cuốn 1, Trang 31) nhấn mạnh điểm mấu chốt: **Quy định 1% Duty Cycle áp dụng riêng biệt cho từng phân băng tần cụ thể**:
@@ -585,7 +687,9 @@ Giáo trình USMB (Cuốn 1, Trang 31) nhấn mạnh điểm mấu chốt: **Quy
 #### 2.6.2. Tốc độ Bit Trung bình Dài hạn (Average Long-term Bitrate)
 Khi tính đến ràng buộc 1% Duty Cycle, tốc độ truyền dữ liệu hữu ích của một nút cảm biến trong suốt vòng đời bị giảm đi $100$ lần:
 
-$$R_{\text{average}} = \frac{R_{\text{useful}}}{100}$$
+```math
+R_{\text{average}} = \frac{R_{\text{useful}}}{100}
+```
 
 - Với **SF7** (gói 1 byte, $\text{ToA} = 46.3\text{ ms}$, tốc độ tức thời $172.7\text{ bps}$): Tốc độ trung bình dài hạn chỉ đạt **$1.73\text{ bps}$** (khoảng $0.21\text{ bytes/s}$).
 - Với **SF12** (gói 1 byte, $\text{ToA} = 1155.1\text{ ms}$, tốc độ tức thời $6.9\text{ bps}$): Tốc độ trung bình dài hạn chỉ đạt **$0.07\text{ bps}$** (khoảng $0.0087\text{ bytes/s}$ $\rightarrow$ mất hơn 2 phút mới truyền xong 1 byte dữ liệu trung bình).
@@ -619,7 +723,10 @@ stateDiagram-v2
 ```
 
 Năng lượng tiêu thụ cho một chu kỳ hoạt động ($E_{\text{cycle}}$):
-$$E_{\text{cycle}} = V_{dd} \cdot \left( I_{\text{TX}} \cdot T_{\text{ToA}} + I_{\text{RX}} \cdot T_{\text{RX}} + I_{\text{sensor}} \cdot T_{\text{sensor}} + I_{\text{sleep}} \cdot T_{\text{sleep}} \right)$$
+
+```math
+E_{\text{cycle}} = V_{dd} \cdot \left( I_{\text{TX}} \cdot T_{\text{ToA}} + I_{\text{RX}} \cdot T_{\text{RX}} + I_{\text{sensor}} \cdot T_{\text{sensor}} + I_{\text{sleep}} \cdot T_{\text{sleep}} \right)
+```
 
 - Dòng phát sóng $I_{\text{TX}}$: Chiếm từ $30\text{ mA}$ (ở công suất $+2\text{ dBm}$) đến $120\text{ mA}$ (ở công suất $+14\text{ dBm}$ với PA_BOOST).
 - Dòng thu sóng $I_{\text{RX}}$: Khoảng $10 - 15\text{ mA}$ trong suốt các cửa sổ nhận `RX1` và `RX2`.
@@ -646,7 +753,11 @@ Hệ thống cảnh báo dưới đây được trích xuất từ các dấu hi
 >
 > **3. Giải pháp kỹ thuật khắc phục & Best Practice:**
 > - **Cài đặt bộ đếm thời gian Off-time nghiêm ngặt trong Firmware:** Sau mỗi lần truyền bản tin có thời gian phát $T_{\text{on}}$, firmware bắt buộc phải kích hoạt bộ đếm thời gian ngủ không phát sóng:
->   $$T_{\text{off}} = T_{\text{on}} \times 99$$
+>
+>   ```math
+>   T_{\text{off}} = T_{\text{on}} \times 99
+>   ```
+>
 > - **Áp dụng giải thuật Token Bucket / Leaky Bucket:** Quản lý ngân sách thời gian phát sóng tích lũy (Airtime Budget) trong bộ nhớ RAM/EEPROM. Nếu số dư airtime không đủ cho gói tin tiếp theo, lập tức hoãn phát và đưa vi điều khiển vào chế độ Deep Sleep.
 > - **Chiến lược chuyển kênh thông minh (Inter-subband Channel Hopping):** Khi có dữ liệu khẩn cấp (Alarm/Event), firmware chủ động chuyển tần số sang phân băng Sub-band g1 ($863 - 868\text{ MHz}$) hoặc Sub-band g3 ($869.4 - 869.65\text{ MHz}$, Duty Cycle lên tới $10\%$) thay vì cố gắng phát trên các kênh mặc định của Sub-band g ($868.0 - 868.6\text{ MHz}$).
 
@@ -665,7 +776,11 @@ Hệ thống cảnh báo dưới đây được trích xuất từ các dấu hi
 >
 > **3. Giải pháp kỹ thuật khắc phục & Best Practice:**
 > - **Quy tắc vàng bật LDRO:** Luôn luôn kiểm tra điều kiện thời gian symbol trước khi khởi tạo modem:
->   $$\text{Nếu } T_{\text{symbol}} = \frac{2^{\text{SF}}}{\text{BW}} > 16.0\text{ ms} \implies \text{Bắt buộc bật } \text{DE} = 1$$
+>
+>   ```math
+>   \text{Nếu } T_{\text{symbol}} = \frac{2^{\text{SF}}}{\text{BW}} > 16.0\text{ ms} \implies \text{Bắt buộc bật } \text{DE} = 1
+>   ```
+>
 > - **Cấu hình thanh ghi phần cứng SX1276/SX1278 (ESP-IDF):**
 >   * Thanh ghi `RegModemConfig3` (Địa chỉ `0x26`): Thiết lập Bit 3 (`LowDataRateOptimize = 1`).
 >   ```c
@@ -743,7 +858,10 @@ Toàn bộ 12 bài tập có biểu tượng Búa & Cờ-lê (🛠️) từ Chư
   - Biểu tượng phát: $\mathbf{S_i} = b_i \cdot \mathbf{C_i}$.
   - Tín hiệu thu đồng thời trên ăng-ten: $\mathbf{R} = \sum_{i=1}^3 \mathbf{S_i}$.
   - Giải mã tại máy thu $i$: Nhân vô hướng với mã $\mathbf{C_i}$ và lấy trung bình:
-    $$b_{\text{rec}} = \frac{1}{4} \sum_{k=1}^4 \left( R_k \cdot C_{i,k} \right)$$
+
+    ```math
+    b_{\text{rec}} = \frac{1}{4} \sum_{k=1}^4 \left( R_k \cdot C_{i,k} \right)
+    ```
 
 - **[Lời giải chi tiết từng bước (Step-by-step)]:**
   **1. Kiểm chứng truyền đơn lẻ cho User 2 (Table 4):**
@@ -778,18 +896,36 @@ Toàn bộ 12 bài tập có biểu tượng Búa & Cờ-lê (🛠️) từ Chư
 
 - **[Phân tích & Công thức áp dụng]:**
   Áp dụng công thức đảo Decibel:
-  $$\frac{P_R}{P_T} = 10^{\frac{\text{Ratio (dB)}}{10}}$$
+
+  ```math
+  \frac{P_R}{P_T} = 10^{\frac{\text{Ratio (dB)}}{10}}
+  ```
 
 - **[Lời giải chi tiết từng bước (Step-by-step)]:**
   1. Thế giá trị $\text{Ratio} = -6\text{ dB}$ vào công thức:
-     $$\frac{P_R}{P_T} = 10^{\frac{-6}{10}} = 10^{-0.6}$$
+
+     ```math
+     \frac{P_R}{P_T} = 10^{\frac{-6}{10}} = 10^{-0.6}
+     ```
+
   2. Bấm máy tính số học chính xác:
-     $$10^{-0.6} \approx 0.2511886... \approx \mathbf{0.25}$$
+
+     ```math
+     10^{-0.6} \approx 0.2511886... \approx \mathbf{0.25}
+     ```
+
   3. Hoặc suy luận nhanh bằng mốc chuẩn kỹ sư:
-     $$-6\text{ dB} = (-3\text{ dB}) + (-3\text{ dB}) \implies \text{Giảm một nửa rồi lại giảm tiếp một nửa} = \frac{1}{2} \times \frac{1}{2} = \mathbf{0.25}$$
+
+     ```math
+     -6\text{ dB} = (-3\text{ dB}) + (-3\text{ dB}) \implies \text{Giảm một nửa rồi lại giảm tiếp một nửa} = \frac{1}{2} \times \frac{1}{2} = \mathbf{0.25}
+     ```
 
 - **[Đáp số chuẩn & Bài học kỹ thuật rút ra]:**
-  $$\mathbf{\frac{P_R}{P_T} = 0.25}$$
+
+  ```math
+  \mathbf{\frac{P_R}{P_T} = 0.25}
+  ```
+
   *Bài học kỹ thuật:* Dấu trừ ($-$) đại diện cho sự suy hao (Attenuation). Tỷ số $0.25 < 1$ xác nhận công suất tại đầu thu chỉ còn lại đúng $25\%$ ($1/4$) so với công suất phát ban đầu; $75\%$ năng lượng đã bị tiêu tán dưới dạng nhiệt trên tuyến cáp.
 
 ---
@@ -802,20 +938,42 @@ Toàn bộ 12 bài tập có biểu tượng Búa & Cờ-lê (🛠️) từ Chư
 
 - **[Phân tích & Công thức áp dụng]:**
   1. *Phương pháp 1: Áp dụng công thức giải tích chuẩn:*
-     $$P(\text{dBm}) = 10 \log_{10}\left(\frac{P(\text{W})}{0.001\text{ W}}\right) = 10 \log_{10}(P(\text{mW}))$$
+
+     ```math
+     P(\text{dBm}) = 10 \log_{10}\left(\frac{P(\text{W})}{0.001\text{ W}}\right) = 10 \log_{10}(P(\text{mW}))
+     ```
+
   2. *Phương pháp 2: Tách thừa số theo mốc nhẩm kỹ sư (Bảng Table 9):*
-     $$2\text{ W} = 1\text{ mW} \times 10 \times 10 \times 10 \times 2$$
+
+     ```math
+     2\text{ W} = 1\text{ mW} \times 10 \times 10 \times 10 \times 2
+     ```
 
 - **[Lời giải chi tiết từng bước (Step-by-step)]:**
   - *Cách 1 (Tính nhẩm logarit theo sách USMB):*
-    $$2\text{ W} = 2000\text{ mW} = 1\text{ mW} \times 10 \times 10 \times 10 \times 2$$
+
+    ```math
+    2\text{ W} = 2000\text{ mW} = 1\text{ mW} \times 10 \times 10 \times 10 \times 2
+    ```
+
     Tương đương trong miền $\text{dBm}$:
-    $$P(\text{dBm}) = 0\text{ dBm} + 10\text{ dB} + 10\text{ dB} + 10\text{ dB} + 3\text{ dB} = \mathbf{33\text{ dBm}}$$
+
+    ```math
+    P(\text{dBm}) = 0\text{ dBm} + 10\text{ dB} + 10\text{ dB} + 10\text{ dB} + 3\text{ dB} = \mathbf{33\text{ dBm}}
+    ```
+
   - *Cách 2 (Tính đại số chính xác):*
-    $$P(\text{dBm}) = 10 \log_{10}(2000) = 10 \cdot (3 + \log_{10} 2) \approx 10 \cdot (3 + 0.30103) = \mathbf{33.01\text{ dBm}}$$
+
+    ```math
+    P(\text{dBm}) = 10 \log_{10}(2000) = 10 \cdot (3 + \log_{10} 2) \approx 10 \cdot (3 + 0.30103) = \mathbf{33.01\text{ dBm}}
+    ```
 
 - **[Đáp số chuẩn & Bài học kỹ thuật rút ra]:**
-  $$\mathbf{P = 33\text{ dBm}}$$
+
+  ```math
+  \mathbf{P = 33\text{ dBm}}
+  ```
+
   *Bài học kỹ thuật:* Kỹ sư có thể chuyển đổi tức thì giữa Watt và $\text{dBm}$ mà không cần máy tính bỏ túi. Mức $33\text{ dBm}$ là công suất rất lớn trong thiết bị cầm tay, gấp gần $80$ lần công suất tối đa của thiết bị LoRaWAN EU868 ($14\text{ dBm} = 25\text{ mW}$).
 
 ---
@@ -830,25 +988,51 @@ Toàn bộ 12 bài tập có biểu tượng Búa & Cờ-lê (🛠️) từ Chư
 
 - **[Phân tích & Công thức áp dụng]:**
   1. Phương trình ngân sách công suất thu (Friis Transmission Equation dạng Decibel):
-     $$P_R = P_T + G_T - L_{\text{air}} + G_R$$
+
+     ```math
+     P_R = P_T + G_T - L_{\text{air}} + G_R
+     ```
+
   2. Điều kiện thu nhận tín hiệu:
-     $$P_R \ge \text{Sensitivity}$$
+
+     ```math
+     P_R \ge \text{Sensitivity}
+     ```
+
   3. Ngân sách đường truyền toàn phần:
-     $$\text{Link Budget} = P_T - \text{Sensitivity}$$
+
+     ```math
+     \text{Link Budget} = P_T - \text{Sensitivity}
+     ```
 
 - **[Lời giải chi tiết từng bước (Step-by-step)]:**
   1. *Tính mức công suất tín hiệu thu được tại đầu vào máy thu ($P_R$):*
-     $$P_R = 13\text{ dBm} + 2\text{ dB} - 60\text{ dB} + 2\text{ dB} = \mathbf{-43\text{ dBm}}$$
+
+     ```math
+     P_R = 13\text{ dBm} + 2\text{ dB} - 60\text{ dB} + 2\text{ dB} = \mathbf{-43\text{ dBm}}
+     ```
+
   2. *So sánh với độ nhạy thu:*
      Ta có $P_R = -43\text{ dBm}$, trong khi độ nhạy yêu cầu là $-80\text{ dBm}$.
      Vì $-43\text{ dBm} > -80\text{ dBm}$, mức tín hiệu thực tế lớn hơn ngưỡng thu tối thiểu một khoảng dự trữ (Fade Margin) là:
-     $$\text{Margin} = -43 - (-80) = +37\text{ dB}$$
+
+     ```math
+     \text{Margin} = -43 - (-80) = +37\text{ dB}
+     ```
+
      $\implies$ **Tín hiệu hoàn toàn được thu nhận thành công với chất lượng rất tốt.**
   3. *Tính Ngân sách đường truyền (Link Budget):*
-     $$\text{Link Budget} = 13\text{ dBm} - (-80\text{ dBm}) = 13 + 80 = \mathbf{93\text{ dB}}$$
+
+     ```math
+     \text{Link Budget} = 13\text{ dBm} - (-80\text{ dBm}) = 13 + 80 = \mathbf{93\text{ dB}}
+     ```
 
 - **[Đáp số chuẩn & Bài học kỹ thuật rút ra]:**
-  $$\mathbf{P_R = -43\text{ dBm} \implies \text{Thu nhận thành công (CÓ)} \quad\mid\quad \text{Link Budget} = 93\text{ dB}}$$
+
+  ```math
+  \mathbf{P_R = -43\text{ dBm} \implies \text{Thu nhận thành công (CÓ)} \quad\mid\quad \text{Link Budget} = 93\text{ dB}}
+  ```
+
   *Bài học kỹ thuật:* Khoảng chênh lệch dự trữ $+37\text{ dB}$ đảm bảo tuyến truyền hoạt động ổn định ngay cả khi gặp thời tiết xấu (mưa bão gây suy hao thêm $10 - 15\text{ dB}$).
 
 ---
@@ -861,20 +1045,37 @@ Toàn bộ 12 bài tập có biểu tượng Búa & Cờ-lê (🛠️) từ Chư
 
 - **[Phân tích & Công thức áp dụng]:**
   Xung Up-chirp tiêu chuẩn quét đối xứng qua tần số trung tâm $F_{\text{channel}}$:
-  $$F_{\text{start}} = F_{\text{channel}} - \frac{\text{BW}}{2}$$
-  $$F_{\text{end}} = F_{\text{channel}} + \frac{\text{BW}}{2}$$
+
+  ```math
+  F_{\text{start}} = F_{\text{channel}} - \frac{\text{BW}}{2}
+  ```
+
+  ```math
+  F_{\text{end}} = F_{\text{channel}} + \frac{\text{BW}}{2}
+  ```
 
 - **[Lời giải chi tiết từng bước (Step-by-step)]:**
   1. Đổi toàn bộ đơn vị về Hertz ($\text{Hz}$):
      - $F_{\text{channel}} = 868.1\text{ MHz} = 868\,100\,000\text{ Hz}$
      - $\text{BW} = 125\text{ kHz} = 125\,000\text{ Hz} \implies \frac{\text{BW}}{2} = 62\,500\text{ Hz}$
   2. Tính tần số bắt đầu:
-     $$F_{\text{start}} = 868\,100\,000 - 62\,500 = \mathbf{868\,037\,500\text{ Hz}} \quad (868.0375\text{ MHz})$$
+
+     ```math
+     F_{\text{start}} = 868\,100\,000 - 62\,500 = \mathbf{868\,037\,500\text{ Hz}} \quad (868.0375\text{ MHz})
+     ```
+
   3. Tính tần số kết thúc:
-     $$F_{\text{end}} = 868\,100\,000 + 62\,500 = \mathbf{868\,162\,500\text{ Hz}} \quad (868.1625\text{ MHz})$$
+
+     ```math
+     F_{\text{end}} = 868\,100\,000 + 62\,500 = \mathbf{868\,162\,500\text{ Hz}} \quad (868.1625\text{ MHz})
+     ```
 
 - **[Đáp số chuẩn & Bài học kỹ thuật rút ra]:**
-  $$\mathbf{F_{\text{start}} = 868\,037\,500\text{ Hz} \quad\mid\quad F_{\text{end}} = 868\,162\,500\text{ Hz}}$$
+
+  ```math
+  \mathbf{F_{\text{start}} = 868\,037\,500\text{ Hz} \quad\mid\quad F_{\text{end}} = 868\,162\,500\text{ Hz}}
+  ```
+
   *Bài học kỹ thuật:* Toàn bộ năng lượng sóng vô tuyến của xung Chirp được trải đều trong khoảng phổ $125\text{ kHz}$ này. Bộ lọc thông dải (Bandpass Filter) của máy thu bắt buộc phải có độ rộng tối thiểu $125\text{ kHz}$ đối xứng quanh $868.1\text{ MHz}$ để bắt trọn tín hiệu.
 
 ---
@@ -890,7 +1091,10 @@ Toàn bộ 12 bài tập có biểu tượng Búa & Cờ-lê (🛠️) từ Chư
 
 - **[Phân tích & Công thức áp dụng]:**
   Tốc độ bit thô của modem LoRa:
-  $$R_{\text{raw}} = \text{SF} \cdot \left(\frac{\text{BW}}{2^{\text{SF}}}\right) \quad (\text{bps})$$
+
+  ```math
+  R_{\text{raw}} = \text{SF} \cdot \left(\frac{\text{BW}}{2^{\text{SF}}}\right) \quad (\text{bps})
+  ```
 
 - **[Lời giải chi tiết từng bước (Step-by-step)]:**
   1. *Trường hợp 1 ($\text{SF} = 7$, $\text{BW} = 125\,000\text{ Hz}$):*
@@ -903,7 +1107,11 @@ Toàn bộ 12 bài tập có biểu tượng Búa & Cờ-lê (🛠️) từ Chư
      - Tốc độ bit: $R_{\text{raw}} = 12 \times 30.51758 \approx \mathbf{366.21\text{ bps}} \approx \mathbf{366\text{ bps}}$.
 
 - **[Đáp số chuẩn & Bài học kỹ thuật rút ra]:**
-  $$\mathbf{\text{Case 1 (SF7): } 6836\text{ bps} \quad\mid\quad \text{Case 2 (SF12): } 366\text{ bps}}$$
+
+  ```math
+  \mathbf{\text{Case 1 (SF7): } 6836\text{ bps} \quad\mid\quad \text{Case 2 (SF12): } 366\text{ bps}}
+  ```
+
   *Bài học kỹ thuật:* Tốc độ bit ở SF7 cao gấp gần $19$ lần so với SF12 ($6836 / 366 \approx 18.68$). Chuyển từ SF12 sang SF7 giúp giảm thời gian chiếm sóng $19$ lần, tiết kiệm năng lượng pin tương ứng.
 
 ---
@@ -916,18 +1124,36 @@ Toàn bộ 12 bài tập có biểu tượng Búa & Cờ-lê (🛠️) từ Chư
 
 - **[Phân tích & Công thức áp dụng]:**
   Tỷ lệ mã hóa $\text{CR} = 4/5$ có hệ số dôi dư (Overhead Ratio) là:
-  $$\text{Overhead} = \frac{5}{4} = 1.25$$
+
+  ```math
+  \text{Overhead} = \frac{5}{4} = 1.25
+  ```
+
   Tốc độ bit hiệu dụng sau mã hóa:
-  $$R_{\text{bit-CR}} = \frac{R_{\text{raw}}}{\text{Overhead}} = R_{\text{raw}} \cdot \left(\frac{4}{5}\right)$$
+
+  ```math
+  R_{\text{bit-CR}} = \frac{R_{\text{raw}}}{\text{Overhead}} = R_{\text{raw}} \cdot \left(\frac{4}{5}\right)
+  ```
 
 - **[Lời giải chi tiết từng bước (Step-by-step)]:**
   1. *Trường hợp 1 ($\text{SF7}, \text{BW125}, \text{CR} = 4/5$):*
-     $$R_{\text{bit-CR1}} = \frac{6835.94\text{ bps}}{1.25} = 6835.94 \times 0.8 = \mathbf{5468.75\text{ bps}} \approx \mathbf{5469\text{ bps}}$$
+
+     ```math
+     R_{\text{bit-CR1}} = \frac{6835.94\text{ bps}}{1.25} = 6835.94 \times 0.8 = \mathbf{5468.75\text{ bps}} \approx \mathbf{5469\text{ bps}}
+     ```
+
   2. *Trường hợp 2 ($\text{SF12}, \text{BW125}, \text{CR} = 4/5$):*
-     $$R_{\text{bit-CR2}} = \frac{366.21\text{ bps}}{1.25} = 366.21 \times 0.8 = \mathbf{292.97\text{ bps}} \approx \mathbf{293\text{ bps}}$$
+
+     ```math
+     R_{\text{bit-CR2}} = \frac{366.21\text{ bps}}{1.25} = 366.21 \times 0.8 = \mathbf{292.97\text{ bps}} \approx \mathbf{293\text{ bps}}
+     ```
 
 - **[Đáp số chuẩn & Bài học kỹ thuật rút ra]:**
-  $$\mathbf{\text{Case 1 (SF7, CR 4/5): } 5469\text{ bps} \quad\mid\quad \text{Case 2 (SF12, CR 4/5): } 293\text{ bps}}$$
+
+  ```math
+  \mathbf{\text{Case 1 (SF7, CR 4/5): } 5469\text{ bps} \quad\mid\quad \text{Case 2 (SF12, CR 4/5): } 293\text{ bps}}
+  ```
+
   *Bài học kỹ thuật:* Dữ liệu khớp chính xác $100\%$ với bảng tra cứu thông số kỹ thuật Table 13 trong datasheet của chip Semtech SX1276/SX1262.
 
 ---
@@ -942,7 +1168,10 @@ Toàn bộ 12 bài tập có biểu tượng Búa & Cờ-lê (🛠️) từ Chư
 
 - **[Phân tích & Công thức áp dụng]:**
   Phần mềm Semtech LoRa Modem Calculator sử dụng thuật toán nội suy chính xác số học dấu phẩy động của công thức:
-  $$\text{Equivalent Bitrate} = \text{SF} \cdot \left(\frac{\text{BW}}{2^{\text{SF}}}\right) \cdot \left(\frac{4}{5}\right)$$
+
+  ```math
+  \text{Equivalent Bitrate} = \text{SF} \cdot \left(\frac{\text{BW}}{2^{\text{SF}}}\right) \cdot \left(\frac{4}{5}\right)
+  ```
 
 - **[Lời giải chi tiết từng bước (Step-by-step)]:**
   1. Trên giao diện SX1272 / SX1262 Calculator:
@@ -953,7 +1182,11 @@ Toàn bộ 12 bài tập có biểu tượng Búa & Cờ-lê (🛠️) từ Chư
      - Trường `Equivalent Bitrate` hiển thị chính xác: **$292.97\text{ bps}$**.
 
 - **[Đáp số chuẩn & Bài học kỹ thuật rút ra]:**
-  $$\mathbf{\text{SF7: } 5468.75\text{ bps} \quad\mid\quad \text{SF12: } 292.97\text{ bps}}$$
+
+  ```math
+  \mathbf{\text{SF7: } 5468.75\text{ bps} \quad\mid\quad \text{SF12: } 292.97\text{ bps}}
+  ```
+
   *Bài học kỹ thuật:* Kết quả tính toán giải tích hoàn toàn đồng nhất với công cụ chuẩn của hãng Semtech. Sai số giữa tính toán thủ công và phần mềm bằng $0$.
 
 ---
@@ -968,7 +1201,10 @@ Toàn bộ 12 bài tập có biểu tượng Búa & Cờ-lê (🛠️) từ Chư
 
 - **[Phân tích & Công thức áp dụng]:**
   Tốc độ truyền dữ liệu thực tế của PHY Payload:
-  $$\text{bitrate}_{\text{LoRa payload}} = \frac{\text{Số bit Payload}}{T_{\text{ToA}}} = \frac{1\text{ byte} \times 8\text{ bits}}{T_{\text{ToA}} \text{ (giây)}} \quad (\text{bps})$$
+
+  ```math
+  \text{bitrate}_{\text{LoRa payload}} = \frac{\text{Số bit Payload}}{T_{\text{ToA}}} = \frac{1\text{ byte} \times 8\text{ bits}}{T_{\text{ToA}} \text{ (giây)}} \quad (\text{bps})
+  ```
 
 - **[Lời giải chi tiết từng bước (Step-by-step)]:**
   1. *Tra cứu / Tính toán Time on Air từ phần mềm mô phỏng Semtech:*
@@ -976,12 +1212,23 @@ Toàn bộ 12 bài tập có biểu tượng Búa & Cờ-lê (🛠️) từ Chư
      - Với **SF12** ($\text{PL} = 1\text{ byte}$): $T_{\text{ToA}} = \mathbf{827.39\text{ ms}} = 0.82739\text{ s}$.
   2. *Tính tốc độ bit thực tế:*
      - Trường hợp 1 (SF7):
-       $$\text{bitrate}_{\text{LoRa payload (SF7)}} = \frac{8\text{ bits}}{0.02585\text{ s}} \approx \mathbf{309.3\text{ bps}}$$
+
+       ```math
+       \text{bitrate}_{\text{LoRa payload (SF7)}} = \frac{8\text{ bits}}{0.02585\text{ s}} \approx \mathbf{309.3\text{ bps}}
+       ```
+
      - Trường hợp 2 (SF12):
-       $$\text{bitrate}_{\text{LoRa payload (SF12)}} = \frac{8\text{ bits}}{0.82739\text{ s}} \approx \mathbf{9.6\text{ bps}}$$
+
+       ```math
+       \text{bitrate}_{\text{LoRa payload (SF12)}} = \frac{8\text{ bits}}{0.82739\text{ s}} \approx \mathbf{9.6\text{ bps}}
+       ```
 
 - **[Đáp số chuẩn & Bài học kỹ thuật rút ra]:**
-  $$\mathbf{\text{SF7: } T_{\text{ToA}} = 25.85\text{ ms} \implies 309.3\text{ bps} \quad\mid\quad \text{SF12: } T_{\text{ToA}} = 827.39\text{ ms} \implies 9.6\text{ bps}}$$
+
+  ```math
+  \mathbf{\text{SF7: } T_{\text{ToA}} = 25.85\text{ ms} \implies 309.3\text{ bps} \quad\mid\quad \text{SF12: } T_{\text{ToA}} = 827.39\text{ ms} \implies 9.6\text{ bps}}
+  ```
+
   *Bài học kỹ thuật:* Tốc độ truyền thực tế của $1\text{ byte}$ dữ liệu ($309.3\text{ bps}$ ở SF7 và $9.6\text{ bps}$ ở SF12) thấp hơn rất nhiều so với tốc độ danh định ($5469\text{ bps}$ và $293\text{ bps}$) do phải "gánh" thời gian truyền của $12.25\text{ symbols}$ Preamble và Header vật lý.
 
 ---
@@ -998,16 +1245,30 @@ Toàn bộ 12 bài tập có biểu tượng Búa & Cờ-lê (🛠️) từ Chư
 
 - **[Phân tích & Công thức áp dụng]:**
   Dưới góc nhìn người dùng, chỉ có $1\text{ byte}$ ($8\text{ bits}$) nhiệt độ là dữ liệu hữu ích:
-  $$\text{bitrate}_{\text{LoRaWAN useful}} = \frac{8\text{ bits}}{T_{\text{ToA}} \text{ (giây)}} \quad (\text{bps})$$
+
+  ```math
+  \text{bitrate}_{\text{LoRaWAN useful}} = \frac{8\text{ bits}}{T_{\text{ToA}} \text{ (giây)}} \quad (\text{bps})
+  ```
 
 - **[Lời giải chi tiết từng bước (Step-by-step)]:**
   1. *Trường hợp 1 (SF7, Payload tổng 14 bytes):*
-     $$\text{bitrate}_{\text{LoRaWAN useful (SF7)}} = \frac{8\text{ bits}}{0.0463\text{ s}} \approx \mathbf{172.7\text{ bps}}$$
+
+     ```math
+     \text{bitrate}_{\text{LoRaWAN useful (SF7)}} = \frac{8\text{ bits}}{0.0463\text{ s}} \approx \mathbf{172.7\text{ bps}}
+     ```
+
   2. *Trường hợp 2 (SF12, Payload tổng 14 bytes):*
-     $$\text{bitrate}_{\text{LoRaWAN useful (SF12)}} = \frac{8\text{ bits}}{1.1551\text{ s}} \approx \mathbf{6.9\text{ bps}}$$
+
+     ```math
+     \text{bitrate}_{\text{LoRaWAN useful (SF12)}} = \frac{8\text{ bits}}{1.1551\text{ s}} \approx \mathbf{6.9\text{ bps}}
+     ```
 
 - **[Đáp số chuẩn & Bài học kỹ thuật rút ra]:**
-  $$\mathbf{\text{SF7 useful: } 172.7\text{ bps} \quad\mid\quad \text{SF12 useful: } 6.9\text{ bps}}$$
+
+  ```math
+  \mathbf{\text{SF7 useful: } 172.7\text{ bps} \quad\mid\quad \text{SF12 useful: } 6.9\text{ bps}}
+  ```
+
   *Bài học kỹ thuật:* Ở SF12, tốc độ truyền dữ liệu ứng dụng chỉ vỏn vẹn $6.9\text{ bps}$ (chưa đầy $1\text{ byte/giây}$). Đây là minh chứng rõ ràng nhất cho thấy LoRaWAN hoàn toàn không phù hợp cho việc truyền tải tập tin đa phương tiện hay âm thanh, mà chỉ tối ưu cho các gói tin đo đạc ngắn.
 
 ---
@@ -1020,9 +1281,16 @@ Toàn bộ 12 bài tập có biểu tượng Búa & Cờ-lê (🛠️) từ Chư
 
 - **[Phân tích & Công thức áp dụng]:**
   Quy định $1\%$ Duty Cycle yêu cầu tỷ lệ thời gian phát sóng không vượt quá $1/100$ tổng thời gian:
-  $$\text{bitrate}_{\text{average 1\%}} = \frac{\text{bitrate}_{\text{LoRaWAN useful}}}{100}$$
+
+  ```math
+  \text{bitrate}_{\text{average 1\%}} = \frac{\text{bitrate}_{\text{LoRaWAN useful}}}{100}
+  ```
+
   Hoặc tính theo chu kỳ phát tối thiểu:
-  $$T_{\text{period}} = T_{\text{ToA}} \times 100 \implies \text{bitrate}_{\text{average 1\%}} = \frac{8\text{ bits}}{T_{\text{period}}}$$
+
+  ```math
+  T_{\text{period}} = T_{\text{ToA}} \times 100 \implies \text{bitrate}_{\text{average 1\%}} = \frac{8\text{ bits}}{T_{\text{period}}}
+  ```
 
 - **[Lời giải chi tiết từng bước (Step-by-step)]:**
   1. *Trường hợp 1 (SF7):*
@@ -1030,16 +1298,27 @@ Toàn bộ 12 bài tập có biểu tượng Búa & Cờ-lê (🛠️) từ Chư
      - Thời gian im lặng bắt buộc: $T_{\text{off}} = 99 \times 0.0463\text{ s} = 4.5837\text{ s}$.
      - Chu kỳ phát tối thiểu: $T_{\text{period}} = 46.3\text{ ms} + 4583.7\text{ ms} = 4.63\text{ s}$.
      - Tốc độ bit trung bình dài hạn:
-       $$\text{bitrate}_{\text{average (SF7)}} = \frac{172.7\text{ bps}}{100} = \mathbf{1.73\text{ bps}} \quad \left(\text{hoặc } \frac{8\text{ bits}}{4.63\text{ s}} \approx 1.728\text{ bps}\right)$$
+
+       ```math
+       \text{bitrate}_{\text{average (SF7)}} = \frac{172.7\text{ bps}}{100} = \mathbf{1.73\text{ bps}} \quad \left(\text{hoặc } \frac{8\text{ bits}}{4.63\text{ s}} \approx 1.728\text{ bps}\right)
+       ```
+
   2. *Trường hợp 2 (SF12):*
      - Thời gian phát: $T_{\text{on}} = 1155.1\text{ ms} = 1.1551\text{ s}$.
      - Thời gian im lặng bắt buộc: $T_{\text{off}} = 99 \times 1.1551\text{ s} = 114.3549\text{ s}$ ($\approx 1.9\text{ phút}$).
      - Chu kỳ phát tối thiểu: $T_{\text{period}} = 1.1551 \times 100 = 115.51\text{ s}$.
      - Tốc độ bit trung bình dài hạn:
-       $$\text{bitrate}_{\text{average (SF12)}} = \frac{6.9\text{ bps}}{100} = \mathbf{0.07\text{ bps}}$$
+
+       ```math
+       \text{bitrate}_{\text{average (SF12)}} = \frac{6.9\text{ bps}}{100} = \mathbf{0.07\text{ bps}}
+       ```
 
 - **[Đáp số chuẩn & Bài học kỹ thuật rút ra]:**
-  $$\mathbf{\text{SF7 average: } 1.73\text{ bps} \quad\mid\quad \text{SF12 average: } 0.07\text{ bps}}$$
+
+  ```math
+  \mathbf{\text{SF7 average: } 1.73\text{ bps} \quad\mid\quad \text{SF12 average: } 0.07\text{ bps}}
+  ```
+
   *Bài học kỹ thuật:* Khi thiết bị chạy ở SF12, sau khi phát một gói tin $14\text{ bytes}$ mất $1.15\text{ giây}$, nó bắt buộc phải im lặng tuyệt đối gần $2\text{ phút}$ trên phân băng đó. Nếu thiết kế hệ thống yêu cầu gửi dữ liệu liên tục mỗi 30 giây thì bắt buộc phải chuyển sang SF7 hoặc dùng kỹ thuật nhảy kênh.
 
 ---
@@ -1061,35 +1340,89 @@ Toàn bộ 12 bài tập có biểu tượng Búa & Cờ-lê (🛠️) từ Chư
 
 - **[Phân tích & Công thức áp dụng]:**
   1. Công thức tính tổng số symbol $n_{\text{symbol}}$:
-     $$n_{\text{symbol}} = (n_{\text{preamble}} + 4.25) + 8 + \max\left( \left\lceil \frac{8 \cdot \text{Payload} - 4 \cdot \text{SF} + 28 + 16 \cdot \text{CRC} - 20 \cdot H}{4(\text{SF} - 2 \cdot \text{DE})} \right\rceil (\text{CR} + 4), \; 0 \right)$$
+
+     ```math
+     n_{\text{symbol}} = (n_{\text{preamble}} + 4.25) + 8 + \max\left( \left\lceil \frac{8 \cdot \text{Payload} - 4 \cdot \text{SF} + 28 + 16 \cdot \text{CRC} - 20 \cdot H}{4(\text{SF} - 2 \cdot \text{DE})} \right\rceil (\text{CR} + 4), \; 0 \right)
+     ```
+
   2. Thời gian truyền 1 symbol:
-     $$T_{\text{symbol}} = \frac{2^{\text{SF}}}{\text{BW}}$$
+
+     ```math
+     T_{\text{symbol}} = \frac{2^{\text{SF}}}{\text{BW}}
+     ```
+
   3. Tổng thời gian chiếm sóng:
-     $$T_{\text{ToA}} = n_{\text{symbol}} \cdot T_{\text{symbol}}$$
+
+     ```math
+     T_{\text{ToA}} = n_{\text{symbol}} \cdot T_{\text{symbol}}
+     ```
 
 - **[Lời giải chi tiết từng bước (Step-by-step)]:**
   1. *Tính toán số học trong biểu thức Ceiling:*
      - Tử số:
-       $$\text{Tử số} = 8 \cdot 14 - 4 \cdot 7 + 28 + 16 \cdot 1 - 20 \cdot 0$$
-       $$\text{Tử số} = 112 - 28 + 28 + 16 - 0 = 112 + 16 = \mathbf{128}$$
+
+       ```math
+       \text{Tử số} = 8 \cdot 14 - 4 \cdot 7 + 28 + 16 \cdot 1 - 20 \cdot 0
+       ```
+
+       ```math
+       \text{Tử số} = 112 - 28 + 28 + 16 - 0 = 112 + 16 = \mathbf{128}
+       ```
+
      - Mẫu số:
-       $$\text{Mẫu số} = 4 \cdot (\text{SF} - 2 \cdot \text{DE}) = 4 \cdot (7 - 2 \cdot 0) = 4 \cdot 7 = \mathbf{28}$$
+
+       ```math
+       \text{Mẫu số} = 4 \cdot (\text{SF} - 2 \cdot \text{DE}) = 4 \cdot (7 - 2 \cdot 0) = 4 \cdot 7 = \mathbf{28}
+       ```
+
      - Phép chia và làm tròn lên:
-       $$\frac{\text{Tử số}}{\text{Mẫu số}} = \frac{128}{28} \approx 4.5714$$
-       $$\left\lceil 4.5714 \right\rceil = \mathbf{5}$$
+
+       ```math
+       \frac{\text{Tử số}}{\text{Mẫu số}} = \frac{128}{28} \approx 4.5714
+       ```
+
+       ```math
+       \left\lceil 4.5714 \right\rceil = \mathbf{5}
+       ```
+
   2. *Tính số symbol phần Payload:*
-     $$n_{\text{payload-core}} = 5 \cdot (\text{CR} + 4) = 5 \cdot (1 + 4) = 5 \cdot 5 = \mathbf{25\text{ symbols}}$$
-     $$n_{\text{payload}} = 8 + 25 = \mathbf{33\text{ symbols}}$$
+
+     ```math
+     n_{\text{payload-core}} = 5 \cdot (\text{CR} + 4) = 5 \cdot (1 + 4) = 5 \cdot 5 = \mathbf{25\text{ symbols}}
+     ```
+
+     ```math
+     n_{\text{payload}} = 8 + 25 = \mathbf{33\text{ symbols}}
+     ```
+
   3. *Tính tổng số symbol của toàn bộ khung LoRa ($n_{\text{symbol}}$):*
-     $$n_{\text{preamble-total}} = 8 + 4.25 = \mathbf{12.25\text{ symbols}}$$
-     $$n_{\text{symbol}} = 12.25 + 33 = \mathbf{45.25\text{ symbols}}$$
+
+     ```math
+     n_{\text{preamble-total}} = 8 + 4.25 = \mathbf{12.25\text{ symbols}}
+     ```
+
+     ```math
+     n_{\text{symbol}} = 12.25 + 33 = \mathbf{45.25\text{ symbols}}
+     ```
+
   4. *Tính thời gian truyền 1 symbol ($T_{\text{symbol}}$):*
-     $$T_{\text{symbol}} = \frac{2^7}{125\,000} = \frac{128}{125\,000} = 0.001024\text{ s} = \mathbf{1.024\text{ ms}}$$
+
+     ```math
+     T_{\text{symbol}} = \frac{2^7}{125\,000} = \frac{128}{125\,000} = 0.001024\text{ s} = \mathbf{1.024\text{ ms}}
+     ```
+
   5. *Tính tổng thời gian Time on Air ($T_{\text{ToA}}$):*
-     $$T_{\text{ToA}} = 45.25 \times 1.024\text{ ms} = \mathbf{46.336\text{ ms}} \approx \mathbf{46.3\text{ ms}}$$
+
+     ```math
+     T_{\text{ToA}} = 45.25 \times 1.024\text{ ms} = \mathbf{46.336\text{ ms}} \approx \mathbf{46.3\text{ ms}}
+     ```
 
 - **[Đáp số chuẩn & Bài học kỹ thuật rút ra]:**
-  $$\mathbf{n_{\text{symbol}} = 45.25\text{ symbols} \quad\mid\quad T_{\text{symbol}} = 1.024\text{ ms} \quad\mid\quad T_{\text{ToA}} = 46.3\text{ ms}}$$
+
+  ```math
+  \mathbf{n_{\text{symbol}} = 45.25\text{ symbols} \quad\mid\quad T_{\text{symbol}} = 1.024\text{ ms} \quad\mid\quad T_{\text{ToA}} = 46.3\text{ ms}}
+  ```
+
   *Bài học kỹ thuật:* Phép tính giải tích chứng minh sự chính xác tuyệt đối của công thức Semtech. Nắm vững công thức này cho phép kỹ sư nhúng lập trình tính toán ToA ngay trên vi điều khiển ESP32/STM32 mà không cần kết nối mạng.
 
 ---
@@ -1222,11 +1555,23 @@ Yêu cầu:
 
 - **Câu 4: Đáp án đúng là C**
   * *Tại sao C đúng:* Phương trình ngân sách đường truyền tại biên thu tối thiểu:
-    $$P_R = P_T + G_T - L_{\text{cable1}} - L_{\text{air-max}} + G_R - L_{\text{cable2}} = \text{Sensitivity}$$
+
+    ```math
+    P_R = P_T + G_T - L_{\text{cable1}} - L_{\text{air-max}} + G_R - L_{\text{cable2}} = \text{Sensitivity}
+    ```
+
     Suy ra:
-    $$L_{\text{air-max}} = P_T - \text{Sensitivity} + (G_T - L_{\text{cable1}}) + (G_R - L_{\text{cable2}})$$
+
+    ```math
+    L_{\text{air-max}} = P_T - \text{Sensitivity} + (G_T - L_{\text{cable1}}) + (G_R - L_{\text{cable2}})
+    ```
+
     Thay số:
-    $$L_{\text{air-max}} = 14 - (-148) + (3 - 1) + (3 - 1) = 162 + 2 + 2 = \mathbf{166\text{ dB}}$$
+
+    ```math
+    L_{\text{air-max}} = 14 - (-148) + (3 - 1) + (3 - 1) = 162 + 2 + 2 = \mathbf{166\text{ dB}}
+    ```
+
   * *Tại sao các phương án khác sai:*
     - Phương án A ($162\text{ dB}$) sai vì bỏ quên độ lợi ròng của hệ thống ăng-ten hai đầu ($+4\text{ dB}$).
     - Phương án B ($164\text{ dB}$) sai do chỉ cộng độ lợi của một đầu ăng-ten.
@@ -1245,78 +1590,186 @@ Yêu cầu:
 
 #### Lời giải Bài toán 1: Thiết kế Phao biển Quan trắc
 1. **Đổi công suất phát sang mili-Watt:**
-   $$P_T(\text{mW}) = 10^{\frac{P_T(\text{dBm})}{10}} = 10^{\frac{14}{10}} = 10^{1.4} \approx \mathbf{25.12\text{ mW}} \approx \mathbf{25\text{ mW}}$$
+
+   ```math
+   P_T(\text{mW}) = 10^{\frac{P_T(\text{dBm})}{10}} = 10^{\frac{14}{10}} = 10^{1.4} \approx \mathbf{25.12\text{ mW}} \approx \mathbf{25\text{ mW}}
+   ```
 
 2. **Tính suy hao không gian tự do $L_{\text{air}}$ trên cự ly $D = 22\text{ km}$:**
    Áp dụng công thức USMB:
-   $$L_{\text{air}} = 10 \log_{10}\left(D^2 \cdot F^2 \cdot 1755\right)$$
+
+   ```math
+   L_{\text{air}} = 10 \log_{10}\left(D^2 \cdot F^2 \cdot 1755\right)
+   ```
+
    Với $D = 22\text{ km}$, $F = 868\text{ MHz}$:
-   $$D^2 = 22^2 = 484$$
-   $$F^2 = 868^2 = 753\,424$$
-   $$\text{Tích số} = 484 \times 753\,424 \times 1755 \approx 6.4002 \times 10^{11}$$
-   $$L_{\text{air}} = 10 \log_{10}\left(6.4002 \times 10^{11}\right) = 10 \cdot (11 + \log_{10} 6.4002) = 10 \cdot (11 + 0.8062) = \mathbf{118.06\text{ dB}}$$
+
+   ```math
+   D^2 = 22^2 = 484
+   ```
+
+   ```math
+   F^2 = 868^2 = 753\,424
+   ```
+
+   ```math
+   \text{Tích số} = 484 \times 753\,424 \times 1755 \approx 6.4002 \times 10^{11}
+   ```
+
+   ```math
+   L_{\text{air}} = 10 \log_{10}\left(6.4002 \times 10^{11}\right) = 10 \cdot (11 + \log_{10} 6.4002) = 10 \cdot (11 + 0.8062) = \mathbf{118.06\text{ dB}}
+   ```
 
 3. **Tính mức công suất thu $P_R$ (RSSI) tại Gateway:**
-   $$P_R = P_T + G_T + G_R - L_{\text{cable}} - L_{\text{air}}$$
-   $$P_R = 14\text{ dBm} + 2\text{ dBi} + 6\text{ dBi} - 2\text{ dB} - 118.06\text{ dB} = 20 - 118.06 = \mathbf{-98.06\text{ dBm}}$$
+
+   ```math
+   P_R = P_T + G_T + G_R - L_{\text{cable}} - L_{\text{air}}
+   ```
+
+   ```math
+   P_R = 14\text{ dBm} + 2\text{ dBi} + 6\text{ dBi} - 2\text{ dB} - 118.06\text{ dB} = 20 - 118.06 = \mathbf{-98.06\text{ dBm}}
+   ```
 
 4. **Xác định Spreading Factor tối thiểu đảm bảo Fade Margin $\ge 12\text{ dB}$:**
    Yêu cầu:
-   $$\text{Margin} = P_R - \text{Sensitivity} \ge 12\text{ dB} \implies \text{Sensitivity} \le P_R - 12\text{ dB}$$
-   $$\text{Sensitivity} \le -98.06\text{ dBm} - 12\text{ dB} = \mathbf{-110.06\text{ dBm}}$$
+
+   ```math
+   \text{Margin} = P_R - \text{Sensitivity} \ge 12\text{ dB} \implies \text{Sensitivity} \le P_R - 12\text{ dB}
+   ```
+
+   ```math
+   \text{Sensitivity} \le -98.06\text{ dBm} - 12\text{ dB} = \mathbf{-110.06\text{ dBm}}
+   ```
+
    Tra cứu bảng độ nhạy thu của SX1262:
    - Ở **SF7**: Độ nhạy thu là $-123.0\text{ dBm}$.
    Vì $-123.0\text{ dBm} \le -110.06\text{ dBm}$, cấu hình **SF7** hoàn toàn thỏa mãn và đem lại Fade Margin thực tế lên tới:
-   $$\text{Margin}_{\text{SF7}} = -98.06 - (-123.0) = \mathbf{+24.94\text{ dB}} \ge 12\text{ dB}$$
+
+   ```math
+   \text{Margin}_{\text{SF7}} = -98.06 - (-123.0) = \mathbf{+24.94\text{ dB}} \ge 12\text{ dB}
+   ```
+
    $\implies$ **Kết luận:** Spreading Factor tối thiểu cần chọn là **$\text{SF} = 7$**. Việc chọn SF7 giúp tối ưu thời gian phát sóng, giảm thiểu điện năng tiêu thụ và giảm tối đa nguy cơ xung đột trên biển.
 
 ---
 
 #### Lời giải Bài toán 2: Tính Time on Air & Quy chế TTN FAP
 1. **Tính kích thước LoRa PHY Payload:**
-   $$\text{PL} = 18\text{ bytes (User Data)} + 13\text{ bytes (LoRaWAN Header)} = \mathbf{31\text{ bytes}}$$
+
+   ```math
+   \text{PL} = 18\text{ bytes (User Data)} + 13\text{ bytes (LoRaWAN Header)} = \mathbf{31\text{ bytes}}
+   ```
 
 2. **Tính toán ToA tại cấu hình $\text{SF} = 7$ ($\text{DE} = 0, H = 0, \text{CRC} = 1, \text{CR} = 1$):**
    - Số symbol phần mở đầu:
-     $$n_{\text{preamble-total}} = 8 + 4.25 = \mathbf{12.25\text{ symbols}}$$
+
+     ```math
+     n_{\text{preamble-total}} = 8 + 4.25 = \mathbf{12.25\text{ symbols}}
+     ```
+
    - Tính biểu thức số nguyên trong hàm trần (Ceiling):
-     $$\text{Tử số} = 8 \cdot 31 - 4 \cdot 7 + 28 + 16 \cdot 1 - 20 \cdot 0 = 248 - 28 + 28 + 16 = \mathbf{264}$$
-     $$\text{Mẫu số} = 4 \cdot (7 - 2 \cdot 0) = \mathbf{28}$$
-     $$\frac{\text{Tử số}}{\text{Mẫu số}} = \frac{264}{28} \approx 9.4286 \implies \lceil 9.4286 \rceil = \mathbf{10}$$
+
+     ```math
+     \text{Tử số} = 8 \cdot 31 - 4 \cdot 7 + 28 + 16 \cdot 1 - 20 \cdot 0 = 248 - 28 + 28 + 16 = \mathbf{264}
+     ```
+
+     ```math
+     \text{Mẫu số} = 4 \cdot (7 - 2 \cdot 0) = \mathbf{28}
+     ```
+
+     ```math
+     \frac{\text{Tử số}}{\text{Mẫu số}} = \frac{264}{28} \approx 9.4286 \implies \lceil 9.4286 \rceil = \mathbf{10}
+     ```
+
    - Số symbol phần payload:
-     $$n_{\text{payload}} = 8 + 10 \cdot (1 + 4) = 8 + 50 = \mathbf{58\text{ symbols}}$$
+
+     ```math
+     n_{\text{payload}} = 8 + 10 \cdot (1 + 4) = 8 + 50 = \mathbf{58\text{ symbols}}
+     ```
+
    - Tổng số symbol khung:
-     $$n_{\text{symbol}} = 12.25 + 58 = \mathbf{70.25\text{ symbols}}$$
+
+     ```math
+     n_{\text{symbol}} = 12.25 + 58 = \mathbf{70.25\text{ symbols}}
+     ```
+
    - Thời gian 1 symbol ở SF7/BW125:
-     $$T_{\text{symbol}} = \frac{2^7}{125\,000} = \mathbf{1.024\text{ ms}}$$
+
+     ```math
+     T_{\text{symbol}} = \frac{2^7}{125\,000} = \mathbf{1.024\text{ ms}}
+     ```
+
    - Thời gian Time on Air ở SF7:
-     $$T_{\text{ToA (SF7)}} = 70.25 \times 1.024\text{ ms} = \mathbf{71.936\text{ ms}} \approx \mathbf{71.94\text{ ms}}$$
+
+     ```math
+     T_{\text{ToA (SF7)}} = 70.25 \times 1.024\text{ ms} = \mathbf{71.936\text{ ms}} \approx \mathbf{71.94\text{ ms}}
+     ```
 
 3. **Tính toán ToA tại cấu hình $\text{SF} = 12$ ($\text{DE} = 1, H = 0, \text{CRC} = 1, \text{CR} = 1$):**
    - Biểu thức số học trong hàm trần (Lưu ý $\text{DE} = 1$):
-     $$\text{Tử số} = 8 \cdot 31 - 4 \cdot 12 + 28 + 16 \cdot 1 - 20 \cdot 0 = 248 - 48 + 28 + 16 = \mathbf{244}$$
-     $$\text{Mẫu số} = 4 \cdot (12 - 2 \cdot 1) = 4 \cdot 10 = \mathbf{40}$$
-     $$\frac{\text{Tử số}}{\text{Mẫu số}} = \frac{244}{40} = 6.1 \implies \lceil 6.1 \rceil = \mathbf{7}$$
+
+     ```math
+     \text{Tử số} = 8 \cdot 31 - 4 \cdot 12 + 28 + 16 \cdot 1 - 20 \cdot 0 = 248 - 48 + 28 + 16 = \mathbf{244}
+     ```
+
+     ```math
+     \text{Mẫu số} = 4 \cdot (12 - 2 \cdot 1) = 4 \cdot 10 = \mathbf{40}
+     ```
+
+     ```math
+     \frac{\text{Tử số}}{\text{Mẫu số}} = \frac{244}{40} = 6.1 \implies \lceil 6.1 \rceil = \mathbf{7}
+     ```
+
    - Số symbol phần payload:
-     $$n_{\text{payload}} = 8 + 7 \cdot (1 + 4) = 8 + 35 = \mathbf{43\text{ symbols}}$$
+
+     ```math
+     n_{\text{payload}} = 8 + 7 \cdot (1 + 4) = 8 + 35 = \mathbf{43\text{ symbols}}
+     ```
+
    - Tổng số symbol khung:
-     $$n_{\text{symbol}} = 12.25 + 43 = \mathbf{55.25\text{ symbols}}$$
+
+     ```math
+     n_{\text{symbol}} = 12.25 + 43 = \mathbf{55.25\text{ symbols}}
+     ```
+
    - Thời gian 1 symbol ở SF12/BW125:
-     $$T_{\text{symbol}} = \frac{2^{12}}{125\,000} = \mathbf{32.768\text{ ms}}$$
+
+     ```math
+     T_{\text{symbol}} = \frac{2^{12}}{125\,000} = \mathbf{32.768\text{ ms}}
+     ```
+
    - Thời gian Time on Air ở SF12:
-     $$T_{\text{ToA (SF12)}} = 55.25 \times 32.768\text{ ms} = \mathbf{1810.432\text{ ms}} \approx \mathbf{1810.43\text{ ms}} \quad (1.81\text{ s})$$
+
+     ```math
+     T_{\text{ToA (SF12)}} = 55.25 \times 32.768\text{ ms} = \mathbf{1810.432\text{ ms}} \approx \mathbf{1810.43\text{ ms}} \quad (1.81\text{ s})
+     ```
 
 4. **Đánh giá theo chính sách TTN Fair Access Policy ($30\text{ giây / ngày}$):**
    - **Kịch bản SF7 ($T_{\text{ToA}} = 0.07194\text{ s}$):**
      * Số gói tin tối đa được gửi mỗi ngày:
-       $$N_{\max \text{ (SF7)}} = \left\lfloor \frac{30\text{ s}}{0.07194\text{ s}} \right\rfloor = \mathbf{417\text{ gói / ngày}}$$
+
+       ```math
+       N_{\max \text{ (SF7)}} = \left\lfloor \frac{30\text{ s}}{0.07194\text{ s}} \right\rfloor = \mathbf{417\text{ gói / ngày}}
+       ```
+
      * Khoảng thời gian giãn cách tối thiểu giữa 2 lần gửi:
-       $$T_{\text{interval (SF7)}} = \frac{24 \times 60\text{ phút}}{417} \approx \mathbf{3.45\text{ phút / lần}}$$
+
+       ```math
+       T_{\text{interval (SF7)}} = \frac{24 \times 60\text{ phút}}{417} \approx \mathbf{3.45\text{ phút / lần}}
+       ```
+
    - **Kịch bản SF12 ($T_{\text{ToA}} = 1.81043\text{ s}$):**
      * Số gói tin tối đa được gửi mỗi ngày:
-       $$N_{\max \text{ (SF12)}} = \left\lfloor \frac{30\text{ s}}{1.81043\text{ s}} \right\rfloor = \mathbf{16\text{ gói / ngày}}$$
+
+       ```math
+       N_{\max \text{ (SF12)}} = \left\lfloor \frac{30\text{ s}}{1.81043\text{ s}} \right\rfloor = \mathbf{16\text{ gói / ngày}}
+       ```
+
      * Khoảng thời gian giãn cách tối thiểu giữa 2 lần gửi:
-       $$T_{\text{interval (SF12)}} = \frac{24 \times 60\text{ phút}}{16} = \mathbf{90.0\text{ phút / lần}} \quad (1.5\text{ giờ / lần})$$
+
+       ```math
+       T_{\text{interval (SF12)}} = \frac{24 \times 60\text{ phút}}{16} = \mathbf{90.0\text{ phút / lần}} \quad (1.5\text{ giờ / lần})
+       ```
 
 ---
 
@@ -1327,30 +1780,82 @@ Dung lượng pin hữu ích: $C_{\text{eff}} = 1920\text{ mAh} = 1920 \times 36
 1. **Kịch bản A (Cấu hình SF7, $T_{\text{ToA}} = 51.5\text{ ms} = 0.0515\text{ s}$):**
    - Thời gian ngủ: $T_{\text{sleep}} = 900\text{ s} - (0.1\text{ s} + 0.0515\text{ s} + 0.12\text{ s}) = 900 - 0.2715 = 899.7285\text{ s}$.
    - Điện lượng tiêu thụ trong 1 chu kỳ ($Q_{\text{cycle}}$):
-     $$Q_{\text{sensor}} = 5\text{ mA} \times 0.1\text{ s} = 0.500\text{ mA}\cdot\text{s}$$
-     $$Q_{\text{TX}} = 45\text{ mA} \times 0.0515\text{ s} = 2.3175\text{ mA}\cdot\text{s}$$
-     $$Q_{\text{RX}} = 11\text{ mA} \times 0.12\text{ s} = 1.320\text{ mA}\cdot\text{s}$$
-     $$Q_{\text{sleep}} = 0.002\text{ mA} \times 899.7285\text{ s} \approx 1.7995\text{ mA}\cdot\text{s}$$
-     $$Q_{\text{cycle (SF7)}} = 0.500 + 2.3175 + 1.320 + 1.7995 = \mathbf{5.937\text{ mA}\cdot\text{s}}$$
+
+     ```math
+     Q_{\text{sensor}} = 5\text{ mA} \times 0.1\text{ s} = 0.500\text{ mA}\cdot\text{s}
+     ```
+
+     ```math
+     Q_{\text{TX}} = 45\text{ mA} \times 0.0515\text{ s} = 2.3175\text{ mA}\cdot\text{s}
+     ```
+
+     ```math
+     Q_{\text{RX}} = 11\text{ mA} \times 0.12\text{ s} = 1.320\text{ mA}\cdot\text{s}
+     ```
+
+     ```math
+     Q_{\text{sleep}} = 0.002\text{ mA} \times 899.7285\text{ s} \approx 1.7995\text{ mA}\cdot\text{s}
+     ```
+
+     ```math
+     Q_{\text{cycle (SF7)}} = 0.500 + 2.3175 + 1.320 + 1.7995 = \mathbf{5.937\text{ mA}\cdot\text{s}}
+     ```
+
    - Dòng điện trung bình dài hạn:
-     $$I_{\text{avg (SF7)}} = \frac{Q_{\text{cycle}}}{T_{\text{cycle}}} = \frac{5.937\text{ mA}\cdot\text{s}}{900\text{ s}} \approx 0.006597\text{ mA} = \mathbf{6.60\text{ }\mu\text{A}}$$
+
+     ```math
+     I_{\text{avg (SF7)}} = \frac{Q_{\text{cycle}}}{T_{\text{cycle}}} = \frac{5.937\text{ mA}\cdot\text{s}}{900\text{ s}} \approx 0.006597\text{ mA} = \mathbf{6.60\text{ }\mu\text{A}}
+     ```
+
    - Tuổi thọ pin dự kiến:
-     $$\text{Tuổi thọ (SF7)} = \frac{6\,912\,000\text{ mA}\cdot\text{s}}{5.937\text{ mA}\cdot\text{s / chu kỳ}} = 1\,164\,224\text{ chu kỳ}$$
-     $$\text{Tuổi thọ (SF7)} = \frac{1\,164\,224 \times 15\text{ phút}}{60 \times 24 \times 365.25} \approx \mathbf{33.2\text{ năm}} \implies \text{Bị giới hạn bởi tuổi thọ hóa học của pin: } \mathbf{10 - 15\text{ năm}}.$$
+
+     ```math
+     \text{Tuổi thọ (SF7)} = \frac{6\,912\,000\text{ mA}\cdot\text{s}}{5.937\text{ mA}\cdot\text{s / chu kỳ}} = 1\,164\,224\text{ chu kỳ}
+     ```
+
+     ```math
+     \text{Tuổi thọ (SF7)} = \frac{1\,164\,224 \times 15\text{ phút}}{60 \times 24 \times 365.25} \approx \mathbf{33.2\text{ năm}} \implies \text{Bị giới hạn bởi tuổi thọ hóa học của pin: } \mathbf{10 - 15\text{ năm}}.
+     ```
 
 2. **Kịch bản B (Cấu hình SF12, $T_{\text{ToA}} = 1318.9\text{ ms} = 1.3189\text{ s}$):**
    - Thời gian ngủ: $T_{\text{sleep}} = 900 - (0.1 + 1.3189 + 0.12) = 900 - 1.5389 = 898.4611\text{ s}$.
    - Điện lượng tiêu thụ trong 1 chu kỳ:
-     $$Q_{\text{sensor}} = 0.500\text{ mA}\cdot\text{s}$$
-     $$Q_{\text{TX}} = 45\text{ mA} \times 1.3189\text{ s} = \mathbf{59.3505\text{ mA}\cdot\text{s}}$$
-     $$Q_{\text{RX}} = 1.320\text{ mA}\cdot\text{s}$$
-     $$Q_{\text{sleep}} = 0.002\text{ mA} \times 898.4611\text{ s} \approx 1.7969\text{ mA}\cdot\text{s}$$
-     $$Q_{\text{cycle (SF12)}} = 0.500 + 59.3505 + 1.320 + 1.7969 = \mathbf{62.9674\text{ mA}\cdot\text{s}}$$
+
+     ```math
+     Q_{\text{sensor}} = 0.500\text{ mA}\cdot\text{s}
+     ```
+
+     ```math
+     Q_{\text{TX}} = 45\text{ mA} \times 1.3189\text{ s} = \mathbf{59.3505\text{ mA}\cdot\text{s}}
+     ```
+
+     ```math
+     Q_{\text{RX}} = 1.320\text{ mA}\cdot\text{s}
+     ```
+
+     ```math
+     Q_{\text{sleep}} = 0.002\text{ mA} \times 898.4611\text{ s} \approx 1.7969\text{ mA}\cdot\text{s}
+     ```
+
+     ```math
+     Q_{\text{cycle (SF12)}} = 0.500 + 59.3505 + 1.320 + 1.7969 = \mathbf{62.9674\text{ mA}\cdot\text{s}}
+     ```
+
    - Dòng điện trung bình dài hạn:
-     $$I_{\text{avg (SF12)}} = \frac{62.9674\text{ mA}\cdot\text{s}}{900\text{ s}} \approx 0.06996\text{ mA} = \mathbf{69.96\text{ }\mu\text{A}}$$
+
+     ```math
+     I_{\text{avg (SF12)}} = \frac{62.9674\text{ mA}\cdot\text{s}}{900\text{ s}} \approx 0.06996\text{ mA} = \mathbf{69.96\text{ }\mu\text{A}}
+     ```
+
    - Tuổi thọ pin dự kiến:
-     $$\text{Tuổi thọ (SF12)} = \frac{6\,912\,000}{62.9674} \approx 109\,771\text{ chu kỳ}$$
-     $$\text{Tuổi thọ (SF12)} = \frac{109\,771 \times 15}{60 \times 24 \times 365.25} \approx \mathbf{3.13\text{ năm}}.$$
+
+     ```math
+     \text{Tuổi thọ (SF12)} = \frac{6\,912\,000}{62.9674} \approx 109\,771\text{ chu kỳ}
+     ```
+
+     ```math
+     \text{Tuổi thọ (SF12)} = \frac{109\,771 \times 15}{60 \times 24 \times 365.25} \approx \mathbf{3.13\text{ năm}}.
+     ```
 
 3. **Bài học Kỹ thuật & Giá trị Cốt lõi của ADR:**
    - Dòng tiêu thụ trung bình ở SF12 cao gấp hơn **$10.6$ lần** so với SF7 ($69.96\text{ }\mu\text{A}$ so với $6.60\text{ }\mu\text{A}$).
@@ -1369,7 +1874,10 @@ Dưới đây là bảng đối chiếu kiểm định năng lực hoàn thành 
 - Phân biệt rõ $\text{dB}$ (tỷ lệ tương đối) và $\text{dBm}$ (công suất tuyệt đối so với $1\text{ mW}$).
 - Tự tính nhẩm nhanh các mốc: $+3\text{ dB}$ (tăng gấp đôi công suất), $-3\text{ dB}$ (giảm một nửa công suất), $+10\text{ dB}$ (tăng gấp 10 lần).
 - Tính được Link Budget từ công suất phát ($P_T$) và độ nhạy thu (Sensitivity):
-  $$\text{Link Budget} = P_T - \text{Sensitivity}$$
+
+  ```math
+  \text{Link Budget} = P_T - \text{Sensitivity}
+  ```
 
 > 🔑 **[KEY & GIẢI THÍCH CHUẨN]:**
 > 1. **Bản chất đại lượng:**
@@ -1380,7 +1888,11 @@ Dưới đây là bảng đối chiếu kiểm định năng lực hoàn thành 
 >    - Cộng $+10\text{ dB} \iff \times 10$ công suất. Trừ $-10\text{ dB} \iff \div 10$ công suất.
 >    - Ví dụ: Một máy phát có công suất $2\text{ W} = 2000\text{ mW} = 1\text{ mW} \times 10 \times 10 \times 10 \times 2 \implies 0\text{ dBm} + 10 + 10 + 10 + 3 = \mathbf{33\text{ dBm}}$.
 > 3. **Công thức Link Budget:**
->    $$\text{Link Budget (dB)} = P_T(\text{dBm}) - \text{Sensitivity}(\text{dBm})$$
+>
+>    ```math
+>    \text{Link Budget (dB)} = P_T(\text{dBm}) - \text{Sensitivity}(\text{dBm})
+>    ```
+>
 >    - Chip Semtech SX1272 ($P_T = +20\text{ dBm}$, Sensitivity = $-137\text{ dBm}$) cho $\text{Link Budget} = 20 - (-137) = \mathbf{157\text{ dB}}$.
 >    - Chip Semtech SX1262 ($P_T = +22\text{ dBm}$, Sensitivity = $-148\text{ dBm}$) cho $\text{Link Budget} = 22 - (-148) = \mathbf{170\text{ dB}}$.
 >    - Tại EU868 giới hạn $P_T = +14\text{ dBm}$, $\text{Link Budget} = 14 - (-148) = \mathbf{162\text{ dB}}$, vượt trội hoàn toàn so với 4G LTE ($\approx 130\text{ dB}$).
@@ -1408,7 +1920,10 @@ Dưới đây là bảng đối chiếu kiểm định năng lực hoàn thành 
 - Phân biệt Up-chirp và Down-chirp; giải thích được cơ chế trải phổ bằng chirp thay vì mã giả ngẫu nhiên thông thường.
 - Hiểu mối quan hệ giữa **Spreading Factor ($\text{SF7} \rightarrow \text{SF12}$)**, **Bandwidth ($\text{BW}$)** và **Coding Rate ($\text{CR}$)**.
 - Thuộc lòng và giải thích được công thức thời gian truyền 1 symbol:
-  $$T_{\text{symbol}} = \frac{2^{\text{SF}}}{\text{BW}}$$
+
+  ```math
+  T_{\text{symbol}} = \frac{2^{\text{SF}}}{\text{BW}}
+  ```
 
 > 🔑 **[KEY & GIẢI THÍCH CHUẨN]:**
 > 1. **Up-chirp vs Down-chirp & Trải phổ CSS:**
@@ -1420,7 +1935,11 @@ Dưới đây là bảng đối chiếu kiểm định năng lực hoàn thành 
 >    - **Bandwidth (BW):** Độ rộng dải thông kênh ($125, 250, 500\text{ kHz}$). BW tỷ lệ thuận với tốc độ truyền và tốc độ chip: $R_c = \text{BW}$.
 >    - **Coding Rate (CR):** Tỷ lệ sửa lỗi Hamming FEC ($4/5, 4/6, 4/7, 4/8$). CR tăng cường độ tin cậy khi đường truyền có nhiễu xung nhưng làm tăng phụ phí thời gian phát từ $25\%$ đến $100\%$.
 > 3. **Công thức thời gian truyền 1 symbol:**
->    $$T_{\text{symbol}} = \frac{2^{\text{SF}}}{\text{BW}}$$
+>
+>    ```math
+>    T_{\text{symbol}} = \frac{2^{\text{SF}}}{\text{BW}}
+>    ```
+>
 >    - Ý nghĩa vật lý: Một symbol gồm chính xác $2^{\text{SF}}$ chips, và mỗi chip có độ rộng thời gian là $T_{\text{chip}} = 1/\text{BW}$. Do đó, thời gian quét hết một symbol là $2^{\text{SF}} \times (1/\text{BW}) = 2^{\text{SF}} / \text{BW}$.
 >    - Tại $\text{BW} = 125\text{ kHz}$: $\text{SF7} \implies T_{\text{sym}} = 1.024\text{ ms}$; $\text{SF8} \implies 2.048\text{ ms}$; $\text{SF12} \implies 32.768\text{ ms}$.
 
@@ -1432,9 +1951,17 @@ Dưới đây là bảng đối chiếu kiểm định năng lực hoàn thành 
 
 > 🔑 **[KEY & GIẢI THÍCH CHUẨN]:**
 > 1. **Công thức giải tích tính Time on Air (ToA):**
->    $$T_{\text{ToA}} = (n_{\text{preamble}} + 4.25 + n_{\text{payload}}) \cdot \left(\frac{2^{\text{SF}}}{\text{BW}}\right)$$
+>
+>    ```math
+>    T_{\text{ToA}} = (n_{\text{preamble}} + 4.25 + n_{\text{payload}}) \cdot \left(\frac{2^{\text{SF}}}{\text{BW}}\right)
+>    ```
+>
 >    Với số symbol Payload được xác định chính xác theo công thức Semtech:
->    $$n_{\text{payload}} = 8 + \max\left( \left\lceil \frac{8 \cdot \text{PL} - 4 \cdot \text{SF} + 28 + 16 \cdot \text{CRC} - 20 \cdot H}{4(\text{SF} - 2 \cdot \text{DE})} \right\rceil (\text{CR} + 4), \; 0 \right)$$
+>
+>    ```math
+>    n_{\text{payload}} = 8 + \max\left( \left\lceil \frac{8 \cdot \text{PL} - 4 \cdot \text{SF} + 28 + 16 \cdot \text{CRC} - 20 \cdot H}{4(\text{SF} - 2 \cdot \text{DE})} \right\rceil (\text{CR} + 4), \; 0 \right)
+>    ```
+>
 >    - Ví dụ tính mẫu: Gói Uplink LoRaWAN $14\text{ bytes}$ (SF7, BW125, CR4/5, Preamble 8, Explicit Header $H=0$, $\text{CRC}=1$, $\text{DE}=0$):
 >      * Tử số: $8\cdot 14 - 4\cdot 7 + 28 + 16 - 0 = 128$.
 >      * Mẫu số: $4\cdot(7 - 0) = 28$.
@@ -1445,7 +1972,15 @@ Dưới đây là bảng đối chiếu kiểm định năng lực hoàn thành 
 > 2. **Quy định 1% Duty Cycle trên EU868:**
 >    - Viện Tiêu chuẩn ETSI EN 300 220 bắt buộc thiết bị phát không quá $1\%$ thời gian trên mỗi phân băng tần ($868.0 - 868.6\text{ MHz}$ và $863.0 - 868.0\text{ MHz}$).
 >    - Công thức tính thời gian im lặng bắt buộc:
->      $$T_{\text{off}} = T_{\text{on}} \cdot \left(\frac{1 - 0.01}{0.01}\right) = \mathbf{99 \cdot T_{\text{on}}}$$
+>
+>      ```math
+>      T_{\text{off}} = T_{\text{on}} \cdot \left(\frac{1 - 0.01}{0.01}\right) = \mathbf{99 \cdot T_{\text{on}}}
+>      ```
+>
 >    - Khi truyền gói tin mất $T_{\text{on}} = 46.3\text{ ms}$, thời gian nghỉ tối thiểu trên kênh/phân băng đó là:
->      $$T_{\text{off}} = 99 \times 46.3\text{ ms} = 4583.7\text{ ms} \approx \mathbf{4.58\text{ giây}}$$
+>
+>      ```math
+>      T_{\text{off}} = 99 \times 46.3\text{ ms} = 4583.7\text{ ms} \approx \mathbf{4.58\text{ giây}}
+>      ```
+>
 >    - Trong thời gian $4.58\text{ s}$ này, nếu cần phát tin khẩn cấp, thiết bị có thể áp dụng cơ chế nhảy kênh (Channel Hopping) sang phân băng khác (Sub-band g1 hoặc g3) mà không vi phạm pháp luật.
