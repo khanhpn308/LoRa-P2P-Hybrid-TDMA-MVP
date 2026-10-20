@@ -12,7 +12,7 @@ One ESP32 + SX1276 gateway is both LoRa P2P packet bridge and **local TDMA Maste
 - `backend-go` — minimal Go scaffold; no MQTT/TDMA implementation yet
 - `simulator` — model/test planning, **not a verified digital twin**
 - `clients` — placeholders until web/mobile work begins
-- [Acceptance gates](docs/verification/acceptance-gates.md) and [development guide](docs/development/coding-standards.md)
+- [Acceptance gates](docs/verification/acceptance-gates.md), [coding standards](docs/development/coding-standards.md) and [Vietnamese Monorepo Handbook](docs/development/monorepo-guide.md)
 
 ## Development
 
