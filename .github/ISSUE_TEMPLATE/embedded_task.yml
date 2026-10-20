@@ -3,6 +3,16 @@ description: ESP-IDF C / SX1276 / Gateway / Node development
 title: "[FW] "
 labels: ["type:feature"]
 body:
+  - type: textarea
+    id: target_directories
+    attributes:
+      label: "Target Directories (allowed paths)"
+      description: "REQUIRED. List every repository-relative directory or specific file this Issue permits changing. Cross-path changes need Issue scope update and reviewer approval."
+      placeholder: |
+        firmware/components/sx1276_driver/
+        tests/hil/
+    validations:
+      required: true
   - type: dropdown
     id: component
     attributes:
