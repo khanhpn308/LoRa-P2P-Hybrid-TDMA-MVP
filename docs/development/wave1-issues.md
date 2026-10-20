@@ -1,25 +1,27 @@
-# Wave 1 — 12 GitHub Issues F0–F3 (bản đã hiệu chỉnh)
+# Wave 1 — 12 GitHub Issues (bản đã hiệu chỉnh)
 
 > **Trạng thái:** 12/12 GitHub Issues đã được tạo và kiểm tra trên repository.
 > **Project #1:** Việc thêm Project Item/Gate cần chạy `scripts/sync_wave1_project.sh` bằng tài khoản GitHub có quyền `project`, sau đó nhận dòng `SUCCESS: 12/12...`. Chỉ sau bước đó mới xác nhận chúng thực sự nằm trong Project.
-> **Phạm vi Wave 1:** F0 Foundation, F1 RF Feasibility, F2 Protocol/Shared MAC, F3 Backend/Simulator Preparation. **Không** có nghĩa đã hoàn thành toàn bộ Gateway Master, Node TDMA Client hoặc hệ thống RF end-to-end.
+> **Phạm vi Wave 1:** Repository Governance, RF/Driver Feasibility, Protocol/Shared MAC, Backend/Simulator Preparation. **Không** có nghĩa đã hoàn thành toàn bộ Gateway Master, Node TDMA Client hoặc hệ thống RF end-to-end.
+>
+> **Quy ước quản lý:** `W1-05` là Issue thứ 05 của Wave 1, **không** phải bước thực hiện thứ năm. `Workstream` phân loại miền kỹ thuật; `Gate` G0–G6 là cổng nghiệm thu; dependencies và mức sẵn sàng quyết định thứ tự thực thi. Không sử dụng tiền tố Phase trong Task ID hoặc Issue title.
 
 ## 1. Danh mục Issues chính thức
 
-| ID | GitHub Issue | Giai đoạn | Project Gate | Priority đề xuất | Điều kiện phụ thuộc chính |
+| ID | GitHub Issue | Workstream | Project Gate | Priority đề xuất | Điều kiện phụ thuộc chính |
 |---|---|---|---|---|---|
-| W1-01 | [#8 Repo Governance](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/8) | F0 | G0: Scope | P1 | Không |
-| W1-02 | [#9 Hardware/RF Bring-up](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/9) | F1 | G1: RF | P0 | W1-01 (governance), thực nghiệm có thể song song |
-| W1-03 | [#10 ESP-IDF Components + Driver](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/10) | F1 | G1: RF | P0 | W1-02 xác nhận pinout |
-| W1-04 | [#11 Timing/ToA/Guard](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/11) | F1 | G1: RF | P0 | W1-02, W1-03 |
-| W1-05 | [#12 Radio MAC Contract](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/12) | F2 | G2: Protocol | P0 | W1-04, security review |
-| W1-06 | [#13 MAC/Airtime implementation](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/13) | F2 | G3: Embedded | P0 | W1-03, W1-04, W1-05 |
-| W1-07 | [#14 MQTT Contract](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/14) | F2 | G2: Protocol | P1 | W1-01; W1-05 phiên bản và session |
-| W1-08 | [#15 OpenAPI/WebSocket](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/15) | F3 | G4: Integration | P1 | W1-07 data semantics |
-| W1-09 | [#16 Local Infrastructure/TLS](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/16) | F3 | G4: Integration | P1 | W1-01; W1-07 topic ACL |
-| W1-10 | [#17 Gateway MQTT Simulator](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/17) | F3 | G4: Integration | P1 | W1-07, W1-09 |
-| W1-11 | [#18 Storage/MQTT Idempotency](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/18) | F3 | G4: Integration | P1 | W1-07, W1-09, W1-10 |
-| W1-12 | [#19 Go Scheduler/Simulation](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/19) | F3 | G4: Integration | P1 | W1-04, W1-05, W1-07, W1-08, W1-10, W1-11 |
+| W1-01 | [#8 Repo Governance](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/8) | Repo | G0: Scope | P1 | Không |
+| W1-02 | [#9 Hardware/RF Bring-up](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/9) | RF | G1: RF | P0 | W1-01 (governance), thực nghiệm có thể song song |
+| W1-03 | [#10 ESP-IDF Components + Driver](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/10) | Driver | G1: RF | P0 | W1-02 xác nhận pinout |
+| W1-04 | [#11 Timing/ToA/Guard](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/11) | RF | G1: RF | P0 | W1-02, W1-03 |
+| W1-05 | [#12 Radio MAC Contract](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/12) | Contract | G2: Protocol | P0 | W1-04, security review |
+| W1-06 | [#13 MAC/Airtime implementation](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/13) | MAC | G3: Embedded | P0 | W1-03, W1-04, W1-05 |
+| W1-07 | [#14 MQTT Contract](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/14) | Contract | G2: Protocol | P1 | W1-01; W1-05 phiên bản và session |
+| W1-08 | [#15 OpenAPI/WebSocket](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/15) | Contract | G4: Integration | P1 | W1-07 data semantics |
+| W1-09 | [#16 Local Infrastructure/TLS](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/16) | Infra | G4: Integration | P1 | W1-01; W1-07 topic ACL |
+| W1-10 | [#17 Gateway MQTT Simulator](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/17) | Sim | G4: Integration | P1 | W1-07, W1-09 |
+| W1-11 | [#18 Storage/MQTT Idempotency](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/18) | Backend | G4: Integration | P1 | W1-07, W1-09, W1-10 |
+| W1-12 | [#19 Go Scheduler/Simulation](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/19) | Backend | G4: Integration | P1 | W1-04, W1-05, W1-07, W1-08, W1-10, W1-11 |
 
 **Lưu ý:** Priority P0/P1 trong bảng mới là khuyến nghị, chưa khẳng định đã gán vào Custom Field. Chưa gán assignee khi 5 tài khoản khác chưa được xác minh. Mỗi Issue đã có mục `Target Directories (allowed paths)` và điều kiện nghiệm thu.
 
