@@ -1,8 +1,20 @@
-# Bootstrap fallback: replace with six real collaborator usernames after invitations.
+# Temporary CODEOWNERS baseline. Real team usernames are not yet confirmed.
+# After the five collaborators ACCEPT invitations and gain repo write access,
+# replace the owner below per path with actual GitHub usernames through a reviewed PR.
+# Never insert dummy @user placeholders that would break automatic review requests.
+* @khanhpn308
 /.github/ @khanhpn308
-/contracts/ @khanhpn308
 /docs/architecture/ @khanhpn308
-/firmware/ @khanhpn308
+/docs/development/ @khanhpn308
+/docs/requirements/ @khanhpn308
+/docs/verification/ @khanhpn308
+/contracts/ @khanhpn308
+/firmware/components/ @khanhpn308
+/firmware/gateway_master/ @khanhpn308
+/firmware/sensor_node/ @khanhpn308
 /backend-go/ @khanhpn308
 /clients/ @khanhpn308
+/simulator/ @khanhpn308
+/tests/ @khanhpn308
 /deploy/ @khanhpn308
+/scripts/ @khanhpn308
