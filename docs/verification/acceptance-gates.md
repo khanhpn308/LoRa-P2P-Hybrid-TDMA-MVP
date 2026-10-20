@@ -1,33 +1,33 @@
-# Release gates and required evidence
+# Các cổng nghiệm thu (Release Gates) và bằng chứng bắt buộc
 
-Evidence includes issue ID, commit or firmware hash, board revision, ESP-IDF/toolchain version, test configuration, logs, timestamp, test owner, criterion and disposition. Never label a result PASS based on AI prediction.
+Bằng chứng phải bao gồm mã Issue, mã commit hoặc mã băm (hash) của firmware, phiên bản bo mạch (board revision), phiên bản ESP-IDF/toolchain, cấu hình kiểm thử, log, thời điểm kiểm thử, người phụ trách kiểm thử, tiêu chí đánh giá và kết luận. Không được đánh dấu kết quả là `PASS` chỉ dựa trên dự đoán của AI.
 
-| Gate | Purpose | Evidence |
+| Gate | Mục đích | Bằng chứng cần có |
 |---|---|---|
-| G0 | Baseline scope, responsibilities and RTM | Approved requirements + ADRs |
-| G1 | Hardware/RF/airtime feasibility | RF regulatory assessment, ToA calculations and actual measurements |
-| G2 | Versioned custom MAC and TDMA protocol | Bit/byte layouts, failure states, security plan, vectors |
-| G3 | Embedded bring-up and autonomous gateway | Hardware test reports, timing and restart logs |
-| G4 | Backend and client integration | MQTT dedup, API authorization, migration/restore, E2E |
-| G5 | Security/reliability | Threat model, replay/nonce checks, fault injection, soak tests |
-| G6 | Pilot acceptance | Field measurements, latency distributions, decision record |
+| G0 | Xác lập phạm vi cơ sở, trách nhiệm và ma trận truy vết yêu cầu (RTM) | Requirements và ADR đã được phê duyệt |
+| G1 | Xác minh tính khả thi của phần cứng, RF và thời gian phát sóng (airtime) | Đánh giá quy định RF, tính toán ToA và số liệu đo thực tế |
+| G2 | Xác minh giao thức Custom MAC và TDMA có quản lý phiên bản | Bố cục bit/byte, các trạng thái lỗi, phương án bảo mật và test vectors |
+| G3 | Kiểm chứng hệ nhúng và Gateway có khả năng vận hành tự chủ | Báo cáo kiểm thử phần cứng, log timing và log khởi động lại |
+| G4 | Tích hợp Backend và Client | Kiểm tra chống trùng lặp MQTT, phân quyền API, migration/restore và kiểm thử end-to-end (E2E) |
+| G5 | Bảo mật và độ tin cậy | Threat model, kiểm tra replay/nonce, fault injection và soak tests |
+| G6 | Nghiệm thu thử nghiệm thực địa (Pilot) | Số liệu đo thực địa, phân phối độ trễ và biên bản quyết định |
 
-Permitted status: PASS, PARTIAL_WITH_FINDINGS, FAIL, NOT_VERIFIED. No automatic promotion on code-only check for RF, security or HIL gates.
+Các trạng thái được phép: `PASS`, `PARTIAL_WITH_FINDINGS`, `FAIL`, `NOT_VERIFIED`. Không được tự động nâng trạng thái nghiệm thu chỉ dựa vào kiểm tra mã nguồn (code-only checks) đối với các Gate liên quan đến RF, bảo mật hoặc HIL.
 
-Use `docs/verification/` for small measurement reports and GitHub Actions artifacts or controlled lab storage for large traces.
+Lưu các báo cáo đo kiểm nhỏ trong `docs/verification/`. Đối với các trace/log dung lượng lớn, sử dụng GitHub Actions artifacts hoặc kho lưu trữ phòng thí nghiệm có kiểm soát.
 
-## GitHub Projects Gate single-select field (exact options)
+## Trường Gate trong GitHub Projects — kiểu chọn một giá trị (single-select)
 
-Project #1 must use a **single** Custom Field named `Gate` with precisely seven values:
+GitHub Project #1 phải có **duy nhất một** Custom Field mang tên `Gate`, với **chính xác bảy lựa chọn** dưới đây:
 
-| Project field option | Gate meaning |
+| Giá trị của trường trong GitHub Project | Ý nghĩa của Gate |
 |---|---|
-| `G0: Scope` | Scope, requirements and responsibility baseline |
-| `G1: RF` | RF feasibility and regulatory evidence |
-| `G2: Protocol` | MAC and TDMA design verification |
-| `G3: Embedded` | Firmware and hardware integration |
-| `G4: Integration` | MQTT/Backend/Client E2E |
-| `G5: Security/Reliability` | Security and reliability evidence |
-| `G6: Pilot Acceptance` | Field-test acceptance |
+| `G0: Scope` | Xác lập phạm vi, yêu cầu và trách nhiệm |
+| `G1: RF` | Tính khả thi RF và bằng chứng tuân thủ quy định |
+| `G2: Protocol` | Kiểm chứng thiết kế MAC và TDMA |
+| `G3: Embedded` | Tích hợp firmware và phần cứng |
+| `G4: Integration` | Kiểm thử tích hợp MQTT/Backend/Client từ đầu đến cuối (E2E) |
+| `G5: Security/Reliability` | Bằng chứng về bảo mật và độ tin cậy |
+| `G6: Pilot Acceptance` | Nghiệm thu kiểm thử thực địa |
 
-Use `bash scripts/setup_project_gate.sh` from the repository root after GitHub CLI has authorized Project access. The repository cannot guarantee the live Project field exists until GitHub confirms it. Gate classification on an Issue is not the same as technical PASS of the gate.
+Chạy lệnh `bash scripts/setup_project_gate.sh` tại thư mục gốc repository sau khi GitHub CLI đã được cấp quyền truy cập Project. Không thể khẳng định trường `Gate` đã tồn tại trên Project thực tế cho đến khi được GitHub xác nhận. Việc gán một Gate cho Issue chỉ là phân loại phạm vi nghiệm thu, **không đồng nghĩa với việc Gate đó đã đạt `PASS` về mặt kỹ thuật**.
