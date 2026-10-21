@@ -3,7 +3,7 @@
 
 ## 1. Topics, QoS và ownership
 
-Root `iot/v1/gw/{gateway_id}`. MQTT 3.1.1/v5 cần chốt bằng ADR. Dùng TLS với xác thực broker/Gateway, ACL theo client ID thật; chỉ profile `dev-insecure` localhost bị cô lập mới được chạy cleartext.
+Root `iot/v1/gw/{gateway_id}`. **MQTT 5.0 bắt buộc** cho Gateway và Backend (xem [ADR-0002](../../docs/adr/0002-mqtt-5.md)); MQTT 3.1.1 không thuộc contract v1. Dùng TLS với xác thực broker/Gateway, ACL theo client ID thật; chỉ profile `dev-insecure` localhost bị cô lập mới được chạy cleartext.
 
 | Suffix | Publisher → Consumer | QoS | Retain | Schema |
 |---|---|---:|---|---|
@@ -16,6 +16,17 @@ Root `iot/v1/gw/{gateway_id}`. MQTT 3.1.1/v5 cần chốt bằng ADR. Dùng TLS 
 | `downlink/command` | Backend → Gateway | 1 | false | [command](schemas/command.schema.json) |
 
 Gateway chỉ publish `uplink/#` và subscribe `downlink/#` của **chính mình**; Backend ngược lại. Web/Mobile không truy cập MQTT trực tiếp. Không tạo ngầm alias `iot/gw/{id}/control/schedule/set` hay `uplink/sched_ack` nêu trong tài liệu đính kèm: namespace canonical là của repository.
+
+## 1.1. MQTT 5.0 — session và expiry
+
+| Luồng | Quy tắc MQTT 5.0 |
+|---|---|
+| Gateway CONNECT | `Clean Start=1`, `Session Expiry Interval=0`; subscribe lại sau reconnect. Uplink offline buffer giới hạn tại Gateway. |
+| Backend CONNECT | Client ID cố định; `Clean Start=0`, `Session Expiry Interval>0`. Thời hạn, queue limit và broker persistence phải cấu hình/kiểm thử trước triển khai. |
+| `downlink/schedule`, `downlink/command` | **Bắt buộc** `Message Expiry Interval` (giây nguyên dương, không vượt thời gian còn lại đến `expires_at` tại lúc publish); không publish nếu còn <1 giây hoặc đã quá hạn. `Retain=false`. |
+| Tất cả topics | QoS/Retain theo bảng trên; MQTT 5 Reason Codes cần được log. Không bắt buộc User Properties hoặc Topic Alias. |
+
+**Message Expiry không thay `expires_at`:** Gateway phải kiểm tra thời hạn bằng đồng hồ tin cậy và xác thực ID/version. Broker PUBACK không có nghĩa là command đã được Node thực thi. Backend reconcile schedule/status sau reconnect, không điều khiển từng slot bằng MQTT.
 
 ## 2. Envelope & dữ liệu
 
@@ -33,7 +44,7 @@ Backend: `PROPOSED → SENT → STAGED → ACTIVE` hoặc `REJECTED / EXPIRED`; 
 - `VERIFY_NACK`: từ chối với `reason_code`; active trước đó giữ nguyên.
 - `ACTIVE_REPORT`: Gateway đã kích hoạt thực tế. Backend chỉ đánh ACTIVE khi `request_id`, `schedule_version`, identity và mốc activation khớp.
 
-`downlink/schedule retain=false`: retained stale schedule nguy hiểm sau reboot. Sau reconnect Backend đối chiếu retained `uplink/status` (chỉ phản ánh last-known), rồi resend request còn hiệu lực nếu cần. Gateway phải reject `expires_at` đã qua/clock không đáng tin, duplicate cũ, sai gateway, slot trùng, thông số airtime lỗi. Gateway tự chọn SF activate đủ xa; Backend **không** điều khiển radio từng slot. MQTT v5 Message Expiry, nếu dùng, chỉ hỗ trợ bổ sung và không thay `expires_at` validation.
+`downlink/schedule retain=false`: retained stale schedule nguy hiểm sau reboot. Sau reconnect Backend đối chiếu retained `uplink/status` (chỉ phản ánh last-known), rồi resend request còn hiệu lực nếu cần. Gateway phải reject `expires_at` đã qua/clock không đáng tin, duplicate cũ, sai gateway, slot trùng, thông số airtime lỗi. Gateway tự chọn SF activate đủ xa; Backend **không** điều khiển radio từng slot. MQTT 5.0 Message Expiry là bắt buộc khi publish schedule/command, nhưng không thay `expires_at` validation (mục 1.1).
 
 ## 4. Downlink commands và xác nhận
 
@@ -42,6 +53,7 @@ Backend: `PROPOSED → SENT → STAGED → ACTIVE` hoặc `REJECTED / EXPIRED`; 
 ## 5. Negative tests / giới hạn
 
 - QoS1 duplicate, reconnect và offline replay: giữ ID, chỉ lưu một lần vào DB.
+- MQTT 5.0: thử CONNECT/session, Message Expiry (thiếu, quá dài, hết hạn), Reason Codes và khởi động lại Broker/Gateway.
 - Expired, retained stale, wrong gateway, non-monotonic version, overlapping slot, thiếu announcement horizon → NACK/fail closed.
 - Thiếu/nhầm ACL hoặc command quá hạn → từ chối.
 - JSON Schema không thay được kiểm tra liên trường: unique slot/node, thời hạn với clock, transition hợp lệ và airtime.
