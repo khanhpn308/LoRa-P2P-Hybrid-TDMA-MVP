@@ -1,5 +1,5 @@
 # MQTT Contract v1 — Gateway ↔ Mosquitto ↔ Backend Go
-**0.1.0-draft, PROPOSED, Issue #14. Chưa triển khai, chưa nghiệm thu.**
+**Version:** `0.1.0-draft` · **MQTT 5.0:** `OWNER_ACCEPTED` (ADR-0002, PR #26) · **Contract:** `DRAFT / PENDING CROSS-TEAM REVIEW` (Issue #14) · **Implementation:** `NOT_VERIFIED`.
 
 ## 1. Topics, QoS và ownership
 
