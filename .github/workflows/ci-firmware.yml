@@ -1,7 +1,23 @@
 name: CI - Firmware Scaffolds
-on: [pull_request, push, workflow_dispatch]
+# Do not build ESP-IDF for unrelated Web, Backend, or documentation PRs.
+# If these jobs are required checks for every PR, path-based skipping can leave
+# checks Pending. Configure branch rules accordingly before enforcing them.
+on:
+  pull_request:
+    paths:
+      - "firmware/**"
+      - "contracts/radio-mac/**"
+      - "contracts/mqtt/**"
+      - ".github/workflows/ci-firmware.yml"
+  workflow_dispatch:
+
 permissions:
   contents: read
+
+concurrency:
+  group: firmware-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   gateway-build:
     name: gateway-esp32-build
