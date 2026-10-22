@@ -105,7 +105,7 @@ def verify_preinstalled_resources(spec: IsolatedCLI) -> None:
 @dataclass(frozen=True)
 class ProbeReceipt:
     provider: str
-    state: str
+    status: str
     exit_code: int | None
     sha256: str
     output_bytes: int
