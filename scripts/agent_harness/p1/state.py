@@ -27,6 +27,7 @@ class Journal:
         if self.path.parent.is_symlink() or self.path.is_symlink():
             raise StateConflict("SQLite journal may not be a symlink")
         self.db = sqlite3.connect(str(path), timeout=15, isolation_level=None)
+        self.path.chmod(0o600)  # Host-only state even under a permissive caller umask
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA busy_timeout=15000")
         self.db.execute("PRAGMA journal_mode=WAL")
