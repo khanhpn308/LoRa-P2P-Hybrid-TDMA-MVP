@@ -87,7 +87,7 @@ class RuntimePlanTests(unittest.TestCase):
 class ProviderOutputTests(unittest.TestCase):
     def test_codex_requires_exact_stdout_not_echoed_prompt(self):
         item = evaluate_probe("codex", 0, b"CODEX_SMOKE_OK\n")
-        self.assertEqual(item.state, "READ_ONLY_MODEL_PROBE_PASS_ONLY")
+        self.assertEqual(item.status, "READ_ONLY_MODEL_PROBE_PASS_ONLY")
         self.assertEqual(item.exit_code, 0)
         for out in (b"", b"model: CODEX_SMOKE_OK from prompt",
                     b"CODEX_SMOKE_OK plus instructions"):
