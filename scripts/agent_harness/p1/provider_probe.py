@@ -31,6 +31,8 @@ def main() -> int:
     parser.add_argument("--network", required=True, help="Governed lora-agent-egress-* network")
     parser.add_argument("--profile-volume", required=True, help="Provider-dedicated authentication volume")
     parser.add_argument("--execute", action="store_true", help="Execute provider smoke test, not coding")
+    parser.add_argument("--confirm-external-egress-policy", action="store_true",
+                        help="Operator confirms egress restriction and isolated auth are externally reviewed")
     parser.add_argument("--timeout", type=int, default=180)
     args = parser.parse_args()
     try:
@@ -54,6 +56,9 @@ def main() -> int:
                     "requires": "externally reviewed egress and provider authentication",
                 }, indent=2))
                 return 0
+            if not args.confirm_external_egress_policy:
+                raise RuntimeBlocked(
+                    "Missing operator confirmation of external egress + isolated auth policy")
             code, stdout, stderr = _run(command, timeout=args.timeout, name=name)
             receipt = evaluate_probe(args.provider, code, stdout, stderr)
             print(json.dumps(receipt.as_json(), indent=2))
