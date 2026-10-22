@@ -44,9 +44,15 @@ class RuntimePlanTests(unittest.TestCase):
             self.assertIn(proxy_env, args)
         self.assertIn(IMAGE, args)
         self.assertIn("CODEX_HOME=/home/agent/.codex-clean-pilot", args)
+        self.assertIn("CODEX_CA_CERTIFICATE=/etc/ssl/certs/ca-certificates.crt", args)
+        self.assertLess(args.index("CODEX_HOME=/home/agent/.codex-clean-pilot"),
+                        args.index(IMAGE))
+        self.assertLess(args.index("CODEX_CA_CERTIFICATE=/etc/ssl/certs/ca-certificates.crt"),
+                        args.index(IMAGE))
         self.assertEqual(args[-8:],
-                         ["codex", "exec", "--sandbox", "read-only",
-                          "--skip-git-repo-check", "--ask-for-approval", "never", "hello"])
+                         ["codex", "--ask-for-approval", "never",
+                          "exec", "--sandbox", "read-only",
+                          "--skip-git-repo-check", "hello"])
         mounts = [args[i+1] for i, v in enumerate(args) if v == "--mount"]
         self.assertEqual(len(mounts), 2)
         self.assertTrue(any("dst=/workspace,readonly" in x for x in mounts))
