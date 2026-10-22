@@ -36,9 +36,11 @@ class IsolatedCLI:
     profile_volume: str
 
     def command(self, snapshot: pathlib.Path, container_name: str,
-                prompt: str) -> list[str]:
+                prompt: str, *, docker_only_isolation: bool = False) -> list[str]:
         if self.provider not in ("codex", "agy"):
             raise RuntimeBlocked("Unknown provider")
+        if docker_only_isolation and self.provider != "codex":
+            raise RuntimeBlocked("Docker-only sandbox override is Codex-specific")
         if not IMAGE.fullmatch(self.image_id):
             raise RuntimeBlocked("Provider CLI image must be pinned to inspected sha256 ID")
         if not NETWORK.fullmatch(self.network):
@@ -83,8 +85,12 @@ class IsolatedCLI:
             self.image_id,
         ]
         if self.provider == "codex":
+            # Docker is the sole OS boundary in this explicitly accepted mode.
+            # The immutable root, read-only /workspace, non-root uid, no caps,
+            # and segregated internal egress network must remain in force.
+            sandbox = "danger-full-access" if docker_only_isolation else "read-only"
             return flags + ["codex", "--ask-for-approval", "never",
-                            "exec", "--sandbox", "read-only",
+                            "exec", "--sandbox", sandbox,
                             "--skip-git-repo-check", prompt]
         return flags + ["agy", "--sandbox", "-p", prompt,
                         "--output-format", "json", "--print-timeout", "3m"]
