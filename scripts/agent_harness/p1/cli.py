@@ -63,6 +63,8 @@ def main() -> int:
     prep.add_argument("--issue", type=int, required=True)
     prep.add_argument("--source", type=Path, default=Path.cwd())
     prep.add_argument("--apply", action="store_true", help="Create SQLite record + git worktree")
+    prep.add_argument("--expected-base-sha", default=None,
+                      help="Optional 40-character approved HEAD pin; blocks if source changed")
     prep.add_argument("--state", type=Path, default=None,
                       help="Local Host SQLite journal, outside source worktree by default")
     status = sub.add_parser("status")
@@ -83,6 +85,8 @@ def main() -> int:
         if args.command == "prepare":
             data = plan_payload(source, args.issue, run_id=uuid.uuid4().hex)
             item = data["worktree_plan"]
+            if args.expected_base_sha is not None and item.base_sha != args.expected_base_sha:
+                raise PreflightError("Actual source HEAD does not match approved base SHA")
             preview = {"state": "PREFLIGHT_ONLY", "issue": args.issue,
                        "run_id": data["run_id"], "source_sha": item.base_sha,
                        "issue_sha256": data["issue_sha"],
