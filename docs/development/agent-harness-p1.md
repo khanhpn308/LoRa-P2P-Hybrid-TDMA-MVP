@@ -174,7 +174,7 @@ After independently verifying network filtering and dedicated profiles, re-run e
 --execute --confirm-external-egress-policy
 ~~~
 
-This confirmation flag is an **operator acknowledgment**, NOT attestation or a substitute for actual network/VM security. A real provider request consumes provider quota. Codex is invoked in read-only mode; AGY gets `--sandbox` and no dangerous permission bypass. The fake README fixture is read-only, not a working Git repository. The command validates the terminal response, soft permission denials (including exit 0 cases), errors and bounded output.
+This confirmation flag is an **operator acknowledgment**, NOT attestation or a substitute for actual network/VM security. A real provider request consumes provider quota. Codex is invoked in read-only mode; AGY gets `--sandbox` and no dangerous permission bypass. The fake README fixture is read-only, not a working Git repository. Codex therefore uses `--skip-git-repo-check` **only for this disposable non-Git smoke directory**; normal per-Issue code changes must retain Git/source-SHA validation. The command validates the terminal response, soft permission denials (including exit 0 cases), errors and bounded output.
 
 PASS here means **only** that the provider responded in an isolated, read-only smoke test. It does not prove an end-to-end Agent loop, firmware build, audit coverage, complete quota governance, precise egress restriction or unattended safety. HIL, RF and TDMA remain NOT_VERIFIED.
 
