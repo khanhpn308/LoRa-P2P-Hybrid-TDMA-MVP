@@ -48,6 +48,10 @@ class ToolchainTests(unittest.TestCase):
             self.assertIn("HOME=/tmp", args)
             self.assertIn(HASH, args)
             self.assertNotIn("espressif/idf:v6.1", args)
+            mount = args[args.index("--mount") + 1]
+            self.assertIn("type=bind,src=", mount)
+            self.assertIn(",dst=/workspace", mount)
+            self.assertNotIn(",rw", mount)  # Docker --mount is read-write by default
             self.assertNotIn("--privileged", args)
             self.assertEqual(args[-2:], ["idf.py", "build"])
             self.assertEqual(args[args.index("--workdir") + 1],
@@ -147,6 +151,24 @@ class ToolchainTests(unittest.TestCase):
             with self.subTest(version=version):
                 with self.assertRaises(tc.ToolchainError):
                     tc.actual_version(version, "6.1")
+
+
+    def test_docker_exit_125_shows_bounded_stderr(self):
+        """Docker startup failures must retain actionable diagnostics."""
+        with patch("toolchains.resolver.subprocess.run", return_value=subprocess.CompletedProcess(
+                ["docker", "run"], 125, "", "docker: invalid mount config: invalid key rw")):
+            with self.assertRaises(tc.ToolchainError) as caught:
+                tc.check(["docker", "run", "image", "idf.py", "--version"])
+            self.assertIn("exit 125", str(caught.exception))
+            self.assertIn("invalid mount config", str(caught.exception))
+
+    def test_docker_error_redacts_sensitive_output(self):
+        with patch("toolchains.resolver.subprocess.run", return_value=subprocess.CompletedProcess(
+                ["docker", "run"], 125, "", "docker: token=private_example_value")):
+            with self.assertRaises(tc.ToolchainError) as caught:
+                tc.check(["docker", "run", "image", "idf.py", "--version"])
+            self.assertNotIn("private_example_value", str(caught.exception))
+            self.assertIn("token=[REDACTED]", str(caught.exception))
 
 if __name__ == "__main__":
     unittest.main()
