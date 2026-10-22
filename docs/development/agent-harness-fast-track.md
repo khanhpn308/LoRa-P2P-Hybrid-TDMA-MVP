@@ -37,3 +37,9 @@ Expected last two statuses: `PLAN_ONLY`. The provider command builder now inject
 5. Actual Worker issue editing, host ESP-IDF v6.1 builds, AGY/Gemini audited snapshot, signed commit-bound evidence and Draft PR publishing are a separate P1-B2-C milestone; none is complete by smoke testing.
 
 References: https://www.antigravity.google/docs/faq/ ; https://www.antigravity.google/docs/cli/headless/ ; https://developers.openai.com/cookbook/examples/codex/build_iterative_repair_loops_with_codex
+
+## Smoke blocked after successful Docker login
+
+If `codex login status` reports `Logged in using ChatGPT` from `lora-codex-cli:0.163.0-ca-fixed` but the smoke returns `BLOCKED: Provider permission/authentication denial`, do not infer a failed subscription. The original message merged unrelated stderr signals, including sandbox setup denials. The live probe now prints `diagnostic.stderr_signals` and a hash/length only, never raw stderr, to discriminate `sandbox_backend`, `filesystem_permission`, `provider_auth`, `approval`, and `network_transport`. Review the flags, not secret-containing logs. Fail-closed behavior is unchanged.
+
+Nested Codex Linux sandbox creation may require user namespace/mount operations denied by the deliberately hardened outer Docker runtime (`--cap-drop=ALL`, non-root, `no-new-privileges`). The outer container is **not** permission to remove isolation; do not use `--privileged`, mount `docker.sock`, or disable TLS verification. An outer-container-only sandbox proposal requires a separate security review before any smoke or coding task is changed. See https://github.com/openai/codex/issues/46246 and https://learn.chatgpt.com/docs/agent-approvals-security.
