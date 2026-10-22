@@ -106,8 +106,10 @@ class IsolatedCLI:
             # The immutable root, read-only /workspace, non-root uid, no caps,
             # and segregated internal egress network must remain in force.
             sandbox = "danger-full-access" if docker_only_isolation else "read-only"
+            # A disposable smoke does not need durable Codex session rollouts.
+            # Avoid a background write path rather than whitelisting os error 13.
             return flags + ["codex", "--ask-for-approval", "never",
-                            "exec", "--sandbox", sandbox,
+                            "exec", "--ephemeral", "--sandbox", sandbox,
                             "--skip-git-repo-check", prompt]
         return flags + ["agy", "--sandbox", "-p", prompt,
                         "--output-format", "json", "--print-timeout", "3m"]
