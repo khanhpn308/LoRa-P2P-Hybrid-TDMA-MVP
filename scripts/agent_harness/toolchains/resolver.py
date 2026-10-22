@@ -57,7 +57,20 @@ def check(args: list[str], *, cwd: pathlib.Path | None = None,
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ToolchainError(f"Toolchain command unavailable/timed out: {args[0]}") from exc
     if p.returncode:
-        raise ToolchainError(f"Toolchain check failed: {args[0]}, exit {p.returncode}")
+        # A Docker error (especially exit 125) is usually explained by stderr.
+        # Expose only a bounded, redacted diagnostic; do not log environment
+        # variables, full command arguments or untrusted multiline output.
+        diagnostic = p.stderr.strip()[-1200:]
+        diagnostic = re.sub(
+            r"(?i)(authorization|api[_-]?key|token|password|secret)\\s*[:=]\\s*\\S+",
+            r"\\1=[REDACTED]", diagnostic,
+        )
+        diagnostic = re.sub(r"[\\r\\n\\t]+", " ", diagnostic)
+        if not diagnostic:
+            diagnostic = "No Docker/tool stderr was returned"
+        raise ToolchainError(
+            f"Toolchain check failed: {args[0]}, exit {p.returncode}: {diagnostic}"
+        )
     if len(p.stdout) > 8192:
         raise ToolchainError("Toolchain version/inspect response exceeds limit")
     return p.stdout.strip()
