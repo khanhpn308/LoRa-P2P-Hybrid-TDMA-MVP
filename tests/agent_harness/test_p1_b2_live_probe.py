@@ -63,6 +63,29 @@ class RuntimePlanTests(unittest.TestCase):
         self.assertNotIn("--privileged", args)
         self.assertNotIn("--dangerously-skip-permissions", args)
 
+    def test_docker_only_codex_is_opt_in_and_keeps_outer_guardrails(self):
+        with tempfile.TemporaryDirectory() as d:
+            args = IsolatedCLI("codex", IMAGE, NETWORK, CODEX_VOLUME).command(
+                pathlib.Path(d), "lora-p1-probe-codex-1234abcd", "hello",
+                docker_only_isolation=True)
+        self.assertEqual(args[-8:],
+                         ["codex", "--ask-for-approval", "never",
+                          "exec", "--sandbox", "danger-full-access",
+                          "--skip-git-repo-check", "hello"])
+        for flag in ("--read-only", "--cap-drop=ALL",
+                     "--security-opt=no-new-privileges",
+                     "--network", "--user"):
+            self.assertIn(flag, args)
+        self.assertIn("10001:10001", args)
+        self.assertTrue(any("dst=/workspace,readonly" in x for x in args))
+        self.assertNotIn("--privileged", args)
+
+    def test_docker_only_override_rejects_agy(self):
+        with tempfile.TemporaryDirectory() as d, self.assertRaises(RuntimeBlocked):
+            IsolatedCLI("agy", IMAGE, NETWORK, AGY_VOLUME).command(
+                pathlib.Path(d), "lora-p1-probe-agy-1234abcd", "hello",
+                docker_only_isolation=True)
+
     def test_agy_plan_is_independent_and_structured(self):
         args = self.plan("agy", AGY_VOLUME)
         self.assertEqual(args[-8:],
@@ -214,6 +237,33 @@ class SmokeCliTests(unittest.TestCase):
         self.assertEqual(json.loads(buffer.getvalue())["status"],
                          "READ_ONLY_MODEL_PROBE_PASS_ONLY")
         launched.assert_called_once()
+
+    def test_docker_only_requires_execute_and_egress_confirmation(self):
+        for flags in (
+            ["--accept-docker-only-isolation"],
+            ["--execute", "--accept-docker-only-isolation"],
+        ):
+            with self.subTest(flags=flags), patch.object(
+                    sys, "argv", self.argv(flags)), patch.object(
+                    provider_probe, "_run") as launched, contextlib.redirect_stdout(
+                    io.StringIO()) as buffer:
+                self.assertEqual(provider_probe.main(), 2)
+                self.assertEqual(json.loads(buffer.getvalue())["status"], "BLOCKED")
+                launched.assert_not_called()
+
+    def test_mocked_docker_only_success_reports_boundary(self):
+        with patch.object(sys, "argv", self.argv([
+                "--execute", "--confirm-external-egress-policy",
+                "--accept-docker-only-isolation"])), patch.object(
+                provider_probe, "verify_preinstalled_resources"), patch.object(
+                provider_probe, "_run", return_value=(
+                    0, b"CODEX_SMOKE_OK\\n".replace(b"\\\\n", b"\\n"), b"")) as launched, contextlib.redirect_stdout(
+                io.StringIO()) as buffer:
+            self.assertEqual(provider_probe.main(), 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["status"], "READ_ONLY_MODEL_PROBE_PASS_ONLY")
+        self.assertEqual(payload["sandbox_boundary"], "docker_outer_only")
+        self.assertIn("danger-full-access", launched.call_args.args[0])
 
     def test_mocked_soft_denial_fails_closed(self):
         with patch.object(sys, "argv", self.argv([
