@@ -57,6 +57,10 @@ class IsolatedCLI:
         if os.name != "posix" or not hasattr(os, "getuid"):
             raise RuntimeBlocked("Supported Linux / WSL2 environment required")
         root = snapshot.resolve(strict=True)
+        provider_env = ([
+            "--env", "CODEX_HOME=/home/agent/.codex-clean-pilot",
+            "--env", "CODEX_CA_CERTIFICATE=/etc/ssl/certs/ca-certificates.crt",
+        ] if self.provider == "codex" else [])
         flags = [
             "docker", "run", "--rm", "--init", "--pull=never",
             "--name", container_name,
@@ -75,13 +79,13 @@ class IsolatedCLI:
             "--mount", f"type=bind,src={root},dst=/workspace,readonly",
             "--mount", f"type=volume,src={self.profile_volume},dst=/home/agent",
             "--workdir", "/workspace",
+            *provider_env,
             self.image_id,
         ]
         if self.provider == "codex":
-            flags += ["--env", "CODEX_HOME=/home/agent/.codex-clean-pilot"]
-            return flags + ["codex", "exec", "--sandbox", "read-only",
-                            "--skip-git-repo-check",
-                            "--ask-for-approval", "never", prompt]
+            return flags + ["codex", "--ask-for-approval", "never",
+                            "exec", "--sandbox", "read-only",
+                            "--skip-git-repo-check", prompt]
         return flags + ["agy", "--sandbox", "-p", prompt,
                         "--output-format", "json", "--print-timeout", "3m"]
 
