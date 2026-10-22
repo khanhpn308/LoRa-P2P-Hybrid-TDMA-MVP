@@ -65,6 +65,18 @@ class WorktreeTests(unittest.TestCase):
         with self.assertRaises(WorktreeError):
             make_plan(self.repo, 32, self.run_id)
 
+    def test_git_branch_lookup_failure_is_fail_closed(self):
+        real_run = subprocess.run
+
+        def fake_run(args, **kwargs):
+            if "show-ref" in args:
+                return subprocess.CompletedProcess(args, 128, "", "git database error")
+            return real_run(args, **kwargs)
+
+        with patch("p1.worktrees.subprocess.run", side_effect=fake_run):
+            with self.assertRaises(WorktreeError):
+                make_plan(self.repo, 32, self.run_id)
+
     def test_dry_run_has_no_mutations(self):
         db = self.root / "journal" / "state.sqlite"
         argv = ["cli.py", "prepare", "--issue", "32", "--source", str(self.repo),
