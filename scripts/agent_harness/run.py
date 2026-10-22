@@ -18,7 +18,7 @@ import uuid
 from adapters import codex, antigravity
 from scope import _git, assert_scoped, parse_allowed_paths
 from snapshot import assemble, unchanged, digest
-from toolchains.resolver import ToolchainError, resolve
+from toolchains.resolver import ToolchainError, resolve, normalize_version, load_project_version
 
 REPO = "khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP"
 
@@ -105,17 +105,19 @@ def run(args: argparse.Namespace) -> int:
             return finish("BLOCKED", 2, "Issue must be OPEN")
         scope = parse_allowed_paths(issue["body"])
         result["approved_paths"] = scope
+        baseline = load_project_version(repo)
+        result["approved_esp_idf_version"] = "v" + baseline
+        if args.expected_idf_version and normalize_version(args.expected_idf_version) != baseline:
+            return finish("BLOCKED", 2, "Requested version conflicts with repository baseline")
         if not args.execute:
             return finish("PREFLIGHT_ONLY", 0)
         if not args.accept_isolated_pilot:
             return finish("BLOCKED", 2, "Requires external isolation; --accept-isolated-pilot")
-        if not args.expected_idf_version:
-            return finish("BLOCKED", 2, "Approve/pin an exact ESP-IDF X.Y.Z version before execution")
         for program in ("codex", "agy"):
             if shutil.which(program) is None:
                 return finish("BLOCKED", 2, "Missing CLI: " + program)
         try:
-            idf = resolve(repo, version=args.expected_idf_version,
+            idf = resolve(repo, version=baseline,
                           mode=args.toolchain_mode,
                           allow_native_fallback=args.allow_native_fallback)
         except ToolchainError as exc:
@@ -248,7 +250,7 @@ def main() -> int:
     p.add_argument("--execute", action="store_true")
     p.add_argument("--accept-isolated-pilot", action="store_true",
                    help="Operator attests environment isolation; this flag does not create a sandbox")
-    p.add_argument("--expected-idf-version", help="Approved exact ESP-IDF X.Y.Z release")
+    p.add_argument("--expected-idf-version", help="Optional assertion against firmware/esp-idf-version.txt")
     p.add_argument("--toolchain-mode", choices=(
         "container_first", "container_only", "native_first", "native_only"),
         default="container_first")

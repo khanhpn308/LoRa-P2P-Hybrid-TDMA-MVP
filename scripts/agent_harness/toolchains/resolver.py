@@ -12,8 +12,8 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
-VERSION = re.compile(r"^v?(\d+\.\d+\.\d+)$")
-IDENTIFIED_VERSION = re.compile(r"^ESP-IDF\s+v?(\d+\.\d+\.\d+)\s*$")
+VERSION = re.compile(r"^v?(\d+\.\d+(?:\.\d+)?)$")
+IDENTIFIED_VERSION = re.compile(r"^ESP-IDF\s+v?(\d+\.\d+(?:\.\d+)?)\s*$")
 MODES = {"container_first", "container_only", "native_first", "native_only"}
 CONTAINER_BASE = "espressif/idf"
 
@@ -25,8 +25,20 @@ class ToolchainError(RuntimeError):
 def normalize_version(value: str) -> str:
     match = VERSION.fullmatch(value.strip()) if isinstance(value, str) else None
     if match is None:
-        raise ToolchainError("Approved ESP-IDF version must be exact X.Y.Z (not latest or release branch)")
+        raise ToolchainError("Approved ESP-IDF version must be exact X.Y or X.Y.Z (not latest or release branch)")
     return match.group(1)
+
+
+def load_project_version(repo: pathlib.Path) -> str:
+    """Use firmware/esp-idf-version.txt as the single authoritative toolchain release."""
+    path = repo / "firmware" / "esp-idf-version.txt"
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise ToolchainError("Missing firmware/esp-idf-version.txt") from exc
+    if not value.startswith("v"):
+        raise ToolchainError("Baseline must use exact vX.Y or vX.Y.Z tag")
+    return normalize_version(value)
 
 
 def actual_version(output: str, expected: str) -> str:
