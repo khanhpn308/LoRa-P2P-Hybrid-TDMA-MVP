@@ -185,6 +185,36 @@ class ProviderOutputTests(unittest.TestCase):
         self.assertEqual(info["benign_codex_alias_warning_count"], 0)
         self.assertIn("filesystem_permission", info["stderr_signals"])
 
+    def test_safe_permission_diagnostics_keep_only_boolean_tags(self):
+        secret = b"token=SENSITIVE_DO_NOT_ECHO"
+        stderr = (
+            b"2026-10-23 WARNING: proceeding, even though we could not create "
+            b"PATH aliases: Read-only file system (os error 30) " + secret + b"\n"
+            b"error: cannot use /home/agent/.codex-clean-pilot/sessions: permission denied\n"
+        )
+        report = safe_probe_diagnostic(
+            "codex", 0, b"CODEX_SMOKE_OK\n", stderr)
+        self.assertEqual(report["benign_codex_alias_warning_count"], 0)
+        self.assertEqual(len(report["permission_line_shapes"]), 2)
+        self.assertIn("path_aliases", report["permission_line_shapes"][0]["tags"])
+        self.assertIn("os_error_30", report["permission_line_shapes"][0]["tags"])
+        self.assertIn("session_storage", report["permission_line_shapes"][1]["tags"])
+        self.assertIn("codex_home", report["permission_line_shapes"][1]["tags"])
+        self.assertNotIn("SENSITIVE_DO_NOT_ECHO", json.dumps(report))
+        with self.assertRaises(RuntimeBlocked):
+            evaluate_probe("codex", 0, b"CODEX_SMOKE_OK\n", stderr)
+
+    def test_safe_permission_line_shapes_bounded_and_unknown_origin_kept(self):
+        lines = b"".join(
+            b"ERROR: Read-only file system unrelated to aliases\n"
+            for _ in range(100))
+        report = safe_probe_diagnostic("codex", 0, b"", lines)
+        self.assertEqual(len(report["permission_line_shapes"]), 6)
+        self.assertTrue(all(
+            "read_only_filesystem" in line["tags"]
+            for line in report["permission_line_shapes"]))
+        self.assertNotIn("unrelated", json.dumps(report))
+
     def test_safe_diagnostic_classifies_namespace_failure_without_raw_logs(self):
         log = b"bwrap: operation not permitted; token=SECRET_123"
         info = safe_probe_diagnostic("codex", 0, b"", log)
