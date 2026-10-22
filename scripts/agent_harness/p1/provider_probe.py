@@ -54,8 +54,8 @@ def main() -> int:
                     "requires": "externally reviewed egress and provider authentication",
                 }, indent=2))
                 return 0
-            code, output = _run(command, timeout=args.timeout, name=name)
-            receipt = evaluate_probe(args.provider, code, output)
+            code, stdout, stderr = _run(command, timeout=args.timeout, name=name)
+            receipt = evaluate_probe(args.provider, code, stdout, stderr)
             print(json.dumps(receipt.as_json(), indent=2))
             return 0
     except (RuntimeBlocked, ValueError, OSError) as exc:
