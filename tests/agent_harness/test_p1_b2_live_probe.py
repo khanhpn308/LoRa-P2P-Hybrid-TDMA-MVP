@@ -50,9 +50,9 @@ class RuntimePlanTests(unittest.TestCase):
                         args.index(IMAGE))
         self.assertLess(args.index("CODEX_CA_CERTIFICATE=/etc/ssl/certs/ca-certificates.crt"),
                         args.index(IMAGE))
-        self.assertEqual(args[-8:],
+        self.assertEqual(args[-9:],
                          ["codex", "--ask-for-approval", "never",
-                          "exec", "--sandbox", "read-only",
+                          "exec", "--ephemeral", "--sandbox", "read-only",
                           "--skip-git-repo-check", "hello"])
         mounts = [args[i+1] for i, v in enumerate(args) if v == "--mount"]
         self.assertEqual(len(mounts), 2)
@@ -68,9 +68,9 @@ class RuntimePlanTests(unittest.TestCase):
             args = IsolatedCLI("codex", IMAGE, NETWORK, CODEX_VOLUME).command(
                 pathlib.Path(d), "lora-p1-probe-codex-1234abcd", "hello",
                 docker_only_isolation=True)
-        self.assertEqual(args[-8:],
+        self.assertEqual(args[-9:],
                          ["codex", "--ask-for-approval", "never",
-                          "exec", "--sandbox", "danger-full-access",
+                          "exec", "--ephemeral", "--sandbox", "danger-full-access",
                           "--skip-git-repo-check", "hello"])
         for flag in ("--read-only", "--cap-drop=ALL",
                      "--security-opt=no-new-privileges",
@@ -85,6 +85,15 @@ class RuntimePlanTests(unittest.TestCase):
             IsolatedCLI("agy", IMAGE, NETWORK, AGY_VOLUME).command(
                 pathlib.Path(d), "lora-p1-probe-agy-1234abcd", "hello",
                 docker_only_isolation=True)
+
+    def test_ephemeral_codex_does_not_relax_write_access(self):
+        args = self.plan("codex", CODEX_VOLUME)
+        self.assertIn("--ephemeral", args)
+        self.assertTrue(any("dst=/workspace,readonly" in x for x in args))
+        self.assertIn("--read-only", args)
+        self.assertIn("read-only", args)
+        self.assertNotIn("danger-full-access", args)
+        self.assertNotIn("--privileged", args)
 
     def test_agy_plan_is_independent_and_structured(self):
         args = self.plan("agy", AGY_VOLUME)
