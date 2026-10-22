@@ -101,7 +101,7 @@ def run(args: argparse.Namespace) -> int:
         # Intent-to-add makes new in-scope sources appear in the real diff sent
         # to the auditor; never rely on a tracked-only diff for new source.
         untracked = [p for p in _git(repo, "ls-files", "--others",
-                                   "--exclude-standard", "-z").split("\\0") if p]
+                                   "--exclude-standard", "-z").split("\0") if p]
         if untracked:
             _git(repo, "add", "-N", "--", *untracked)
         _git(repo, "diff", "--check")
