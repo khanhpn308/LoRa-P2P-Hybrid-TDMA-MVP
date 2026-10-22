@@ -105,7 +105,7 @@ class ResolvedIDF:
                 "--tmpfs=/tmp:rw,nosuid,nodev,size=1g",
                 "--user", f"{os.getuid()}:{os.getgid()}",
                 "--env", "HOME=/tmp",
-                "--mount", f"type=bind,src={root},dst=/workspace,rw",
+                "--mount", f"type=bind,src={root},dst=/workspace",
                 "--workdir", "/workspace/" + relative.as_posix(),
                 self.identity, "idf.py", *args,
             ]
