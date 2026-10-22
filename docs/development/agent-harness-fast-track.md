@@ -65,3 +65,9 @@ python3 scripts/agent_harness/p1/provider_probe.py \
 ~~~
 
 Success requires `READ_ONLY_MODEL_PROBE_PASS_ONLY`, exact stdout marker, exit 0 and no denial signals. The receipt records `sandbox_boundary=docker_outer_only`. Failure remains BLOCKED; do not sanitize failures into PASS. This smoke does not exercise a coding tool and cannot verify Worker/Repair/HIL behavior.
+
+## Narrow Codex immutable-root warning exception
+
+The Oct 23 operator run under explicit Docker-only isolation returned exit 0 and the exact `CODEX_SMOKE_OK` marker, but still had a filesystem-permission signal (541 bytes of stderr): **BLOCKED**. Earlier CLI output had the precise startup warning `WARNING: proceeding, even though we could not create PATH aliases: Read-only file system (os error 30)`. This warning is consistent with the immutable Docker rootfs; it is not evidence that a model-call tool failed.
+
+For Codex ONLY, the evaluator can ignore exactly ONE entire occurrence of that known startup line and no other permission errors. It checks the remaining stderr for `permission denied`, `read-only file system`, `operation not permitted` or authorization failures. Different or repeated warnings remain fail-closed. The safe diagnostic now includes `benign_codex_alias_warning_count`. AGY handling and Docker sandbox limits are unchanged. Do not use this narrow exception to permit arbitrary filesystem writes or general autonomous coding.
