@@ -15,6 +15,10 @@ One ESP32 + SX1276 gateway is both LoRa P2P packet bridge and **local TDMA Maste
 - [Acceptance gates](docs/verification/acceptance-gates.md), [coding standards](docs/development/coding-standards.md) and [Vietnamese Monorepo Handbook](docs/development/monorepo-guide.md)
 - [Pre-Task-Breakdown Readiness](docs/development/task-breakdown-readiness.md) — Gate field, CODEOWNERS and Path-Scoped Issues
 
+## ESP-IDF toolchain baseline — v6.1
+
+**Approved ESP-IDF release for both Gateway and Node: `v6.1`.** The authoritative repository value is [`firmware/esp-idf-version.txt`](firmware/esp-idf-version.txt), documented in [ADR-0003](docs/adr/0003-esp-idf-v6-1.md). Firmware CI and the Agent Harness read this version instead of independently selecting toolchains. Build success does not establish SX1276/HIL/RF/timing correctness. Do not use floating `release-v6.1` or `latest`.
+
 ## Development
 
 Use GitHub Issues + Project, one feature branch and reviewed PR per change. Changes to `contracts/` require cross-component impact review. `.github/CODEOWNERS` initially nominates the repository owner until all six collaborator usernames are assigned.

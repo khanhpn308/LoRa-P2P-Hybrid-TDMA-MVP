@@ -7,14 +7,14 @@
 - LoRa **P2P**, ESP32 + SX1276, local Gateway TDMA Master; Go Backend plans schedules. No LoRaWAN assumptions.
 - Existing firmware is only a scaffold; experimental driver has not been imported.
 - Radio-MAC v1 wire/security remains DRAFT; no production codec, RF limits or radio performance may be approved by Agent output.
-- Current firmware CI uses ESP-IDF `release-v5.4`, while the experimental code targeted v6.1. Engineering must approve the version before Issue #10 driver import.
+- **Owner-approved ESP-IDF baseline `v6.1`:** ADR-0003 and `firmware/esp-idf-version.txt` are the source of truth. Gateway/Node CI and Harness share the same version; driver porting/HIL still require separate verification.
 - Keep original acceptance gates G0–G6 in `docs/verification/acceptance-gates.md` separate from host software checks.
 
 ## P0 implemented in this PR
 
 1. Python Host preflight reads an OPEN GitHub Issue with an explicit, exact `Target Directories (allowed paths)` list, refuses a dirty worktree and requires an Issue-number feature branch.
 2. Codex CLI acts as the Worker in `workspace-write` mode. The Host, not Worker text, validates all changes; file scope, symlink changes and binary or oversized diffs are rejected.
-3. Deterministic Host checks run structure tests, Python harness unit tests and BOTH ESP-IDF app builds. A Docker-first Toolchain Resolver selects the **exact approved X.Y.Z release**, verifies the local official Espressif image identity and checks `idf.py --version`. Host records image ID/version plus command receipts; it does not put raw logs in the manifest.
+3. Deterministic Host checks run structure tests, Python harness unit tests and BOTH ESP-IDF app builds. A Docker-first Toolchain Resolver selects the **exact approved X.Y or X.Y.Z release**, verifies the local official Espressif image identity and checks `idf.py --version`. Host records image ID/version plus command receipts; it does not put raw logs in the manifest.
 4. Antigravity CLI (`agy`) acts as fresh independent Auditor. Host creates a bounded copied snapshot of changed code and relevant reference docs, embeds full review data into the prompt, and uses `--output-format json`, `--json-schema` and `--sandbox`.
 5. `exit_code == 0` alone is NOT success. Host requires `status=SUCCESS`, nonmissing `structured_output`, a structurally valid report, zero findings/limitations for PASS, explicit per-changed-file `reviewed_scope`, and no observed permission soft-denial.
 6. Host verifies audit snapshot integrity after the model invocation. Up to two OPTIONAL repair rounds are supported; repeated identical diff, timeout, scope violation and audit INCONCLUSIVE stop the job.
@@ -36,12 +36,12 @@ Last command is PREFLIGHT ONLY. It requires `gh` login and a clean Issue-number 
 
 **Do not run `--execute` on a credentialed personal WSL2 machine.** Prepare a disposable VM/container and per-Issue worktree, with controlled network, separate authorized provider credentials, no personal home/SSH tokens, no privileged Docker socket, limited CPU/time, and external host-owned evidence/approval.
 
-After Issue scope and board pinout are approved and a matching ESP-IDF toolchain version is recorded in an ADR, run from the isolated Issue branch:
+After Issue scope and board pinout are approved, run from the isolated Issue branch; the repo baseline is `v6.1` and the version flag is an optional cross-check:
 
 ```bash
 python3 scripts/agent_harness/run.py --issue 10 --execute \
   --accept-isolated-pilot \
-  --expected-idf-version '<engineering-approved idf.py --version substring>' \
+  --expected-idf-version 'v6.1' \
   --max-repairs 1
 ```
 
@@ -53,8 +53,8 @@ File: `scripts/agent_harness/toolchains/resolver.py`. This resolver is controlle
 
 ### Docker-first (default, no machine-specific IDF_PATH)
 
-1. The firmware owner approves a concrete **patch version** `X.Y.Z` in the applicable ADR/Issue (e.g. `5.4.4` is an **example only**, not approved for this repo). Do not use `latest`, `v5.4`, or `release-v5.4` floating tags.
-2. A trusted operator pre-installs the corresponding official `espressif/idf:vX.Y.Z` image. The Harness never pulls images or selects a new firmware version autonomously.
+1. ADR-0003 and `firmware/esp-idf-version.txt` approve **`v6.1`**. Do not use `latest`, prereleases or floating `release-v6.1` tags.
+2. A trusted operator pre-installs the corresponding official `espressif/idf:vX.Y or X.Y.Z` image. The Harness never pulls images or selects a new firmware version autonomously.
 3. Host runs `docker image inspect` and requires a valid SHA-256 image identity; executes **that inspected image ID** with `--pull=never`. A `docker run ... idf.py --version` probe must match the approved exact release.
 4. Builds bind only the current repository/worktree to `/workspace` and use `--network=none`, `--cap-drop=ALL`, `--security-opt=no-new-privileges`, `--read-only`, a writable `/tmp` tmpfs, bounded processes/memory/CPU and non-root UID/GID. No USB device, Docker socket or privileged flag is exposed.
 5. Container project workdirs are derived from the worktree at runtime. No `/home/<user>/...` path is embedded in source, and no `source export.sh` is needed.
@@ -63,30 +63,30 @@ Example **operator preparation only**, after the version has been formally appro
 
 ```bash
 docker version
-docker pull espressif/idf:v5.4.4  # EXAMPLE; replace with APPROVED release
-docker image inspect espressif/idf:v5.4.4 --format '{{.Id}}'
+docker pull espressif/idf:v6.1  # EXAMPLE; replace with APPROVED release
+docker image inspect espressif/idf:v6.1 --format '{{.Id}}'
 ```
 
 Verify the selected environment WITHOUT starting Codex/AGY, firmware builds or RF:
 
 ```bash
-python3 scripts/agent_harness/toolchains/check.py --version 5.4.4
+python3 scripts/agent_harness/toolchains/check.py --version 6.1
 # Only if approved to use the native installation:
-python3 scripts/agent_harness/toolchains/check.py --version 5.4.4 --mode native_only
+python3 scripts/agent_harness/toolchains/check.py --version 6.1 --mode native_only
 ```
 
-The standalone command returns `TOOLCHAIN_VERIFIED_ONLY` or `BLOCKED`. These commands use example versions; pick the project's actually approved X.Y.Z. A successful probe is NOT an ESP-IDF build, RF or HIL PASS.
+The standalone command returns `TOOLCHAIN_VERIFIED_ONLY` or `BLOCKED`. These commands use example versions; pick the project's actually approved X.Y or X.Y.Z. A successful probe is NOT an ESP-IDF build, RF or HIL PASS.
 
 Start the controlled CLI pilot only in an **externally isolated disposable** execution environment:
 
 ```bash
 python3 scripts/agent_harness/run.py --issue 10 --execute \
   --accept-isolated-pilot \
-  --expected-idf-version '5.4.4' \
+  --expected-idf-version '6.1' \
   --toolchain-mode container_first
 ```
 
-The version and Issue number above are examples and must match approved inputs and the local Issue-number branch. Image availability and version are checked **before the Worker runs**. A failed probe yields `BLOCKED`, never `BUILD_VERIFIED`.
+The version is pinned to `v6.1`; the Issue number must match the feature branch. Image availability and version are checked **before the Worker runs**. A failed probe yields `BLOCKED`, never `BUILD_VERIFIED`. Version is loaded from `firmware/esp-idf-version.txt` by default; `--expected-idf-version` or `check.py --version` may only assert the same value.
 
 ### Native discovery (explicitly opted into host execution)
 
@@ -104,7 +104,7 @@ Example without hardcoding a path into repository source:
 test -n "$IDF_PATH" && test -f "$IDF_PATH/export.sh"
 python3 scripts/agent_harness/run.py --issue 10 --execute \
   --accept-isolated-pilot \
-  --expected-idf-version '<approved-X.Y.Z>' \
+  --expected-idf-version '<approved-X.Y or X.Y.Z>' \
   --toolchain-mode native_only
 ```
 

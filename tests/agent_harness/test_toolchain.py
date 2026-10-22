@@ -17,7 +17,7 @@ class ToolchainTests(unittest.TestCase):
         self.assertEqual(tc.normalize_version("v6.1"), "6.1")
         self.assertEqual(tc.normalize_version("6.1"), "6.1")
         for version in ("latest", "release-v6.1", "6", "v6.1-dev",
-                        "6.1; touch /tmp/bad", "", "v6.1.1"):
+                        "6.1; touch /tmp/bad", "", "v6.1.0.1"):
             with self.subTest(version=version):
                 with self.assertRaises(tc.ToolchainError):
                     tc.normalize_version(version)
