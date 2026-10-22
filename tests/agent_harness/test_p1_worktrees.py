@@ -77,6 +77,16 @@ class WorktreeTests(unittest.TestCase):
         self.assertFalse(db.exists())
         self.assertFalse(pathlib.Path(data["worktree"]).exists())
 
+    def test_expected_source_sha_mismatch_blocks_before_mutation(self):
+        db = self.root / "journal" / "state.sqlite"
+        argv = ["cli.py", "prepare", "--issue", "32", "--source", str(self.repo),
+                "--state", str(db), "--expected-base-sha", "0" * 40, "--apply"]
+        with patch.object(cli, "issue_info", return_value=self.issue_data), \
+             patch.object(sys, "argv", argv), contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(cli.main(), 2)
+        self.assertEqual(json.loads(out.getvalue())["state"], "BLOCKED")
+        self.assertFalse(db.exists())
+
     def test_apply_creates_journal_and_clean_worktree(self):
         db = self.root / "journal" / "state.sqlite"
         argv = ["cli.py", "prepare", "--issue", "32", "--source", str(self.repo),
