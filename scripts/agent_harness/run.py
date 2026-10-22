@@ -39,9 +39,11 @@ def tool(args: list[str], cwd: pathlib.Path, timeout: int) -> tuple[dict, str]:
     combined = p.stdout + "\n" + p.stderr
     if "-----BEGIN PRIVATE KEY-----" in combined:
         raise GateError("Tool output contains private key material; stop and inspect locally")
+    # Successful JSON-producing tools must return stdout only, not appended stderr.
+    diagnostic = p.stdout if p.returncode == 0 else combined
     sanitized = re.sub(
         r"(?i)\b(authorization|api[_-]?key|token|password|secret)\s*[:=]\s*\S+",
-        r"\1=[REDACTED]", combined)
+        r"\1=[REDACTED]", diagnostic)
     return {"tool": args[0], "exit_code": p.returncode,
             "output_sha256": digest(out), "output_bytes": len(out)}, sanitized[-3200:]
 
