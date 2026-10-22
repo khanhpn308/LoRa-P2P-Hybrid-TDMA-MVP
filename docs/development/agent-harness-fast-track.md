@@ -26,7 +26,7 @@ python3 scripts/agent_harness/p1/provider_probe.py --provider codex --image-id "
 python3 scripts/agent_harness/p1/provider_probe.py --provider agy --image-id "$AGY_IMAGE" --network lora-agent-egress-staging --profile-volume lora-agent-agy-auth-pilot
 ~~~
 
-Expected last two statuses: `PLAN_ONLY`. The provider command builder now injects HTTP_PROXY, HTTPS_PROXY, http_proxy and https_proxy pointing to `http://lora-egress-proxy:3128`, with empty NO_PROXY/no_proxy. Docker network inspection now rejects `Internal=false`; this alone is not an external egress-policy attestation.
+Expected last two statuses: `PLAN_ONLY`. The provider command builder now injects HTTP_PROXY, HTTPS_PROXY, http_proxy and https_proxy pointing to `http://lora-egress-proxy:3128`, with empty NO_PROXY/no_proxy. Codex smoke additionally sets `CODEX_HOME=/home/agent/.codex-clean-pilot` to match the isolated operator `codex login --device-auth` profile; until `codex login status` returns a successful authenticated state in the same profile, live smoke remains blocked. Docker network inspection now rejects `Internal=false`; this alone is not an external egress-policy attestation.
 
 ## Live-gating blockers — do not skip
 
