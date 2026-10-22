@@ -35,9 +35,9 @@ class RuntimePlanTests(unittest.TestCase):
         self.assertIn("--network", args)
         self.assertEqual(args[args.index("--network")+1], NETWORK)
         self.assertIn(IMAGE, args)
-        self.assertEqual(args[-7:],
+        self.assertEqual(args[-8:],
                          ["codex", "exec", "--sandbox", "read-only",
-                          "--ask-for-approval", "never", "hello"])
+                          "--skip-git-repo-check", "--ask-for-approval", "never", "hello"])
         mounts = [args[i+1] for i, v in enumerate(args) if v == "--mount"]
         self.assertEqual(len(mounts), 2)
         self.assertTrue(any("dst=/workspace,readonly" in x for x in mounts))
