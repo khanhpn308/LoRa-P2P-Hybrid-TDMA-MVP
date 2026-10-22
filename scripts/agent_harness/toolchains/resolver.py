@@ -13,7 +13,7 @@ import subprocess
 from dataclasses import dataclass
 
 VERSION = re.compile(r"^v?(\d+\.\d+\.\d+)$")
-IDENTIFIED_VERSION = re.compile(r"\bESP-IDF\s+v?(\d+\.\d+\.\d+)(?!\.\d)")
+IDENTIFIED_VERSION = re.compile(r"^ESP-IDF\s+v?(\d+\.\d+\.\d+)\s*$")
 MODES = {"container_first", "container_only", "native_first", "native_only"}
 CONTAINER_BASE = "espressif/idf"
 
@@ -30,10 +30,11 @@ def normalize_version(value: str) -> str:
 
 
 def actual_version(output: str, expected: str) -> str:
-    m = IDENTIFIED_VERSION.search(output)
-    if m is None or m.group(1) != expected:
+    versions = [m.group(1) for line in output.splitlines()
+                if (m := IDENTIFIED_VERSION.fullmatch(line.strip())) is not None]
+    if len(versions) != 1 or versions[0] != expected:
         raise ToolchainError(f"ESP-IDF version is missing or differs from approved {expected}")
-    return m.group(1)
+    return versions[0]
 
 
 def check(args: list[str], *, cwd: pathlib.Path | None = None,
