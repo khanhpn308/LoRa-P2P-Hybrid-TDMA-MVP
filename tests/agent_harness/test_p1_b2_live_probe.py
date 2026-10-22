@@ -43,6 +43,7 @@ class RuntimePlanTests(unittest.TestCase):
         ):
             self.assertIn(proxy_env, args)
         self.assertIn(IMAGE, args)
+        self.assertIn("CODEX_HOME=/home/agent/.codex-clean-pilot", args)
         self.assertEqual(args[-8:],
                          ["codex", "exec", "--sandbox", "read-only",
                           "--skip-git-repo-check", "--ask-for-approval", "never", "hello"])
