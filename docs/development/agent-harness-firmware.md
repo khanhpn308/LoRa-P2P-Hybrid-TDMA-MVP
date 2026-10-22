@@ -67,6 +67,16 @@ docker pull espressif/idf:v5.4.4  # EXAMPLE; replace with APPROVED release
 docker image inspect espressif/idf:v5.4.4 --format '{{.Id}}'
 ```
 
+Verify the selected environment WITHOUT starting Codex/AGY, firmware builds or RF:
+
+```bash
+python3 scripts/agent_harness/toolchains/check.py --version 5.4.4
+# Only if approved to use the native installation:
+python3 scripts/agent_harness/toolchains/check.py --version 5.4.4 --mode native_only
+```
+
+The standalone command returns `TOOLCHAIN_VERIFIED_ONLY` or `BLOCKED`. These commands use example versions; pick the project's actually approved X.Y.Z. A successful probe is NOT an ESP-IDF build, RF or HIL PASS.
+
 Start the controlled CLI pilot only in an **externally isolated disposable** execution environment:
 
 ```bash
@@ -89,7 +99,9 @@ The version and Issue number above are examples and must match approved inputs a
 Example without hardcoding a path into repository source:
 
 ```bash
-export IDF_PATH="$(realpath "$HOME/esp/esp-idf")"  # only an example of user-provided discovery
+# IDF_PATH comes from the machine's ESP-IDF installation/VS Code setup.
+# No source-code path or recursive HOME scan is needed.
+test -n "$IDF_PATH" && test -f "$IDF_PATH/export.sh"
 python3 scripts/agent_harness/run.py --issue 10 --execute \
   --accept-isolated-pilot \
   --expected-idf-version '<approved-X.Y.Z>' \
