@@ -1,6 +1,7 @@
 """Host-side bounded command supervisor for non-secret deterministic test jobs.
 
-Model execution is NOT authorized by this module. A separate externally hardened,
+This P1-B1 module allows ONLY benign test-fixture binaries (true/false/sleep).
+Model execution is NOT authorized. A separate externally hardened,
 network-restricted container/VM with scoped credentials is mandatory for Codex/AGY.
 """
 from __future__ import annotations
@@ -12,7 +13,9 @@ import signal
 import subprocess
 from dataclasses import dataclass
 
-PROHIBITED = {"agy", "codex", "docker", "gh", "sudo", "su"}
+# P1-B1 tests only: arbitrary Host shell/Python/model commands are forbidden.
+# Expand only when execution is moved behind an externally isolated runner.
+SAFE_FIXTURES = {"true", "false", "sleep"}
 MAX_CAPTURE = 20_000
 
 
@@ -36,8 +39,8 @@ class Receipt:
 def execute_checked(argv: list[str], cwd: pathlib.Path, *,
                     timeout: int = 30) -> Receipt:
     """No command shell, new process group, kill child processes on timeout."""
-    if not argv or pathlib.Path(argv[0]).name in PROHIBITED:
-        raise ProcessBlocked("Command is prohibited in trusted Host supervision")
+    if not argv or pathlib.Path(argv[0]).name not in SAFE_FIXTURES:
+        raise ProcessBlocked("Only test fixture commands are permitted on Host in P1-B1")
     if timeout < 1 or timeout > 3600:
         raise ProcessBlocked("Invalid timeout")
     if not cwd.is_dir() or cwd.is_symlink():
