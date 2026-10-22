@@ -62,11 +62,17 @@ def make_plan(source: pathlib.Path, issue: int, run_id: str) -> WorktreePlan:
     if target.exists() or target.is_symlink():
         raise WorktreeError("Worktree target already exists")
     try:
-        git(repo, "show-ref", "--verify", "--quiet", "refs/heads/" + branch)
-    except WorktreeError:
-        pass  # --quiet exits 1 if the ref does not exist; verify the target anyway.
-    else:
+        ref = subprocess.run(
+            ["git", "-C", str(repo), "show-ref", "--verify", "--quiet",
+             "refs/heads/" + branch],
+            text=True, capture_output=True, check=False, timeout=20,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise WorktreeError("Cannot safely inspect existing Git branch") from exc
+    if ref.returncode == 0:
         raise WorktreeError("Generated branch already exists")
+    if ref.returncode != 1:
+        raise WorktreeError("Git branch lookup failed; refusing to create worktree")
     return WorktreePlan(repo, target, branch, sha, issue)
 
 
