@@ -22,6 +22,23 @@ NETWORK = re.compile(r"^lora-agent-egress-[a-z0-9][a-z0-9-]{0,42}$")
 NAME = re.compile(r"^lora-p1-probe-(?:codex|agy)-[a-f0-9]{8}$")
 OUTPUT_LIMIT = 64_000
 MAX_SECONDS = 240
+# Exact, known non-fatal Codex CLI startup warning on an immutable Docker
+# rootfs. Do NOT ignore other read-only/permission diagnostics.
+_CODEX_ALIAS_WARNING = re.compile(
+    rb"(?m)^WARNING: proceeding, even though we could not create PATH aliases: "
+    rb"Read-only file system \\(os error 30\\)\\r?$"
+)
+
+
+def _effective_probe_stderr(provider: str, stderr: bytes) -> tuple[bytes, int]:
+    """Strip only a precise Codex alias-install warning; retain all other lines."""
+    if provider != "codex":
+        return stderr, 0
+    matches = _CODEX_ALIAS_WARNING.findall(stderr)
+    # Never accept an unexpectedly repeated startup warning.
+    if len(matches) != 1:
+        return stderr, 0
+    return _CODEX_ALIAS_WARNING.sub(b"", stderr, count=1), 1
 
 
 class RuntimeBlocked(RuntimeError):
@@ -178,6 +195,8 @@ def safe_probe_diagnostic(provider: str, code: int | None,
     """Bounded keyword signals only: NEVER print model output or credentials."""
     if provider not in ("codex", "agy"):
         raise RuntimeBlocked("Unknown provider")
+    effective_stderr, benign_alias_warning_count = _effective_probe_stderr(
+        provider, stderr)
     signals = (
         ("sandbox_backend", rb"(?i)(bubblewrap|bwrap|landlock|unshare|seccomp|"
                             rb"user.namespace|sandbox.{0,32}(?:denied|fail)|"
@@ -196,8 +215,9 @@ def safe_probe_diagnostic(provider: str, code: int | None,
             b"CODEX_SMOKE_OK" if provider == "codex" else b"AGY_SMOKE_OK"),
         "stderr_bytes": len(stderr),
         "stderr_sha256": hashlib.sha256(stderr).hexdigest(),
+        "benign_codex_alias_warning_count": benign_alias_warning_count,
         "stderr_signals": [name for name, pattern in signals
-                           if re.search(pattern, stderr)],
+                           if re.search(pattern, effective_stderr)],
     }
 
 
@@ -209,8 +229,11 @@ def evaluate_probe(provider: str, code: int | None,
     import json
     if code != 0:
         raise RuntimeBlocked("Provider invocation failed with nonzero exit")
+    effective_stderr, _alias_warning_count = _effective_probe_stderr(
+        provider, stderr)
     if re.search(rb"(?i)(permission denied|approval required|approval denied|"
-                 rb"authentication required|not permitted|soft.denied)", stderr):
+                 rb"authentication required|not permitted|soft.denied|"
+                 rb"read.only file system|operation not permitted)", effective_stderr):
         raise RuntimeBlocked("Provider permission/authentication denial")
     if provider == "agy":
         try:
