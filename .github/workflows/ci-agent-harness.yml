@@ -1,0 +1,27 @@
+name: CI - Firmware Agent Harness (host gates only)
+
+on:
+  pull_request:
+    paths:
+      - "AGENTS.md"
+      - ".agent-harness/**"
+      - "scripts/agent_harness/**"
+      - "tests/agent_harness/**"
+      - "docs/development/agent-harness-firmware.md"
+      - ".github/workflows/ci-agent-harness.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  harness-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile Python harness
+        run: python3 -m compileall -q scripts/agent_harness tests/agent_harness
+      - name: Scope guard tests
+        run: python3 -m unittest discover -s tests/agent_harness -v
+      - name: Repo structure guard
+        run: python3 scripts/verify_structure.py
