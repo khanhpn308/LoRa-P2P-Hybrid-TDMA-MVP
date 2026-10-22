@@ -45,15 +45,19 @@ def assemble(repo: Path, dest: Path, changed: list[str], diff: str, receipts: li
     (dest / "checks.json").write_text(json.dumps(receipts, indent=2), encoding="utf-8")
     for name in ("changes.patch", "checks.json"):
         (dest / name).chmod(0o444)
+        hashes[name] = digest((dest / name).read_bytes())
     return hashes
 
 
 def unchanged(dest: Path, before: dict) -> bool:
-    expected = {"changes.patch", "checks.json"}
-    expected.update("source/" + key for key in before)
+    expected = {"audit.schema.json", "changes.patch", "checks.json"}
+    expected.update("source/" + key for key in before
+                    if key not in ("changes.patch", "checks.json", "audit.schema.json"))
     actual = {p.relative_to(dest).as_posix() for p in dest.rglob("*") if p.is_file()}
-    return (actual == expected
-            and all((dest / "source" / path).is_file()
-                    and not (dest / "source" / path).is_symlink()
-                    and digest((dest / "source" / path).read_bytes()) == h
-                    for path, h in before.items()))
+    if actual != expected:
+        return False
+    for path, before_hash in before.items():
+        target = dest / path if path in ("changes.patch", "checks.json", "audit.schema.json") else dest / "source" / path
+        if not target.is_file() or target.is_symlink() or digest(target.read_bytes()) != before_hash:
+            return False
+    return True
