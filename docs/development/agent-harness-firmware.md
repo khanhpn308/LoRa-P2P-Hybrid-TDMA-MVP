@@ -14,7 +14,7 @@
 
 1. Python Host preflight reads an OPEN GitHub Issue with an explicit, exact `Target Directories (allowed paths)` list, refuses a dirty worktree and requires an Issue-number feature branch.
 2. Codex CLI acts as the Worker in `workspace-write` mode. The Host, not Worker text, validates all changes; file scope, symlink changes and binary or oversized diffs are rejected.
-3. Deterministic Host checks run structure tests, Python harness unit tests and BOTH ESP-IDF app builds. Host records command exit code and output SHA-256/length, but does not store raw logs in the manifest.
+3. Deterministic Host checks run structure tests, Python harness unit tests and BOTH ESP-IDF app builds. A Docker-first Toolchain Resolver selects the **exact approved X.Y.Z release**, verifies the local official Espressif image identity and checks `idf.py --version`. Host records image ID/version plus command receipts; it does not put raw logs in the manifest.
 4. Antigravity CLI (`agy`) acts as fresh independent Auditor. Host creates a bounded copied snapshot of changed code and relevant reference docs, embeds full review data into the prompt, and uses `--output-format json`, `--json-schema` and `--sandbox`.
 5. `exit_code == 0` alone is NOT success. Host requires `status=SUCCESS`, nonmissing `structured_output`, a structurally valid report, zero findings/limitations for PASS, explicit per-changed-file `reviewed_scope`, and no observed permission soft-denial.
 6. Host verifies audit snapshot integrity after the model invocation. Up to two OPTIONAL repair rounds are supported; repeated identical diff, timeout, scope violation and audit INCONCLUSIVE stop the job.
@@ -47,9 +47,65 @@ python3 scripts/agent_harness/run.py --issue 10 --execute \
 
 The flag `--accept-isolated-pilot` is ONLY an acknowledgment, not isolation or enforcement. The runner cannot attest Docker/VM isolation. Codex and AGY internal sandbox flags also do not replace a strong external boundary. The host does not commit, push, merge, open PRs, flash ESP32, transmit RF or approve HIL in P0.
 
+## Portable ESP-IDF Toolchain Resolver (implemented in P0)
+
+File: `scripts/agent_harness/toolchains/resolver.py`. This resolver is controlled by the Python Host; neither Codex nor AGY may choose the ESP-IDF version. This change does **not** settle the v5.4 versus v6.1 architecture decision.
+
+### Docker-first (default, no machine-specific IDF_PATH)
+
+1. The firmware owner approves a concrete **patch version** `X.Y.Z` in the applicable ADR/Issue (e.g. `5.4.4` is an **example only**, not approved for this repo). Do not use `latest`, `v5.4`, or `release-v5.4` floating tags.
+2. A trusted operator pre-installs the corresponding official `espressif/idf:vX.Y.Z` image. The Harness never pulls images or selects a new firmware version autonomously.
+3. Host runs `docker image inspect` and requires a valid SHA-256 image identity; executes **that inspected image ID** with `--pull=never`. A `docker run ... idf.py --version` probe must match the approved exact release.
+4. Builds bind only the current repository/worktree to `/workspace` and use `--network=none`, `--cap-drop=ALL`, `--security-opt=no-new-privileges`, `--read-only`, a writable `/tmp` tmpfs, bounded processes/memory/CPU and non-root UID/GID. No USB device, Docker socket or privileged flag is exposed.
+5. Container project workdirs are derived from the worktree at runtime. No `/home/<user>/...` path is embedded in source, and no `source export.sh` is needed.
+
+Example **operator preparation only**, after the version has been formally approved:
+
+```bash
+docker version
+docker pull espressif/idf:v5.4.4  # EXAMPLE; replace with APPROVED release
+docker image inspect espressif/idf:v5.4.4 --format '{{.Id}}'
+```
+
+Start the controlled CLI pilot only in an **externally isolated disposable** execution environment:
+
+```bash
+python3 scripts/agent_harness/run.py --issue 10 --execute \
+  --accept-isolated-pilot \
+  --expected-idf-version '5.4.4' \
+  --toolchain-mode container_first
+```
+
+The version and Issue number above are examples and must match approved inputs and the local Issue-number branch. Image availability and version are checked **before the Worker runs**. A failed probe yields `BLOCKED`, never `BUILD_VERIFIED`.
+
+### Native discovery (explicitly opted into host execution)
+
+- `--toolchain-mode native_only`: use an already activated `idf.py` on PATH, or source a trusted `export.sh` from environment-provided `IDF_PATH` / `ESP_IDF_ROOT` in the SAME child Bash process that runs `idf.py`.
+- `--toolchain-mode native_first`: native first, Docker if it cannot match the version.
+- `--toolchain-mode container_first --allow-native-fallback`: Docker first, then native with explicit fallback permission.
+- `--toolchain-mode container_only`: Docker only; never use native tools.
+- The native resolver does not recursively scan personal directories, trust unvetted startup files, download installers or silently fall back. When installed somewhere nonstandard, let the environment supply `IDF_PATH` or use the container.
+
+Example without hardcoding a path into repository source:
+
+```bash
+export IDF_PATH="$(realpath "$HOME/esp/esp-idf")"  # only an example of user-provided discovery
+python3 scripts/agent_harness/run.py --issue 10 --execute \
+  --accept-isolated-pilot \
+  --expected-idf-version '<approved-X.Y.Z>' \
+  --toolchain-mode native_only
+```
+
+**Security boundary:** Native builds run untrusted Worker-modified CMake/scripts on the host; permit this ONLY inside a disposable credential-isolated VM/container. Docker build restrictions protect the build subprocess, **not** the Codex Worker. Docker-daemon access itself is privileged; only the trusted Host may invoke Docker, and a stronger isolated runner remains required for unattended P1.
+
+**Operational limitations:** Builds with no network may fail if managed components need downloading; prepare and review dependencies before running. Image availability, Docker daemon permissions, correct patch tag and WSL2 behavior are still `NOT_VERIFIED` until exercised on the target host. Flash, monitor, HIL, RF and real TDMA remain outside this runner.
+
+### Verification
+
+`python3 -m unittest discover -s tests/agent_harness -v` tests successful and failed version resolution, missing Docker, exact release checks, source activation with spaces, and restricted Docker command construction by mock; no container image download, model calls or RF use in CI.
 ## What remains to implement (P1 and later)
 
-- Real provisioned **isolated per-Issue Git Worktree**, filesystem/network/identity boundaries and least-privilege short-lived GitHub publisher.
+- Real provisioned **isolated per-Issue Git Worktree**, filesystem/network/identity boundaries and least-privilege short-lived GitHub publisher. Containerized ESP-IDF builds alone do not provide this full runner isolation.
 - Durable SQLite checkpoints, recovery after process/WSL crash, process-tree cleanup, resource budgets and verified tool versions.
 - Full immutable logs with secret redaction, static analysis, code-coverage policy, CI evidence bound to a final commit SHA, security scanning and automatic Draft PR.
 - Model-agnostic routing for `agy` Worker / Codex Auditor; quota/rate-limit tracking under provider authorization.
