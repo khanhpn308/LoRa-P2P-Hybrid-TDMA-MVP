@@ -18,6 +18,7 @@ import uuid
 from adapters import codex, antigravity
 from scope import _git, assert_scoped, parse_allowed_paths
 from snapshot import assemble, unchanged, digest
+from toolchains.resolver import ToolchainError, resolve
 
 REPO = "khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP"
 
@@ -109,15 +110,18 @@ def run(args: argparse.Namespace) -> int:
         if not args.accept_isolated_pilot:
             return finish("BLOCKED", 2, "Requires external isolation; --accept-isolated-pilot")
         if not args.expected_idf_version:
-            return finish("BLOCKED", 2, "Approve/pin ESP-IDF version before code execution")
-        for program in ("codex", "agy", "idf.py"):
+            return finish("BLOCKED", 2, "Approve/pin an exact ESP-IDF X.Y.Z version before execution")
+        for program in ("codex", "agy"):
             if shutil.which(program) is None:
                 return finish("BLOCKED", 2, "Missing CLI: " + program)
-        receipt, installed = tool(["idf.py", "--version"], repo, 45)
-        result["events"].append({"stage": "toolchain", **receipt})
-        if receipt["exit_code"] or args.expected_idf_version not in installed:
-            return finish("BLOCKED", 2, "ESP-IDF toolchain version does not match approved value")
-        result["esp_idf_version"] = installed.strip()[:100]
+        try:
+            idf = resolve(repo, version=args.expected_idf_version,
+                          mode=args.toolchain_mode,
+                          allow_native_fallback=args.allow_native_fallback)
+        except ToolchainError as exc:
+            return finish("BLOCKED", 2, str(exc))
+        result["toolchain"] = idf.evidence()
+        result["esp_idf_version"] = idf.version
         worker_rules = (repo / ".agent-harness" / "worker.md").read_text(encoding="utf-8")
         audit_rules = (repo / ".agent-harness" / "auditor.md").read_text(encoding="utf-8")
         schema = repo / "scripts" / "agent_harness" / "adapters" / "audit.schema.json"
@@ -151,8 +155,10 @@ def run(args: argparse.Namespace) -> int:
             checks = [
                 (["python3", "scripts/verify_structure.py"], repo),
                 (["python3", "-m", "unittest", "discover", "-s", "tests/agent_harness", "-v"], repo),
-                (["idf.py", "build"], repo / "firmware" / "gateway_master"),
-                (["idf.py", "build"], repo / "firmware" / "sensor_node"),
+                (idf.command(repo, repo / "firmware" / "gateway_master", "build"),
+                 repo / "firmware" / "gateway_master"),
+                (idf.command(repo, repo / "firmware" / "sensor_node", "build"),
+                 repo / "firmware" / "sensor_node"),
             ]
             try:
                 for cmd, cwd in checks:
@@ -242,7 +248,12 @@ def main() -> int:
     p.add_argument("--execute", action="store_true")
     p.add_argument("--accept-isolated-pilot", action="store_true",
                    help="Operator attests environment isolation; this flag does not create a sandbox")
-    p.add_argument("--expected-idf-version", help="Approved substring of idf.py --version")
+    p.add_argument("--expected-idf-version", help="Approved exact ESP-IDF X.Y.Z release")
+    p.add_argument("--toolchain-mode", choices=(
+        "container_first", "container_only", "native_first", "native_only"),
+        default="container_first")
+    p.add_argument("--allow-native-fallback", action="store_true",
+                   help="Allow native host build if Docker-first cannot resolve (not an isolation control)")
     p.add_argument("--timeout", type=int, default=600)
     p.add_argument("--max-repairs", type=int, default=0)
     args = p.parse_args()
