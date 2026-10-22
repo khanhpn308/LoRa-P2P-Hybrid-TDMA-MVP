@@ -51,7 +51,7 @@ def _git(repo: pathlib.Path, *args: str) -> str:
 
 def changed_paths(repo: pathlib.Path) -> tuple[str, ...]:
     """Track modified, deleted and untracked (nonignored) paths."""
-    tracked = _git(repo, "diff", "--name-only", "-z", "HEAD").split("\0")
+    tracked = _git(repo, "diff", "--name-only", "--no-renames", "-z", "HEAD").split("\0")
     untracked = _git(repo, "ls-files", "--others", "--exclude-standard", "-z").split("\0")
     return tuple(sorted(set(p for p in tracked + untracked if p)))
 
@@ -66,6 +66,9 @@ def violations(repo: pathlib.Path, allowed: Iterable[str],
             failures.append(f"unsafe path: {path}")
             continue
         candidate = root / path
+        if any(p.is_symlink() for p in (candidate, *candidate.parents) if p != root and root in p.parents):
+            failures.append(f"symlink forbidden in changed path: {path}")
+            continue
         if not candidate.resolve().is_relative_to(root):
             failures.append(f"symlink escape: {path}")
             continue
