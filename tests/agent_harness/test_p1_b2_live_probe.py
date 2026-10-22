@@ -257,7 +257,7 @@ class SmokeCliTests(unittest.TestCase):
                 "--accept-docker-only-isolation"])), patch.object(
                 provider_probe, "verify_preinstalled_resources"), patch.object(
                 provider_probe, "_run", return_value=(
-                    0, b"CODEX_SMOKE_OK\\n".replace(b"\\\\n", b"\\n"), b"")) as launched, contextlib.redirect_stdout(
+                    0, b"CODEX_SMOKE_OK\n", b"")) as launched, contextlib.redirect_stdout(
                 io.StringIO()) as buffer:
             self.assertEqual(provider_probe.main(), 0)
         payload = json.loads(buffer.getvalue())
