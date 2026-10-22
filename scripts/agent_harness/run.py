@@ -98,6 +98,12 @@ def run(args: argparse.Namespace) -> int:
         if not checked["changed"]:
             record["error"] = "Worker changed no files"
             return finish("NO_CHANGES", 3)
+        # Intent-to-add makes new in-scope sources appear in the real diff sent
+        # to the auditor; never rely on a tracked-only diff for new source.
+        untracked = [p for p in _git(repo, "ls-files", "--others",
+                                   "--exclude-standard", "-z").split("\\0") if p]
+        if untracked:
+            _git(repo, "add", "-N", "--", *untracked)
         _git(repo, "diff", "--check")
     except (ValueError, subprocess.SubprocessError) as exc:
         record["error"] = str(exc)
