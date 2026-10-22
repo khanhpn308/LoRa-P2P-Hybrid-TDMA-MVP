@@ -26,6 +26,8 @@ def main() -> int:
     p.add_argument("--image-id", help="Verified local espressif/idf:v6.1 image sha256:...")
     args = p.parse_args()
     try:
+        if not args.state.is_file() or args.state.is_symlink():
+            raise VerificationBlocked("Host SQLite journal not found or is a symlink")
         with Journal(args.state) as journal:
             receipt = verify_candidate(journal, args.run_id)
             job = journal.get(args.run_id)
