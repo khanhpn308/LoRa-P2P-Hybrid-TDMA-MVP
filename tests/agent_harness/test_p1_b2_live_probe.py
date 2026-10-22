@@ -34,6 +34,14 @@ class RuntimePlanTests(unittest.TestCase):
         self.assertIn("--cap-drop=ALL", args)
         self.assertIn("--network", args)
         self.assertEqual(args[args.index("--network")+1], NETWORK)
+        for proxy_env in (
+            "HTTP_PROXY=http://lora-egress-proxy:3128",
+            "HTTPS_PROXY=http://lora-egress-proxy:3128",
+            "http_proxy=http://lora-egress-proxy:3128",
+            "https_proxy=http://lora-egress-proxy:3128",
+            "NO_PROXY=", "no_proxy=",
+        ):
+            self.assertIn(proxy_env, args)
         self.assertIn(IMAGE, args)
         self.assertEqual(args[-8:],
                          ["codex", "exec", "--sandbox", "read-only",
@@ -127,13 +135,27 @@ class DockerInspectTests(unittest.TestCase):
         def fake_run(argv, **kw):
             which = argv[1]
             value = (IMAGE if which == "image"
-                     else "bridge" if which == "network" else CODEX_VOLUME)
+                     else "bridge|true" if which == "network" else CODEX_VOLUME)
             return subprocess.CompletedProcess(argv, 0, value + "\n", "")
 
         with patch("p1.provider_runtime.subprocess.run", side_effect=fake_run) as calls:
             verify_preinstalled_resources(spec)
         self.assertEqual(calls.call_count, 3)
         self.assertFalse(any("pull" in c.args[0] for c in calls.call_args_list))
+
+    def test_noninternal_bridge_network_is_blocked(self):
+        spec = IsolatedCLI("codex", IMAGE, NETWORK, CODEX_VOLUME)
+
+        def fake_run(argv, **kwargs):
+            kind = argv[1]
+            output = (IMAGE if kind == "image"
+                      else "bridge|false" if kind == "network"
+                      else CODEX_VOLUME)
+            return subprocess.CompletedProcess(argv, 0, output + "\n", "")
+
+        with patch("p1.provider_runtime.subprocess.run", side_effect=fake_run):
+            with self.assertRaises(RuntimeBlocked):
+                verify_preinstalled_resources(spec)
 
     def test_wrong_local_image_id_is_blocked(self):
         spec = IsolatedCLI("codex", IMAGE, NETWORK, CODEX_VOLUME)
