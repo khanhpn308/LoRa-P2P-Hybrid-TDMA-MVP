@@ -73,6 +73,7 @@ class IsolatedCLI:
         ]
         if self.provider == "codex":
             return flags + ["codex", "exec", "--sandbox", "read-only",
+                            "--skip-git-repo-check",
                             "--ask-for-approval", "never", prompt]
         return flags + ["agy", "--sandbox", "-p", prompt,
                         "--output-format", "json", "--print-timeout", "3m"]
