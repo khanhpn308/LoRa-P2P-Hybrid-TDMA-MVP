@@ -159,6 +159,14 @@ def run(args: argparse.Namespace) -> int:
                 feedback = ("Host verification failed. Fix the relevant code and tests. "
                             + json.dumps(receipts))
                 continue
+            # Builds and tests can modify the tree through generated code or
+            # build hooks. Verify the exact same scoped diff AFTER those tools.
+            try:
+                post_paths, post_diff = audited_diff(repo, issue["body"])
+            except (ValueError, GateError, subprocess.SubprocessError) as exc:
+                return finish("POLICY_VIOLATION", 4, "Post-build scope check: " + str(exc))
+            if post_paths != changed or digest(post_diff.encode()) != diff_hash:
+                return finish("POLICY_VIOLATION", 4, "Worktree changed during verification")
             result["build"] = "BUILD_VERIFIED_LOCAL_UNCOMMITTED_TREE"
             result["state"] = "AUDITING"
             try:
@@ -193,6 +201,14 @@ def run(args: argparse.Namespace) -> int:
                         raise antigravity.AuditError("Auditor changed review snapshot")
             except (OSError, ValueError, antigravity.AuditError) as exc:
                 return finish("AUDIT_INCONCLUSIVE", 5, str(exc))
+            # Recheck Worker tree because Auditor is a separate process and
+            # safety cannot rely on the text prompt or CLI sandbox label alone.
+            try:
+                audit_paths, audit_diff = audited_diff(repo, issue["body"])
+            except (ValueError, GateError, subprocess.SubprocessError) as exc:
+                return finish("POLICY_VIOLATION", 5, "Post-audit scope check: " + str(exc))
+            if audit_paths != changed or digest(audit_diff.encode()) != diff_hash:
+                return finish("POLICY_VIOLATION", 5, "Worktree changed while auditing")
             result["review"] = review
             if review["status"] == "PASS":
                 result["audit"] = "AUDIT_PASS_SOFTWARE_ONLY"
