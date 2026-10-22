@@ -15,10 +15,10 @@ Read `.github/copilot-instructions.md`, `.github/instructions/embedded.instructi
 ## Roles and execution order
 1. **Host Coordinator (deterministic):** Issue/scope validation, clean branch/worktree, bounded process timeouts, compiler/test logs, diff checks, evidence manifest, human stop gates.
 2. **Worker (Codex in initial pilot):** modifies only paths authorized in the Issue, supplies tests and a change note. Cannot certify its own code.
-3. **Auditor (fresh Gemini session):** read-only review of code/diff against requirements, datasheet, failure paths and coding standards. No editing, no shared Worker conversation. Return PASS/FAIL/INCONCLUSIVE with file:line findings and gaps.
+3. **Auditor (fresh Antigravity `agy` headless session):** read-only review of code/diff against requirements, datasheet, failure paths and coding standards. No editing, no shared Worker conversation. Return PASS/FAIL/INCONCLUSIVE with file:line findings and gaps.
 4. **Human engineer:** RF/hardware/ISR/timer/security/contract decisions, HIL measurement approval, PR review and merge.
 
-The Host, never an Agent's text, decides whether a gate passed. Flow: Issue -> isolated branch -> Worker -> scope gate -> deterministic tests/build -> independent Auditor -> evidence -> DRAFT PR -> human review. A failed or unavailable gate is NOT_VERIFIED/FAIL and blocks acceptance.
+The Host, never an Agent's text or exit code alone, decides whether a gate passed. `agy` must return `status=SUCCESS`, schema-valid `structured_output` and complete exact `reviewed_scope`. AGY's read-only instruction is NOT a security boundary; a disposable environment is required for unattended execution. Flow: Issue -> isolated branch -> Worker -> scope gate -> deterministic tests/build -> independent Auditor -> evidence -> DRAFT PR -> human review. A failed or unavailable gate is NOT_VERIFIED/FAIL and blocks acceptance.
 
 ## Stop conditions
 - Changed file outside approved Issue `Target Directories (allowed paths)`, secrets, external symlink, untrusted tool configuration, unauthorized radio command, unapproved version/contract change.
