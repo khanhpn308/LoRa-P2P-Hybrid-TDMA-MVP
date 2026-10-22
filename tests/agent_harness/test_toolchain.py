@@ -28,6 +28,10 @@ class ToolchainTests(unittest.TestCase):
             tc.actual_version("ESP-IDF v5.4.40", "5.4.4")
         with self.assertRaises(tc.ToolchainError):
             tc.actual_version("ESP-IDF v6.1.0", "5.4.4")
+        with self.assertRaises(tc.ToolchainError):
+            tc.actual_version("ESP-IDF v5.4.4-dirty", "5.4.4")
+        with self.assertRaises(tc.ToolchainError):
+            tc.actual_version("ESP-IDF v5.4.4-14-gabcdef", "5.4.4")
 
     def test_docker_command_uses_sha_and_restricted_network(self):
         with tempfile.TemporaryDirectory() as d:
