@@ -48,19 +48,19 @@ Nested Codex Linux sandbox creation may require user namespace/mount operations 
 
 Operator-provided live diagnostic (Oct 23, 2026): `exit_code=0`, `stdout_exact_expected_marker=true`, with `stderr_signals=[sandbox_backend, filesystem_permission]`. This is **not** a PASS: tools may fail silently when Codex attempts nested Linux sandbox inside the restricted Docker boundary. Reference: https://learn.chatgpt.com/docs/agent-approvals-security and https://github.com/openai/codex/issues/46246.
 
-The default remains `codex exec --sandbox read-only` and fail-closed. For a **read-only disposable smoke fixture only**, the operator may explicitly elect to use Docker as the **sole filesystem/process sandbox** via `--accept-docker-only-isolation` (requires `--execute --confirm-external-egress-policy`). This selects **inner Codex** `--sandbox danger-full-access`; it does NOT add Docker `--privileged`, host mounts, Docker socket, writable repo, capabilities, or Internet egress. It does permit a model-triggered command to access anything readable inside the container, including the mounted provider auth volume, so the host admin MUST approve this tradeoff and keep that volume dedicated. This is not production approval for unattended arbitrary worker code.
+The default remains `codex exec --sandbox read-only` and fail-closed. For a **read-only disposable smoke fixture only**, the operator may explicitly elect to use Docker as the **sole filesystem/process sandbox** via `--accept-docker-only-isolation` (requires `--execute --confirm-external-egress-policy`). This selects **inner Codex** `--sandbox danger-full-access`; it does NOT add Docker `--privileged`, host mounts, Docker socket, writable repo, capabilities, or unrestricted Internet egress. It does permit a model-triggered command to access anything readable inside the container, including the mounted provider auth volume, so the host admin MUST approve this tradeoff and keep that volume dedicated. This is not production approval for unattended arbitrary worker code.
 
 ~~~bash
 cd ~/projects/iot/LoRa-P2P-Harness-Proxy
 git pull --ff-only
 python3 -m unittest discover -s tests/agent_harness -q
 CODEX_IMAGE=$(docker image inspect lora-codex-cli:0.163.0-ca-fixed --format '{{.Id}}')
-python3 scripts/agent_harness/p1/provider_probe.py \\
-  --provider codex \\
-  --image-id "$CODEX_IMAGE" \\
-  --network lora-agent-egress-staging \\
-  --profile-volume lora-agent-codex-auth-pilot \\
-  --execute --confirm-external-egress-policy \\
+python3 scripts/agent_harness/p1/provider_probe.py \
+  --provider codex \
+  --image-id "$CODEX_IMAGE" \
+  --network lora-agent-egress-staging \
+  --profile-volume lora-agent-codex-auth-pilot \
+  --execute --confirm-external-egress-policy \
   --accept-docker-only-isolation --timeout 180
 ~~~
 
