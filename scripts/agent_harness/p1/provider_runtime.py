@@ -78,6 +78,30 @@ class IsolatedCLI:
                         "--output-format", "json", "--print-timeout", "3m"]
 
 
+def verify_preinstalled_resources(spec: IsolatedCLI) -> None:
+    """Probe existing Docker resources; no creation, pulls or policy attestation.
+
+    An existing network does NOT mean its egress restriction is effective.
+    """
+    lookups = (
+        (["docker", "image", "inspect", "--format", "{{.Id}}", spec.image_id],
+         spec.image_id),
+        (["docker", "network", "inspect", "--format", "{{.Driver}}", spec.network],
+         "bridge"),
+        (["docker", "volume", "inspect", "--format", "{{.Name}}", spec.profile_volume],
+         spec.profile_volume),
+    )
+    for argv, wanted in lookups:
+        try:
+            proc = subprocess.run(argv, stdin=subprocess.DEVNULL,
+                                  capture_output=True, text=True, timeout=20,
+                                  check=False)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeBlocked("Docker runtime inspection unavailable") from exc
+        if proc.returncode or proc.stdout.strip() != wanted:
+            raise RuntimeBlocked("Pre-provisioned image, bridge network or auth volume missing")
+
+
 @dataclass(frozen=True)
 class ProbeReceipt:
     provider: str
