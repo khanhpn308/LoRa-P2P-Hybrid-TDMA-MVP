@@ -173,7 +173,7 @@ def safe_probe_diagnostic(provider: str, code: int | None,
     if provider not in ("codex", "agy"):
         raise RuntimeBlocked("Unknown provider")
     signals = (
-        ("sandbox_backend", rb"(?i)(bubblewrap|\\bbwrap\\b|landlock|unshare|seccomp|"
+        ("sandbox_backend", rb"(?i)(bubblewrap|bwrap|landlock|unshare|seccomp|"
                             rb"user.namespace|sandbox.{0,32}(?:denied|fail)|"
                             rb"operation not permitted)"),
         ("filesystem_permission", rb"(?i)(permission denied|read.only file system)"),
