@@ -78,6 +78,7 @@ class IsolatedCLI:
             self.image_id,
         ]
         if self.provider == "codex":
+            flags += ["--env", "CODEX_HOME=/home/agent/.codex-clean-pilot"]
             return flags + ["codex", "exec", "--sandbox", "read-only",
                             "--skip-git-repo-check",
                             "--ask-for-approval", "never", prompt]
