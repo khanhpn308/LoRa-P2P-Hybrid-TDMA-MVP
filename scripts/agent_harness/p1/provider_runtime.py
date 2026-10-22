@@ -12,7 +12,8 @@ import pathlib
 import re
 import signal
 import subprocess
-import time
+import tempfile
+import resource
 from dataclasses import dataclass
 
 IMAGE = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -89,63 +90,73 @@ class ProbeReceipt:
         return vars(self)
 
 
-def _run(argv: list[str], *, timeout: int, name: str) -> tuple[int | None, bytes]:
+def _run(argv: list[str], *, timeout: int, name: str) -> tuple[int | None, bytes, bytes]:
     """Only accepts argv constructed by IsolatedCLI, never arbitrary Agent commands."""
     if timeout < 1 or timeout > MAX_SECONDS or argv[:2] != ["docker", "run"]:
         raise RuntimeBlocked("Invalid bounded Docker invocation")
-    try:
-        process = subprocess.Popen(argv, stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
-                                   start_new_session=True)
-    except OSError as exc:
-        raise RuntimeBlocked("Docker cannot start: " + type(exc).__name__) from exc
-    try:
-        stdout, stderr = process.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired as exc:
+    # Use file-backed output, not unbounded subprocess.PIPE accumulation.
+    with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
+        def limit_output():
+            resource.setrlimit(resource.RLIMIT_FSIZE, (OUTPUT_LIMIT, OUTPUT_LIMIT))
+
         try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        process.communicate()
-        # Kill ONLY the uniquely named container we created (not a generic cleanup).
+            process = subprocess.Popen(argv, stdout=stdout_file,
+                                       stderr=stderr_file, stdin=subprocess.DEVNULL,
+                                       start_new_session=True, preexec_fn=limit_output)
+        except OSError as exc:
+            raise RuntimeBlocked("Docker cannot start: " + type(exc).__name__) from exc
         try:
-            subprocess.run(["docker", "kill", name],
-                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL, timeout=15, check=False)
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-        raise RuntimeBlocked("Provider probe timed out; container cleanup attempted") from exc
-    combined = stdout + b"\n" + stderr
-    if len(combined) > OUTPUT_LIMIT:
-        raise RuntimeBlocked("Provider output exceeded capture budget")
-    return process.returncode, combined
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+            # Only the uniquely named container owned by this probe.
+            try:
+                subprocess.run(["docker", "kill", name],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=15, check=False)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            raise RuntimeBlocked("Provider probe timed out; container cleanup attempted") from exc
+        stdout_file.seek(0)
+        stderr_file.seek(0)
+        stdout = stdout_file.read(OUTPUT_LIMIT + 1)
+        stderr = stderr_file.read(OUTPUT_LIMIT + 1)
+        if len(stdout) + len(stderr) > OUTPUT_LIMIT:
+            raise RuntimeBlocked("Provider output exceeded capture budget")
+        return process.returncode, stdout, stderr
 
 
-def evaluate_probe(provider: str, code: int | None, output: bytes) -> ProbeReceipt:
-    if len(output) > OUTPUT_LIMIT:
+def evaluate_probe(provider: str, code: int | None,
+                   stdout: bytes, stderr: bytes = b"") -> ProbeReceipt:
+    """Validate actual terminal response, NOT a prompt echoed in diagnostic logs."""
+    if len(stdout) + len(stderr) > OUTPUT_LIMIT:
         raise RuntimeBlocked("Output too large")
     import json
     if code != 0:
         raise RuntimeBlocked("Provider invocation failed with nonzero exit")
-    # Never write provider output to a manifest. Only a SHA/length is returned.
+    if re.search(rb"(?i)(permission denied|approval required|approval denied|"
+                 rb"authentication required|not permitted|soft.denied)", stderr):
+        raise RuntimeBlocked("Provider permission/authentication denial")
     if provider == "agy":
-        # Stderr is not JSON: separate it by reading the envelope prefix from
-        # the combined payload. Only one response envelope is accepted.
-        raw = output.split(b"\n", 1)[0]
         try:
-            envelope = json.loads(raw)
+            envelope = json.loads(stdout)
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise RuntimeBlocked("Invalid AGY JSON envelope") from exc
         if (not isinstance(envelope, dict)
                 or envelope.get("status") != "SUCCESS"
                 or envelope.get("error")):
             raise RuntimeBlocked("AGY terminal state is not SUCCESS")
-        if "AGY_SMOKE_OK" not in str(envelope.get("response", "")):
-            raise RuntimeBlocked("AGY smoke marker missing")
+        if str(envelope.get("response", "")).strip() != "AGY_SMOKE_OK":
+            raise RuntimeBlocked("AGY smoke marker missing/ambiguous")
     elif provider == "codex":
-        if b"CODEX_SMOKE_OK" not in output:
-            raise RuntimeBlocked("Codex smoke marker missing")
+        if stdout.decode("utf-8", errors="replace").strip() != "CODEX_SMOKE_OK":
+            raise RuntimeBlocked("Codex terminal answer is not the expected smoke marker")
     else:
         raise RuntimeBlocked("Unknown provider")
+    data = stdout + b"\n" + stderr
     return ProbeReceipt(provider, "READ_ONLY_MODEL_PROBE_PASS_ONLY", code,
-                        hashlib.sha256(output).hexdigest(), len(output))
+                        hashlib.sha256(data).hexdigest(), len(data))
