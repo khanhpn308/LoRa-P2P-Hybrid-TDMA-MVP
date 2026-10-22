@@ -14,7 +14,7 @@ from typing import Callable, Any
 
 from .state import Journal, StateConflict
 from .verify import VerificationBlocked, verify_candidate
-from ..adapters.antigravity import check_report, AuditError
+from adapters.antigravity import check_report, AuditError
 
 TRANSITIONS = {
     "READY": {"WORKER_RUNNING", "BLOCKED"},
