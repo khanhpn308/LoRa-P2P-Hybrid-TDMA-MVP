@@ -12,7 +12,7 @@ import sys
 if __package__ in (None, ""):
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from p1.state import Journal
+from p1.state import Journal, StateConflict
 from p1.verify import verify_candidate, VerificationBlocked
 from p1.runtime_boundary import BuildBoundary, BoundaryError
 from toolchains.resolver import load_project_version, ToolchainError
@@ -44,7 +44,7 @@ def main() -> int:
             ]
         print(json.dumps(receipt, ensure_ascii=False, indent=2))
         return 0
-    except (VerificationBlocked, BoundaryError, ToolchainError, OSError, ValueError) as exc:
+    except (VerificationBlocked, BoundaryError, ToolchainError, StateConflict, OSError, ValueError) as exc:
         print(json.dumps({"status": "BLOCKED", "reason": str(exc)[:250]}))
         return 2
 
