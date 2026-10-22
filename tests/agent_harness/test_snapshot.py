@@ -28,6 +28,7 @@ class SnapshotTests(unittest.TestCase):
             schema.write_text("{}")
             h["audit.schema.json"] = digest(schema.read_bytes())
             self.assertTrue(unchanged(dest, h))
+            (dest / "changes.patch").chmod(0o644)
             (dest / "changes.patch").write_text("tampered")
             self.assertFalse(unchanged(dest, h))
 
