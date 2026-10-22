@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "scripts" / "agent_harness"))
-from p1.provider_runtime import IsolatedCLI, RuntimeBlocked, evaluate_probe
+from p1.provider_runtime import IsolatedCLI, RuntimeBlocked, evaluate_probe, verify_preinstalled_resources
 from p1 import provider_probe
 
 IMAGE = "sha256:" + "a" * 64
@@ -120,6 +120,29 @@ class ProviderOutputTests(unittest.TestCase):
             evaluate_probe("codex", 0, b"A" * 65_000)
 
 
+class DockerInspectTests(unittest.TestCase):
+    def test_requires_pinned_matching_existing_resources(self):
+        spec = IsolatedCLI("codex", IMAGE, NETWORK, CODEX_VOLUME)
+
+        def fake_run(argv, **kw):
+            which = argv[1]
+            value = (IMAGE if which == "image"
+                     else "bridge" if which == "network" else CODEX_VOLUME)
+            return subprocess.CompletedProcess(argv, 0, value + "\n", "")
+
+        with patch("p1.provider_runtime.subprocess.run", side_effect=fake_run) as calls:
+            verify_preinstalled_resources(spec)
+        self.assertEqual(calls.call_count, 3)
+        self.assertFalse(any("pull" in c.args[0] for c in calls.call_args_list))
+
+    def test_wrong_local_image_id_is_blocked(self):
+        spec = IsolatedCLI("codex", IMAGE, NETWORK, CODEX_VOLUME)
+        with patch("p1.provider_runtime.subprocess.run",
+                   return_value=subprocess.CompletedProcess([], 0, "sha256:" + "f"*64, "")):
+            with self.assertRaises(RuntimeBlocked):
+                verify_preinstalled_resources(spec)
+
+
 class SmokeCliTests(unittest.TestCase):
     def argv(self, extra=()):
         return ["provider_probe.py", "--provider", "codex",
@@ -145,6 +168,7 @@ class SmokeCliTests(unittest.TestCase):
     def test_mocked_live_codex_probe(self):
         with patch.object(sys, "argv", self.argv([
                 "--execute", "--confirm-external-egress-policy"])), \
+             patch.object(provider_probe, "verify_preinstalled_resources"), \
              patch.object(provider_probe, "_run",
                           return_value=(0, b"CODEX_SMOKE_OK\n", b"")) as launched, \
              contextlib.redirect_stdout(io.StringIO()) as buffer:
@@ -156,6 +180,7 @@ class SmokeCliTests(unittest.TestCase):
     def test_mocked_soft_denial_fails_closed(self):
         with patch.object(sys, "argv", self.argv([
                 "--execute", "--confirm-external-egress-policy"])), \
+             patch.object(provider_probe, "verify_preinstalled_resources"), \
              patch.object(provider_probe, "_run",
                           return_value=(0, b"CODEX_SMOKE_OK\n", b"permission denied")), \
              contextlib.redirect_stdout(io.StringIO()) as buffer:
