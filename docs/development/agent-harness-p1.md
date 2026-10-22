@@ -65,7 +65,7 @@ P1-A's SQLite journal and per-Issue worktree are inputs to new Host controls:
 - `scripts/agent_harness/p1/verify.py` verifies PREPARED state, exact source SHA, branch, registered worktree, changed-path scope, symlinks, file sizes and obvious credential patterns. It creates SHA-256 hashes of tracked diff and all untracked candidate files. The receipt ALWAYS marks build/audit/HIL/RF NOT_VERIFIED. This scan is defense in depth, NOT comprehensive secret detection.
 - `scripts/agent_harness/p1/host_gate.py` provides a read-only CLI for a pre-existing Host SQLite journal. It never invokes AI, Docker or GitHub writes.
 - `scripts/agent_harness/p1/runtime_boundary.py` plans argv-only Docker builds on an operator-confirmed image ID, with no network, privileges, Docker socket or Host credentials. A generated command is NOT evidence of actual image verification or execution.
-- `scripts/agent_harness/p1/process.py` supervises trusted deterministic local test commands and kills process groups on timeout. It is NOT a security sandbox; subprocess output buffering still requires an external memory-limited runner.
+- `scripts/agent_harness/p1/process.py` supervises trusted deterministic local test commands and kills process groups on timeout. It is NOT a security sandbox; **P1-B1 allows only test fixtures true/false/sleep, no bash/python/Agent/GitHub commands**. Subprocess output buffering still requires an external memory-limited runner.
 - `scripts/agent_harness/p1/draft_preview.py` prints the planned Host-only `gh pr create --draft` command from an exact, committed clean issue branch. It DOES NOT execute, push, or promote AI statements to real evidence.
 
 ### WSL2 — inspect externally created candidate
