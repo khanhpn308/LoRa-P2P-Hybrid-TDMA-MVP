@@ -66,6 +66,12 @@ class IsolatedCLI:
             "--read-only", "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m",
             "--user", "10001:10001",
             "--env", "HOME=/home/agent",
+            "--env", "HTTP_PROXY=http://lora-egress-proxy:3128",
+            "--env", "HTTPS_PROXY=http://lora-egress-proxy:3128",
+            "--env", "http_proxy=http://lora-egress-proxy:3128",
+            "--env", "https_proxy=http://lora-egress-proxy:3128",
+            "--env", "NO_PROXY=",
+            "--env", "no_proxy=",
             "--mount", f"type=bind,src={root},dst=/workspace,readonly",
             "--mount", f"type=volume,src={self.profile_volume},dst=/home/agent",
             "--workdir", "/workspace",
@@ -82,13 +88,13 @@ class IsolatedCLI:
 def verify_preinstalled_resources(spec: IsolatedCLI) -> None:
     """Probe existing Docker resources; no creation, pulls or policy attestation.
 
-    An existing network does NOT mean its egress restriction is effective.
+    An internal bridge network is required; this does NOT prove outbound ACL enforcement.
     """
     lookups = (
         (["docker", "image", "inspect", "--format", "{{.Id}}", spec.image_id],
          spec.image_id),
-        (["docker", "network", "inspect", "--format", "{{.Driver}}", spec.network],
-         "bridge"),
+        (["docker", "network", "inspect", "--format", "{{.Driver}}|{{.Internal}}", spec.network],
+         "bridge|true"),
         (["docker", "volume", "inspect", "--format", "{{.Name}}", spec.profile_volume],
          spec.profile_volume),
     )
