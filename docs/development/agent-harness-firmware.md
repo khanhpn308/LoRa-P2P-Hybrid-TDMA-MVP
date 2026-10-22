@@ -14,7 +14,7 @@
 
 1. Python Host preflight reads an OPEN GitHub Issue with an explicit, exact `Target Directories (allowed paths)` list, refuses a dirty worktree and requires an Issue-number feature branch.
 2. Codex CLI acts as the Worker in `workspace-write` mode. The Host, not Worker text, validates all changes; file scope, symlink changes and binary or oversized diffs are rejected.
-3. Deterministic Host checks run structure tests, Python harness unit tests and BOTH ESP-IDF app builds. A Docker-first Toolchain Resolver selects the **exact approved X.Y or X.Y.Z release**, verifies the local official Espressif image identity and checks `idf.py --version`. Host records image ID/version plus command receipts; it does not put raw logs in the manifest.
+3. Deterministic Host checks run structure tests, Python harness unit tests and BOTH ESP-IDF app builds. A Docker-first Toolchain Resolver selects the **owner-approved v6.1 release**, verifies the local official Espressif image identity and checks `idf.py --version`. Host records image ID/version plus command receipts; it does not put raw logs in the manifest.
 4. Antigravity CLI (`agy`) acts as fresh independent Auditor. Host creates a bounded copied snapshot of changed code and relevant reference docs, embeds full review data into the prompt, and uses `--output-format json`, `--json-schema` and `--sandbox`.
 5. `exit_code == 0` alone is NOT success. Host requires `status=SUCCESS`, nonmissing `structured_output`, a structurally valid report, zero findings/limitations for PASS, explicit per-changed-file `reviewed_scope`, and no observed permission soft-denial.
 6. Host verifies audit snapshot integrity after the model invocation. Up to two OPTIONAL repair rounds are supported; repeated identical diff, timeout, scope violation and audit INCONCLUSIVE stop the job.
@@ -49,12 +49,12 @@ The flag `--accept-isolated-pilot` is ONLY an acknowledgment, not isolation or e
 
 ## Portable ESP-IDF Toolchain Resolver (implemented in P0)
 
-File: `scripts/agent_harness/toolchains/resolver.py`. This resolver is controlled by the Python Host; neither Codex nor AGY may choose the ESP-IDF version. This change does **not** settle the v5.4 versus v6.1 architecture decision.
+File: `scripts/agent_harness/toolchains/resolver.py`. This resolver is controlled by the Python Host; neither Codex nor AGY may choose the ESP-IDF version. This implements the owner-approved v6.1 baseline; firmware build/HIL validation remains separate.
 
 ### Docker-first (default, no machine-specific IDF_PATH)
 
 1. ADR-0003 and `firmware/esp-idf-version.txt` approve **`v6.1`**. Do not use `latest`, prereleases or floating `release-v6.1` tags.
-2. A trusted operator pre-installs the corresponding official `espressif/idf:vX.Y or X.Y.Z` image. The Harness never pulls images or selects a new firmware version autonomously.
+2. A trusted operator pre-installs the corresponding official `espressif/idf:v6.1` image. The Harness never pulls images or selects a new firmware version autonomously.
 3. Host runs `docker image inspect` and requires a valid SHA-256 image identity; executes **that inspected image ID** with `--pull=never`. A `docker run ... idf.py --version` probe must match the approved exact release.
 4. Builds bind only the current repository/worktree to `/workspace` and use `--network=none`, `--cap-drop=ALL`, `--security-opt=no-new-privileges`, `--read-only`, a writable `/tmp` tmpfs, bounded processes/memory/CPU and non-root UID/GID. No USB device, Docker socket or privileged flag is exposed.
 5. Container project workdirs are derived from the worktree at runtime. No `/home/<user>/...` path is embedded in source, and no `source export.sh` is needed.
@@ -63,7 +63,7 @@ Example **operator preparation only**, after the version has been formally appro
 
 ```bash
 docker version
-docker pull espressif/idf:v6.1  # EXAMPLE; replace with APPROVED release
+docker pull espressif/idf:v6.1  # Operator prepares the approved image
 docker image inspect espressif/idf:v6.1 --format '{{.Id}}'
 ```
 
@@ -75,7 +75,7 @@ python3 scripts/agent_harness/toolchains/check.py --version 6.1
 python3 scripts/agent_harness/toolchains/check.py --version 6.1 --mode native_only
 ```
 
-The standalone command returns `TOOLCHAIN_VERIFIED_ONLY` or `BLOCKED`. These commands use example versions; pick the project's actually approved X.Y or X.Y.Z. A successful probe is NOT an ESP-IDF build, RF or HIL PASS.
+The standalone command returns `TOOLCHAIN_VERIFIED_ONLY` or `BLOCKED`. These commands check the repository-approved ESP-IDF v6.1. A successful probe is NOT an ESP-IDF build, RF or HIL PASS.
 
 Start the controlled CLI pilot only in an **externally isolated disposable** execution environment:
 
@@ -104,7 +104,7 @@ Example without hardcoding a path into repository source:
 test -n "$IDF_PATH" && test -f "$IDF_PATH/export.sh"
 python3 scripts/agent_harness/run.py --issue 10 --execute \
   --accept-isolated-pilot \
-  --expected-idf-version '<approved-X.Y or X.Y.Z>' \
+  --expected-idf-version 'v6.1' \
   --toolchain-mode native_only
 ```
 
