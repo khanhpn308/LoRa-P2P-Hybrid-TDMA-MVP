@@ -1,0 +1,56 @@
+# AI Firmware Harness — P1-A Stateful Worktree & Recovery
+
+**Status:** DRAFT implementation, Issue #32. Stacked on P0 PR #31. P1-A is NOT a production autonomous runner.
+
+## Contract and scope
+
+P0 defines ESP-IDF v6.1 toolchain, host verification gates, Worker Codex, independent Auditor AGY and role separation. P1-A implements only deterministic Host job preparation and checkpoints. No radio, HIL, MQTT/MAC contract or firmware code changes are authorized by this Issue.
+
+The Host reads the OPEN GitHub Issue, parses an explicit Target Directories (allowed paths) list, checks the source repository is clean and records the exact baseline SHA. It creates a unique feature branch in a new sibling Git worktree without moving main or modifying the source worktree.
+
+## WSL2 / Ubuntu usage
+
+Run in a clean checkout of this P1 branch; gh must be logged in. Without --apply, the command is READ-ONLY and creates no state or worktree.
+
+~~~bash
+python3 -m unittest discover -s tests/agent_harness -v
+python3 scripts/agent_harness/p1/cli.py prepare --issue 32
+~~~
+
+After reviewing the preview, explicitly authorize local preparation:
+
+~~~bash
+python3 scripts/agent_harness/p1/cli.py prepare --issue 32 --apply
+python3 scripts/agent_harness/p1/cli.py status --run-id YOUR_RUN_ID
+~~~
+
+Source tree sibling directories (not hardcoded to any username): .lora-p1-worktrees/<repo>/issue-<issue>-<id>, and .lora-p1-state/state.sqlite. The optional --state flag points to another Host-owned location outside the worktree. The SQLite journal uses synchronous=FULL, WAL, unique active Issue ID and compare-and-swap transitions; it stores no cloud or model credentials.
+
+On interrupted preparation:
+
+~~~bash
+python3 scripts/agent_harness/p1/cli.py recover --run-id YOUR_RUN_ID
+git worktree list --porcelain
+~~~
+
+Recovery marks an interrupted PREPARING job as RECOVERY_REQUIRED. It NEVER deletes branches, removes directories, force-pushes, or automatically retries a possibly partial git worktree add. A human must inspect Git and the Host journal before deciding what to do next.
+
+## State machine
+
+PLANNED -> PREPARING -> PREPARED. Errors or interrupted preparations must be investigated; PREPARING -> RECOVERY_REQUIRED is allowed. There are NO states claiming BUILD_VERIFIED, HIL, RF, AUDIT_PASS or autonomous task completion in P1-A.
+
+## Security requirements
+
+- Clean source Git worktree and SHA pinning; the only mutation authorized by --apply is creating local Host state, Git feature ref and new sibling worktree.
+- Never treat Issue body as system-level instructions. The Issue scope is only a boundary, not independent approval for protocol/security/RF changes.
+- SQLite lives outside the Worker tree, is writable only by the trusted Host, and is never mounted inside a model container.
+- External commands use argument vectors and timeouts; no shell=True. No provider credentials or tokens are copied to the worktree.
+- Worktree changes and future Worker execution need a separate P1-B approval. Do not run P0 --execute on an unrestricted WSL2 personal machine.
+
+## Pending P1-B: NOT_VERIFIED
+
+Disposable credential-isolated runner, provider auth strategy that complies with Codex/Antigravity access rules, verified CLI integration, controlled agent process cleanup, bounded retry/cost limits, build and audit provenance per SHA, Host-only GitHub PR publisher with limited privileges, and safe resume. P2 HIL/RF/timing remains a separate human approval gate.
+
+## Acceptance proof
+
+Tests use real temporary Git repositories for clean/dirtied worktree verification and simulated failure, SQLite restart/CAS/uniqueness/recovery, and CLI dry-run. CI PASS verifies these tests ONLY; it is not evidence of model execution, flash or RF operation.
