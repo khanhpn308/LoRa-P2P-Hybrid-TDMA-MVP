@@ -62,10 +62,10 @@ def check(args: list[str], *, cwd: pathlib.Path | None = None,
         # variables, full command arguments or untrusted multiline output.
         diagnostic = p.stderr.strip()[-1200:]
         diagnostic = re.sub(
-            r"(?i)(authorization|api[_-]?key|token|password|secret)\\s*[:=]\\s*\\S+",
-            r"\\1=[REDACTED]", diagnostic,
+            r"(?i)(authorization|api[_-]?key|token|password|secret)\s*[:=]\s*\S+",
+            r"\1=[REDACTED]", diagnostic,
         )
-        diagnostic = re.sub(r"[\\r\\n\\t]+", " ", diagnostic)
+        diagnostic = re.sub(r"[\r\n\t]+", " ", diagnostic)
         if not diagnostic:
             diagnostic = "No Docker/tool stderr was returned"
         raise ToolchainError(
