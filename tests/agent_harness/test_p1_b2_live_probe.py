@@ -49,7 +49,7 @@ class RuntimePlanTests(unittest.TestCase):
 
     def test_agy_plan_is_independent_and_structured(self):
         args = self.plan("agy", AGY_VOLUME)
-        self.assertEqual(args[-7:],
+        self.assertEqual(args[-8:],
                          ["agy", "--sandbox", "-p", "hello",
                           "--output-format", "json", "--print-timeout", "3m"])
         self.assertNotIn(CODEX_VOLUME, " ".join(args))
