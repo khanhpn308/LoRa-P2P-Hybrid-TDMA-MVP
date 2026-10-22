@@ -166,6 +166,35 @@ def _run(argv: list[str], *, timeout: int, name: str) -> tuple[int | None, bytes
         return process.returncode, stdout, stderr
 
 
+
+def safe_probe_diagnostic(provider: str, code: int | None,
+                          stdout: bytes, stderr: bytes) -> dict:
+    """Bounded keyword signals only: NEVER print model output or credentials."""
+    if provider not in ("codex", "agy"):
+        raise RuntimeBlocked("Unknown provider")
+    signals = (
+        ("sandbox_backend", rb"(?i)(bubblewrap|\\bbwrap\\b|landlock|unshare|seccomp|"
+                            rb"user.namespace|sandbox.{0,32}(?:denied|fail)|"
+                            rb"operation not permitted)"),
+        ("filesystem_permission", rb"(?i)(permission denied|read.only file system)"),
+        ("provider_auth", rb"(?i)(authentication required|not logged in|"
+                          rb"token.expired|invalid.token|unauthorized)"),
+        ("approval", rb"(?i)(approval required|approval denied|soft.denied)"),
+        ("network_transport", rb"(?i)(proxy error|certificate|TLS error|"
+                              rb"connection reset|connection refused|DNS error|"
+                              rb"network unreachable)"),
+    )
+    return {
+        "exit_code": code,
+        "stdout_exact_expected_marker": stdout.strip() == (
+            b"CODEX_SMOKE_OK" if provider == "codex" else b"AGY_SMOKE_OK"),
+        "stderr_bytes": len(stderr),
+        "stderr_sha256": hashlib.sha256(stderr).hexdigest(),
+        "stderr_signals": [name for name, pattern in signals
+                           if re.search(pattern, stderr)],
+    }
+
+
 def evaluate_probe(provider: str, code: int | None,
                    stdout: bytes, stderr: bytes = b"") -> ProbeReceipt:
     """Validate actual terminal response, NOT a prompt echoed in diagnostic logs."""
