@@ -152,6 +152,39 @@ class ProviderOutputTests(unittest.TestCase):
             with self.assertRaises(RuntimeBlocked):
                 evaluate_probe("agy", 0, packet, diagnostic)
 
+    def test_only_exact_codex_path_alias_warning_is_nonfatal(self):
+        warning = (b"WARNING: proceeding, even though we could not create "
+                   b"PATH aliases: Read-only file system (os error 30)\\n")
+        receipt = evaluate_probe(
+            "codex", 0, b"CODEX_SMOKE_OK\\n", warning)
+        self.assertEqual(receipt.status, "READ_ONLY_MODEL_PROBE_PASS_ONLY")
+        diagnostic = safe_probe_diagnostic(
+            "codex", 0, b"CODEX_SMOKE_OK\\n", warning)
+        self.assertEqual(diagnostic["benign_codex_alias_warning_count"], 1)
+        self.assertNotIn("filesystem_permission", diagnostic["stderr_signals"])
+
+    def test_alias_warning_does_not_mask_real_permission_failure(self):
+        warning = (b"WARNING: proceeding, even though we could not create "
+                   b"PATH aliases: Read-only file system (os error 30)\\n")
+        for stderr in (
+            warning + b"ERROR: permission denied opening workspace\\n",
+            warning + b"ERROR: operation not permitted\\n",
+            warning + warning,
+            b"WARNING: proceeding, even though we could not create "
+            b"PATH aliases: Read-only file system (os error 30); "
+            b"permission denied\\n",
+        ):
+            with self.subTest(stderr_sha=str(len(stderr))):
+                with self.assertRaises(RuntimeBlocked):
+                    evaluate_probe("codex", 0, b"CODEX_SMOKE_OK\\n", stderr)
+
+    def test_alias_warning_not_ignored_for_agy(self):
+        warning = (b"WARNING: proceeding, even though we could not create "
+                   b"PATH aliases: Read-only file system (os error 30)\\n")
+        info = safe_probe_diagnostic("agy", 0, b"", warning)
+        self.assertEqual(info["benign_codex_alias_warning_count"], 0)
+        self.assertIn("filesystem_permission", info["stderr_signals"])
+
     def test_safe_diagnostic_classifies_namespace_failure_without_raw_logs(self):
         log = b"bwrap: operation not permitted; token=SECRET_123"
         info = safe_probe_diagnostic("codex", 0, b"", log)
