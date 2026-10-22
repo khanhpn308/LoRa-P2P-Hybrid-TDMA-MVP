@@ -13,12 +13,12 @@ from typing import Any
 from scope import assert_scoped, _git
 
 
-def command(argv: list[str], cwd: pathlib.Path, timeout: int, input_text: str | None = None) -> dict[str, Any]:
+def command(argv: list[str], cwd: pathlib.Path, timeout: int, input_text: str | None = None, stdout_limit: int = 80000) -> dict[str, Any]:
     try:
         result = subprocess.run(argv, cwd=cwd, input=input_text, text=True,
                                 capture_output=True, timeout=timeout, check=False)
         return {"command": argv, "exit_code": result.returncode,
-                "stdout": result.stdout[-80000:], "stderr": result.stderr[-20000:]}
+                "stdout": result.stdout[-stdout_limit:], "stderr": result.stderr[-20000:]}
     except subprocess.TimeoutExpired:
         return {"command": argv, "exit_code": None, "error": "TIMEOUT"}
     except OSError as exc:
@@ -122,7 +122,7 @@ def run(args: argparse.Namespace) -> int:
             return finish("CHECKS_FAILED", 4)
     record["build"] = "BUILD_VERIFIED_IN_LOCAL_WORKTREE_ONLY"
 
-    diff = command(["git", "diff", "--no-ext-diff", "--binary", "HEAD"], repo, 30)
+    diff = command(["git", "diff", "--no-ext-diff", "--binary", "HEAD"], repo, 30, stdout_limit=1000000)
     if diff["exit_code"] != 0:
         return finish("DIFF_FAILED", 4)
     # Include untracked file content in auditor input only through an explicit inventory.
