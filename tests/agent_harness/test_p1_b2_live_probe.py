@@ -10,7 +10,8 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "scripts" / "agent_harness"))
-from p1.provider_runtime import IsolatedCLI, RuntimeBlocked, evaluate_probe, verify_preinstalled_resources
+from p1.provider_runtime import (IsolatedCLI, RuntimeBlocked, evaluate_probe,
+                                 safe_probe_diagnostic, verify_preinstalled_resources)
 from p1 import provider_probe
 
 IMAGE = "sha256:" + "a" * 64
@@ -128,6 +129,14 @@ class ProviderOutputTests(unittest.TestCase):
             with self.assertRaises(RuntimeBlocked):
                 evaluate_probe("agy", 0, packet, diagnostic)
 
+    def test_safe_diagnostic_classifies_namespace_failure_without_raw_logs(self):
+        log = b"bwrap: operation not permitted; token=SECRET_123"
+        info = safe_probe_diagnostic("codex", 0, b"", log)
+        self.assertFalse(info["stdout_exact_expected_marker"])
+        self.assertIn("sandbox_backend", info["stderr_signals"])
+        self.assertNotIn("SECRET_123", json.dumps(info))
+        self.assertEqual(info["exit_code"], 0)
+
     def test_exit_code_and_output_limit(self):
         with self.assertRaises(RuntimeBlocked):
             evaluate_probe("codex", 1, b"CODEX_SMOKE_OK")
@@ -214,7 +223,10 @@ class SmokeCliTests(unittest.TestCase):
                           return_value=(0, b"CODEX_SMOKE_OK\n", b"permission denied")), \
              contextlib.redirect_stdout(io.StringIO()) as buffer:
             self.assertEqual(provider_probe.main(), 2)
-        self.assertEqual(json.loads(buffer.getvalue())["status"], "BLOCKED")
+        receipt = json.loads(buffer.getvalue())
+        self.assertEqual(receipt["status"], "BLOCKED")
+        self.assertIn("filesystem_permission", receipt["diagnostic"]["stderr_signals"])
+        self.assertNotIn("permission denied", json.dumps(receipt["diagnostic"]))
 
 
 if __name__ == "__main__":
