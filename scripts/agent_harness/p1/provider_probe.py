@@ -34,16 +34,25 @@ def main() -> int:
     parser.add_argument("--execute", action="store_true", help="Execute provider smoke test, not coding")
     parser.add_argument("--confirm-external-egress-policy", action="store_true",
                         help="Operator confirms egress restriction and isolated auth are externally reviewed")
+    parser.add_argument("--accept-docker-only-isolation", action="store_true",
+                        help="Explicitly accept Codex inner sandbox disabled; Docker remains the only OS boundary")
     parser.add_argument("--timeout", type=int, default=180)
     args = parser.parse_args()
     try:
         config = IsolatedCLI(args.provider, args.image_id, args.network, args.profile_volume)
+        if args.accept_docker_only_isolation and (
+                args.provider != "codex" or not args.execute
+                or not args.confirm_external_egress_policy):
+            raise RuntimeBlocked(
+                "Docker-only isolation requires Codex execute plus approved egress")
         with tempfile.TemporaryDirectory(prefix="lora-safe-probe-") as folder:
             snapshot = pathlib.Path(folder)
             (snapshot / "README.txt").write_text(
                 "Temporary harmless test fixture. No repository content or secrets.\n")
             name = "lora-p1-probe-" + args.provider + "-" + uuid.uuid4().hex[:8]
-            command = config.command(snapshot, name, PROMPTS[args.provider])
+            command = config.command(
+                snapshot, name, PROMPTS[args.provider],
+                docker_only_isolation=args.accept_docker_only_isolation)
             if not args.execute:
                 # Do not print actual Docker args including credential profile volume.
                 print(json.dumps({
@@ -53,6 +62,7 @@ def main() -> int:
                     "network": args.network,
                     "snapshot": "disposable_read_only",
                     "profile": "dedicated_provider_volume",
+                    "sandbox_boundary": "codex_inner_read_only",
                     "model_calls": 0,
                     "requires": "externally reviewed egress and provider authentication",
                 }, indent=2))
@@ -69,11 +79,20 @@ def main() -> int:
                 print(json.dumps({
                     "status": "BLOCKED",
                     "reason": str(exc)[:200],
+                    "sandbox_boundary": (
+                        "docker_outer_only" if args.accept_docker_only_isolation
+                        else "codex_inner_read_only" if args.provider == "codex"
+                        else "provider_default"),
                     "diagnostic": safe_probe_diagnostic(
                         args.provider, code, stdout, stderr),
                 }, indent=2))
                 return 2
-            print(json.dumps(receipt.as_json(), indent=2))
+            result = receipt.as_json()
+            result["sandbox_boundary"] = (
+                "docker_outer_only" if args.accept_docker_only_isolation
+                else "codex_inner_read_only" if args.provider == "codex"
+                else "provider_default")
+            print(json.dumps(result, indent=2))
             return 0
     except (RuntimeBlocked, ValueError, OSError) as exc:
         print(json.dumps({"status": "BLOCKED", "reason": str(exc)[:200]}))
