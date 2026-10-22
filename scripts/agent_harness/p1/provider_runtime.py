@@ -190,6 +190,41 @@ def _run(argv: list[str], *, timeout: int, name: str) -> tuple[int | None, bytes
 
 
 
+
+def _safe_permission_line_shapes(stderr: bytes) -> list[dict]:
+    """Expose bounded boolean signatures, never stderr text, paths, or tokens."""
+    patterns = (
+        ("path_aliases", rb"(?i)path aliases"),
+        ("startup_proceeding", rb"(?i)warning: proceeding"),
+        ("read_only_filesystem", rb"(?i)read.only file system"),
+        ("permission_denied", rb"(?i)permission denied"),
+        ("operation_not_permitted", rb"(?i)operation not permitted"),
+        ("os_error_30", rb"(?i)os error 30"),
+        ("os_error_13", rb"(?i)os error 13"),
+        ("codex_home", rb"(?i)codex.clean.pilot|\\.codex"),
+        ("session_storage", rb"(?i)session|sqlite|database"),
+        ("logging", rb"(?i)log(ger|ging|file|s)?"),
+        ("workspace", rb"(?i)/workspace"),
+        ("usr_local", rb"(?i)/usr/local"),
+        ("tmp", rb"(?i)/tmp"),
+        ("has_ansi", rb"\\x1b\\["),
+    )
+    matches = []
+    for line_no, line in enumerate(stderr.splitlines(), 1):
+        if not re.search(
+                rb"(?i)(permission denied|read.only file system|operation not permitted)",
+                line):
+            continue
+        matches.append({
+            "line_number": line_no,
+            "line_bytes": len(line),
+            "tags": [key for key, pattern in patterns if re.search(pattern, line)],
+        })
+        if len(matches) == 6:
+            break
+    return matches
+
+
 def safe_probe_diagnostic(provider: str, code: int | None,
                           stdout: bytes, stderr: bytes) -> dict:
     """Bounded keyword signals only: NEVER print model output or credentials."""
@@ -218,6 +253,7 @@ def safe_probe_diagnostic(provider: str, code: int | None,
         "benign_codex_alias_warning_count": benign_alias_warning_count,
         "stderr_signals": [name for name, pattern in signals
                            if re.search(pattern, effective_stderr)],
+        "permission_line_shapes": _safe_permission_line_shapes(effective_stderr),
     }
 
 
