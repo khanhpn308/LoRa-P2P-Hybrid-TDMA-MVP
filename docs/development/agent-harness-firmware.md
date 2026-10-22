@@ -110,6 +110,8 @@ python3 scripts/agent_harness/run.py --issue 10 --execute \
 
 **Security boundary:** Native builds run untrusted Worker-modified CMake/scripts on the host; permit this ONLY inside a disposable credential-isolated VM/container. Docker build restrictions protect the build subprocess, **not** the Codex Worker. Docker-daemon access itself is privileged; only the trusted Host may invoke Docker, and a stronger isolated runner remains required for unattended P1.
 
+**Docker error diagnostics:** A `docker run` exit code `125` is not an ESP-IDF compile result. The resolver now preserves a bounded, redacted stderr message in `ToolchainError` so failed `check.py` probes identify the rejected option/daemon error. The `--mount type=bind,src=...,dst=/workspace` specification omits an unsupported `,rw` suffix: Docker bind mounts are read-write by default. A real WSL2 end-to-end probe is still required; never disable `--network=none`, `--read-only`, `--cap-drop=ALL` merely to silence a failure.
+
 **Operational limitations:** Builds with no network may fail if managed components need downloading; prepare and review dependencies before running. Image availability, Docker daemon permissions, correct patch tag and WSL2 behavior are still `NOT_VERIFIED` until exercised on the target host. Flash, monitor, HIL, RF and real TDMA remain outside this runner.
 
 ### Verification
