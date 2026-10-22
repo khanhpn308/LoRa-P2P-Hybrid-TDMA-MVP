@@ -67,7 +67,7 @@ def violations(repo: pathlib.Path, allowed: Iterable[str],
             continue
         candidate = root / path
         if any(p.is_symlink() for p in (candidate, *candidate.parents) if p != root and root in p.parents):
-            failures.append(f"symlink forbidden in changed path: {path}")
+            failures.append(f"symlink escape/forbidden in changed path: {path}")
             continue
         if not candidate.resolve().is_relative_to(root):
             failures.append(f"symlink escape: {path}")
