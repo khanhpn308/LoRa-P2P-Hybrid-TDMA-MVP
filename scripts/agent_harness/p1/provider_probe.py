@@ -16,7 +16,7 @@ import uuid
 if __package__ in ("", None):
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from p1.provider_runtime import IsolatedCLI, RuntimeBlocked, _run, evaluate_probe
+from p1.provider_runtime import IsolatedCLI, RuntimeBlocked, _run, evaluate_probe, verify_preinstalled_resources
 
 PROMPTS = {
     "codex": "Respond with exactly CODEX_SMOKE_OK. Do not use tools or modify files.",
@@ -59,6 +59,7 @@ def main() -> int:
             if not args.confirm_external_egress_policy:
                 raise RuntimeBlocked(
                     "Missing operator confirmation of external egress + isolated auth policy")
+            verify_preinstalled_resources(config)
             code, stdout, stderr = _run(command, timeout=args.timeout, name=name)
             receipt = evaluate_probe(args.provider, code, stdout, stderr)
             print(json.dumps(receipt.as_json(), indent=2))
