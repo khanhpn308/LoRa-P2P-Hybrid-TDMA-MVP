@@ -124,3 +124,60 @@ A future production adapter must satisfy ALL of the following before anyone invo
 The P1-B2-A simulation is intentionally a test harness for these invariants, **not proof** that model isolation, network policy, provider credentials or a safe unattended runtime exist.
 
 Current Antigravity source: https://antigravity.google/docs/cli/headless/
+
+
+## P1-B2-B — Operator-controlled real CLI smoke tests (Issue #34)
+
+**Status: CODE_WRITTEN / CI or WSL2 LIVE NOT_VERIFIED until evidence exists.** This stage tests model CLI authentication and response under constrained Docker settings only, before permitting a live coding task. It is NOT an end-to-end autonomous coding run.
+
+Files:
+- `p1/provider_runtime.py`: plans read-only, no-privilege Codex/AGY Docker invocations, uses reviewed immutable image ID, distinct preprovisioned provider home volumes, bounded memory/CPU/PIDs and a disposable read-only fixture (NOT the monorepo). Probes existing Docker image, user-defined bridge network and auth volume before execution; never builds/pulls images or creates networks.
+- `p1/provider_probe.py`: defaults to `PLAN_ONLY`. Explicit `--execute --confirm-external-egress-policy` enables ONLY a harmless, read-only, single-turn provider smoke test. Returns `READ_ONLY_MODEL_PROBE_PASS_ONLY` or `BLOCKED` with hash/size receipt, never raw model output or credentials.
+- `tests/agent_harness/test_p1_b2_live_probe.py`: CLI argument/permission/denial/timeout-policy and fake-provider integration tests, no real tokens.
+
+### Operator preparation and safety prerequisites
+
+**Not handled by the Harness:** A reviewed, immutable container image must already contain the supported Codex CLI or Antigravity CLI and required dependencies. Validate each CLI version/flags against actual image binaries; the CLI versions seen on WSL2 are not evidence of versions inside the image. The Docker daemon and image supply chain must be trusted. Never put credentials in Docker image layers, `docker build --build-arg`, environment variables printed in logs or Git files.
+
+Provision a *dedicated auth volume per provider* (names `lora-agent-codex-auth-...` and `lora-agent-agy-auth-...`) with isolated authorized login, owned/writable by container UID 10001. These are persistent volumes; users must rotate/revoke credentials according to provider terms and never mount their normal WSL2 user home, `~/.codex`, `~/.gemini`, SSH keys, GitHub write token, or host Docker socket. The provider should be authenticated interactively within this isolated profile, using an approved login flow. Do not copy browser cookies, harvest tokens, share accounts or circumvent usage limits.
+
+Create an externally secured, dedicated **bridge** network named `lora-agent-egress-...` with verified outbound allowlist/proxy and resource governance. **Docker bridge networking alone is NOT egress allowlisting**; this module can only verify that the network exists and uses driver `bridge`, not that its firewall policy is effective. A private network with no external provider connectivity will fail the live smoke, and that is preferable to silently broadening outbound access.
+
+### Running in dry-run mode (no quota)
+
+From a clean PR branch/worktree with P1-B2-B code, after the image, profile volume and dedicated network have been provisioned:
+
+~~~bash
+python3 -m unittest discover -s tests/agent_harness -v
+
+# Obtain the immutable ID from the operator-approved CLI image:
+docker image inspect YOUR_REVIEWED_CLI_IMAGE --format '{{.Id}}'
+
+python3 scripts/agent_harness/p1/provider_probe.py \
+  --provider codex --image-id sha256:YOUR64CHARIMAGEID \
+  --network lora-agent-egress-reviewed \
+  --profile-volume lora-agent-codex-auth-pilot
+
+python3 scripts/agent_harness/p1/provider_probe.py \
+  --provider agy --image-id sha256:YOUR64CHARIMAGEID \
+  --network lora-agent-egress-reviewed \
+  --profile-volume lora-agent-agy-auth-pilot
+~~~
+
+Replace the placeholder image ID(s) with a real reviewed 64-hex SHA-256. Codex and AGY may be installed in **different** approved CLI images. The dry-run does not authenticate, run models, make network calls, create a Docker container or inspect provider credentials.
+
+### Explicit real smoke test (requires external human approval)
+
+After independently verifying network filtering and dedicated profiles, re-run each command with:
+
+~~~text
+--execute --confirm-external-egress-policy
+~~~
+
+This confirmation flag is an **operator acknowledgment**, NOT attestation or a substitute for actual network/VM security. A real provider request consumes provider quota. Codex is invoked in read-only mode; AGY gets `--sandbox` and no dangerous permission bypass. The fake README fixture is read-only, not a working Git repository. The command validates the terminal response, soft permission denials (including exit 0 cases), errors and bounded output.
+
+PASS here means **only** that the provider responded in an isolated, read-only smoke test. It does not prove an end-to-end Agent loop, firmware build, audit coverage, complete quota governance, precise egress restriction or unattended safety. HIL, RF and TDMA remain NOT_VERIFIED.
+
+### Subsequent P1-B2-C work (still open)
+
+Integrate an externally isolated, per-Issue **scratch copy** of code for the Codex Worker; import only vetted changed paths into the Host-owned worktree; build Gateway and Node with trusted Docker ESP-IDF v6.1 receipts; send a separate immutable AGY snapshot and require a full schema-valid independent report; enforce post-build/audit candidate hashes, crash recovery, final SHA provenance and Host-owned Draft PR publication only after CI. Do not pass P1-B2-A's `SIMULATED` receipts off as real build or audit evidence.
