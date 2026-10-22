@@ -98,7 +98,7 @@ class ToolchainTests(unittest.TestCase):
             self.assertEqual(result.provider, "native-export")
             invoked = check.call_args.args[0]
             self.assertEqual(invoked[0], "bash")
-            self.assertIn('source "$1/export.sh"', invoked)
+            self.assertIn('source "$1/export.sh"', invoked[4])
             self.assertIn(str(installed), invoked)
             self.assertEqual(invoked[-2:], ["idf.py", "--version"])
 
