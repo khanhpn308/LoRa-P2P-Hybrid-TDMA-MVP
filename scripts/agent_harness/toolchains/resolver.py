@@ -81,7 +81,7 @@ class ResolvedIDF:
                 "--env", "HOME=/tmp",
                 "--mount", f"type=bind,src={root},dst=/workspace,rw",
                 "--workdir", "/workspace/" + relative.as_posix(),
-                self.image, "idf.py", *args,
+                self.identity, "idf.py", *args,
             ]
         if self.provider == "native-path":
             if not self.executable:
