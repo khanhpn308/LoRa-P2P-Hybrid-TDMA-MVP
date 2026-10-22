@@ -201,13 +201,13 @@ def _safe_permission_line_shapes(stderr: bytes) -> list[dict]:
         ("operation_not_permitted", rb"(?i)operation not permitted"),
         ("os_error_30", rb"(?i)os error 30"),
         ("os_error_13", rb"(?i)os error 13"),
-        ("codex_home", rb"(?i)codex.clean.pilot|\\.codex"),
+        ("codex_home", rb"(?i)codex.clean.pilot|[.]codex"),
         ("session_storage", rb"(?i)session|sqlite|database"),
         ("logging", rb"(?i)log(ger|ging|file|s)?"),
         ("workspace", rb"(?i)/workspace"),
         ("usr_local", rb"(?i)/usr/local"),
         ("tmp", rb"(?i)/tmp"),
-        ("has_ansi", rb"\\x1b\\["),
+        ("has_ansi", b"\x1b"),
     )
     matches = []
     for line_no, line in enumerate(stderr.splitlines(), 1):
