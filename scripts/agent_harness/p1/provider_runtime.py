@@ -26,7 +26,7 @@ MAX_SECONDS = 240
 # rootfs. Do NOT ignore other read-only/permission diagnostics.
 _CODEX_ALIAS_WARNING = re.compile(
     rb"(?m)^WARNING: proceeding, even though we could not create PATH aliases: "
-    rb"Read-only file system \\(os error 30\\)\\r?$"
+    rb"Read-only file system \(os error 30\)\r?$"
 )
 
 
