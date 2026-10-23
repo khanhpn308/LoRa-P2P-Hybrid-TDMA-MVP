@@ -3,7 +3,7 @@ openapi: "3.0.3"
 info:
   title: "LoRa Hybrid TDMA MVP — Backend/Client REST Contract"
   version: "1.0.0-draft"
-  description: "Proposed contract only. No business endpoints implemented. Security/auth token lifecycle pending ADR; see contracts/api/websocket.md for WSS."
+  description: "DRAFT v1 contract only; 14 operations, including three PROPOSED additions for Issue #15. No business endpoints implemented. Bearer/JWT + browser WSS auth are D13 BLOCKED_SECURITY pending ADR. No client direct MQTT/DB; no physical actuation guarantee from HTTP 202."
 servers:
   -
     url: "http://localhost:8080"
@@ -230,6 +230,7 @@ paths:
   "/api/v1/gateways/{gw_id}/schedules/generate":
     post:
       operationId: "schedules_generate"
+      description: "PROPOSED candidate profile; creation is not active. Clients must not infer schedule activation from HTTP 202."
       summary: "Generate/propose versioned TDMA schedule; NOT instantly ACTIVE"
       tags:
         - "schedules"
@@ -296,6 +297,7 @@ paths:
   "/api/v1/nodes/{node_id}/commands":
     post:
       operationId: "nodes_command"
+      description: "Requires stable X-Idempotency-Key on retries (DRAFT BREAKING CHANGE). Same authenticated actor/key and canonical request returns the original ticket; mismatched payload returns 409. HTTP 202 is acceptance, NOT radio execution."
       summary: "Queue downlink command with application expiry"
       tags:
         - "nodes"
@@ -305,6 +307,7 @@ paths:
       parameters:
         -
           "$ref": "#/components/parameters/NodeId"
+        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "202":
           description: "Successful operation"
@@ -328,6 +331,88 @@ paths:
           "application/json":
             schema:
               "$ref": "#/components/schemas/CommandRequest"
+  "/api/v1/gateways/{gw_id}/schedules/{schedule_id}/review":
+    post:
+      operationId: "schedules_review"
+      summary: "PROPOSED: human review for planned schedule; Gateway is not activated"
+      description: "ADMIN reviews the proposed plan. APPROVE retains state PROPOSED with review_state APPROVED; REJECT sets REJECTED. This is not an RF activation and never sets ACTIVE."
+      tags:
+        - "schedules"
+      x-roles: ["ADMIN"]
+      parameters:
+        - $ref: "#/components/parameters/GatewayId"
+        - $ref: "#/components/parameters/ScheduleId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduleReviewRequest"
+      responses:
+        "200":
+          description: "Updated review decision; schedule not activated"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleSummary"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  "/api/v1/gateways/{gw_id}/schedules/{schedule_id}/activation-requests":
+    post:
+      operationId: "schedules_request_activation"
+      summary: "PROPOSED: queue an approved schedule for Gateway staging"
+      description: "202 only means Backend accepted/persisted intent. Gateway may STAGE_ACK and later ACTIVE_REPORT; only correlated ACTIVE_REPORT yields ACTIVE. Repeated X-Idempotency-Key plus identical request returns same accepted operation; conflicting payload is 409."
+      tags:
+        - "schedules"
+      x-roles: ["ADMIN"]
+      parameters:
+        - $ref: "#/components/parameters/GatewayId"
+        - $ref: "#/components/parameters/ScheduleId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduleActivationRequest"
+      responses:
+        "202":
+          description: "Activation REQUEST accepted for asynchronous dispatch; NOT ACTIVE"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleSummary"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  "/api/v1/nodes/{node_id}/commands/{command_id}":
+    get:
+      operationId: "nodes_command_get"
+      summary: "PROPOSED: read a persisted command ticket after HTTP 202"
+      description: "Read-only status query. NODE_ACKED means node-level ACK as defined by Radio MAC; physical actuation confirmation is not implied."
+      tags:
+        - "nodes"
+      x-roles: ["ADMIN", "OPERATOR", "VIEWER"]
+      parameters:
+        - $ref: "#/components/parameters/NodeId"
+        - $ref: "#/components/parameters/CommandId"
+      responses:
+        "200":
+          description: "Current persisted command state"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommandTicket"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
   "/api/v1/audit":
     get:
       operationId: "audit_list"
@@ -391,6 +476,23 @@ components:
       schema:
         type: "string"
         pattern: "^(0|[1-9][0-9]{0,19})$"
+    CommandId:
+      name: "command_id"
+      in: "path"
+      required: true
+      schema:
+        type: "string"
+        format: "uuid"
+    IdempotencyKey:
+      name: "X-Idempotency-Key"
+      in: "header"
+      required: true
+      description: "Client-generated opaque key stable across HTTP retries. Scope is authenticated actor + operation + resource + canonical request fingerprint. Same key/different payload is 409; keys stored for at least the command/activation acceptance window (retention policy TBD). Never reuse for a different command."
+      schema:
+        type: "string"
+        minLength: 16
+        maxLength: 128
+        pattern: "^[A-Za-z0-9_-]{16,128}$"
     Cursor:
       name: "cursor"
       in: "query"
@@ -771,6 +873,33 @@ components:
           type: "string"
           maxLength: 2000
           nullable: true
+        review_state:
+          type: "string"
+          enum: ["PENDING", "APPROVED", "REJECTED"]
+          description: "PROPOSED extension: human review state independent of Gateway activation status; old clients may omit it. APPROVED does NOT mean ACTIVE."
+    ScheduleReviewRequest:
+      type: "object"
+      additionalProperties: false
+      required: ["decision"]
+      properties:
+        decision:
+          type: "string"
+          enum: ["APPROVE", "REJECT"]
+        note:
+          type: "string"
+          minLength: 1
+          maxLength: 2000
+      description: "Human reviewer decision. No implicit RF activation."
+    ScheduleActivationRequest:
+      type: "object"
+      additionalProperties: false
+      required: ["expected_version"]
+      properties:
+        expected_version:
+          type: "integer"
+          minimum: 0
+          maximum: 4294967295
+      description: "Optimistic version check. Backend only accepts review_state APPROVED and a valid proposal; Gateway retains local activation authority."
     GenerateScheduleRequest:
       type: "object"
       additionalProperties: false
@@ -840,6 +969,15 @@ components:
         created_at:
           type: "string"
           format: "date-time"
+        state_revision:
+          type: "string"
+          pattern: "^(0|[1-9][0-9]{0,19})$"
+          description: "Optional monotonically increasing persisted revision; correlate with WSS COMMAND_STATE_CHANGED and prevent stale UI regressions."
+        reason_code:
+          type: "string"
+          minLength: 1
+          maxLength: 64
+          description: "Application reason; NODE_ACKED is not physical actuation proof."
     AuditEntry:
       type: "object"
       additionalProperties: false
