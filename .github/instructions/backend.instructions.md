@@ -1,9 +1,9 @@
 ---
 applyTo: "backend-go/**"
 ---
-# Go Backend AI Instructions — v1.0 PROPOSED REPLACEMENT
+# Go Backend AI Instructions — v1.0.1 DRAFT
 
-> **Status:** DRAFT. Intended to **replace, not duplicate**, `.github/instructions/backend.instructions.md` after Issue scoping and team review. **Canonical target:** `docs/development/backend-go/GO_BACKEND_ENGINEERING_STANDARD_V1.0.md` (proposed in Issue #39; pending merge/review). References in `[RULE-ID]` correspond to the canonical full standard. Go 1.27.3 is an owner-directed repository lock; Engineering Standard remains DRAFT pending independent review.
+> **Status:** DRAFT; this file is the sole path-scoped backend instruction (branch Issue #41, stacked on #40; pending review). **Canonical target:** `docs/development/backend-go/GO_BACKEND_ENGINEERING_STANDARD_V1.0.md` (proposed in Issue #39; pending merge/review). References in `[RULE-ID]` correspond to the canonical full standard. Go 1.27.3 is an owner-directed repository lock; Engineering Standard remains DRAFT pending independent review.
 
 ## Priorities
 
@@ -33,6 +33,7 @@ applyTo: "backend-go/**"
 - [GB-006, GB-008, AR-008] Avoid `util/common` dumping grounds, generic repositories, unnecessary interfaces, reflection, registry/factory patterns, global state.
 - [GO-006, GO-008..010] Typed structs/JSON tags; wrap useful error context with `%w`, use `errors.Is/As`, handle each error, **log once at responsible boundary**.
 - [GO-011..013, RT-005] `context.Context` first for I/O; propagate timeout/cancellation; UTC + correct timestamp source/units.
+- [GO-006, CT-003..004, TS-003, AI-006] **Go 1.27 JSON:** preserve outbound wire serialization via `encoding/json` (v1-compatible) unless a contract review approves otherwise. For **new inbound JSON object** HTTP/MQTT DTOs, use `internal/jsonboundary.DecodeObject(payload, maxBytes, &dto)` (Go stdlib `encoding/json/v2`, strict duplicate/UTF-8 rejection + `RejectUnknownMembers`); size-limit payload before decode, typed fields/case-sensitive keys. **Decode success ≠ JSON Schema success**: validate required fields, `schema_version`, enum/range/regex, nullability and cross-field invariants separately before DB writes/MQTT ACK. IDs such as `event_seq` remain decimal strings; no `float64` conversion. Test duplicate top-level/nested, malformed/trailing JSON, unknowns, invalid UTF-8, null, overflow and legacy output representation; never assert exact stdlib error text.
 - [CT-003..006, GB-009, SE-001..009] Validate trust boundaries and domain invariants; no silent fallbacks, secret logging, unsafe auth/RBAC, or normal-error `panic`.
 - [RT-001..011, MQ-004..005] Concurrency only when justified; bounded queues/workers/retries; each goroutine owned and joined; graceful shutdown with finite deadline.
 - [DB-001..010] SQL parameterized; DB constraints, short transactions, versioned migrations, idempotency; no assumption of DB↔MQTT atomicity.
