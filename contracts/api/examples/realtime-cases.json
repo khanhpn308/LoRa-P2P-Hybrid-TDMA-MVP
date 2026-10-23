@@ -85,7 +85,7 @@
           "gateway_id": "gw01",
           "node_id": 1,
           "reading_id": "50",
-          "event_id": "gw01:boot:42",
+          "event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:42",
           "observed_at": "2026-10-20T08:00:00Z",
           "data": {
             "ch1_raw": 2575,
@@ -109,6 +109,225 @@
           "gateway_id": "gw01",
           "mode": "ACTIVE",
           "last_seen_at": "2026-10-20T08:00:00Z"
+        }
+      }
+    },
+    {
+      "id": "WS-TELEMETRY-BAD-SOURCE-EVENT-ID",
+      "valid": false,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "srv:0001",
+        "type": "TELEMETRY_UPDATE",
+        "emitted_at": "2026-10-20T08:00:01Z",
+        "cursor": "opaque:001",
+        "payload": {
+          "gateway_id": "gw01",
+          "node_id": 1,
+          "reading_id": "50",
+          "event_id": "gw01:boot:42",
+          "observed_at": "2026-10-20T08:00:00Z",
+          "data": {
+            "ch1_raw": 2575,
+            "ch2_raw": 620,
+            "ch3_raw": 50,
+            "battery_mv": 3600
+          }
+        }
+      }
+    },
+    {
+      "id": "WS-TELEMETRY-BAD-READING-ID",
+      "valid": false,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "srv:0001",
+        "type": "TELEMETRY_UPDATE",
+        "emitted_at": "2026-10-20T08:00:01Z",
+        "cursor": "opaque:001",
+        "payload": {
+          "gateway_id": "gw01",
+          "node_id": 1,
+          "reading_id": 9007199254740992,
+          "event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:42",
+          "observed_at": "2026-10-20T08:00:00Z",
+          "data": {
+            "ch1_raw": 2575,
+            "ch2_raw": 620,
+            "ch3_raw": 50,
+            "battery_mv": 3600
+          }
+        }
+      }
+    },
+    {
+      "id": "WS-SCHEDULE-ACTIVE-VALID",
+      "valid": true,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "srv:0001",
+        "type": "SCHEDULE_STATE_CHANGED",
+        "emitted_at": "2026-10-20T08:00:01Z",
+        "cursor": "opaque:001",
+        "payload": {
+          "gateway_id": "gw01",
+          "schedule_id": "9",
+          "version": 6,
+          "state": "ACTIVE"
+        }
+      }
+    },
+    {
+      "id": "WS-SCHEDULE-UNKNOWN-STATE",
+      "valid": false,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "srv:0001",
+        "type": "SCHEDULE_STATE_CHANGED",
+        "emitted_at": "2026-10-20T08:00:01Z",
+        "cursor": "opaque:001",
+        "payload": {
+          "gateway_id": "gw01",
+          "schedule_id": "9",
+          "version": 6,
+          "state": "ACTIVATING"
+        }
+      }
+    },
+    {
+      "id": "WS-ALERT-NONUTC",
+      "valid": false,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "srv:0001",
+        "type": "ALERT_TRIGGERED",
+        "emitted_at": "2026-10-20T15:00:01+07:00",
+        "cursor": "opaque:001",
+        "payload": {
+          "gateway_id": "gw01",
+          "node_id": 1,
+          "alert_id": "123",
+          "severity": "P0_EMERGENCY",
+          "triggered_at": "2026-10-20T08:00:00Z"
+        }
+      }
+    },
+    {
+      "id": "WS-COMMAND-VALID",
+      "valid": true,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "srv:cmd:0001",
+        "type": "COMMAND_STATE_CHANGED",
+        "emitted_at": "2026-10-20T08:01:01Z",
+        "payload": {
+          "gateway_id": "gw01",
+          "node_id": 1,
+          "command_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+          "state": "QUEUED",
+          "state_revision": "1"
+        }
+      }
+    },
+    {
+      "id": "WS-COMMAND-NODE-ACKED-VALID",
+      "valid": true,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "srv:cmd:0001",
+        "type": "COMMAND_STATE_CHANGED",
+        "emitted_at": "2026-10-20T08:01:01Z",
+        "payload": {
+          "gateway_id": "gw01",
+          "node_id": 1,
+          "command_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+          "state": "NODE_ACKED",
+          "state_revision": "3"
+        }
+      }
+    },
+    {
+      "id": "WS-COMMAND-MISSING-REVISION",
+      "valid": false,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "srv:cmd:0001",
+        "type": "COMMAND_STATE_CHANGED",
+        "emitted_at": "2026-10-20T08:01:01Z",
+        "payload": {
+          "gateway_id": "gw01",
+          "node_id": 1,
+          "command_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+          "state": "QUEUED"
+        }
+      }
+    },
+    {
+      "id": "WS-COMMAND-INVALID-UUID",
+      "valid": false,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "srv:cmd:0001",
+        "type": "COMMAND_STATE_CHANGED",
+        "emitted_at": "2026-10-20T08:01:01Z",
+        "payload": {
+          "gateway_id": "gw01",
+          "node_id": 1,
+          "command_id": "cmd-not-uuid",
+          "state": "QUEUED",
+          "state_revision": "1"
+        }
+      }
+    },
+    {
+      "id": "WS-COMMAND-INVALID-STATE",
+      "valid": false,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "srv:cmd:0001",
+        "type": "COMMAND_STATE_CHANGED",
+        "emitted_at": "2026-10-20T08:01:01Z",
+        "payload": {
+          "gateway_id": "gw01",
+          "node_id": 1,
+          "command_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+          "state": "DELIVERED",
+          "state_revision": "1"
+        }
+      }
+    },
+    {
+      "id": "WS-COMMAND-INVALID-REVISION",
+      "valid": false,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "srv:cmd:0001",
+        "type": "COMMAND_STATE_CHANGED",
+        "emitted_at": "2026-10-20T08:01:01Z",
+        "payload": {
+          "gateway_id": "gw01",
+          "node_id": 1,
+          "command_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+          "state": "QUEUED",
+          "state_revision": 2
+        }
+      }
+    },
+    {
+      "id": "WS-COMMAND-EXTRA-FIELD",
+      "valid": false,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "srv:cmd:0001",
+        "type": "COMMAND_STATE_CHANGED",
+        "emitted_at": "2026-10-20T08:01:01Z",
+        "payload": {
+          "gateway_id": "gw01",
+          "node_id": 1,
+          "command_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+          "state": "QUEUED",
+          "state_revision": "1",
+          "operator_token": "secret-example-not-real"
         }
       }
     }

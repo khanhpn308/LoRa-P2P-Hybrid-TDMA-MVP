@@ -1073,6 +1073,12 @@ components:
   responses:
     Unauthorized:
       description: "Authentication required"
+      headers:
+        WWW-Authenticate:
+          description: 'RFC 6750 Bearer challenge (realm; invalid_token when applicable).'
+          required: true
+          schema:
+            type: "string"
       content:
         "application/json":
           schema:

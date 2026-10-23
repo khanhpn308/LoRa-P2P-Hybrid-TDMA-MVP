@@ -19,24 +19,29 @@
     "event_id": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 128
+      "maxLength": 128,
+      "description": "Unique Backend-origin WSS envelope ID (NOT the Gateway/MQTT payload event_id)."
     },
     "type": {
       "enum": [
         "TELEMETRY_UPDATE",
         "ALERT_TRIGGERED",
         "SCHEDULE_STATE_CHANGED",
-        "GATEWAY_STATUS_CHANGED"
+        "GATEWAY_STATUS_CHANGED",
+        "COMMAND_STATE_CHANGED"
       ]
     },
     "emitted_at": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "pattern": "Z$",
+      "description": "Backend UTC RFC3339 emission time (Z); no global order guarantee."
     },
     "cursor": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 512
+      "maxLength": 512,
+      "description": "Opaque hint, not a durable replay or resume token."
     },
     "payload": {
       "type": "object"
@@ -84,7 +89,9 @@
               "event_id": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 128
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9_-]{1,32}:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}:(0|[1-9][0-9]{0,19})$",
+                "description": "MQTT v1 source event identity <gateway_id>:<gateway_epoch UUID>:<event_seq>. Backend validates same-gateway identity semantics."
               },
               "observed_at": {
                 "type": [
@@ -285,6 +292,69 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "COMMAND_STATE_CHANGED"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "gateway_id",
+              "node_id",
+              "command_id",
+              "state",
+              "state_revision"
+            ],
+            "properties": {
+              "gateway_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,32}$"
+              },
+              "node_id": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 254
+              },
+              "command_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "state": {
+                "enum": [
+                  "QUEUED",
+                  "DISPATCHED",
+                  "NODE_ACKED",
+                  "REJECTED",
+                  "EXPIRED",
+                  "UNKNOWN"
+                ]
+              },
+              "state_revision": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]{0,19})$",
+                "description": "Monotonic decimal revision for one command. Compare by integer/BigInt, NEVER JavaScript Number for large IDs."
+              },
+              "reason_code": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            }
+          }
+        }
+      }
     }
-  ]
+  ],
+  "description": "DRAFT WebSocket envelope; backpressure, origin authorization, ordering, subscriptions and resync are application-level rules, not JSON Schema guarantees."
 }
