@@ -47,8 +47,15 @@ def main() -> int:
                 "Docker-only isolation requires Codex execute plus approved egress")
         with tempfile.TemporaryDirectory(prefix="lora-safe-probe-") as folder:
             snapshot = pathlib.Path(folder)
-            (snapshot / "README.txt").write_text(
+            # TemporaryDirectory defaults to mode 0700 for the WSL2 user,
+            # while the container runs as UID 10001. Without traverse/read
+            # access, Codex AGENTS.md discovery fails with EACCES (os error 13).
+            # Only this disposable, non-secret fixture is made readable.
+            fixture = snapshot / "README.txt"
+            fixture.write_text(
                 "Temporary harmless test fixture. No repository content or secrets.\n")
+            snapshot.chmod(0o755)
+            fixture.chmod(0o644)
             name = "lora-p1-probe-" + args.provider + "-" + uuid.uuid4().hex[:8]
             command = config.command(
                 snapshot, name, PROMPTS[args.provider],
