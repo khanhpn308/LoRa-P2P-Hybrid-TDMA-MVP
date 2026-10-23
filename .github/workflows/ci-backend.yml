@@ -9,14 +9,23 @@ jobs:
     defaults:
       run:
         working-directory: backend-go
+    env:
+      GOTOOLCHAIN: local
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: backend-go/go.mod
+          go-version: '1.27.3'
           cache: false
+      - name: Verify pinned Go toolchain and module
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          test "$(go env GOVERSION)" = "go1.27.3"
+          test "$(cat ../.go-version)" = "1.27.3"
+          test "$(awk '$1 == "go" {print $2}' go.mod)" = "1.27.3"
       - name: Go formatting
-        run: test -z "$(gofmt -l cmd)"
+        run: test -z "$(gofmt -l .)"
       - run: go vet ./...
       - run: go test ./...
       - run: go build ./cmd/server
