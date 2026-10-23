@@ -24,28 +24,36 @@
     "schedule_version": {
       "type": "integer",
       "minimum": 0,
-      "maximum": 4294967295
+      "maximum": 4294967295,
+      "description": "Backend monotonic uint32 draft (per Gateway namespace), NOT a raw RF 8-bit SCHED_VER. Cross-layer mapping is BLOCKED at #12."
     },
     "created_at": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "pattern": "Z$",
+      "description": "Backend-issued UTC timestamp; semantic validation requires created_at < expires_at."
     },
     "expires_at": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "pattern": "Z$",
+      "description": "Absolute UTC proposal/command acceptance deadline; MQTT Message Expiry is separate and also mandatory."
     },
     "profile_id": {
       "const": "P-10S-15",
-      "type": "string"
+      "type": "string",
+      "description": "Candidate only (P-10S-15); not validated airtime/RF/HIL profile. Do not treat as approved timing."
     },
     "superframe_ms": {
       "const": 10000,
-      "type": "integer"
+      "type": "integer",
+      "description": "Candidate/mock-only value. Actual timing requires #12/G1/G2/G3 review."
     },
     "min_announce_superframes": {
       "type": "integer",
       "minimum": 3,
-      "maximum": 30
+      "maximum": 30,
+      "description": "Number of COMPLETE beacon announcement superframes before switching; Gateway chooses safe activation boundary."
     },
     "slots": {
       "type": "array",
@@ -81,7 +89,8 @@
             "type": "integer"
           }
         }
-      }
+      },
+      "description": "Shape only: slot uniqueness, non-overlap, half-duplex, timing/airtime and guards require semantic validation."
     }
   },
   "required": [
@@ -96,5 +105,6 @@
     "superframe_ms",
     "min_announce_superframes",
     "slots"
-  ]
+  ],
+  "description": "DRAFT MQTT v1 payload; schema checks local shape, not topic authorization, replay, clock freshness, state transitions or MQTT properties. Cross-team review pending (Issue #14)."
 }

@@ -12,7 +12,9 @@
     "event_id": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 128
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-]{1,32}:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}:(0|[1-9][0-9]{0,19})$",
+      "description": "MUST equal gateway_id + ':' + gateway_epoch + ':' + event_seq (semantic equality validated by consumers). Stable on QoS1 retransmission/replay."
     },
     "gateway_id": {
       "type": "string",
@@ -20,22 +22,26 @@
     },
     "gateway_epoch": {
       "type": "string",
-      "format": "uuid"
+      "format": "uuid",
+      "description": "Unique boot epoch; regenerate on Gateway reboot, never on MQTT reconnect. Offline queued events retain original epoch."
     },
     "event_seq": {
       "type": "string",
-      "pattern": "^(0|[1-9][0-9]{0,19})$"
+      "pattern": "^(0|[1-9][0-9]{0,19})$",
+      "description": "Decimal uint64 counter scoped to gateway_epoch; semantic integer <= 18446744073709551615 and no wrap/reuse."
     },
     "observed_at": {
       "oneOf": [
         {
           "type": "string",
-          "format": "date-time"
+          "format": "date-time",
+          "pattern": "Z$"
         },
         {
           "type": "null"
         }
-      ]
+      ],
+      "description": "Event occurrence time (UTC Z) only when a defensible time source exists. Null when unknown; never silently backfill with ingest time."
     },
     "observed_time_source": {
       "enum": [
@@ -47,10 +53,12 @@
     },
     "radio_rx_monotonic_us": {
       "type": "string",
-      "pattern": "^(0|[1-9][0-9]{0,19})$"
+      "pattern": "^(0|[1-9][0-9]{0,19})$",
+      "description": "Gateway-local monotonic microseconds; meaningful only within gateway_epoch. Do not compare across boots."
     },
     "buffered": {
-      "type": "boolean"
+      "type": "boolean",
+      "description": "Indicates offline queue/replay path; QoS1 DUP flag is NOT a business dedup key. Event identity never changes after buffering."
     },
     "node_id": {
       "type": "integer",
@@ -154,7 +162,8 @@
           "minimum": -2147483648,
           "maximum": 2147483647
         }
-      }
+      },
+      "description": "Optional until authenticated Radio MAC alert payload encodes the channel/threshold; never invent trigger values."
     },
     "radio_ack_sent": {
       "type": "boolean"
@@ -177,5 +186,27 @@
     "severity",
     "data",
     "radio_ack_sent"
+  ],
+  "description": "DRAFT MQTT v1 payload; schema checks local shape, not topic authorization, replay, clock freshness, state transitions or MQTT properties. Cross-team review pending (Issue #14).",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "observed_time_source": {
+            "const": "unknown"
+          }
+        },
+        "required": [
+          "observed_time_source"
+        ]
+      },
+      "then": {
+        "properties": {
+          "observed_at": {
+            "type": "null"
+          }
+        }
+      }
+    }
   ]
 }
