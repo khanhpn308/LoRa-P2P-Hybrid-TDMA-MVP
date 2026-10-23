@@ -220,3 +220,19 @@ Record exact source SHA and test receipts; compare the final changed paths to
 Issue #43's five-path allowlist. Human independent review is required before
 finding M02 can be closed. Live E2E remains NO-GO until G01–G08 prerequisites
 are evidenced and approved.
+
+## P1-B2 C02 — Gemini Auditor via official Antigravity CLI (Issue #45)
+
+**Status: DESIGN_DRAFT; NO GEMINI API AUDITOR; NO LIVE EXECUTION AUTHORIZED.**
+The user-selected reviewer is **Gemini through the official Antigravity CLI**. See
+[`.agent-harness/security/provider-decision.md`](../../.agent-harness/security/provider-decision.md)
+for the operator-direct, fresh-session, read-only audit handoff.
+Google's consumer terms support **direct `agy -p` scripting/CI**, not embedding it
+as the unattended third-party Harness Auditor. Therefore the automated
+`Worker -> agy subprocess -> Repair` integration is **BLOCKED** on consumer login.
+For the one supervised pilot, a human independently invokes `agy` and transfers
+a scoped, SHA-bound structured audit receipt to the trusted Host, which applies
+Issue #43's strict Host validator. A supported enterprise/provider grant is
+required for any future unattended integration. No API key, CLI model call,
+credential/profile change, Docker/firewall change or E2E pilot is authorized
+by this documentation update; H01-H04 and G01-G08 remain open.
