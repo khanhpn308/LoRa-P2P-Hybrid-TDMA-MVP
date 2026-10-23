@@ -220,3 +220,16 @@ Record exact source SHA and test receipts; compare the final changed paths to
 Issue #43's five-path allowlist. Human independent review is required before
 finding M02 can be closed. Live E2E remains NO-GO until G01–G08 prerequisites
 are evidenced and approved.
+
+## P1-B2 C02 — Supported provider and credential boundary (Issue #45)
+
+**Status: DESIGN_DRAFT / LIVE EXECUTION NOT AUTHORIZED.**
+The proposed provider/security decision is documented in
+[`.agent-harness/security/provider-decision.md`](../../.agent-harness/security/provider-decision.md).
+It describes supported OpenAI Codex/API-backed Worker inference and an independent
+Gemini API Auditor, each with dedicated authorized identities and an external
+credential broker separated from a disposable credential-free code executor.
+Consumer Antigravity `agy` login is not an approved backend for embedding in this
+third-party coding harness. No provider calls, key provisioning, Docker/network
+change or E2E pilot is authorized by this documentation update. Owner must
+approve identity entitlements, budgets, runtime tests and G01-G08 before live use.
