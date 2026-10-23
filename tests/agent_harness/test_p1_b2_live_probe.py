@@ -327,12 +327,12 @@ class SmokeCliTests(unittest.TestCase):
                              0o644)
             self.assertEqual(sorted(p.name for p in root.iterdir()), ["README.txt"])
             checked.append(True)
-            return 0, b"CODEX_SMOKE_OK\\n", b""
+            return 0, b"CODEX_SMOKE_OK\n", b""
 
         with patch.object(sys, "argv", self.argv([
-                "--execute", "--confirm-external-egress-policy"])), \\
-             patch.object(provider_probe, "verify_preinstalled_resources"), \\
-             patch.object(provider_probe, "_run", side_effect=fake_docker_run), \\
+                "--execute", "--confirm-external-egress-policy"])), \
+             patch.object(provider_probe, "verify_preinstalled_resources"), \
+             patch.object(provider_probe, "_run", side_effect=fake_docker_run), \
              contextlib.redirect_stdout(io.StringIO()) as buffer:
             self.assertEqual(provider_probe.main(), 0)
         self.assertEqual(checked, [True])
