@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# WAVE 1: only link existing GitHub Issues #8–#19 to personal Project #1 and set Gate.
+# WAVE 1 (post-rebaseline): link only #8–#12, #14–#16 to Project #1 and set Gate.
 # Does NOT create issues, edit Issue bodies, alter labels, change assignees or delete Project data.
 # Safe to rerun after interruption; uses existing Project item when already present.
 set -euo pipefail
@@ -72,13 +72,9 @@ done <<'ISSUE_CHECK'
 10|03
 11|04
 12|05
-13|06
 14|07
 15|08
 16|09
-17|10
-18|11
-19|12
 ISSUE_CHECK
 
 echo "Preflight PASS: 12 actual Issues and canonical Gate field."
@@ -120,15 +116,11 @@ done <<'ISSUE_GATES'
 10|G1: RF
 11|G1: RF
 12|G2: Protocol
-13|G3: Embedded
 14|G2: Protocol
 15|G4: Integration
 16|G4: Integration
-17|G4: Integration
-18|G4: Integration
-19|G4: Integration
 ISSUE_GATES
 
-[ "$changed" -eq 12 ] || { echo "ERROR: only $changed / 12 processed"; exit 1; }
-echo "SUCCESS: 12/12 Wave 1 Issues linked and Gate VERIFIED on GitHub Project #1."
+[ "$changed" -eq 8 ] || { echo "ERROR: only $changed / 8 processed"; exit 1; }
+echo "SUCCESS: 8/8 Wave 1 Issues linked and Gate VERIFIED on GitHub Project #1."
 echo "NOTE: Priority, Status, Sprint, Estimate, owners are NOT automatically modified."
