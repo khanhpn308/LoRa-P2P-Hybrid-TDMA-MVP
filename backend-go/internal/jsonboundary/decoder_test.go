@@ -7,9 +7,9 @@ import (
 )
 
 type testEnvelope struct {
-	SchemaVersion string `json:"schema_version"`
-	GatewayID     string `json:"gateway_id"`
-	EventSeq      string `json:"event_seq"`
+	SchemaVersion string  `json:"schema_version"`
+	GatewayID     string  `json:"gateway_id"`
+	EventSeq      string  `json:"event_seq"`
 	ObservedAt    *string `json:"observed_at"`
 	Data          struct {
 		BatteryMV uint16 `json:"battery_mv"`
