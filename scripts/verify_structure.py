@@ -73,7 +73,7 @@ if version_file.is_file():
 if module_file.is_file():
     import re
 
-    match = re.search(r"(?m)^go\\s+(\\S+)\\s*$", module_file.read_text(encoding="utf-8"))
+    match = re.search(r"(?m)^go\s+(\S+)\s*$", module_file.read_text(encoding="utf-8"))
     if not match or match.group(1) != expected_go:
         failures.append(f"backend-go/go.mod must declare go {expected_go}")
     else:
