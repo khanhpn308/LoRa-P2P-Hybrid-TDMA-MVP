@@ -291,6 +291,21 @@ class SmokeCliTests(unittest.TestCase):
         self.assertEqual(json.loads(buffer.getvalue())["status"], "PLAN_ONLY")
         launched.assert_not_called()
 
+    def test_agy_plan_only_reports_provider_boundary_not_codex(self):
+        argv = ["provider_probe.py", "--provider", "agy",
+                "--image-id", IMAGE, "--network", NETWORK,
+                "--profile-volume", AGY_VOLUME]
+        with patch.object(sys, "argv", argv), \
+             patch.object(provider_probe, "_run") as launched, \
+             contextlib.redirect_stdout(io.StringIO()) as buffer:
+            self.assertEqual(provider_probe.main(), 0)
+        receipt = json.loads(buffer.getvalue())
+        self.assertEqual(receipt["status"], "PLAN_ONLY")
+        self.assertEqual(receipt["provider"], "agy")
+        self.assertEqual(receipt["sandbox_boundary"], "agy_provider_default")
+        self.assertEqual(receipt["model_calls"], 0)
+        launched.assert_not_called()
+
     def test_execute_without_external_policy_confirmation_blocks(self):
         with patch.object(sys, "argv", self.argv(["--execute"])), \
              patch.object(provider_probe, "_run") as launched, \
