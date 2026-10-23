@@ -33,3 +33,9 @@ The buildable scaffolds do not transmit RF or claim working TDMA. Validate timin
 ### Repository migration
 
 Existing experimental firmware lives separately in `khanhpn308/esp32e_sx1768-915Mhz`. **It has not been copied.** Import after inventory/security review, via separate PR preserving provenance and license notices.
+
+### Go backend version policy
+
+**Pinned toolchain: Go 1.27.3.** Root [`.go-version`](.go-version) records the local development selection; [`backend-go/go.mod`](backend-go/go.mod) requires the same patch release; [backend CI](.github/workflows/ci-backend.yml) installs and checks the exact version with `GOTOOLCHAIN=local`. Verify `go version` prints `go1.27.3` before running backend checks. This is a Go-only change; the ESP-IDF firmware toolchain is independent.
+
+[Go Backend Engineering Standard v1.0](docs/development/backend-go/GO_BACKEND_ENGINEERING_STANDARD_V1.0.md) and [backend AI instructions](.github/instructions/backend.instructions.md) are **DRAFT, pending human technical review**.
