@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import pathlib
+import stat
 import subprocess
 import sys
 import tempfile
@@ -309,6 +310,34 @@ class SmokeCliTests(unittest.TestCase):
         self.assertEqual(json.loads(buffer.getvalue())["status"],
                          "READ_ONLY_MODEL_PROBE_PASS_ONLY")
         launched.assert_called_once()
+
+    def test_disposable_fixture_is_accessible_to_container_uid(self):
+        """Codex may traverse/read only the harmless snapshot, not host secrets."""
+        checked = []
+
+        def fake_docker_run(command, *, timeout, name):
+            self.assertIn("--user", command)
+            self.assertEqual(command[command.index("--user")+1], "10001:10001")
+            mount = next(command[i+1] for i, flag in enumerate(command)
+                         if flag == "--mount" and "dst=/workspace" in command[i+1])
+            self.assertTrue(mount.endswith(",readonly"))
+            root = pathlib.Path(mount.removeprefix("type=bind,src=").split(",dst=")[0])
+            self.assertEqual(stat.S_IMODE(root.stat().st_mode), 0o755)
+            self.assertEqual(stat.S_IMODE((root / "README.txt").stat().st_mode),
+                             0o644)
+            self.assertEqual(sorted(p.name for p in root.iterdir()), ["README.txt"])
+            checked.append(True)
+            return 0, b"CODEX_SMOKE_OK\\n", b""
+
+        with patch.object(sys, "argv", self.argv([
+                "--execute", "--confirm-external-egress-policy"])), \\
+             patch.object(provider_probe, "verify_preinstalled_resources"), \\
+             patch.object(provider_probe, "_run", side_effect=fake_docker_run), \\
+             contextlib.redirect_stdout(io.StringIO()) as buffer:
+            self.assertEqual(provider_probe.main(), 0)
+        self.assertEqual(checked, [True])
+        self.assertEqual(json.loads(buffer.getvalue())["status"],
+                         "READ_ONLY_MODEL_PROBE_PASS_ONLY")
 
     def test_docker_only_requires_execute_and_egress_confirmation(self):
         for flags in (
