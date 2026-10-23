@@ -69,7 +69,9 @@ def main() -> int:
                     "network": args.network,
                     "snapshot": "disposable_read_only",
                     "profile": "dedicated_provider_volume",
-                    "sandbox_boundary": "codex_inner_read_only",
+                    "sandbox_boundary": (
+                        "codex_inner_read_only" if args.provider == "codex"
+                        else "agy_provider_default"),
                     "model_calls": 0,
                     "requires": "externally reviewed egress and provider authentication",
                 }, indent=2))
