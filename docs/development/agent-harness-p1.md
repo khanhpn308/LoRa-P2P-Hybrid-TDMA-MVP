@@ -236,3 +236,25 @@ Issue #43's strict Host validator. A supported enterprise/provider grant is
 required for any future unattended integration. No API key, CLI model call,
 credential/profile change, Docker/firewall change or E2E pilot is authorized
 by this documentation update; H01-H04 and G01-G08 remain open.
+
+## P1-B2 Issue #47 — Dual AGY CLI supervised pilot (supersedes C02 role choice for this lane)
+
+**STATUS: OPERATOR_RUNBOOK_PREPARED / REAL AGY WORKER AND AUDITOR NOT_VERIFIED.**
+The owner selected **Gemini Worker + Gemini Auditor**, both invoked directly through
+the official `agy` CLI, in two **fresh, separate** sessions. The earlier Codex
+Worker and Gemini API options remain **historical proposals for P0/P1**, and must
+not be silently selected for Issue #47. Full unattended Harness->consumer AGY
+orchestration remains blocked by the provider's third-party integration rules.
+The Worker may only create
+`tests/agent_harness/fixtures/security_pilot/README.md` under explicit human
+approval; Host checks the changed paths and executes tests; the operator
+initiates a second read-only Gemini audit of a separate snapshot; Host checks
+strict audit schema, exact `reviewed_scope` and candidate hash; human decides.
+Both sessions using Gemini gives **independent contexts/roles only**, not
+independent model risk. The owner deferred a separate credential-free
+isolation test; it stays **NOT_VERIFIED**, never PASS.
+
+See [operator runbook](agy-supervised-pilot.md) and
+[Issue #47](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/47).
+No live call, model quota usage, Docker/network/credential change, merge,
+flash or HIL/RF claim occurred in this documentation-only commit.
