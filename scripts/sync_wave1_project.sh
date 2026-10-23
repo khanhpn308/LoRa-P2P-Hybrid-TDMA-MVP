@@ -15,7 +15,7 @@ gh auth status -h github.com >/dev/null || { echo "ERROR: login first"; exit 1; 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-# Confirm Project, Gate and all expected issue titles before any mutation.
+# Confirm Project, canonical Gate options and Wave labels before any mutation.
 gh project view "$PROJECT" --owner "$OWNER" --format json > "$TMP_DIR/project.json"
 gh project field-list "$PROJECT" --owner "$OWNER" --format json --limit 100 > "$TMP_DIR/fields.json"
 gh project item-list "$PROJECT" --owner "$OWNER" --format json --limit 500 > "$TMP_DIR/items.json"
@@ -59,25 +59,27 @@ for item in items:
 PY
 }
 
-while IFS='|' read -r n code; do
+# Verify Issue membership from the canonical Wave label, NOT from the title prefix.
+# Titles now use only domain tags such as [RF]/[Backend] and GitHub Issue numbers.
+while IFS= read -r n; do
   [ -n "$n" ] || continue
-  title="$(gh issue view "$n" -R "$REPO" --json title --jq '.title')"
-  case "$title" in
-    "[W1-$code]"*) ;;
-    *) echo "ERROR: Issue #$n unexpected title: $title"; exit 1 ;;
-  esac
+  has_label="$(gh issue view "$n" -R "$REPO" --json labels --jq '[.labels[].name] | index("wave:1") != null')"
+  if [ "$has_label" != "true" ]; then
+    echo "ERROR: Issue #$n must have canonical label wave:1, got=$has_label"
+    exit 1
+  fi
 done <<'ISSUE_CHECK'
-8|01
-9|02
-10|03
-11|04
-12|05
-14|07
-15|08
-16|09
+8
+9
+10
+11
+12
+14
+15
+16
 ISSUE_CHECK
 
-echo "Preflight PASS: 12 actual Issues and canonical Gate field."
+echo "Preflight PASS: 8 actual Wave 1 Issues (label wave:1) and canonical Gate field."
 declare -i changed=0
 while IFS='|' read -r number gate; do
   [ -n "$number" ] || continue
