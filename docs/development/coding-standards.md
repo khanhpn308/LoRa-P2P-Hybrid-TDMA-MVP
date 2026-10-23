@@ -15,3 +15,9 @@
 - Engineers and AI may modify only the paths listed. Update Issue scope and obtain owner/cross-team review **before** adding any other path, including tests, docs, migrations and contracts.
 - PR authors must repeat allowed paths; reviewers compare the PR `Files changed` to the Issue, not just the label.
 - Current checks validate templates and structure, NOT full automatic enforcement of per-Issue path allowances. See `docs/development/task-breakdown-readiness.md`.
+
+## Go backend baseline (Issue #39 — pending review)
+
+- Required backend compiler/toolchain: **Go 1.27.3**, matching root `.go-version`, `backend-go/go.mod` and the exact CI selection. No `@latest` toolchain auto-upgrades; CI must run with `GOTOOLCHAIN=local`.
+- Canonical proposed standard: [Go Backend Engineering Standard v1.0](backend-go/GO_BACKEND_ENGINEERING_STANDARD_V1.0.md); path-scoped AI rules: [backend.instructions.md](../../.github/instructions/backend.instructions.md). The standard remains **DRAFT** until independently reviewed.
+- HTTP routing: stdlib `net/http`; PostgreSQL: `pgx/v5`; MQTT 5.0: `eclipse/paho.golang` `autopaho`/`paho`. Names are pre-approved in the standard draft; concrete module versions are not installed/approved in the scaffold.
