@@ -54,3 +54,38 @@ Disposable credential-isolated runner, provider auth strategy that complies with
 ## Acceptance proof
 
 Tests use real temporary Git repositories for clean/dirtied worktree verification and simulated failure, SQLite restart/CAS/uniqueness/recovery, and CLI dry-run. CI PASS verifies these tests ONLY; it is not evidence of model execution, flash or RF operation.
+
+
+## P1-B1 — Host Verification Boundary (Issue #34)
+
+**Status: CODE_WRITTEN, pending CI and human technical review; not autonomous.**
+
+P1-A's SQLite journal and per-Issue worktree are inputs to new Host controls:
+
+- `scripts/agent_harness/p1/verify.py` verifies PREPARED state, exact source SHA, branch, registered worktree, changed-path scope, symlinks, file sizes and obvious credential patterns. It creates SHA-256 hashes of tracked diff and all untracked candidate files. The receipt ALWAYS marks build/audit/HIL/RF NOT_VERIFIED. This scan is defense in depth, NOT comprehensive secret detection.
+- `scripts/agent_harness/p1/host_gate.py` provides a read-only CLI for a pre-existing Host SQLite journal. It never invokes AI, Docker or GitHub writes.
+- `scripts/agent_harness/p1/runtime_boundary.py` plans argv-only Docker builds on an operator-confirmed image ID, with no network, privileges, Docker socket or Host credentials. A generated command is NOT evidence of actual image verification or execution.
+- `scripts/agent_harness/p1/process.py` supervises trusted deterministic local test commands and kills process groups on timeout. It is NOT a security sandbox; **P1-B1 allows only test fixtures true/false/sleep, no bash/python/Agent/GitHub commands**. Subprocess output buffering still requires an external memory-limited runner.
+- `scripts/agent_harness/p1/draft_preview.py` prints the planned Host-only `gh pr create --draft` command from an exact, committed clean issue branch. It DOES NOT execute, push, or promote AI statements to real evidence.
+
+### WSL2 — inspect externally created candidate
+
+A PREPARED P1 job with candidate changes strictly within the Issue scope is required:
+
+~~~bash
+python3 scripts/agent_harness/p1/host_gate.py \
+  --run-id YOUR_RUN_ID --state /HOST-OWNED/PATH/state.sqlite
+python3 -m unittest discover -s tests/agent_harness -v
+~~~
+
+These commands do NOT run Codex or AGY; they do NOT build or flash anything. The Host candidate receipt status is `SCOPE_SCAN_PASS_ONLY` and never `BUILD_VERIFIED`.
+
+### Remaining P1-B2: critical blockers
+
+A containerized offline ESP-IDF build does not make an unattended coding agent safe. Real Codex/AGY require a separately secured model runtime with credentials and constrained provider egress; P1-B1 does not yet provision that runtime. No real provider invocation is included.
+
+Next milestone: disposable model runtime with approved network allowlist and credential isolation, independent read-only AGY review, retry state machine, full post-build/audit diff checks, exact-commit test evidence, CI-verified Host GitHub Draft PR publication, and safe crash/quota recovery. Require a real harmless software Issue pilot. Never auto merge, flash or claim RF/HIL PASS.
+
+Current interface references:
+- https://antigravity.google/docs/cli/headless/
+- https://learn.chatgpt.com/docs/cli/reference
