@@ -1,0 +1,67 @@
+name: Harness - Approved Issue (Enterprise AGY only)
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "OPEN Issue with harness:approved label and exact scope"
+        type: number
+        required: true
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: harness-issue-${{ github.event.issue.number || inputs.issue_number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  approved-issue:
+    # Disabled until independent enterprise entitlement and runner attestations.
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'issues' && github.event.label.name == 'harness:approved')) &&
+      vars.HARNESS_ENTERPRISE_READY == 'true'
+    runs-on: [self-hosted, linux, harness-isolated]
+    environment: harness-enterprise
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate provider preflight and execute in isolated runner
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HARNESS_IMAGE_ID: ${{ vars.HARNESS_IDF_IMAGE_ID }}
+          HARNESS_MODEL: ${{ vars.AGY_MODEL }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+        run: |
+          set -euo pipefail
+          test -n "$HARNESS_IMAGE_ID"
+          test -n "$HARNESS_MODEL"
+          test -f /etc/lora-harness/provider-policy.json
+          mkdir -p "$RUNNER_TEMP/harness-evidence"
+          python3 scripts/agent_harness/p1/auto_issue.py \
+            --issue "$ISSUE_NUMBER" \
+            --source "$GITHUB_WORKSPACE" \
+            --execute \
+            --policy-file /etc/lora-harness/provider-policy.json \
+            --image-id "$HARNESS_IMAGE_ID" \
+            --model "$HARNESS_MODEL" \
+            --max-repairs 1 \
+            --timeout 600 \
+            --report "$RUNNER_TEMP/harness-evidence/result.json"
+
+      - name: Save sanitized report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harness-issue-report-${{ github.run_id }}
+          path: ${{ runner.temp }}/harness-evidence/result.json
+          if-no-files-found: warn
+          retention-days: 14
