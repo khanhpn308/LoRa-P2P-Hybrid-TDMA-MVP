@@ -1,0 +1,170 @@
+{
+  "revision": "1.0.0-draft",
+  "description": "Pure synthetic REST/OpenAPI component examples, not HTTP server integration evidence. Data values are mock only.",
+  "cases": [
+    {
+      "id": "REST-ERROR-401-VALID",
+      "schema": "Error",
+      "valid": true,
+      "message": {
+        "code": "UNAUTHORIZED",
+        "message": "Bearer token required",
+        "request_id": "550e8400-e29b-41d4-a716-446655440000"
+      }
+    },
+    {
+      "id": "REST-ERROR-MISSING-REQUEST-ID",
+      "schema": "Error",
+      "valid": false,
+      "message": {
+        "code": "UNAUTHORIZED",
+        "message": "Bearer token required"
+      }
+    },
+    {
+      "id": "REST-ERROR-UNKNOWN-PROPERTY",
+      "schema": "Error",
+      "valid": false,
+      "message": {
+        "code": "UNAUTHORIZED",
+        "message": "Bearer token required",
+        "request_id": "550e8400-e29b-41d4-a716-446655440000",
+        "token": "do-not-echo"
+      }
+    },
+    {
+      "id": "REST-COMMAND-TICKET-QUEUED",
+      "schema": "CommandTicket",
+      "valid": true,
+      "message": {
+        "command_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+        "node_id": 1,
+        "state": "QUEUED",
+        "created_at": "2026-10-20T08:00:05Z",
+        "state_revision": "1"
+      }
+    },
+    {
+      "id": "REST-COMMAND-TICKET-NODE-ACKED",
+      "schema": "CommandTicket",
+      "valid": true,
+      "message": {
+        "command_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+        "node_id": 1,
+        "state": "NODE_ACKED",
+        "created_at": "2026-10-20T08:00:05Z",
+        "state_revision": "3"
+      }
+    },
+    {
+      "id": "REST-COMMAND-TICKET-BAD-UUID",
+      "schema": "CommandTicket",
+      "valid": false,
+      "message": {
+        "command_id": "not_uuid",
+        "node_id": 1,
+        "state": "QUEUED",
+        "created_at": "2026-10-20T08:00:05Z",
+        "state_revision": "1"
+      }
+    },
+    {
+      "id": "REST-COMMAND-TICKET-BAD-STATE",
+      "schema": "CommandTicket",
+      "valid": false,
+      "message": {
+        "command_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+        "node_id": 1,
+        "state": "ACTIVE",
+        "created_at": "2026-10-20T08:00:05Z",
+        "state_revision": "1"
+      }
+    },
+    {
+      "id": "REST-COMMAND-TICKET-NUMERIC-REVISION",
+      "schema": "CommandTicket",
+      "valid": false,
+      "message": {
+        "command_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+        "node_id": 1,
+        "state": "QUEUED",
+        "created_at": "2026-10-20T08:00:05Z",
+        "state_revision": 9007199254740994
+      }
+    },
+    {
+      "id": "REST-SCHEDULE-REVIEW-APPROVE",
+      "schema": "ScheduleReviewRequest",
+      "valid": true,
+      "message": {
+        "decision": "APPROVE"
+      }
+    },
+    {
+      "id": "REST-SCHEDULE-REVIEW-REJECT",
+      "schema": "ScheduleReviewRequest",
+      "valid": true,
+      "message": {
+        "decision": "REJECT",
+        "note": "Overlapping RF/airtime policy requires review"
+      }
+    },
+    {
+      "id": "REST-SCHEDULE-REVIEW-INVALID",
+      "schema": "ScheduleReviewRequest",
+      "valid": false,
+      "message": {
+        "decision": "ACTIVATE"
+      }
+    },
+    {
+      "id": "REST-SCHEDULE-REVIEW-EXTRA-FIELD",
+      "schema": "ScheduleReviewRequest",
+      "valid": false,
+      "message": {
+        "decision": "APPROVE",
+        "force_activate": true
+      }
+    },
+    {
+      "id": "REST-SCHEDULE-ACTIVATION-VALID",
+      "schema": "ScheduleActivationRequest",
+      "valid": true,
+      "message": {
+        "expected_version": 8
+      }
+    },
+    {
+      "id": "REST-SCHEDULE-ACTIVATION-INVALID-TYPE",
+      "schema": "ScheduleActivationRequest",
+      "valid": false,
+      "message": {
+        "expected_version": "8"
+      }
+    },
+    {
+      "id": "REST-SCHEDULE-ACTIVATION-INVALID-VERSION",
+      "schema": "ScheduleActivationRequest",
+      "valid": false,
+      "message": {
+        "expected_version": -1
+      }
+    },
+    {
+      "id": "REST-GENERATE-PROFILE-VALID",
+      "schema": "GenerateScheduleRequest",
+      "valid": true,
+      "message": {
+        "profile_id": "P-10S-15"
+      }
+    },
+    {
+      "id": "REST-GENERATE-PROFILE-UNKNOWN",
+      "schema": "GenerateScheduleRequest",
+      "valid": false,
+      "message": {
+        "profile_id": "REGION-UNKNOWN"
+      }
+    }
+  ]
+}

@@ -1,27 +1,48 @@
-# WebSocket Real-time Contract — Backend → Web/Mobile
+# WebSocket v1 — Backend → React Web / Flutter Client (Issue #15)
 
-**0.1.0-draft · Issue #15 · Not implemented · Backend/Web/Mobile review pending.** REST interface: [openapi.yaml](openapi.yaml). WSS message schema: [realtime-event.schema.json](schemas/realtime-event.schema.json).
+**Contract:** `0.2.0-draft / PROPOSED` · **Production implementation:** `NOT_IMPLEMENTED` · **Auth decision D13:** `TBD / BLOCKED_SECURITY` · **Producer/consumer approval:** `PENDING`.
+Baseline: BM05 WebSocket/WSS learning material, [OpenAPI](openapi.yaml), [Event JSON Schema](schemas/realtime-event.schema.json) and [API Contract Semantics](contract-semantics.md). Endpoint is `wss://{backend_host}/api/v1/ws/realtime`; isolated localhost development may use `ws://localhost:8080/api/v1/ws/realtime`. Use JSON UTF-8 text WebSocket messages, not LoRa RF frames.
 
-## Endpoint & authorization
+## 1. Trust boundary and subscription model (v1 proposal)
 
-`wss://{backend_host}/api/v1/ws/realtime` production; localhost development may use `ws://localhost:8080/api/v1/ws/realtime` behind isolated network only. Authentication must be established **before** upgrade, enforcing Viewer/Operator/Admin permissions **server-side**. Browser WebSocket does not support arbitrary Authorization headers: choose and document either Secure HttpOnly SameSite cookie + CSRF/Origin protection **or** short-lived single-use WSS ticket before implementation (ADR pending). **Do not** place long-lived bearer JWT/token in query parameters, logs or URL. Invalid/revoked credentials: reject handshake. Check `Origin` and gateway/tenant authorization.
+- `WSS` protects the client→server channel when TLS is configured correctly; use strict `Origin` allowlist for browsers (prevents CSWSH in cookie-based profiles), **plus** authentication and server-side authorization. `Origin` is not a credential (non-browser clients can forge it).
+- Browser `new WebSocket(url)` cannot set an arbitrary `Authorization` header. **Do not place long-lived JWT/Bearer credentials in query strings**. D13 is still unresolved: possible secure `HttpOnly/Secure/SameSite` cookie with CSWSH/CSRF safeguards **or** atomic short-lived single-use ticket issued over authenticated REST. `POST /api/v1/auth/ws-ticket` is **NOT in OpenAPI** and MUST NOT be assumed implemented/approved.
+- Until D13 is approved, production handshake method is `TBD`. Server **MUST** reject unauthenticated/unauthorized upgrades; no "allow-all until auth exists" fallback. No secrets in access logs. Token/session expiration and revocation require disconnect/reauthorization strategy in implementation.
+- Proposed v1 subscription: **server-selected authorized visibility scope at handshake**, limited to gateways/nodes accessible to the authenticated user. No client-supplied `SUBSCRIBE` / `UNSUBSCRIBE` protocol in v1; client requests a narrower view via REST UI filters. The server must enforce object-level scope for **every** event before fan-out, not merely RBAC role. No tenant leakage, even if Web UI hides unauthorized devices.
+- Authorized roles `ADMIN | OPERATOR | VIEWER` may read permitted events. All state-mutating operations (alert ACK, command, schedule review/activation) use HTTPS REST endpoints with their `x-roles`, never WSS client mutation packets. Unknown WSS client application message types: reject/close under approved policy (WSS v1 is server-push only).
 
-## Server→client events (UTF-8 JSON)
+## 2. Envelope and event types
 
-Envelope: `schema_version="1.0-draft"`, `event_id` (server stable unique ID), `type`, `emitted_at` (server RFC3339 UTC), `payload`, optional opaque `cursor`. Event types:
-- `TELEMETRY_UPDATE`: `gateway_id,node_id,reading_id,event_id` (source MQTT event ID), `observed_at,data` raw channel values.
-- `ALERT_TRIGGERED`: `gateway_id,node_id,alert_id,severity,triggered_at`.
-- `SCHEDULE_STATE_CHANGED`: `gateway_id,schedule_id,version,state`; `STAGED` **không** tương đương `ACTIVE`.
-- `GATEWAY_STATUS_CHANGED`: `gateway_id,mode,last_seen_at`; online phải suy ra từ backend timeout, không tin retained status vô hạn.
+Machine-readable envelope: `schema_version="1.0-draft"`, `event_id` (Backend-origin server-event identity), `type`, `emitted_at` (UTC RFC3339), `payload`, optional opaque `cursor`. Server-event `event_id` is distinct from MQTT source `payload.event_id`. Do not use a WSS event ID to deduplicate Gateway telemetry in PostgreSQL.
 
-Schema machine-readable và ví dụ valid/invalid: [examples/realtime-cases.json](examples/realtime-cases.json).
+| Event `type` | Required payload | Client reconciliation |
+|---|---|---|
+| `TELEMETRY_UPDATE` | `gateway_id, node_id, reading_id, event_id, observed_at, data` | Use `gateway_id + payload.event_id` source identity. New example uses MQTT v1 UUID boot epoch. |
+| `ALERT_TRIGGERED` | `gateway_id, node_id, alert_id, severity, triggered_at` | Correlate `alert_id`; do not overwrite ACK status from a newer REST snapshot. |
+| `SCHEDULE_STATE_CHANGED` | `gateway_id, schedule_id, version, state` | `STAGED != ACTIVE`; only a verified Gateway `ACTIVE_REPORT` in Backend justifies `ACTIVE`. |
+| `GATEWAY_STATUS_CHANGED` | `gateway_id, mode, last_seen_at` | Retained MQTT status is not proof of live connection; trust REST/backend freshness policy. |
+| `COMMAND_STATE_CHANGED` (**PROPOSED EXTENSION**) | `gateway_id, node_id, command_id, state, state_revision` | Read after HTTP 202 from `GET /api/v1/nodes/{node_id}/commands/{command_id}`; compare revisions (decimal strings, not JS Number). `NODE_ACKED` is **not** actuator success. |
 
-## Delivery, ordering và reconnect
+**Compatibility:** fifth event `COMMAND_STATE_CHANGED` extends the previous four-type draft. Clients with exhaustive event-type switches may break. Frontend/Mobile reviewer must approve handling unknown `type` as ignore+telemetry/re-sync rather than crash. Do **not** claim backwards compatibility without test. MQTT v1 schema identity was refined in #14: legacy WSS example `"gw01:boot:42"` is not a valid modern source identity and is replaced by `gw01:<gateway_epoch UUID>:42`.
 
-- WebSocket là luồng cập nhật **best effort**, không phải message queue bền vững. Gói bị mất khi đứt kết nối không bắt buộc được replay; **không** dùng WSS event làm source of truth.
-- Một kết nối TCP giữ thứ tự byte nhưng thứ tự `emitted_at`/data giữa nhiều node, MQTT QoS1, worker hoặc reconnect **không được đảm bảo**. Client dedup bằng server `event_id`, hiển thị dữ liệu dựa `observed_at` và nguồn thời gian (có thể null), không dựa arrival order để ghi đè trạng thái mới.
-- Khi reconnect: xác thực lại, lấy snapshot REST `GET /api/v1/gateways/{gw_id}/status`, `GET /api/v1/nodes`, `GET /api/v1/alerts`, `GET /api/v1/nodes/{node_id}/telemetry` và schedule GET nếu có ID; sau đó tiếp tục WSS. Cursor là opaque hint, **không** cam kết server retention/replay cho đến khi có ADR.
-- Quá tải: Backend đóng kết nối chậm/backpressure có giới hạn và buộc client resync, không cấp hàng đợi không giới hạn. Ping/pong/heartbeat, token refresh, close codes và origin policy cần được chốt tại implementation.
-- Kiểm thử: Web/Mobile dùng mock schema, fixture; chưa có chứng cứ reconnect, authorization hay end-to-end latency PASS.
+## 3. Delivery, order, slow consumer, resync
 
-**RBAC:** Viewer/Operator/Admin nhận các sự kiện được phép xem; mọi HTTP đột biến (ACK, command, schedule) kiểm role phía Backend chứ không dựa trên nút ẩn trong UI.
+1. WSS is **best-effort live push**, no broker-style durability, exactly-once, offline queue, cursor replay or global ordering guarantee. A `cursor` is **opaque hint only** until retention/replay ADR, not a server replay checkpoint. HTTP/WebSocket TCP preserves bytes order per *one connection* only.
+2. After initial connection or reconnect, client starts a **bounded temporary live-event buffer**, then fetches REST baseline snapshots: `GET /api/v1/gateways/{gw_id}/status`, `GET /api/v1/nodes`, `GET /api/v1/alerts`, `GET /api/v1/nodes/{node_id}/telemetry`, `GET /api/v1/gateways/{gw_id}/schedules/{schedule_id}`, and `GET /api/v1/nodes/{node_id}/commands/{command_id}` when relevant. Apply snapshot, then drain live buffer **with per-domain reconciliation**.
+3. Telemetry dedup uses original Gateway event ID; alerts keyed by `alert_id`; schedules keyed by `gateway_id + schedule_id + version` with strict lifecycle; commands keyed by `command_id + state_revision` and must not regress to an older revision. If revision absent/ambiguous, prefer REST resync rather than guessing latest from arrival order. Unknown `observed_at` can be `null`.
+4. When inbound resync buffer overflows or a per-client outbound queue is full, mark UI `STALE / RESYNCING`; discard affected buffer and repeat bounded REST resync or disconnect slow client. **Never** present a partial event stream as complete. Queue lengths, rate, heartbeat ping/pong timeouts, close-code mapping are implementation policy `TBD / NOT_BENCHMARKED`, not a numeric SLA.
+5. Ping/Pong detects half-open TCP only within configured timeout/scheduler assumptions; reconnect with exponential backoff + jitter; no unconditional tight reconnect loops. Race/fan-out concurrency is backend implementation concern, not a guarantee of RFC 6455.
+
+## 4. Negative contract cases / verification split
+
+- JSON Schema: unknown `type`; missing `event_id`; malformed MQTT source `event_id`; wrong command UUID; missing `state_revision`; illegal command state; non-UTC `emitted_at`; extra undeclared payload keys.
+- Behavioral tests (not satisfied by JSON Schema): wrong `Origin`, missing/expired auth, unauthorized gateway subscription, WSS receiving a mutation attempt, duplicate/reordered events, REST snapshot/event race, slow consumer overflow, live cursor used incorrectly as replay.
+- These require executable tests and recorded results in `tests/contract/`, plus integration/security tests for real WSS. Synthetic fixtures alone do not prove those behaviors.
+
+## 5. Source/authority and pending decisions
+
+- [BM04] `BM04_GIAO_TRINH_REST_HTTPS_OPENAPI_FINAL(1).md`: HTTP 202, RBAC, OpenAPI draft, command ticket polling extension (proposed).
+- [BM05] `BM05_GIAO_TRINH_WEBSOCKET_WSS_FINAL(1).md`: RFC 6455, Origin/auth, bounded hub, best-effort resync.
+- [System design] `esp32_sx1762.md` and `docs/architecture/system-overview.md`: Backend plans; Gateway local TDMA Master.
+- Existing [D13](../OPEN_DECISIONS.md) **BLOCKED Security** — leave unresolved pending approved auth ADR; no production token policy invented.
+- Existing #14 MQTT draft: stable Gateway-event identities and `STAGE_ACK != ACTIVE_REPORT`; backend must perform cross-contract mapping.
