@@ -226,5 +226,20 @@ class PilotTests(unittest.TestCase):
 
 
 
+
+class PilotDemoSmokeTests(unittest.TestCase):
+    def test_offline_pilot_demo_marks_everything_simulated(self):
+        """Exercise the real local demo entrypoint, never a model/provider."""
+        from p1.pilot_demo import demo
+
+        result = demo()
+        self.assertEqual(result["status"], "SIMULATED_AWAIT_HUMAN")
+        self.assertEqual(result["evidence_level"], "SIMULATED")
+        self.assertEqual(result["attempts"], 2)
+        self.assertIn("REPAIR_REQUIRED", result["history"])
+        for dimension in ("build", "audit", "hil", "rf"):
+            self.assertEqual(result[dimension], "NOT_VERIFIED")
+
+
 if __name__ == "__main__":
     unittest.main()
