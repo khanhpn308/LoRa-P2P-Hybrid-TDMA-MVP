@@ -119,6 +119,10 @@ def validate_entitlement(policy: dict) -> None:
     if not isinstance(policy.get("evidence_id"), str) or not re.fullmatch(
             r"[A-Za-z0-9_.:/-]{8,120}", policy["evidence_id"]):
         raise PipelineBlocked("Missing traceable entitlement/runtime evidence reference")
+    reference = policy["evidence_id"]
+    if (reference.startswith(("/", ".")) or
+            any(part in ("", ".", "..") for part in reference.split("/"))):
+        raise PipelineBlocked("Unsafe entitlement/runtime evidence reference")
 
 
 def _fingerprint(candidate: dict) -> str:
