@@ -241,5 +241,41 @@ class PilotDemoSmokeTests(unittest.TestCase):
             self.assertEqual(result[dimension], "NOT_VERIFIED")
 
 
+
+class ArchivedRunbookStaticTests(unittest.TestCase):
+    """Parse operator docs without executing a single provider command."""
+
+    @staticmethod
+    def runbook_text():
+        return (
+            pathlib.Path(__file__).resolve().parents[2]
+            / "docs" / "development" / "agy-supervised-pilot.md"
+        ).read_text(encoding="utf-8")
+
+    def test_receipt_validator_python_is_syntactically_valid(self):
+        import ast
+
+        doc = self.runbook_text()
+        start = "python3 - \"$REPO\" \"$EVIDENCE\" \"$AUDIT_PATH\" <<'PY'\n"
+        self.assertEqual(doc.count(start), 1)
+        script = doc.split(start, 1)[1].split("\nPY\n", 1)[0]
+        ast.parse(script)
+        self.assertIn('if result["status"] != "PASS":', script)
+        self.assertIn('recorded("schema-before.sha256")', script)
+        self.assertIn('recorded("candidate-before.sha256")', script)
+
+    def test_bash_blocks_parse_without_running_them(self):
+        doc = self.runbook_text()
+        blocks = doc.split("```bash\n")[1:]
+        self.assertGreaterEqual(len(blocks), 3)
+        for block in blocks:
+            source = block.split("\n```", 1)[0]
+            checked = subprocess.run(
+                ["bash", "-n"], input=source, text=True,
+                capture_output=True, timeout=5, check=False,
+            )
+            self.assertEqual(checked.returncode, 0, checked.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
