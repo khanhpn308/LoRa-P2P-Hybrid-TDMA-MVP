@@ -89,3 +89,38 @@ Next milestone: disposable model runtime with approved network allowlist and cre
 Current interface references:
 - https://antigravity.google/docs/cli/headless/
 - https://learn.chatgpt.com/docs/cli/reference
+
+
+## P1-B2-A — Deterministic Codex→Check→AGY→Repair pilot (Issue #34)
+
+**Status: SIMULATION CODE, awaiting CI; NOT a live autonomous run.**
+
+The new `scripts/agent_harness/p1/pilot.py` links P1-A's PREPARED SQLite job to an independent pilot journal with compare-and-swap transitions. It allows at most two bounded repair attempts, requires every Worker candidate to pass P1-B1 Git scope/secret/symlink/source-SHA checks, recomputes the exact candidate hash after the Host check and after the Auditor, and enforces full changed-file coverage using P0's AGY report validator.
+
+The state sequence is:
+`READY → WORKER_RUNNING → VERIFYING → AUDITING → AWAIT_HUMAN`. Check or audit FAIL transitions to `REPAIR_REQUIRED → WORKER_RUNNING` while a budget remains. A repeated identical failed diff, malformed audit, scope violation, missing paths, or budget exhaustion gives `BLOCKED`. Worker/check/Auditor interruption gives `RECOVERY_REQUIRED`; the Host NEVER auto-resumes a partially modified candidate. SQLite records metadata and SHA-256 receipt hashes, not model tokens, raw output, credentials or private keys.
+
+### Safe WSL2 dry-run with ZERO account/quota usage
+
+From a clean checkout of this P1-B2 feature branch:
+
+~~~bash
+python3 -m unittest discover -s tests/agent_harness -v
+python3 scripts/agent_harness/p1/pilot_demo.py
+~~~
+
+The demo provisions only a disposable local Git repository under a temporary directory. Its fake Worker writes a harmless Python fixture; the first fake Host verification FAILS, the second succeeds after the Worker changes the candidate; the fake independent Auditor returns complete PASS. The expected terminal result is `SIMULATED_AWAIT_HUMAN` with two attempts. Even if all tests pass, `build`, `audit`, `hil` and `rf` are explicitly `NOT_VERIFIED`. The demo does not invoke `codex`, `agy`, `idf.py`, Docker or GitHub writes.
+
+### Live provider integration: NOT YET AUTHORIZED
+
+A future production adapter must satisfy ALL of the following before anyone invokes `run_simulated_cycle` with real process callbacks or promotes its results:
+
+1. Provision a disposable per-Issue runtime outside the personal WSL2 host; validate container/VM identity, UID, mounts, resource limits and process kill/restart behavior. Do not pass normal `~/.ssh`, `~/.git-credentials`, `~/.codex`, `~/.gemini`, GitHub write token, or host Docker socket into the Worker. Only operator-approved, scoped provider authentication and egress are allowed.
+2. Verify actual Codex CLI and AGY headless versions/flags with harmless, read-only requests; approve provider sign-in mechanisms without credential extraction, account sharing or quota bypass. On AGY, status SUCCESS + schema-valid structured_output + permission diagnostics must all pass; `exit=0` alone does not suffice.
+3. Use a Host-owned ESP-IDF v6.1 image identity and deterministic build receipt, not an AI narrative. Record raw logs only in a separately access-controlled redacted evidence location; preserve exact candidate fingerprint across checks and review.
+4. Auditor must receive a bounded independent snapshot with zero write access; never reuse the Worker writable tree or conversation. Require an actual verified PASS with full changed-file coverage.
+5. Only after code is committed by a trusted Host and tests/CI are re-verified at the final exact commit SHA may a separately reviewed least-privileged Host publisher create a **Draft** PR. No automatic merge. No ESP32 flash/RF/HIL or MAC/security changes without human review.
+
+The P1-B2-A simulation is intentionally a test harness for these invariants, **not proof** that model isolation, network policy, provider credentials or a safe unattended runtime exist.
+
+Current Antigravity source: https://antigravity.google/docs/cli/headless/
