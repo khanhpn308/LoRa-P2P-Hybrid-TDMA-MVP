@@ -22,6 +22,23 @@ NETWORK = re.compile(r"^lora-agent-egress-[a-z0-9][a-z0-9-]{0,42}$")
 NAME = re.compile(r"^lora-p1-probe-(?:codex|agy)-[a-f0-9]{8}$")
 OUTPUT_LIMIT = 64_000
 MAX_SECONDS = 240
+# Exact, known non-fatal Codex CLI startup warning on an immutable Docker
+# rootfs. Do NOT ignore other read-only/permission diagnostics.
+_CODEX_ALIAS_WARNING = re.compile(
+    rb"(?m)^WARNING: proceeding, even though we could not create PATH aliases: "
+    rb"Read-only file system \(os error 30\)\r?$"
+)
+
+
+def _effective_probe_stderr(provider: str, stderr: bytes) -> tuple[bytes, int]:
+    """Strip only a precise Codex alias-install warning; retain all other lines."""
+    if provider != "codex":
+        return stderr, 0
+    matches = _CODEX_ALIAS_WARNING.findall(stderr)
+    # Never accept an unexpectedly repeated startup warning.
+    if len(matches) != 1:
+        return stderr, 0
+    return _CODEX_ALIAS_WARNING.sub(b"", stderr, count=1), 1
 
 
 class RuntimeBlocked(RuntimeError):
@@ -36,9 +53,11 @@ class IsolatedCLI:
     profile_volume: str
 
     def command(self, snapshot: pathlib.Path, container_name: str,
-                prompt: str) -> list[str]:
+                prompt: str, *, docker_only_isolation: bool = False) -> list[str]:
         if self.provider not in ("codex", "agy"):
             raise RuntimeBlocked("Unknown provider")
+        if docker_only_isolation and self.provider != "codex":
+            raise RuntimeBlocked("Docker-only sandbox override is Codex-specific")
         if not IMAGE.fullmatch(self.image_id):
             raise RuntimeBlocked("Provider CLI image must be pinned to inspected sha256 ID")
         if not NETWORK.fullmatch(self.network):
@@ -57,6 +76,10 @@ class IsolatedCLI:
         if os.name != "posix" or not hasattr(os, "getuid"):
             raise RuntimeBlocked("Supported Linux / WSL2 environment required")
         root = snapshot.resolve(strict=True)
+        provider_env = ([
+            "--env", "CODEX_HOME=/home/agent/.codex-clean-pilot",
+            "--env", "CODEX_CA_CERTIFICATE=/etc/ssl/certs/ca-certificates.crt",
+        ] if self.provider == "codex" else [])
         flags = [
             "docker", "run", "--rm", "--init", "--pull=never",
             "--name", container_name,
@@ -66,15 +89,28 @@ class IsolatedCLI:
             "--read-only", "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m",
             "--user", "10001:10001",
             "--env", "HOME=/home/agent",
+            "--env", "HTTP_PROXY=http://lora-egress-proxy:3128",
+            "--env", "HTTPS_PROXY=http://lora-egress-proxy:3128",
+            "--env", "http_proxy=http://lora-egress-proxy:3128",
+            "--env", "https_proxy=http://lora-egress-proxy:3128",
+            "--env", "NO_PROXY=",
+            "--env", "no_proxy=",
             "--mount", f"type=bind,src={root},dst=/workspace,readonly",
             "--mount", f"type=volume,src={self.profile_volume},dst=/home/agent",
             "--workdir", "/workspace",
+            *provider_env,
             self.image_id,
         ]
         if self.provider == "codex":
-            return flags + ["codex", "exec", "--sandbox", "read-only",
-                            "--skip-git-repo-check",
-                            "--ask-for-approval", "never", prompt]
+            # Docker is the sole OS boundary in this explicitly accepted mode.
+            # The immutable root, read-only /workspace, non-root uid, no caps,
+            # and segregated internal egress network must remain in force.
+            sandbox = "danger-full-access" if docker_only_isolation else "read-only"
+            # A disposable smoke does not need durable Codex session rollouts.
+            # Avoid a background write path rather than whitelisting os error 13.
+            return flags + ["codex", "--ask-for-approval", "never",
+                            "exec", "--ephemeral", "--sandbox", sandbox,
+                            "--skip-git-repo-check", prompt]
         return flags + ["agy", "--sandbox", "-p", prompt,
                         "--output-format", "json", "--print-timeout", "3m"]
 
@@ -82,13 +118,13 @@ class IsolatedCLI:
 def verify_preinstalled_resources(spec: IsolatedCLI) -> None:
     """Probe existing Docker resources; no creation, pulls or policy attestation.
 
-    An existing network does NOT mean its egress restriction is effective.
+    An internal bridge network is required; this does NOT prove outbound ACL enforcement.
     """
     lookups = (
         (["docker", "image", "inspect", "--format", "{{.Id}}", spec.image_id],
          spec.image_id),
-        (["docker", "network", "inspect", "--format", "{{.Driver}}", spec.network],
-         "bridge"),
+        (["docker", "network", "inspect", "--format", "{{.Driver}}|{{.Internal}}", spec.network],
+         "bridge|true"),
         (["docker", "volume", "inspect", "--format", "{{.Name}}", spec.profile_volume],
          spec.profile_volume),
     )
@@ -155,6 +191,74 @@ def _run(argv: list[str], *, timeout: int, name: str) -> tuple[int | None, bytes
         return process.returncode, stdout, stderr
 
 
+
+
+def _safe_permission_line_shapes(stderr: bytes) -> list[dict]:
+    """Expose bounded boolean signatures, never stderr text, paths, or tokens."""
+    patterns = (
+        ("path_aliases", rb"(?i)path aliases"),
+        ("startup_proceeding", rb"(?i)warning: proceeding"),
+        ("read_only_filesystem", rb"(?i)read.only file system"),
+        ("permission_denied", rb"(?i)permission denied"),
+        ("operation_not_permitted", rb"(?i)operation not permitted"),
+        ("os_error_30", rb"(?i)os error 30"),
+        ("os_error_13", rb"(?i)os error 13"),
+        ("codex_home", rb"(?i)codex.clean.pilot|[.]codex"),
+        ("session_storage", rb"(?i)session|sqlite|database"),
+        ("logging", rb"(?i)log(ger|ging|file|s)?"),
+        ("workspace", rb"(?i)/workspace"),
+        ("usr_local", rb"(?i)/usr/local"),
+        ("tmp", rb"(?i)/tmp"),
+        ("has_ansi", b"\x1b"),
+    )
+    matches = []
+    for line_no, line in enumerate(stderr.splitlines(), 1):
+        if not re.search(
+                rb"(?i)(permission denied|read.only file system|operation not permitted)",
+                line):
+            continue
+        matches.append({
+            "line_number": line_no,
+            "line_bytes": len(line),
+            "tags": [key for key, pattern in patterns if re.search(pattern, line)],
+        })
+        if len(matches) == 6:
+            break
+    return matches
+
+
+def safe_probe_diagnostic(provider: str, code: int | None,
+                          stdout: bytes, stderr: bytes) -> dict:
+    """Bounded keyword signals only: NEVER print model output or credentials."""
+    if provider not in ("codex", "agy"):
+        raise RuntimeBlocked("Unknown provider")
+    effective_stderr, benign_alias_warning_count = _effective_probe_stderr(
+        provider, stderr)
+    signals = (
+        ("sandbox_backend", rb"(?i)(bubblewrap|bwrap|landlock|unshare|seccomp|"
+                            rb"user.namespace|sandbox.{0,32}(?:denied|fail)|"
+                            rb"operation not permitted)"),
+        ("filesystem_permission", rb"(?i)(permission denied|read.only file system)"),
+        ("provider_auth", rb"(?i)(authentication required|not logged in|"
+                          rb"token.expired|invalid.token|unauthorized)"),
+        ("approval", rb"(?i)(approval required|approval denied|soft.denied)"),
+        ("network_transport", rb"(?i)(proxy error|certificate|TLS error|"
+                              rb"connection reset|connection refused|DNS error|"
+                              rb"network unreachable)"),
+    )
+    return {
+        "exit_code": code,
+        "stdout_exact_expected_marker": stdout.strip() == (
+            b"CODEX_SMOKE_OK" if provider == "codex" else b"AGY_SMOKE_OK"),
+        "stderr_bytes": len(stderr),
+        "stderr_sha256": hashlib.sha256(stderr).hexdigest(),
+        "benign_codex_alias_warning_count": benign_alias_warning_count,
+        "stderr_signals": [name for name, pattern in signals
+                           if re.search(pattern, effective_stderr)],
+        "permission_line_shapes": _safe_permission_line_shapes(effective_stderr),
+    }
+
+
 def evaluate_probe(provider: str, code: int | None,
                    stdout: bytes, stderr: bytes = b"") -> ProbeReceipt:
     """Validate actual terminal response, NOT a prompt echoed in diagnostic logs."""
@@ -163,8 +267,11 @@ def evaluate_probe(provider: str, code: int | None,
     import json
     if code != 0:
         raise RuntimeBlocked("Provider invocation failed with nonzero exit")
+    effective_stderr, _alias_warning_count = _effective_probe_stderr(
+        provider, stderr)
     if re.search(rb"(?i)(permission denied|approval required|approval denied|"
-                 rb"authentication required|not permitted|soft.denied)", stderr):
+                 rb"authentication required|not permitted|soft.denied|"
+                 rb"read.only file system|operation not permitted)", effective_stderr):
         raise RuntimeBlocked("Provider permission/authentication denial")
     if provider == "agy":
         try:

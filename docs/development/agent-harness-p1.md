@@ -181,3 +181,80 @@ PASS here means **only** that the provider responded in an isolated, read-only s
 ### Subsequent P1-B2-C work (still open)
 
 Integrate an externally isolated, per-Issue **scratch copy** of code for the Codex Worker; import only vetted changed paths into the Host-owned worktree; build Gateway and Node with trusted Docker ESP-IDF v6.1 receipts; send a separate immutable AGY snapshot and require a full schema-valid independent report; enforce post-build/audit candidate hashes, crash recovery, final SHA provenance and Host-owned Draft PR publication only after CI. Do not pass P1-B2-A's `SIMULATED` receipts off as real build or audit evidence.
+
+## P1-B2/C03 — Host Audit Validator hardening (Issue #43)
+
+**Status: SOURCE CHANGE PROPOSED; security approval, real Auditor and E2E remain NOT_VERIFIED.**
+This host-only change is stacked on the exact Issue #43 baseline; it does not change
+the AGY CLI, authentication, Docker/egress policy, radio firmware, or ESP-IDF v6.1.
+
+The shared P0/P1 Host validator rejects model audit reports that have missing,
+extra or duplicated `reviewed_scope` paths; scope is an exact, unordered set of
+canonical repository-relative POSIX paths provided by the trusted Host. Deleted
+paths are checked lexically and need not exist on disk. Reports are rejected if
+they contain path aliases or traversal, extra or missing root/finding keys,
+invalid value types, non-positive or non-integral line numbers, unexpected
+findings on PASS, or malformed/duplicate-key/non-finite JSON. The parser
+rejects an envelope exceeding 160000 UTF-8 bytes. It still rejects nonzero
+CLI exit codes, terminal status other than SUCCESS, provider errors and tool
+permission denials, and preserves valid FAIL/INCONCLUSIVE verdicts.
+
+The checked-in `adapters/audit.schema.json` stays unchanged. Offline schema
+conformance and schema-drift regression tests fail if its supported constraints
+change. P0 and P1 call the same validator; a provider's schema CLI flag is not
+a substitute for Host validation. Future live P1 ingestion must strictly decode
+raw JSON before constructing a Python dict; a dict cannot retain duplicate-key
+history. The tests here use fake reports/processes only, not live providers.
+Passing tests is SOFTWARE_VALIDATION_ONLY and does not certify AGY independent
+audit, Worker/build isolation, RF/HIL/timing, or production security.
+
+Run focused host tests on an approved, disposable credential-free test checkout:
+
+~~~bash
+python3 -m unittest discover -s tests/agent_harness -p 'test_antigravity.py' -v
+python3 -m unittest discover -s tests/agent_harness -p 'test_adapters.py' -v
+python3 -m unittest discover -s tests/agent_harness -p 'test_p1_b2_pilot.py' -v
+~~~
+
+Record exact source SHA and test receipts; compare the final changed paths to
+Issue #43's five-path allowlist. Human independent review is required before
+finding M02 can be closed. Live E2E remains NO-GO until G01–G08 prerequisites
+are evidenced and approved.
+
+## P1-B2 C02 — Gemini Auditor via official Antigravity CLI (Issue #45)
+
+**Status: DESIGN_DRAFT; NO GEMINI API AUDITOR; NO LIVE EXECUTION AUTHORIZED.**
+The user-selected reviewer is **Gemini through the official Antigravity CLI**. See
+[`.agent-harness/security/provider-decision.md`](../../.agent-harness/security/provider-decision.md)
+for the operator-direct, fresh-session, read-only audit handoff.
+Google's consumer terms support **direct `agy -p` scripting/CI**, not embedding it
+as the unattended third-party Harness Auditor. Therefore the automated
+`Worker -> agy subprocess -> Repair` integration is **BLOCKED** on consumer login.
+For the one supervised pilot, a human independently invokes `agy` and transfers
+a scoped, SHA-bound structured audit receipt to the trusted Host, which applies
+Issue #43's strict Host validator. A supported enterprise/provider grant is
+required for any future unattended integration. No API key, CLI model call,
+credential/profile change, Docker/firewall change or E2E pilot is authorized
+by this documentation update; H01-H04 and G01-G08 remain open.
+
+## P1-B2 Issue #47 — Dual AGY CLI supervised pilot (supersedes C02 role choice for this lane)
+
+**STATUS: OPERATOR_RUNBOOK_PREPARED / REAL AGY WORKER AND AUDITOR NOT_VERIFIED.**
+The owner selected **Gemini Worker + Gemini Auditor**, both invoked directly through
+the official `agy` CLI, in two **fresh, separate** sessions. The earlier Codex
+Worker and Gemini API options remain **historical proposals for P0/P1**, and must
+not be silently selected for Issue #47. Full unattended Harness->consumer AGY
+orchestration remains blocked by the provider's third-party integration rules.
+The Worker may only create
+`tests/agent_harness/fixtures/security_pilot/README.md` under explicit human
+approval; Host checks the changed paths and executes tests; the operator
+initiates a second read-only Gemini audit of a separate snapshot; Host checks
+strict audit schema, exact `reviewed_scope` and candidate hash; human decides.
+Both sessions using Gemini gives **independent contexts/roles only**, not
+independent model risk. The owner deferred a separate credential-free
+isolation test; it stays **NOT_VERIFIED**, never PASS.
+
+See [operator runbook](agy-supervised-pilot.md) and
+[Issue #47](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/47).
+No live call, model quota usage, Docker/network/credential change, merge,
+flash or HIL/RF claim occurred in this documentation-only commit.

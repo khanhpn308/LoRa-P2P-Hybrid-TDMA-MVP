@@ -198,5 +198,33 @@ class PilotTests(unittest.TestCase):
         self.assertEqual(result["attempts"], 1)
 
 
+    def test_audit_extra_reviewed_path_blocks_without_repair(self):
+        def audit(candidate, checks):
+            return {"status": "PASS", "findings": [], "limitations": [],
+                    "reviewed_scope": list(candidate["paths"]) + ["unreviewed.py"]}
+        result = self.cycle(auditor=audit)
+        self.assertEqual(result["status"], "BLOCKED")
+        self.assertEqual(result["attempts"], 1)
+        self.assertIn("Invalid audit", result["reason"])
+
+    def test_audit_duplicate_path_blocks_without_repair(self):
+        def audit(candidate, checks):
+            paths = list(candidate["paths"])
+            return {"status": "PASS", "findings": [], "limitations": [],
+                    "reviewed_scope": paths + paths}
+        result = self.cycle(auditor=audit)
+        self.assertEqual(result["status"], "BLOCKED")
+        self.assertEqual(result["attempts"], 1)
+
+    def test_audit_unknown_root_key_blocks_without_repair(self):
+        def audit(candidate, checks):
+            return {"status": "PASS", "findings": [], "limitations": [],
+                    "reviewed_scope": candidate["paths"], "ignored": True}
+        result = self.cycle(auditor=audit)
+        self.assertEqual(result["status"], "BLOCKED")
+        self.assertEqual(result["attempts"], 1)
+
+
+
 if __name__ == "__main__":
     unittest.main()
