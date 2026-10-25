@@ -15,6 +15,12 @@ Status hồ sơ: `DRAFT / AWAITING HUMAN TECHNICAL REVIEW`. Đây là audit tài
 - Issue body còn câu template "PROPOSED, chưa phải Issue đã được owner cho phép". Chỉ dẫn tiếp tục trực tiếp của user sau khi tạo Issue cho phép thực hiện đúng scope/AC này; đây là execution authorization, không đổi approval của design/requirements. Không sửa Issue hoặc coi template là approval kỹ thuật.
 - Scope lần này chỉ docs, không dùng Harness/model runtime, không cấp quyền RF/flash hoặc sửa contracts. Preflight cũ chỉ là tham khảo; mọi finding dưới đây được kiểm lại tại base SHA và live snapshots ngày 2026-10-25.
 
+### Review remediation R2
+
+- Preflight R2 ngày 2026-10-25: Issue #60 OPEN, AC/allowlist không đổi; branch `docs/60-architecture-rtm`, HEAD trước sửa `bc992ad9fe46c4cf0065d8fe64aa928f42a6a492`, working tree clean; Draft PR #61 OPEN/Draft, base main vẫn `9cb0885ad1de5112e9ae358e15e04e19b6fb38ae`.
+- Chỉ sửa hai deliverables đã được Issue cho phép. R2 sửa evidence/provenance và khả năng tái chạy validation; không review lại hoặc thay architecture/contracts/23 requirement statuses.
+- F-11 được hiệu chỉnh bằng upstream source mới xác minh. Checker R2 đầy đủ, prerequisites, exact commands và output được lưu trong mô tả [Draft PR #61](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/61); không thêm script/path vào repository.
+
 ## Source inventory và authority
 
 Hash trong bảng là SHA-256 của bytes **tại base SHA**, kể cả file được sửa trong R1. Links là đường dẫn hiện tại để tra cứu; findings dùng immutable base links khi cần line numbers. File availability không là approval hoặc test verdict.
@@ -57,7 +63,7 @@ Nguồn bổ sung được contracts dẫn chiếu: [WSS](../../../contracts/api
 
 Planning artifact đọc local: `/home/khanh/projects/iot/docs/backend_worker_gate1_pack/00_SHARED_INPUTS/esp32_sx1762.md`, SHA-256 `fe42d7736aa8a3b7772ac680923e6cec40e1f784d612eaa39c570895e0946f67`. Đã đọc các phần liên quan §§1/3–6/8/10–12, không làm full citation verification cho các marker `[cite: ...]`; không có bibliography/provenance chain được xác minh trong audit. Phân loại `SOURCE_AVAILABLE_LOCAL / DESIGN_INTENT_ONLY`, không phải approved design hoặc measurement. Không đưa bản planning vào Git.
 
-S1 C standard v1.0.0: metadata, hash, local path, ignored/unversioned provenance và 123 observed rule IDs ghi tại [C_STANDARD_SOURCE_TRACEABILITY.md](C_STANDARD_SOURCE_TRACEABILITY.md). Phân loại `SOURCE_AVAILABLE_LOCAL / UPSTREAM_REVISION_NOT_VERIFIED`. Approval tại source repository không truyền sang monorepo; không coi local HEAD pin file ignored. Official Espressif/Semtech docs chỉ là authority cho task API/register review sau; audit này không tái chứng nhận register semantics, RF legal limits hoặc API behavior của source demo.
+S1 C standard v1.0.0: [immutable upstream reference](https://github.com/khanhpn308/esp32e_sx1768-915Mhz/blob/2af2bd2a99234b15f59848f4bdd0b1e920c2dcd5/docs/C_CODING_STANDARDS.md) tại commit `2af2bd2a99234b15f59848f4bdd0b1e920c2dcd5`, 41197 bytes, SHA-256 `70fc06ec5f21e21725f0227238ed3ab258e21b113b95f9ef481332d54715c5de`; exact byte match với S1 local dùng trong R1. Phân loại R2 `SOURCE_PINNED / LOCAL_BYTE_MATCH`; xem [traceability](C_STANDARD_SOURCE_TRACEABILITY.md) và F-11 về correction của kết luận cũ. Approval source-local không truyền sang monorepo. Official Espressif/Semtech docs vẫn là authority cho API/register review sau; R2 không chứng nhận các semantic/hardware claims của source demo.
 
 ### Live Issue inventory
 
@@ -224,7 +230,7 @@ Severity là đánh giá của auditor về tác động nếu gap bị bỏ qua
 - Affected subsystem: Firmware standard / hardware / wire protocol.
 - Recommendation: Classify đủ 12 categories, tách engineering rules khỏi board/contract/RF specifics.
 - Required reviewer: Embedded + RF/Hardware + Node/MAC + Security + Backend/QA.
-- Remaining verification: Owner xác nhận S1 provenance; exact API/datasheet review và board evidence trước v2 standard approval.
+- Remaining verification: S1 provenance đã pin và byte-match ở R2; exact API/datasheet review, monorepo adoption và board evidence vẫn cần trước v2 approval.
 
 ### F-10
 
@@ -241,16 +247,16 @@ Severity là đánh giá của auditor về tác động nếu gap bị bỏ qua
 
 ### F-11
 
-- Severity: MEDIUM.
-- Source: S1 metadata/§14 và [source repository .gitignore line 4](https://github.com/khanhpn308/esp32e_sx1768-915Mhz/blob/e46ff22dfe441911310bc9a859c202bf5c4cface/.gitignore#L4); git ls-files/check-ignore và GitHub GET observations ghi trong evidence.
-- Exact observed evidence: S1 local đọc được, SHA-256 đã ghi trong traceability; git ls-files không tìm thấy, check-ignore chỉ .gitignore:4:*/C_CODING_STANDARDS.md; GitHub GET file tại source HEAD trả 404.
-- Conflicting source: Clean source worktree và source HEAD không pin ignored file; không gán HEAD cho nội dung S1.
-- Classification: Confirmed Fact về provenance gap; source header tự khai v1.0.0 chưa là independent approval record.
-- Approval status: SOURCE_AVAILABLE_LOCAL / UPSTREAM_REVISION_NOT_VERIFIED; không có v2 approval.
+- Severity: MEDIUM đối với provenance gap được báo trong R1; disposition R2 `CORRECTED / SOURCE_PINNED`, không còn giữ gap thiếu upstream reference như finding hiện hành.
+- Source: [upstream S1 metadata/§14](https://github.com/khanhpn308/esp32e_sx1768-915Mhz/blob/2af2bd2a99234b15f59848f4bdd0b1e920c2dcd5/docs/C_CODING_STANDARDS.md), tree commit `2af2bd2a99234b15f59848f4bdd0b1e920c2dcd5`, Git blob `7a5e011bc8133762c8da8433e60c0e801d41b801`; so sánh với local S1 của R1.
+- Exact observed evidence: upstream và local đều 41197 bytes, SHA-256 `70fc06ec5f21e21725f0227238ed3ab258e21b113b95f9ef481332d54715c5de`; so exact bytes trả true. Upstream main tại R2 trỏ commit đã pin. Không thay local/source content.
+- Conflicting source: kết luận R1 dựa vào checkout/commit cũ `e46ff22dfe441911310bc9a859c202bf5c4cface`, nơi file không track và GET trả 404; quan sát đó không chứng minh upstream main thiếu file. Immutable upstream source R2 thay thế kết luận thiếu provenance, không phủ nhận lịch sử checkout cũ.
+- Classification: Confirmed Fact về pinned revision và byte identity; rút lại suy luận tổng quát upstream unavailable/unversioned trong R1.
+- Approval status: `SOURCE_PINNED / LOCAL_BYTE_MATCH` chỉ cho provenance; source-local approval không trở thành monorepo/v2 approval.
 - Affected subsystem: C standard source traceability.
-- Recommendation: Dùng content hash/local provenance và observed rule IDs; yêu cầu versioned archive trước standard approval.
-- Required reviewer: Owner + Embedded/QA.
-- Remaining verification: Portable/versioned S1 và source approval evidence; task này không sửa repository thử nghiệm.
+- Recommendation: dùng immutable upstream link/hash trong traceability và checker tái lập; giữ nguyên 123 source IDs/disposition.
+- Required reviewer: Owner + Embedded/QA xác nhận correction và việc áp dụng rule ở task sau.
+- Remaining verification: human disposition của R2 và monorepo standard review; F-11 không còn yêu cầu cung cấp archive S1. API/datasheet/hardware/security evidence vẫn độc lập.
 
 ### F-12
 
@@ -308,11 +314,11 @@ Các blocker dưới đây chặn design/protocol/production acceptance, không 
 - Security + Node/GW/Backend xử lý D01/D11, keys/nonce/replay và golden vectors trước production codec.
 - Backend/MQTT + Infra-Security review contract/lifecycle/order/identity/expiry; #14 Closed không thay sign-off.
 - Backend/Web/Mobile + Security giải D13, API/WSS conformance và consumer integration; #15/#18 chưa là implemented service.
-- Owner cung cấp versioned S1 và approval provenance trước C Standard v2 task. Local planning citation markers chưa được independent verification, không lấy làm regulatory/timing evidence.
+- S1 đã được pin và so byte trong R2; owner review source-rule adoption/approval cho C Standard v2 vẫn còn chờ. Local planning citation markers chưa được independent verification, không lấy làm regulatory/timing evidence.
 
 Không cài tool/dependency, không thay CI, contracts, RF/pinmap, code hoặc GitHub settings; không auto-merge/flash/TX. Draft PR chỉ xin human review hồ sơ, không chứng nhận G0–G6 PASS.
 
-## Validation results và limitations
+## Validation results R1 và limitations
 
 Các kết quả dưới đây chỉ áp dụng cho documentation/static scope. Không cấp AUDIT_PASS độc lập hoặc G0–G6 PASS. Python `3.12.3`, jsonschema `4.26.0`, PyYAML `6.0.3`; không cài thêm dependencies.
 
@@ -329,8 +335,27 @@ Các kết quả dưới đây chỉ áp dụng cho documentation/static scope. 
 | `git diff 9cb0885ad1de5112e9ae358e15e04e19b6fb38ae`, final staged diff và file inventory | 0, manual review + scope check | Chỉ bảy docs; ADR-0002/0003, contracts, firmware, backend, CI/dependencies không đổi. Numeric candidates không được promote; không thêm credential/build artifact hoặc RF/HIL/timing PASS claim. |
 | Build ESP-IDF, real broker/DB/API/WSS, C↔Go golden, security execution, simulation, HIL/RF/timing | NOT_RUN / NOT_VERIFIED | Không có implementation change hoặc hardware authorization trong R1; không suy evidence từ static docs checks. |
 
-Local receipts/logs: `/tmp/r1-evidence/commands.json`, `diff-check.log`, `structure.log`, `contract-json-syntax.log`, `optional-validator-dependency.log`, `docs-final.log`. Scripts/source snapshots trong `/tmp/r1_validate_docs.py` và `/tmp/r1-live-sources.json` là artifacts ngoài repository, không là CI dependencies. Reviewer cần Issue snapshot và S1 local artifact để chạy lại cùng environment; remote source provenance S1 vẫn F-11. Báo cáo này lưu commands/results nhưng không archive toàn bộ external artifact. Không dùng local-link check để tuyên bố S1 portable.
+Local receipts/logs: `/tmp/r1-evidence/commands.json`, `diff-check.log`, `structure.log`, `contract-json-syntax.log`, `optional-validator-dependency.log`, `docs-final.log`. Scripts/source snapshots trong `/tmp/r1_validate_docs.py` và `/tmp/r1-live-sources.json` là artifacts ngoài repository, không là CI dependencies. Đây là historical local evidence R1; script và source snapshots trong /tmp không phải durable reproduction package. R2 thay phụ thuộc này bằng checker đầy đủ và output trong PR description, đọc Issue scope hiện tại và tải pinned S1; không cần /tmp cũ hoặc đường dẫn local của tác giả.
 
-Source provenance checks riêng: local source `git ls-files --error-unmatch docs/C_CODING_STANDARDS.md` exit 1; `git check-ignore -v docs/C_CODING_STANDARDS.md` exit 0; GitHub GET S1 tại source HEAD HTTP 404, GET `.gitignore` tại cùng HEAD HTTP 200, xác nhận ignore pattern. Đây là finding F-11, không phải PASS cho revision provenance.
+Source provenance checks riêng: local source `git ls-files --error-unmatch docs/C_CODING_STANDARDS.md` exit 1; `git check-ignore -v docs/C_CODING_STANDARDS.md` exit 0; GitHub GET S1 tại source HEAD HTTP 404, GET `.gitignore` tại cùng HEAD HTTP 200, xác nhận ignore pattern. Các lệnh này chỉ kiểm checkout/commit cũ; không chứng minh upstream main thiếu S1. F-11 đã được hiệu chỉnh bằng source/hash R2 ở trên.
 
 Draft PR sẽ chứa base/head SHA, allowlist và các NOT_RUN/NOT_VERIFIED này. Human review còn chờ theo reviewer handoff; không merge trong R1.
+
+## Validation R2 và durable evidence
+
+Nguồn tái lập: mô tả [Draft PR #61](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/61), mục "Review remediation R2 / Reproduction" lưu nguyên checker Python và output. Prerequisites: Python 3.12+ với standard library, Git, GitHub CLI `gh` đã có read access tới hai repositories, checkout PR head cùng base/R1 commits và HTTPS tới GitHub. Không cần package mới hoặc file /tmp của tác giả. Checker kiểm scope cả PR và delta R2, preservation của 23 requirements/architecture/contracts, links/IDs/finding fields, pinned source digest và 123/123 mapping. Scope của checker là documentation structure/provenance, không technical approval; không crawl mọi external URL hoặc chứng minh semantic correctness bằng regex.
+
+Kết quả R2 đã chạy trên nội dung sửa, kiểm lại sau commit và pin final HEAD trong PR description:
+
+| Command / kiểm tra | Exit / observed result |
+|---|---|
+| `git diff --check` | 0, không whitespace errors |
+| `python3 scripts/verify_structure.py` | 0, static foundation only; bốn firmware components vẫn NOT_IMPLEMENTED |
+| JSON syntax pipeline của `ci-contracts.yml` | 0, 11 JSON files; không semantic/conformance proof |
+| Checker Python nguyên văn trong PR description, chạy từ repo root | 0; exact bảy PR paths, delta R2 chỉ hai docs; RTM byte-identical với R1, tám IDs cũ và 15 PROPOSED, cả 23 NOT_VERIFIED; 140 relative links/fragments, không absolute local links; table columns/references hợp lệ; 123/123 source IDs, 12 categories, dispositions không đổi; F-01..F-12 đủ trường |
+| Source byte comparison R2 | Upstream/local đều 41197 bytes và SHA-256 `70fc06ec5f21e21725f0227238ed3ab258e21b113b95f9ef481332d54715c5de`; byte equality true; upstream Git blob SHA-1 khớp `7a5e011bc8133762c8da8433e60c0e801d41b801` |
+| Read-only GitHub preflight | Issue #60 scope/body không đổi; PR #61 OPEN/Draft, đúng branch/head; main baseline không đổi |
+
+Lần thử public API bằng urllib không xác thực trả HTTP 403 rate-limit trước assertions; checker cuối dùng `gh api` với read access sẵn có và đã chạy thành công. Thiếu access/network hoặc Issue body hash thay đổi phải làm checker dừng, không được bỏ qua hoặc suy PASS. R2 không cài tool/dependency và không thay CI.
+
+Full contract suite/OpenAPI dependency, firmware/security/timing/HIL/RF limitations của R1 giữ nguyên. Provenance pin không xác nhận source-local approval có hiệu lực ở monorepo. Không merge hoặc tự đổi Draft thành ready-for-review.

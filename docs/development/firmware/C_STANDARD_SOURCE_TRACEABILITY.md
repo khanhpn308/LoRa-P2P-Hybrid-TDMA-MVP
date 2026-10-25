@@ -4,13 +4,20 @@ Status: `PROPOSED / PENDING HUMAN REVIEW`, [Issue #60](https://github.com/khanhp
 
 ## Provenance và giới hạn nguồn
 
-Nguồn S1 đọc được tại local artifact `/home/khanh/projects/iot/mcu/esp32_sx1276/codebase/main/docs/C_CODING_STANDARDS.md`, document ID `ESP32-LORA-CSTD`, Version `1.0.0`, ngày `2026-10-17`. Header ghi APPROVED và §14 liệt kê DEC-01..DEC-08; đó là approval được nguồn tự ghi cho dự án thử nghiệm, không có hiệu lực kế thừa sang monorepo. Authority của monorepo vẫn [AGENTS.md](../../../AGENTS.md), [coding standards](../coding-standards.md), [ADR-0001](../../adr/0001-hybrid-tdma.md), [ADR-0002](../../adr/0002-mqtt-5.md), [ADR-0003](../../adr/0003-esp-idf-v6-1.md), [contracts](../../../contracts/README.md) và [gates](../../verification/acceptance-gates.md).
+Nguồn S1 được pin tại [upstream docs/C_CODING_STANDARDS.md](https://github.com/khanhpn308/esp32e_sx1768-915Mhz/blob/2af2bd2a99234b15f59848f4bdd0b1e920c2dcd5/docs/C_CODING_STANDARDS.md), commit `2af2bd2a99234b15f59848f4bdd0b1e920c2dcd5` của `khanhpn308/esp32e_sx1768-915Mhz`. Upstream main tại thời điểm R2 trỏ commit này; reference sử dụng SHA bất biến, không phụ thuộc main tiếp tục thay đổi. Metadata nguồn ghi document ID `ESP32-LORA-CSTD`, Version `1.0.0`, ngày `2026-10-17`, header APPROVED và §14 DEC-01..DEC-08. Approval được nguồn ghi cho dự án thử nghiệm không truyền sang monorepo. Authority monorepo vẫn [AGENTS.md](../../../AGENTS.md), [coding standards](../coding-standards.md), [ADR-0001](../../adr/0001-hybrid-tdma.md), [ADR-0002](../../adr/0002-mqtt-5.md), [ADR-0003](../../adr/0003-esp-idf-v6-1.md), [contracts](../../../contracts/README.md) và [gates](../../verification/acceptance-gates.md).
 
-Local repository có remote [esp32e_sx1768-915Mhz](https://github.com/khanhpn308/esp32e_sx1768-915Mhz), HEAD `e46ff22dfe441911310bc9a859c202bf5c4cface`. **HEAD này không pin nội dung S1**: `git ls-files --error-unmatch` không tìm thấy file, `git check-ignore -v` chỉ ra `.gitignore:4:*/C_CODING_STANDARDS.md`; GET file tại HEAD qua GitHub trả HTTP 404. Working tree clean không chứng minh ignored artifact được version-control. Phân loại `SOURCE_AVAILABLE_LOCAL / UPSTREAM_REVISION_NOT_VERIFIED`; không gọi SOURCE_UNAVAILABLE hoặc gán sai commit cho standard.
+R2 so exact bytes của upstream Git blob với local S1 tại `/home/khanh/projects/iot/mcu/esp32_sx1276/codebase/main/docs/C_CODING_STANDARDS.md`, không sửa hoặc thay artifact local:
 
-S1 SHA-256: `70fc06ec5f21e21725f0227238ed3ab258e21b113b95f9ef481332d54715c5de`.
+| Artifact | Bytes | SHA-256 |
+|---|---|---|
+| Upstream S1 tại commit đã pin | 41197 | `70fc06ec5f21e21725f0227238ed3ab258e21b113b95f9ef481332d54715c5de` |
+| Local S1 được dùng trong R1 | 41197 | `70fc06ec5f21e21725f0227238ed3ab258e21b113b95f9ef481332d54715c5de` |
 
-Đã đọc các bảng §§02–13, metadata, References, §14 và verification states. Có 123 rule IDs trong 12 categories, được phân hoạch dưới đây; không tạo IDs giả cho rule nguồn. Các range chỉ gồm IDs thực có. Reviewer có local artifact theo hash để kiểm; chưa có archival URL portable cho S1, owner cần cung cấp bản versioned trước khi phê duyệt v2. Owner có thể kiểm [S1 local artifact](/home/khanh/projects/iot/mcu/esp32_sx1276/codebase/main/docs/C_CODING_STANDARDS.md) trong workspace hiện tại; link local này không portable cho reviewer không có artifact.
+Kết quả so byte: `BYTE_IDENTICAL=true`; Git blob SHA-1 `7a5e011bc8133762c8da8433e60c0e801d41b801`, khớp upstream tree. Phân loại provenance hiện tại: `SOURCE_PINNED / LOCAL_BYTE_MATCH`. Chỉ provenance/content được xác minh; không là approval coding standard cho monorepo, API/register correctness hoặc hardware/RF evidence.
+
+Lịch sử R1: checkout local ở HEAD `e46ff22dfe441911310bc9a859c202bf5c4cface` không track S1 và có ignore pattern; GET file ở commit cũ trả 404. Quan sát đó chỉ đúng với checkout/commit cũ, không chứng minh upstream main thiếu file. R2 rút lại kết luận tổng quát `UPSTREAM_REVISION_NOT_VERIFIED` của F-11 bằng immutable source và content comparison; không thay nội dung source hoặc các disposition đã đề xuất.
+
+Đã đọc các bảng §§02–13, metadata, References, §14 và verification states. Mapping giữ nguyên 123 rule IDs/12 categories. Reviewer có thể lấy [raw pinned S1](https://raw.githubusercontent.com/khanhpn308/esp32e_sx1768-915Mhz/2af2bd2a99234b15f59848f4bdd0b1e920c2dcd5/docs/C_CODING_STANDARDS.md), kiểm SHA-256 và chạy checker được lưu đầy đủ trong mô tả [Draft PR #61](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/61); không cần local path của tác giả. Các rule/classification vẫn PROPOSED, không viết standard v2 trong R2.
 
 ## Disposition theo rule/category
 
@@ -76,4 +83,4 @@ Mọi classification trong bảng là proposal của R1; rationale kỹ thuật 
 
 ## Review handoff
 
-Owner cần archive/version S1 hoặc xác nhận artifact theo hash; không sửa repository thử nghiệm trong Issue này. Embedded xác minh exact ESP-IDF v6.1 APIs/style; RF xác minh silicon/datasheet revision/board. Security giải D01/D11 trước codec; Gateway/Node/Backend review shared boundaries. [Audit R1](ARCHITECTURE_DOCUMENTATION_AUDIT.md) ghi finding và evidence limitations. Không dùng bảng này để thực thi rule v2.0.0 trước task/approval riêng.
+Provenance S1 đã có immutable upstream reference và byte match ở R2; không còn yêu cầu archive lại chỉ để giải F-11. Owner vẫn phải review việc áp dụng source rules vào monorepo; không sửa repository thử nghiệm trong Issue này. Embedded xác minh exact ESP-IDF v6.1 APIs/style; RF xác minh silicon/datasheet revision/board. Security giải D01/D11 trước codec; Gateway/Node/Backend review shared boundaries. [Audit R1](ARCHITECTURE_DOCUMENTATION_AUDIT.md) ghi finding và evidence limitations. Không dùng bảng này để thực thi rule v2.0.0 trước task/approval riêng.
