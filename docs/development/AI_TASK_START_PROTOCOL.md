@@ -17,6 +17,16 @@ activation: AGENTS.md_ROUTING_AFTER_HUMAN_REVIEW_AND_MERGE
 
 A task starts in `INTAKE`. No AI Worker may edit files until the deterministic Host/Human verifies `START_READY`. An agent describing itself as ready is **not** authorization. For conversational questions or read-only research, stop after reporting findings; do not invent an implementation Issue or make changes.
 
+**One-line operator kickoff (recommended; the Issue should contain the remaining details):**
+
+```text
+Bắt đầu task #<issue-number>: <mục tiêu>. MODE=IMPLEMENT|REVIEW|RESEARCH.
+Chạy Task Start Protocol và xuất Pre-Edit Report trước khi sửa bất kỳ file nào.
+```
+
+If the user supplies a clear objective but not an Issue, the agent may inspect relevant sources **read-only** and propose an Issue with exact allowed paths and AC. It must not pretend that a suggested scope is already approved.
+
+
 ```text
 INTAKE → ISSUE_SCOPE → REPO_PREFLIGHT → SELECTIVE_CONTEXT
        → IMPACT_DISCOVERY → DECISION_GATE → PRE_EDIT_HANDOFF
