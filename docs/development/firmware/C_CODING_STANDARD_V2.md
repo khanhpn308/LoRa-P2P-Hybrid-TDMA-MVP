@@ -29,7 +29,7 @@ baseline_commit: 8217885c150888e0ecb1eaf39685d79b4cbf56fa
 rg -n '^\| (Rule ID|---|GOV-|C-|MEM-|ERR-|RTOS-|ARCH-|SEC-|RAD-|QA-)' docs/development/firmware/C_CODING_STANDARD_V2.md
 ```
 
-**CodeGraph STATIC discovery:** Prefer `codegraph_explore` when available to inspect `.c/.h` symbol definitions, public header callers, task-to-radio ownership and ISR/`ESP_TIMER_ISR` callees before reading entire firmware trees. Cross-component graph hits are **READ ONLY** if outside Issue allowed paths. CodeGraph cannot inspect `contracts/**`/ADRs nor prove IRAM placement, dynamic function pointer targets, runtime timing, RF or HIL. If the MCP tool is not available, record `NOT_RUN: codegraph_explore` and perform scoped read-only `rg`/manual call-site review without a graph PASS.
+**CodeGraph STATIC discovery:** MUST use `codegraph_explore` when available to inspect `.c/.h` symbol definitions, public header callers, task-to-radio ownership and ISR/`ESP_TIMER_ISR` callees before reading entire firmware trees. Cross-component graph hits are **READ ONLY** if outside Issue allowed paths. CodeGraph cannot inspect `contracts/**`/ADRs nor prove IRAM placement, dynamic function pointer targets, runtime timing, RF or HIL. If the MCP tool is not available, record `NOT_RUN: codegraph_explore` and perform scoped read-only `rg`/manual call-site review without a graph PASS.
 
 **Agent operation states (proposal):**
 
