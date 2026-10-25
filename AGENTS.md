@@ -4,6 +4,17 @@
 
 Read `.github/copilot-instructions.md`, `.github/instructions/embedded.instructions.md`, `docs/architecture/system-overview.md`, `docs/verification/acceptance-gates.md`, and `docs/development/agent-harness-firmware.md` before firmware tasks.
 
+## Firmware standard routing — AI Workers and Auditors
+
+For an Issue whose approved `Target Directories (allowed paths)` include `firmware/**` or a file beneath `firmware/`, **every AI Worker and AI Auditor MUST read and assess** the applicable parts of [C Firmware Coding Standard v2.0.0-DRAFT](docs/development/firmware/C_CODING_STANDARD_V2.md) **before proposing code changes or issuing a review verdict**. This read requirement is active as an agent-routing instruction; the Standard itself remains `PROPOSED / NOT_APPROVED` and is **not an approved engineering-policy replacement**.
+
+1. Read the Standard's metadata/status, §0 agent entrypoint, the applicable module/rule-ID tables, §12 blocked decisions, and §13 evidence/report contract; use selective loading rather than copying the entire document into each task.
+2. Cross-check each relevant Rule ID against the Issue's exact allowed paths, approved Requirements/ADRs, current `contracts/`, exact ESP-IDF v6.1 API documentation and silicon/board authority where applicable. Prefer higher-authority approved sources whenever the Draft conflicts or lacks support.
+3. Before editing, identify `APPLICABLE_RULE_IDS`, `RULE_APPROVAL_STATUS`, `BLOCKED_DECISIONS`, and `VERIFICATION_PLAN`. In the final task/review report, state `RULE_IDS_CONSULTED`, `CONFLICTS_OR_EXCEPTIONS`, `TESTS_RUN`, `NOT_RUN`, and `EVIDENCE_STATUS`. Do not describe proposed rules as enforced/approved.
+4. If a requested action depends on an unresolved protocol, RF/legal, ISR/timing, security, pinout or interface decision, or requires edits outside authorized paths, **STOP_AND_REPORT** the decision/owner and seek explicit authorization. Reading the Draft never grants permission to change contracts, transmit RF, flash hardware, auto-merge or upgrade G0–G6.
+
+If the Standard is unavailable or cannot be read, record the blocker and request the missing source; do not silently claim conformance. Existing supervised-agent pilot constraints, Host/Auditor separation, and human review/merge controls below remain unchanged.
+
 ## Architecture and authority
 - ESP32 + SX1276, ESP-IDF/FreeRTOS, pure C; custom LoRa **P2P**, not LoRaWAN. Gateway executes real-time hybrid TDMA locally; Go backend plans/version-controls schedules.
 - Approved requirements/ADRs and versioned `contracts/` outrank Agent output. Semtech datasheet (correct revision) governs register semantics. Human verification governs real RF/HIL/timing claims.
