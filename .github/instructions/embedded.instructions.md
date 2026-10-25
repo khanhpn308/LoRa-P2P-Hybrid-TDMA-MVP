@@ -11,4 +11,4 @@ CRC is not cryptographic authentication. Reject unversioned/unvalidated schedule
 
 ## Agent-first C standard v2 — discovery only
 
-For a scoped firmware Issue, agents MAY consult [`C_CODING_STANDARD_V2.md`](../../docs/development/firmware/C_CODING_STANDARD_V2.md) by relevant module/rule ID. **It is a DRAFT and NOT_APPROVED:** its proposed rules do not override this file, `AGENTS.md`, approved ADRs or versioned contracts. Do not apply draft-only requirements as mandatory until an explicitly reviewed activation change; never infer RF/HIL/security PASS from the rulebook.
+For a scoped firmware Issue, AI Workers and Auditors MUST read and assess the applicable sections/Rule IDs of [`C_CODING_STANDARD_V2.md`](../../docs/development/firmware/C_CODING_STANDARD_V2.md), as routed by `AGENTS.md`; report consulted IDs, approval status, blocked decisions and required evidence. **It is a DRAFT and NOT_APPROVED:** its proposed rules do not override this file, `AGENTS.md`, approved ADRs or versioned contracts. Do not apply draft-only requirements as mandatory until an explicitly reviewed activation change; never infer RF/HIL/security PASS from the rulebook.
