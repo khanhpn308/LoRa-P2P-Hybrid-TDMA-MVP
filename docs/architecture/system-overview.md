@@ -1,45 +1,54 @@
-# System Architecture — Baseline 1.1 (DRAFT)
+# Kiến trúc hệ thống, baseline R1
 
-Status: DESIGN-READY FOR FEASIBILITY, **NOT RF CERTIFIED / NOT PERFORMANCE VERIFIED**.
-Source of design intent: the team's Hybrid TDMA architecture; detailed numeric claims in the planning draft are hypotheses to test, not accepted baselines.
+Status: `DRAFT / DESIGN-READY FOR FEASIBILITY`. RF, timing và HIL: `NOT_VERIFIED`. Remediation [#60](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/60) không chứng minh implementation. Firmware vẫn là scaffold theo [AGENTS.md](../../AGENTS.md).
 
-## Boundary and roles
+## Quyết định và phạm vi
+
+[ADR-0001](../adr/0001-hybrid-tdma.md) giữ hướng Gateway-local Hybrid TDMA với Custom LoRa P2P MAC. [ADR-0002](../adr/0002-mqtt-5.md) chọn MQTT 5.0 ở mức `OWNER_ACCEPTED`; cross-team review còn `PENDING`, implementation `NOT_VERIFIED`. [ADR-0003](../adr/0003-esp-idf-v6-1.md) ghi owner approval cho exact ESP-IDF `v6.1`, pin tại [esp-idf-version.txt](../../firmware/esp-idf-version.txt). Các approval này không phê duyệt toàn bộ system design.
 
 ```mermaid
 flowchart TB
   USERS[Admin / Operator / Viewer] <--> CLIENTS[React Web / Flutter Mobile]
   CLIENTS <-->|HTTPS / WSS| GO[Go Modular Monolith + PostgreSQL]
-  GO <-->|MQTT v3.1.1 or v5 - decision TBD; TLS| BROKER[Mosquitto]
-  BROKER <-->|Wi-Fi / MQTT| GW[ESP32 + SX1276 Gateway: Local TDMA Master]
-  GW <-->|LoRa P2P: versioned custom MAC| NODES[10-15 ESP32 + SX1276 Nodes]
+  GO <-->|MQTT 5.0 / TLS| BROKER[Mosquitto]
+  BROKER <-->|Wi-Fi / MQTT 5.0 / TLS| GW[ESP32 + SX1276 Gateway: Local TDMA Master]
+  GW <-->|LoRa P2P / Custom MAC draft| NODES[ESP32 + SX1276 Nodes]
 ```
 
-The **Backend Go** plans future versioned schedules, APIs, alerts and records; it never sends individual slot start/stop commands.
-The **Gateway** validates, stages, announces and activates a schedule at a safe superframe boundary. It independently controls half-duplex RF, beacon, ACK, local airtime enforcement and fallback schedule during Wi-Fi/MQTT failure.
-The **Nodes** measure sensors, detect local alarms, synchronize to beacons, obey owned slots, and use a separately designed bounded priority-access mechanism.
+Nguồn sơ đồ: ADR-0001/0002, [deployment contexts](deployment.md), [contract index](../../contracts/README.md). Quy mô thử nghiệm trong planning không phải capacity đã nghiệm thu; xem MAC-001 và ALERT-001 trong [RTM](../requirements/requirements.md#rtm).
 
-## Five logical layers
+## Ranh giới trách nhiệm
 
-1. Edge & RF: ESP-IDF/C, FreeRTOS, SX1276, custom LoRa P2P MAC and TDMA.
-2. Transport: Wi-Fi/IP, Mosquitto MQTT secured with TLS/ACL outside a restricted local dev environment.
-3. Application & data: Go modular monolith, PostgreSQL; Redis/InfluxDB not in initial scope.
-4. Presentation: React/TypeScript initial target; Flutter mobile optional later.
-5. Identity & governance: authn, server-side RBAC, audit and operational controls.
+| Thành phần | Control plane | Data plane và recovery | Nguồn / RTM |
+|---|---|---|---|
+| Backend Go | Planner tạo, lưu, quản lý version/review của lịch tương lai; không bật/tắt TX/RX từng slot | Validate MQTT, dedup, lưu PostgreSQL; REST/WSS và reconcile sau reconnect | ADR-0001/0002; [MQTT semantics §§2–4](../../contracts/mqtt/semantic-rules.md); SYS-001, DATA-001, MAC-003 |
+| Gateway | Executor validate, persist shadow, quảng bá và chọn local activation boundary | Single-radio half-duplex, Beacon/ACK, local airtime; tiếp tục active schedule còn an toàn khi mất backhaul; bounded buffer | [TDMA §§2–3](../../contracts/radio-mac/tdma-schedule.md); MAC-003/005/006, SYS-001/002 |
+| Node | Xác thực Beacon/session/mapping; chỉ dùng slot/cửa sổ ưu tiên được phép | Đọc sensor, phát hiện alarm cục bộ, sync/holdover có điều kiện; ngừng periodic TX nếu không còn an toàn | [Radio MAC §§1/3/4](../../contracts/radio-mac/specification.md); MAC-002/004/007, SEC-001 |
+| Mosquitto | Xác thực principal, topic ACL, session/expiry | QoS 1 vận chuyển; PUBACK không chứng minh DB commit hay Node execution | [topics §§1–4](../../contracts/mqtt/topics.md); SEC-002, DATA-001/002 |
+| React / Flutter | Gửi yêu cầu qua Backend có server-side RBAC | Hiển thị, dedup và REST resync khi WSS mất continuity; không truy cập MQTT/DB trực tiếp | [API semantics](../../contracts/api/contract-semantics.md); INT-002 |
 
-## Engineering invariants
+Đây là decomposition logic, không áp đặt tên task, core affinity hoặc stack/queue size từ planning. Firmware tách driver, MAC, TDMA và airtime policy theo [embedded instructions](../../.github/instructions/embedded.instructions.md). Backend giữ modular monolith + PostgreSQL, không thêm Redis/InfluxDB/microservices theo ADR-0001 và AGENTS.md.
 
-- Single SX1276 transceiver is half-duplex; no simultaneous GW TX and RX.
-- No blocking Wi-Fi/MQTT calls or SPI operations inside radio ISR.
-- Backend schedules are **plans**; Gateway/Node execute local timing.
-- A schedule is never activated mid-superframe. Missed announcements, resets and version wrap must fail safely.
-- Every transmission obeys local airtime restrictions, including beacons, acknowledgments and retransmissions.
-- LoRa P2P is **not LoRaWAN**, no ChirpStack, OTAA, Class A, LoRaWAN FPort or LoRaWAN FUOTA.
-- CRC detects accidental corruption, not malicious modification. RF command authentication/anti-replay is mandatory design work before deploying outside controlled tests.
+## Bất biến và giới hạn an toàn
 
-## Unverified design inputs (no hardcoded guarantees)
+- Gateway là local TDMA Master; MQTT không phải clock từng slot. Không activate giữa superframe. `STAGE_ACK` khác `ACTIVE_REPORT`; Backend kiểm actual report trước ACTIVE. Nguồn: ADR-0001, MQTT semantics §4; MAC-003.
+- Một radio không TX/RX đồng thời. Single Radio Owner tuần tự hóa SPI/modem; ISR/timer chỉ timestamp và notify có giới hạn, không SPI hoặc blocking network. Nguồn: embedded instructions, Radio MAC §4; FW-002/003, MAC-005.
+- Mọi TX gồm Beacon, ACK, retry, join và alarm đều qua local airtime admission. Profile/policy chưa được xác minh không tạo quyền TX. Nguồn: Radio MAC §4, [D03](../../contracts/OPEN_DECISIONS.md); RF-001, MAC-006.
+- CRC không xác thực mật mã. TLS/MQTT identity không thay RF authentication, nonce uniqueness hoặc anti-replay. Không production codec trước security/wire approval. Nguồn: Radio MAC §§2–3, D01/D11; SEC-001/003/004.
+- Backhaul mất không vô hiệu hóa local safety. Active chỉ tiếp tục nếu còn hợp lệ; shadow không tự activate sau reboot. Proposal `expires_at` không tự trở thành lease của active schedule. Nguồn: TDMA §3, MQTT semantics §4; SYS-001/002.
 
-SF/BW/CR and frequency/channel, power/ERP/antenna, PHY payload sizes, 8-byte header, superframe 10 s, three 400 ms data slots per subframe, beacon 10 s, synchronization jitter +/-10 us, 1%/10% treatment and <3 s end-to-end alert are **TBD or targets** pending RF-regulatory and HIL evidence. Validate applicability of local 920–923 MHz LPWAN conditions based on actual device classifications.
+## Tham số chưa được nghiệm thu
 
-## Review dependencies
+| Miền | Trạng thái và hành động cần có theo nguồn |
+|---|---|
+| Frequency, SF/BW/CR, power/ERP, antenna, duty treatment | D03 `BLOCKED G1`; RF/Hardware xác minh silicon, front-end, board revision và điều kiện pháp lý cho thiết bị/kịch bản trước TX. Nhãn module không là approval. |
+| Header, endianness, cipher/tag, nonce/session/key lifecycle | D01/D11 `BLOCKED G2`; Node/Gateway/Security/Backend review và golden C↔Go vectors trước freeze. |
+| Superframe/slot/guard, IRQ jitter, drift, holdover/recovery threshold | D02/D04/D05 `CANDIDATE / NOT_VERIFIED`; đo riêng ToA RF, command-to-IRQ, IRQ-to-task và clock drift; owner chọn margin sau HIL. |
+| Alarm latency | Research target, chưa là SLA; xác định endpoints, concurrent alarms, RF load và phân phối đo. Không gán hard real-time guarantee cho mobile push. |
+| GPIO, task/core priorities, stack/queue sizes | Không kế thừa demo. Board mapping cần G1; resource budgets cần review và stress/HIL evidence. |
 
-See `docs/requirements/requirements.md`, `docs/verification/acceptance-gates.md`, `contracts/` and ADRs. Edits to a contract require Gateway, Node and/or Backend owners to review.
+Nguồn: [OPEN_DECISIONS](../../contracts/OPEN_DECISIONS.md), [G1–G6](../verification/acceptance-gates.md), [Issue #11](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/11), [vector plan](../../contracts/radio-mac/test-vectors/README.md), embedded instructions. Profile `P-10S-15` và numeric examples trong TDMA §1 chỉ là candidate mock/simulation, không là production baseline. R1 không sửa contracts hoặc chốt tham số.
+
+## Truy vết và nghiệm thu
+
+Xem [RTM](../requirements/requirements.md#rtm), [interface ownership](interfaces.md), [ADR register](../adr/README.md), [contract verification](../../contracts/verification.md), [audit R1](../development/firmware/ARCHITECTURE_DOCUMENTATION_AUDIT.md). Theo acceptance gates và AGENTS.md, design approval độc lập với verification; syntax/schema/build/simulation không thay HIL/RF/security evidence. Closed Issue hoặc tài liệu tồn tại không đủ để gán PASS.
