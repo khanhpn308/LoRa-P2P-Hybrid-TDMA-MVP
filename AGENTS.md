@@ -4,6 +4,18 @@
 
 Read `.github/copilot-instructions.md`, `.github/instructions/embedded.instructions.md`, `docs/architecture/system-overview.md`, `docs/verification/acceptance-gates.md`, and `docs/development/agent-harness-firmware.md` before firmware tasks.
 
+## Go Backend standard routing — AI Workers and Auditors
+
+For any Issue authorizing a change within `backend-go/**`, **every AI Worker and AI Auditor MUST read and assess** the applicable sections and Rule IDs of [Go Backend Engineering Standard v2.0.0-DRAFT](docs/development/backend-go/GO_BACKEND_ENGINEERING_STANDARD_V2.md) before editing or issuing a verdict. Reading is an active routing requirement; **the standard remains `PROPOSED / NOT_APPROVED`** and does not supersede approved requirements, ADRs, versioned contracts or the Issue's allowed paths.
+
+1. Read v2 metadata/§0, Google source precedence/§1, affected v1-mapped rule groups/§2, contract conflict table/§3 and evidence contract/§4. Do **not** load 134 rules when only one module group is relevant.
+2. Preflight: inspect real `backend-go/go.mod`, root `.go-version`, branch/worktree, correct Go toolchain, `.github/instructions/backend.instructions.md`, `contracts/mqtt/**` and `contracts/api/**` as relevant. Go's actual implementation behavior, source approval status and pending D01–D13 decisions matter more than a Draft rule.
+3. Before modifying code, report `APPLICABLE_RULE_IDS`, `RULE_APPROVAL_STATUS`, `CONTRACT_CONFLICTS`, `BLOCKED_DECISIONS`, `ISSUE_ALLOWED_PATHS` and `TEST_PLAN`. Final report: `RULE_IDS_CONSULTED`, `GO_TOOLCHAIN`, `TESTS_RUN`, `NOT_RUN`, `EVIDENCE_STATUS`, `PR_URL` and outstanding human reviews.
+4. **STOP_AND_REPORT** when a task requires unauthorized file/dependency, credentials/security scheme, RF/MAC wire changes or unapproved MQTT state/ACK transitions. In particular, v1 `MQ-009` does not authorize direct `PROPOSED/SENT/EXPIRED → ACTIVE` when draft MQTT semantics currently describe `STAGED → ACTIVE`; escalate reconciliation policy rather than choosing silently.
+5. Do not auto-approve/merge, treat scaffold build as an integrated service, or infer HIL/RF/G4/G5 PASS. Current firmware Harness/pilot restrictions below remain unchanged and must **not** be interpreted as granting unattended Go Agent execution privileges.
+
+If the v2 Draft source cannot be read or conflicts with approved authority, mark `NOT_VERIFIED/BLOCKED` as appropriate rather than asserting conformance. Google Go Style [Guide](https://google.github.io/styleguide/go/guide) governs canonical style, [Decisions](https://google.github.io/styleguide/go/decisions) supplements it, and [Best Practices](https://google.github.io/styleguide/go/best-practices) are advisory; none defines radio/network business contracts.
+
 ## Firmware standard routing — AI Workers and Auditors
 
 For an Issue whose approved `Target Directories (allowed paths)` include `firmware/**` or a file beneath `firmware/`, **every AI Worker and AI Auditor MUST read and assess** the applicable parts of [C Firmware Coding Standard v2.0.0-DRAFT](docs/development/firmware/C_CODING_STANDARD_V2.md) **before proposing code changes or issuing a review verdict**. This read requirement is active as an agent-routing instruction; the Standard itself remains `PROPOSED / NOT_APPROVED` and is **not an approved engineering-policy replacement**.
