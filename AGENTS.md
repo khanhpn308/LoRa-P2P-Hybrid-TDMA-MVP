@@ -4,6 +4,12 @@
 
 Always read `.github/copilot-instructions.md` and the active Issue's exact `Target Directories (allowed paths)` before routing.
 
+## Task Start Gate — mandatory pre-edit handshake
+
+Before any **write/implementation** task, AI Workers and Auditors MUST consult [AI Task Start Protocol](docs/development/AI_TASK_START_PROTOCOL.md) and the active Issue, then complete the scoped `INTAKE → ISSUE_SCOPE → REPO_PREFLIGHT → SELECTIVE_CONTEXT → IMPACT_DISCOVERY → DECISION_GATE → PRE_EDIT_HANDOFF` sequence. The deterministic Host/Human, not the Worker, decides `START_READY | READ_ONLY | BLOCKED`. Do not edit before `START_READY`; produce the canonical 9-field pre-edit report (see protocol §2) and preserve the exact unified final-report fields below. Ordinary answers and authorized research may remain `READ_ONLY` without creating or modifying repository files.
+
+For `firmware/**` use only relevant C v2 Rule IDs; for `backend-go/**` use only relevant Go v2 Rule IDs; for cross-component work inspect both plus current contracts. Source graph and discovered paths never expand Issue scope. The new protocol is `PROPOSED / NOT_APPROVED`; mandatory consultation does not activate draft-only engineering requirements, autonomous harness execution, auto-merge, RF TX, flash or G0–G6 PASS.
+
 ## Context hygiene & Do-Not-Load files
 
 To avoid context dilution and v1/v2 rule collisions during implementation or code review:
