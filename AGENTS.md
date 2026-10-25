@@ -1,6 +1,6 @@
 # Firmware AI Harness — repository entry point
 
-> Status: DRAFT for Issue #30. This file is instructions, NOT evidence of runtime activation.
+> Status: P0 Issue #30 remains DRAFT. For the single **operator-supervised Issue #47 pilot**, the active choice is **Gemini Worker + Gemini Auditor through two separate direct Antigravity CLI sessions**. No unattended AGY Harness integration is authorized.
 
 Read `.github/copilot-instructions.md`, `.github/instructions/embedded.instructions.md`, `docs/architecture/system-overview.md`, `docs/verification/acceptance-gates.md`, and `docs/development/agent-harness-firmware.md` before firmware tasks.
 
@@ -14,8 +14,8 @@ Read `.github/copilot-instructions.md`, `.github/instructions/embedded.instructi
 
 ## Roles and execution order
 1. **Host Coordinator (deterministic):** Issue/scope validation, clean branch/worktree, bounded process timeouts, compiler/test logs, diff checks, evidence manifest, human stop gates.
-2. **Worker (Codex in initial pilot):** modifies only paths authorized in the Issue, supplies tests and a change note. Cannot certify its own code.
-3. **Auditor (fresh Antigravity `agy` headless session):** read-only review of code/diff against requirements, datasheet, failure paths and coding standards. No editing, no shared Worker conversation. Return PASS/FAIL/INCONCLUSIVE with file:line findings and gaps.
+2. **Worker (Issue #47: Gemini via operator-direct `agy` CLI):** creates only the Issue-approved harmless README change in a controlled branch under human-supervised permissions. Cannot certify its own code. The Codex Worker and adapters in P0/P1 historical draft are legacy and NOT the Worker for this pilot.
+3. **Auditor (fresh operator-direct Antigravity `agy` Gemini session):** review immutable, read-only snapshot without sharing the Worker's conversation or writable working tree. No edits/tools granted. Return PASS/FAIL/INCONCLUSIVE with file:line findings and gaps. Sessions differ, but Gemini Worker and Auditor are **not model/provider-independent**.
 4. **Human engineer:** RF/hardware/ISR/timer/security/contract decisions, HIL measurement approval, PR review and merge.
 
 The Host, never an Agent's text or exit code alone, decides whether a gate passed. `agy` must return `status=SUCCESS`, schema-valid `structured_output` and complete exact `reviewed_scope`. AGY's read-only instruction is NOT a security boundary; a disposable environment is required for unattended execution. Flow: Issue -> isolated branch -> Worker -> scope gate -> deterministic tests/build -> independent Auditor -> evidence -> DRAFT PR -> human review. A failed or unavailable gate is NOT_VERIFIED/FAIL and blocks acceptance.
@@ -28,4 +28,19 @@ The Host, never an Agent's text or exit code alone, decides whether a gate passe
 ## Verification semantics
 `CODE_WRITTEN` / `BUILD_VERIFIED` / `AUDIT_PASS` / `SIMULATION_VERIFIED` / `HIL_VERIFIED` / `RF_VERIFIED` are **independent evidence dimensions**. Missing proof is `NOT_VERIFIED`. Build or audit never implies hardware RF PASS.
 
-See the canonical workflow: [Firmware Agent Harness](docs/development/agent-harness-firmware.md).
+See historical P0 workflow: [Firmware Agent Harness](docs/development/agent-harness-firmware.md). **Current supervised pilot instructions:** [Dual AGY Pilot](docs/development/agy-supervised-pilot.md).
+
+
+## Integration guard — Issue #54
+
+On `main`, the selected user-facing supervised model is **Gemini Worker via
+operator-direct official `agy`** and a separate **Gemini Auditor via a fresh
+operator-direct `agy`** context. This is **not** the legacy P0
+`scripts/agent_harness/run.py --execute` pipeline, which still runs Codex
+Worker and is NOT approved for the dual-AGY workflow. The selected P1-B2
+`p1/pilot.py` is a **fake/simulated** deterministic coordinator, not a
+live provider adapter. Neither component may be passed off as autonomous
+Gemini-to-Gemini Harness execution. Consumer AGY credentials must never
+be embedded into a third-party autonomous Harness. H01/H02/H04 are
+NOT_VERIFIED. See `docs/development/agy-supervised-pilot.md` for the
+historical Issue #47 operator-only runbook.

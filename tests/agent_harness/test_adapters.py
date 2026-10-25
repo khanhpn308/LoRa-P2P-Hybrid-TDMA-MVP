@@ -61,5 +61,36 @@ class AdapterTests(unittest.TestCase):
                 codex.invoke("write", pathlib.Path(directory), 120)
 
 
+    def test_agy_rejects_extra_scope_in_mocked_invoke(self):
+        report = dict(REPORT, reviewed_scope=sorted(FILES) + ["unreviewed.py"])
+        payload = json.dumps({"status": "SUCCESS", "structured_output": report})
+        with tempfile.TemporaryDirectory() as directory, patch(
+                "adapters.antigravity.subprocess.run",
+                return_value=subprocess.CompletedProcess([], 0, payload, "")):
+            with self.assertRaises(antigravity.AuditError):
+                antigravity.invoke("Review", pathlib.Path(directory),
+                                   pathlib.Path(directory) / "schema.json", 120, FILES)
+
+    def test_agy_rejects_duplicate_raw_envelope_key(self):
+        payload = '{"status":"SUCCESS","status":"SUCCESS","structured_output":{}}'
+        with tempfile.TemporaryDirectory() as directory, patch(
+                "adapters.antigravity.subprocess.run",
+                return_value=subprocess.CompletedProcess([], 0, payload, "")):
+            with self.assertRaises(antigravity.AuditError):
+                antigravity.invoke("Review", pathlib.Path(directory),
+                                   pathlib.Path(directory) / "schema.json", 120, FILES)
+
+    def test_agy_rejects_extra_nested_audit_key(self):
+        report = dict(REPORT, surprise="unexpected")
+        payload = json.dumps({"status": "SUCCESS", "structured_output": report})
+        with tempfile.TemporaryDirectory() as directory, patch(
+                "adapters.antigravity.subprocess.run",
+                return_value=subprocess.CompletedProcess([], 0, payload, "")):
+            with self.assertRaises(antigravity.AuditError):
+                antigravity.invoke("Review", pathlib.Path(directory),
+                                   pathlib.Path(directory) / "schema.json", 120, FILES)
+
+
+
 if __name__ == "__main__":
     unittest.main()

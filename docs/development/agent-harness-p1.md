@@ -89,3 +89,34 @@ Next milestone: disposable model runtime with approved network allowlist and cre
 Current interface references:
 - https://antigravity.google/docs/cli/headless/
 - https://learn.chatgpt.com/docs/cli/reference
+
+
+## Issue #54 — P1-B2 offline integration to main (DRAFT, source-level only)
+
+**Scope: HOST_OFFLINE_INTEGRATION; execution/safety verification NOT_VERIFIED.**
+Historical P1-B2 work merged into intermediate branches in PRs #35–#38,
+#44, #46, and #48. The selected subset integrated under Issue #54 contains:
+
+- `p1/pilot.py` and `p1/pilot_demo.py`: SQLite CAS checkpoint and
+  simulated Worker → fake deterministic checks → fake Auditor, bounded retry
+  and recovery-required handling. The API explicitly labels its receipts
+  `SIMULATED`; do not wire live CLI callbacks into `run_simulated_cycle`.
+- A strict Host `adapters/antigravity.py` parser, exact canonical
+  `reviewed_scope` enforcement and P0/P1 regression tests from Issue #43.
+- A record of the user-selected, **operator-direct Gemini Worker + fresh
+  Gemini Auditor AGY CLI** from Issue #47; these are two separate sessions
+  but are NOT model/provider-independent. See
+  [supervised pilot record](agy-supervised-pilot.md).
+
+**Out of scope:** Docker/provider-runtime modules, live model probes, API
+keys, credential/egress configuration, automated AGY subprocess orchestration,
+GitHub PR publishing and changes to firmware/MAC/MQTT/API/DB contracts.
+
+**Critical executable distinction:** `scripts/agent_harness/run.py --execute`
+is the historical P0 entrypoint that still imports **Codex Worker and AGY
+Auditor**; it is NOT a Gemini Worker entrypoint, and this integration does not
+enable or authorize its live use. User-supplied local Issue #47 audit receipts
+and unit/CI software results are not runtime isolation, HIL, RF, or autonomous
+E2E evidence. H01/H02/H04 and M01/M02 await separate human review/disposition.
+If the provider requires unsupported third-party consumer-account embedding,
+automatic worker/auditor execution remains BLOCKED.
