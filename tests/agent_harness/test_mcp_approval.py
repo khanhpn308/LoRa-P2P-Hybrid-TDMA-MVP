@@ -16,10 +16,15 @@ import uuid
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts/agent_harness"))
 from mcp_approval import ApprovalAuthority, _ACTIONS, canonical, _strict_json
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from cryptography.hazmat.primitives import serialization
+try:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives import serialization
+except ImportError:
+    Ed25519PrivateKey = None
+    serialization = None
 
 
+@unittest.skipIf(Ed25519PrivateKey is None, "MCP signer cryptography SDK not installed in core test environment")
 class ApprovalTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
