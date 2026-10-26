@@ -164,6 +164,33 @@ class ExecutionTests(unittest.TestCase):
             self.assertEqual(second["status"], "BLOCKED")
             self.assertEqual(host.call_count, 1)
 
+    def test_host_cli_blocks_stale_issue_before_journal_mutation(self):
+        import io
+        from contextlib import redirect_stdout
+        from types import SimpleNamespace
+        from p1 import cli as p1_cli
+        plan = SimpleNamespace(base_sha=self.sha, branch="feature/85-agent-aaaaaaaa",
+                               target=Path(self.tmp.name) / "candidate")
+        item = {"run_id": self.run_id, "issue": 85,
+                "issue_sha": self.issue_sha, "scope": (self.path,),
+                "worktree_plan": plan}
+        argv = ["p1/cli.py", "prepare", "--issue", "85",
+                "--source", str(self.repo), "--apply",
+                "--expected-base-sha", self.sha,
+                "--expected-issue-sha256", self.issue_sha]
+        stale = {"body": "Issue changed after grant",
+                 "scope": (self.path,), "title": "Changed"}
+        with patch.object(sys, "argv", argv), \
+             patch.object(p1_cli, "plan_payload", return_value=item), \
+             patch.object(p1_cli, "issue_info", return_value=stale), \
+             patch.object(p1_cli, "Journal") as journal, \
+             patch.object(p1_cli, "prepare") as git_mutation, \
+             patch.object(p1_cli.os, "umask"):
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(p1_cli.main(), 2)
+            journal.assert_not_called()
+            git_mutation.assert_not_called()
+
     def test_fixture_handoff_and_scope_transition(self):
         self._prepared()
         with patch.object(self.runner, "_enabled", return_value=True), \
