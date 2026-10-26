@@ -84,6 +84,8 @@ class ExecutionTests(unittest.TestCase):
             file.write_bytes(b"fixture command receipt\n")
             file.chmod(0o600)
             receipt[section][key] = {"exit_code": 0, "log": name, "log_sha256": _sha(file)}
+            if section == "builds":
+                receipt[section][key].update(cleanup_verified=True, containers_seen=1)
         self.runner._receipt(self.run_id, "CHECKS_VERIFIED", receipt)
         return dest, tree
 
