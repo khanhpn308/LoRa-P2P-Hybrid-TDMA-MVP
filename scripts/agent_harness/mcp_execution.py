@@ -235,6 +235,10 @@ class MCPExecution:
                             or log["exit_code"] != 0 or log["log"] != logname
                             or _sha(file) != log["log_sha256"]):
                         raise ValueError("Missing/changed command evidence")
+                    if section == "builds" and (log.get("cleanup_verified") is not True
+                            or not isinstance(log.get("containers_seen"), int)
+                            or log["containers_seen"] < 1):
+                        raise ValueError("Unproven Docker cleanup receipt")
             if stage == "AUDITOR_HANDOFF":
                 _check_snapshot(dest, receipt)
             if stage == "AWAIT_HUMAN":
