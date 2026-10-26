@@ -271,6 +271,15 @@ class MCPExecution:
                 raise ValueError("Host must first verify Worker scope")
             job = self._job(run_id)
             before = self._scope(run_id)
+            # P1 checks cover Harness and ESP-IDF firmware only.
+            # Backend/client/contracts have distinct test contracts and MUST
+            # never be marked verified by unrelated firmware builds.
+            supported_prefixes = (
+                "firmware/", "scripts/agent_harness/", "tests/agent_harness/",
+                "docs/", ".agents/agents/",
+            )
+            if any(not p.startswith(supported_prefixes) for p in before["paths"]):
+                return self._blocked("Changed component requires unsupported layer-specific tests")
             prior = json.loads((dest / "scope_verified.json").read_text())
             if before != prior:
                 raise ValueError("Candidate changed after scope receipt")
