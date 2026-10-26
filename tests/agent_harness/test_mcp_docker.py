@@ -52,8 +52,10 @@ class DockerTests(unittest.TestCase):
             self.assertIn(self.pin, argv)
             self.assertNotIn("/var/run/docker.sock", " ".join(argv))
             self.assertEqual(timeout, 1800)
+            (self.out / "gateway_master.cid").write_text("d"*64)
             return {"exit_code": 0, "log": outfile.name, "log_sha256": "c"*64}
-        with patch.object(self.runner, "_list", return_value=set()):
+        with patch.object(self.runner, "_list", return_value=set()), \
+             patch.object(self.runner, "_call", return_value=subprocess.CompletedProcess([], 1, b"", b"")):
             receipt = self.invoke(capture)
         self.assertEqual(receipt["cleanup_verified"], True)
         self.assertEqual(receipt["exit_code"], 0)
