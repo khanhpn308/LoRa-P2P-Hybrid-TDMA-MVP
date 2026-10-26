@@ -110,27 +110,57 @@ class ExecutionTests(unittest.TestCase):
     def _report(self):
         return {"status": "PASS", "findings": [], "limitations": [], "reviewed_scope": [self.path]}
 
-    def test_environment_flag_cannot_authorize_any_mutating_endpoint(self):
+    def test_env_flag_cannot_authorize_mutation_without_signed_grant(self):
         with patch.dict(os.environ, {"LORA_HARNESS_MUTATIONS": "operator-enabled"}), \
-                patch.object(self.host, "_run") as host, \
-                patch.object(self.runner, "_external") as disk:
-            for call in (lambda: self.runner.prepare(85, self.sha, self.issue_sha),
-                         lambda: self.runner.worker_handoff(self.run_id),
-                         lambda: self.runner.verify_worker(self.run_id),
-                         lambda: self.runner.run_checks(self.run_id),
-                         lambda: self.runner.auditor_handoff(self.run_id),
-                         lambda: self.runner.submit_audit(self.run_id, self._report())):
-                self.assertEqual(call()["status"], "BLOCKED")
+                patch.object(self.host, "preflight", return_value={
+                    "state": "PREFLIGHT_ONLY", "source_sha": self.sha,
+                    "issue_sha256": self.issue_sha, "approved_scope": [self.path],
+                }), \
+                patch.object(self.host, "_run") as host:
+            # No root-approved grant exists in this isolated test environment.
+            self.assertEqual(self.runner.prepare(85, self.sha, self.issue_sha)["status"], "BLOCKED")
+            self.assertEqual(self.runner.worker_handoff(self.run_id)["status"], "BLOCKED")
+            self.assertEqual(self.runner.verify_worker(self.run_id)["status"], "BLOCKED")
+            self.assertEqual(self.runner.run_checks(self.run_id)["status"], "BLOCKED")
+            self.assertEqual(self.runner.auditor_handoff(self.run_id)["status"], "BLOCKED")
+            self.assertEqual(self.runner.submit_audit(self.run_id, self._report())["status"], "BLOCKED")
             host.assert_not_called()
-            disk.assert_not_called()
 
-    def test_prepare_never_applies_even_if_execution_guard_is_overridden(self):
-        with patch.object(self.runner, "_enabled", return_value=True), \
-                patch.object(self.host, "preflight") as preview, \
+    def test_missing_operator_grant_blocks_before_worktree_side_effects(self):
+        preview = {"state": "PREFLIGHT_ONLY", "source_sha": self.sha,
+                   "issue_sha256": self.issue_sha, "approved_scope": [self.path]}
+        with patch.object(self.host, "preflight", return_value=preview), \
                 patch.object(self.host, "_run") as host:
             self.assertEqual(self.runner.prepare(85, self.sha, self.issue_sha)["status"], "BLOCKED")
-            preview.assert_not_called()
             host.assert_not_called()
+
+    def test_pinned_issue_mismatch_cannot_consume_grant(self):
+        preview = {"state": "PREFLIGHT_ONLY", "source_sha": self.sha,
+                   "issue_sha256": "0"*64, "approved_scope": [self.path]}
+        with patch.object(self.host, "preflight", return_value=preview), \
+                patch.object(self.host, "_run") as host:
+            self.assertEqual(self.runner.prepare(85, self.sha, self.issue_sha)["status"], "BLOCKED")
+            host.assert_not_called()
+
+    def test_signed_grant_is_consumed_only_once_before_host_apply(self):
+        preview = {"state": "PREFLIGHT_ONLY", "source_sha": self.sha,
+                   "issue_sha256": self.issue_sha, "approved_scope": [self.path]}
+        verified = {"grant_id": "d"*32, "issue": 85}
+        receipt = {"state": "PREPARED", "source_sha": self.sha,
+                   "issue_sha256": self.issue_sha, "approved_scope": [self.path],
+                   "run_id": self.run_id, "branch": "feature/85-agent-aaaaaaaa",
+                   "worktree": str(Path(self.tmp.name) / "candidate")}
+        with patch.object(self.host, "preflight", return_value=preview), \
+                patch.object(execution, "ApprovalAuthority") as authority, \
+                patch.object(self.host, "_run", return_value=receipt) as host:
+            authority.return_value.verify.return_value = verified
+            first = self.runner.prepare(85, self.sha, self.issue_sha)
+            self.assertEqual(first["status"], "PREPARED", first)
+            self.assertEqual(self.runner._state(self.run_id)[0]["approval_id"], verified["grant_id"])
+            self.assertIn("--expected-issue-sha256", host.call_args.args[1])
+            second = self.runner.prepare(85, self.sha, self.issue_sha)
+            self.assertEqual(second["status"], "BLOCKED")
+            self.assertEqual(host.call_count, 1)
 
     def test_fixture_handoff_and_scope_transition(self):
         self._prepared()
