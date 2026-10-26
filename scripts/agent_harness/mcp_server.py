@@ -2,7 +2,7 @@
 
 A MCP server exposes trusted Host capabilities. It does NOT start native
 Gemini/Codex model sessions or attest Auditor provenance. Require explicit
-operator execution enablement and client-side permissions before use.
+reviewed Host authorization before execution. Mutations currently fail closed.
 """
 from __future__ import annotations
 
@@ -41,11 +41,9 @@ def harness_prepare_issue(issue_number: int, approved_base_sha: str,
                           approved_issue_sha256: str) -> dict:
     """HOST MUTATION: create a dedicated pinned Git worktree and external journal.
 
-    Call ONLY after the operator explicitly approves the Issue and exact pins
-    returned from harness_preflight. Mutations are disabled by default;
-    LORA_HARNESS_MUTATIONS=operator-enabled is a trusted HOST setting, not
-    a user authorization primitive. Client MUST gate tool execution; never
-    auto-approve. No commits, pushes, PRs or main edits.
+    BLOCKED in this draft. This transport has no trustworthy Host approval
+    channel or atomic Issue-pin apply. Environment flags and client/model
+    claims cannot authorize execution. No commits, pushes, PRs or main edits.
     """
     return execution.prepare(issue_number, approved_base_sha, approved_issue_sha256)
 
@@ -70,8 +68,8 @@ def harness_verify_worker(run_id: str) -> dict:
 def harness_run_checks(run_id: str) -> dict:
     """HOST EXECUTION: bounded structure/Harness tests, two offline ESP-IDF builds.
 
-    Requires operator-enabled Host runtime and pinned image ID. Uses a
-    disposable firmware source copy, never the candidate bind-mounted RW.
+    BLOCKED pending reviewed Host authorization, isolated candidate tests,
+    and daemon-owned container lifecycle supervision. No Docker is started.
     Not HIL, RF, timing or tests for unrelated backend/client components.
     """
     return execution.run_checks(run_id)
@@ -101,15 +99,7 @@ def harness_submit_audit(run_id: str, audit_report: dict) -> dict:
 @mcp.tool()
 def harness_execution_status(run_id: str) -> dict:
     """Read external evidence stage and Host SQLite state. No Agent execution."""
-    try:
-        state, dest = execution._state(run_id)
-        host_state = host.status(run_id)
-        return {"status": state["stage"], "run_id": run_id,
-                "issue": state["issue"], "receipts": state.get("receipts", {}),
-                "evidence_dir": str(dest), "host_sqlite_state": host_state.get("state"),
-                "native_auditor_provenance": "NOT_VERIFIED"}
-    except (OSError, ValueError, KeyError):
-        return {"status": "BLOCKED", "reason": "External run not found"}
+    return execution.status(run_id)
 
 
 if __name__ == "__main__":

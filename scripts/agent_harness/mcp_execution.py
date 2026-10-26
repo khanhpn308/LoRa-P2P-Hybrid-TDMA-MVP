@@ -7,6 +7,10 @@ from __future__ import annotations
 
 import hashlib
 import fcntl
+from functools import wraps
+from contextlib import closing
+import stat
+import sqlite3
 import json
 import os
 from pathlib import Path
@@ -14,26 +18,105 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
-from typing import Any
 
-from mcp_host import HarnessMCPHost
+from mcp_host import HarnessMCPHost, bounded_run
+from adapters.antigravity import _reject_duplicate_object_keys, _reject_invalid_constant
 
 _RUN = re.compile(r"[0-9a-f]{32}\Z")
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _MAX_OUTPUT = 300_000
+_STAGES = ("PREPARED", "WORKER_HANDOFF", "SCOPE_VERIFIED", "CHECKS_VERIFIED",
+           "AUDITOR_HANDOFF", "AWAIT_HUMAN")
 _MAX_SOURCE_FILE = 6_000_000
 _MAX_FIRMWARE_FILES = 5000
 
 
 def _sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _read_json(path: Path) -> dict:
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                or info.st_mode & 0o077 or info.st_size > 100_000):
+            raise ValueError("Unsafe evidence file")
+        data = stream.read(100_001)
+    if len(data) > 100_000:
+        raise ValueError("Evidence too large")
+    value = json.loads(data, object_pairs_hook=_reject_duplicate_object_keys,
+                       parse_constant=_reject_invalid_constant)
+    if not isinstance(value, dict):
+        raise ValueError("Evidence must be an object")
+    return value
+
+
+def _check_snapshot(dest: Path, frozen: dict) -> None:
+    snapshot = dest / "snapshot"
+    if frozen["snapshot"] != str(snapshot) or snapshot.is_symlink() or not snapshot.is_dir():
+        raise ValueError("Invalid snapshot root")
+    expected = frozen["snapshot_files_sha256"]
+    actual = {}
+    size = 0
+    for count, item in enumerate(snapshot.rglob("*")):
+        if count >= 250:
+            raise ValueError("Snapshot entry budget exceeded")
+        info = item.stat(follow_symlinks=False)
+        if stat.S_ISDIR(info.st_mode):
+            continue
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("Nonregular snapshot input")
+        size += info.st_size
+        if info.st_size > 120_000 or size > 2_000_000 or len(actual) >= 100:
+            raise ValueError("Snapshot budget exceeded")
+        actual[item.relative_to(snapshot).as_posix()] = _sha(item)
+    if actual != {k: v for k, v in expected.items() if not k.startswith("deleted/")}:
+        raise ValueError("Snapshot files changed")
+
+
+def _stage(expected: str):
+    """Serialize the entire side effect, not just its final state write."""
+    def decorate(method):
+        @wraps(method)
+        def guarded(self, run_id, *args, **kwargs):
+            if not self._enabled():
+                return self._blocked("Host authorization unavailable; execution disabled")
+            fd = None
+            try:
+                dest = self._external(run_id)
+                fd = os.open(dest / ".lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                state, _ = self._state(run_id)
+                if state["stage"] != expected:
+                    raise ValueError("Out-of-order or repeated operation")
+                marker = dest / "operation.json"
+                if marker.exists() or marker.is_symlink():
+                    raise ValueError("Interrupted/failed operation requires manual recovery")
+                _atomic_json(marker, {"stage": expected, "operation": method.__name__})
+                result = method(self, run_id, *args, **kwargs)
+                if self._state(run_id)[0]["stage"] != expected:
+                    marker.unlink()
+                else:
+                    _atomic_json(dest / "failure.json", result)
+                return result
+            except (OSError, ValueError, KeyError, TypeError):
+                return self._blocked("Stage busy, invalid, or requires manual recovery")
+            finally:
+                if fd is not None:
+                    os.close(fd)
+        return guarded
+    return decorate
 
 
 def _atomic_json(path: Path, payload: dict) -> None:
-    data = json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2).encode()
+    data = json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False).encode()
     if len(data) > 100_000:
         raise ValueError("Host evidence exceeds size limit")
     tmp = path.with_name(path.name + ".tmp." + str(os.getpid()))
@@ -44,6 +127,11 @@ def _atomic_json(path: Path, payload: dict) -> None:
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, path)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     finally:
         if tmp.exists():
             tmp.unlink()
@@ -59,13 +147,14 @@ class MCPExecution:
         return {"status": "BLOCKED", "reason": reason}
 
     def _enabled(self) -> bool:
-        # Configure only after approving Host security scope. MCP hints are NOT authorization.
-        return os.environ.get("LORA_HARNESS_MUTATIONS") == "operator-enabled"
+        # No trustworthy per-call approval channel exists in this stdio server.
+        # An environment flag or model-supplied pins cannot authorize execution.
+        return False
 
     def _external(self, run_id: str, *, create: bool = False) -> Path:
         if not isinstance(run_id, str) or not _RUN.fullmatch(run_id):
             raise ValueError("Invalid run ID")
-        if self.root.is_symlink():
+        if self.root.is_symlink() or self.root.parent.resolve() != self.root.parent:
             raise ValueError("Evidence root symlink")
         if create:
             self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -74,54 +163,99 @@ class MCPExecution:
             raise ValueError("Evidence run symlink")
         if create:
             dest.mkdir(mode=0o700, exist_ok=False)
-        if not dest.is_dir():
-            raise ValueError("Run evidence not found")
+        for directory in (self.root, dest):
+            info = directory.stat(follow_symlinks=False)
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
+                    or info.st_mode & 0o077):
+                raise ValueError("Evidence directory must be private and Host-owned")
         return dest
 
     def _state(self, run_id: str) -> tuple[dict, Path]:
         dest = self._external(run_id)
-        file = dest / "run.json"
-        if not file.is_file() or file.is_symlink() or file.stat().st_size > 100_000:
-            raise ValueError("Evidence run record not present")
-        state = json.loads(file.read_text())
-        if state["run_id"] != run_id:
-            raise ValueError("Run ID mismatch")
+        state = _read_json(dest / "run.json")
+        if state["run_id"] != run_id or state["stage"] not in _STAGES:
+            raise ValueError("Run ID/stage mismatch")
+        if (not isinstance(state["issue"], int) or isinstance(state["issue"], bool)
+                or not 1 <= state["issue"] <= 2_147_483_647
+                or not _SHA.fullmatch(state["base_sha"])
+                or not re.fullmatch(r"[0-9a-f]{64}", state["issue_sha256"])):
+            raise ValueError("Invalid run pins")
+        from scope import parse_allowed_paths
+        scope = state["approved_scope"]
+        if not isinstance(scope, list) or not scope or len(scope) != len(set(scope)):
+            raise ValueError("Invalid approved scope")
+        parsed = parse_allowed_paths("## Target Directories (allowed paths)\n" +
+                                     "\n".join("- `" + name + "`" for name in scope))
+        if tuple(scope) != parsed:
+            raise ValueError("Noncanonical approved scope")
+        expected = _STAGES[1:_STAGES.index(state["stage"]) + 1]
+        if set(state["receipts"]) != set(expected):
+            raise ValueError("Incomplete evidence chain")
+        for stage in expected:
+            entry = state["receipts"][stage]
+            path = dest / (stage.lower() + ".json")
+            receipt = _read_json(path)
+            if entry != {"file": path.name, "sha256": _sha(path)}:
+                raise ValueError("Evidence receipt hash mismatch")
+            if stage == "CHECKS_VERIFIED":
+                for key, logname in (("structure", "structure.log"),
+                                     ("harness_unit", "harness-unit.log"),
+                                     ("gateway_master", "gateway_master.log"),
+                                     ("sensor_node", "sensor_node.log")):
+                    section = "tests" if key in ("structure", "harness_unit") else "builds"
+                    log = receipt[section][key]
+                    file = dest / logname
+                    info = file.stat(follow_symlinks=False)
+                    if (not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_OUTPUT
+                            or log["exit_code"] != 0 or log["log"] != logname
+                            or _sha(file) != log["log_sha256"]):
+                        raise ValueError("Missing/changed command evidence")
+            if stage == "AUDITOR_HANDOFF":
+                _check_snapshot(dest, receipt)
+            if stage == "AWAIT_HUMAN":
+                _read_json(dest / "auditor-report.json")
+                if _sha(dest / "auditor-report.json") != receipt["auditor_report_sha256"]:
+                    raise ValueError("Auditor report changed")
+        for stage in _STAGES[1:]:
+            path = dest / (stage.lower() + ".json")
+            if stage not in expected and (path.exists() or path.is_symlink()):
+                raise ValueError("Uncommitted receipt requires manual recovery")
         return state, dest
 
     def _receipt(self, run_id: str, stage: str, data: dict) -> None:
-        _, dest = self._state(run_id)
-        lockpath = dest / ".lock"
-        fd = os.open(lockpath, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            state, _ = self._state(run_id)
-            current = state["stage"]
-            transitions = {
-                "PREPARED": "WORKER_HANDOFF",
-                "WORKER_HANDOFF": "SCOPE_VERIFIED",
-                "SCOPE_VERIFIED": "CHECKS_VERIFIED",
-                "CHECKS_VERIFIED": "AUDITOR_HANDOFF",
-                "AUDITOR_HANDOFF": "AWAIT_HUMAN",
-            }
-            if transitions.get(current) != stage:
-                raise ValueError("Out-of-order or repeated stage")
-            receipt = dest / (stage.lower() + ".json")
-            if receipt.exists() or receipt.is_symlink():
-                raise ValueError("Stage receipt already exists")
-            _atomic_json(receipt, data)
-            state["stage"] = stage
-            state.setdefault("receipts", {})[stage] = {
-                "file": receipt.name, "sha256": _sha(receipt)
-            }
-            _atomic_json(dest / "run.json", state)
-        finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-            os.close(fd)
+        # Caller holds the operation lock, including all preceding side effects.
+        state, dest = self._state(run_id)
+        if _STAGES.index(stage) != _STAGES.index(state["stage"]) + 1:
+            raise ValueError("Out-of-order or repeated stage")
+        receipt = dest / (stage.lower() + ".json")
+        if receipt.exists() or receipt.is_symlink():
+            raise ValueError("Stage receipt already exists")
+        _atomic_json(receipt, data)
+        state["stage"] = stage
+        state["receipts"][stage] = {"file": receipt.name, "sha256": _sha(receipt)}
+        _atomic_json(dest / "run.json", state)
 
     def _job(self, run_id: str) -> dict:
         response = self.host.status(run_id)
         if response.get("state") != "PREPARED":
             raise ValueError("Host job is not PREPARED")
+        state, _ = self._state(run_id)
+        for field, expected in (("run_id", run_id), ("issue", state["issue"]),
+                                ("source_sha", state["base_sha"]),
+                                ("worktree", state["worktree"]), ("branch", state["branch"])):
+            if response.get(field) != expected:
+                raise ValueError("Host journal and execution state disagree")
+        # Legacy status omits Issue/scope pins. Cross-check their real journal row.
+        if not self.host._journal_available():
+            raise ValueError("Host journal unavailable")
+        try:
+            with closing(sqlite3.connect(self.host.state.as_uri() + "?mode=ro", uri=True, timeout=1)) as db:
+                row = db.execute("SELECT issue_sha, scope_json FROM jobs WHERE run_id=?", (run_id,)).fetchone()
+            if (row is None or row[0] != state["issue_sha256"] or len(row[1]) > 100_000
+                    or json.loads(row[1]) != state["approved_scope"]):
+                raise ValueError("Host Issue/scope approval differs from execution record")
+        except sqlite3.Error as exc:
+            raise ValueError("Cannot validate Host journal pins") from exc
         return response
 
     def _scope(self, run_id: str) -> dict:
@@ -134,62 +268,42 @@ class MCPExecution:
         worktree = Path(job["worktree"])
         if not worktree.is_dir() or worktree.is_symlink():
             raise ValueError("Unsafe candidate directory")
-        ignored = subprocess.run(
+        ignored = bounded_run(
             ["git", "-C", str(worktree), "ls-files", "--others", "--ignored",
-             "--exclude-standard", "-z"],
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, timeout=30, check=False,
-        )
+             "--exclude-standard", "-z"], worktree, timeout=30, limit=_MAX_OUTPUT)
         if ignored.returncode or ignored.stdout:
             raise ValueError("Candidate contains ignored/untracked files")
+        state, _ = self._state(run_id)
+        from scope import violations
+        if (info.get("base_sha") != state["base_sha"] or not info.get("paths")
+                or violations(worktree, state["approved_scope"], info["paths"])):
+            raise ValueError("Candidate differs from approved base/scope")
         return info
 
-    def prepare(self, issue: int, base_sha: str, issue_sha256: str) -> dict:
-        """Prepare exactly the approved Issue and SHA; requires operator-enabled MCP runtime."""
-        if not self._enabled():
-            return self._blocked("Operator has not enabled mutating MCP execution")
-        if isinstance(issue, bool) or not isinstance(issue, int) or issue < 1:
-            return self._blocked("Invalid Issue")
-        if not isinstance(base_sha, str) or not _SHA.fullmatch(base_sha):
-            return self._blocked("Invalid source pin")
-        if not isinstance(issue_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", issue_sha256):
-            return self._blocked("Invalid Issue SHA-256")
-        preview = self.host.preflight(issue)
-        if (preview.get("state") != "PREFLIGHT_ONLY" or
-                preview.get("source_sha") != base_sha or
-                preview.get("issue_sha256") != issue_sha256):
-            return self._blocked("Issue/source changed since preflight")
-        if not self.host._journal_available() and self.host.state.exists():
-            return self._blocked("Host state journal unsafe")
-        receipt = self.host._run("cli.py", [
-            "prepare", "--issue", str(issue), "--source", str(self.host.source),
-            "--state", str(self.host.state), "--expected-base-sha", base_sha,
-            "--apply",
-        ], timeout=115)
-        if (receipt.get("state") != "PREPARED" or
-                receipt.get("issue_sha256") != issue_sha256 or
-                receipt.get("source_sha") != base_sha):
-            return self._blocked("Host preparation was not verified; inspect journal")
-        run_id = receipt.get("run_id")
+    def status(self, run_id: str) -> dict:
         try:
-            dest = self._external(run_id, create=True)
-            _atomic_json(dest / "run.json", {
-                "issue": issue, "run_id": run_id, "base_sha": base_sha,
-                "issue_sha256": issue_sha256, "stage": "PREPARED",
-                "branch": receipt.get("branch"), "worktree": receipt.get("worktree"),
-                "approved_scope": receipt.get("approved_scope"),
-                "receipts": {}, "proof": "HOST_PREPARED_ONLY",
-            })
-            return {"status": "PREPARED", "run_id": run_id,
-                    "approved_scope": receipt.get("approved_scope"),
-                    "worktree": receipt.get("worktree"), "branch": receipt.get("branch"),
-                    "base_sha": base_sha, "evidence_dir": str(dest)}
-        except (OSError, ValueError) as exc:
-            return self._blocked("Host worktree prepared; evidence setup failed; manual recovery required")
+            state, dest = self._state(run_id)
+            job = self._job(run_id)
+            marker = dest / "operation.json"
+            if marker.exists() or marker.is_symlink():
+                return self._blocked("Operation active or manual recovery required")
+            if _STAGES.index(state["stage"]) >= 2:
+                frozen = _read_json(dest / "scope_verified.json")
+                if frozen != self._scope(run_id):
+                    raise ValueError("Candidate changed since verification")
+            return {"status": state["stage"], "run_id": run_id,
+                    "issue": state["issue"], "receipts": state["receipts"],
+                    "evidence_dir": str(dest), "host_sqlite_state": job["state"],
+                    "native_auditor_provenance": "NOT_VERIFIED"}
+        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+            return self._blocked("Run missing, inconsistent, or evidence changed")
 
+    def prepare(self, issue: int, base_sha: str, issue_sha256: str) -> dict:
+        """Fail closed until Host approval and atomic Issue-pin apply are reviewed."""
+        return self._blocked("Host authorization and atomic Issue approval unavailable; execution disabled")
+
+    @_stage("PREPARED")
     def worker_handoff(self, run_id: str) -> dict:
-        if not self._enabled():
-            return self._blocked("Execution disabled")
         try:
             state, _ = self._state(run_id)
             self._job(run_id)
@@ -207,9 +321,8 @@ class MCPExecution:
         except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
             return self._blocked(str(exc)[:160])
 
+    @_stage("WORKER_HANDOFF")
     def verify_worker(self, run_id: str) -> dict:
-        if not self._enabled():
-            return self._blocked("Execution disabled")
         try:
             state, _ = self._state(run_id)
             if state["stage"] != "WORKER_HANDOFF":
@@ -223,21 +336,26 @@ class MCPExecution:
             return self._blocked(str(exc)[:160])
 
     def _command(self, argv: list[str], cwd: Path, outfile: Path, timeout: int) -> dict:
-        """No shell/AI-provided command. Disk receipt bounded; stderr never returned to model."""
+        """Streaming cap on both pipes and disk; never return log text to MCP."""
+        start = time.monotonic()
+        created = False
         try:
             fd = os.open(outfile, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-            with os.fdopen(fd, "wb") as f:
-                start = time.monotonic()
-                p = subprocess.run(argv, cwd=cwd, stdin=subprocess.DEVNULL,
-                                   stdout=f, stderr=subprocess.STDOUT, check=False,
-                                   timeout=timeout)
-                elapsed = round(time.monotonic()-start, 3)
-            if outfile.stat().st_size > 50_000_000:
-                raise ValueError("Host command log too large")
-            return {"exit_code": p.returncode, "elapsed_seconds": elapsed,
+            created = True
+            with os.fdopen(fd, "wb") as stream:
+                result = bounded_run(argv, cwd, timeout=timeout, limit=_MAX_OUTPUT,
+                                     log=stream,
+                                     env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "LANG": "C.UTF-8"})
+            return {"exit_code": result.returncode,
+                    "elapsed_seconds": round(time.monotonic() - start, 3),
                     "log": outfile.name, "log_sha256": _sha(outfile)}
-        except (OSError, subprocess.TimeoutExpired, ValueError):
-            return {"exit_code": None, "status": "BLOCKED", "reason": "Host process failed/timed out"}
+        except (OSError, subprocess.SubprocessError, ValueError):
+            receipt = {"exit_code": None, "status": "BLOCKED",
+                       "elapsed_seconds": round(time.monotonic() - start, 3),
+                       "reason": "Host process failed, exceeded output limit, or timed out"}
+            if created:
+                receipt.update(log=outfile.name, log_sha256=_sha(outfile))
+            return receipt
 
     @staticmethod
     def _copy_firmware(source: Path, dest: Path) -> None:
@@ -272,10 +390,9 @@ class MCPExecution:
                 shutil.copyfile(f, target)
                 target.chmod(0o644)
 
+    @_stage("SCOPE_VERIFIED")
     def run_checks(self, run_id: str) -> dict:
-        """Deterministic host checks and two offline firmware builds on disposable copies."""
-        if not self._enabled():
-            return self._blocked("Execution disabled")
+        """Diagnostic Host tests only; no build PASS without daemon supervision."""
         image_id = os.environ.get("LORA_HARNESS_DOCKER_IMAGE_ID", "")
         if not _DIGEST.fullmatch(image_id):
             return self._blocked("Operator-pinned Docker image ID required")
@@ -283,18 +400,15 @@ class MCPExecution:
             state, dest = self._state(run_id)
             if state["stage"] != "SCOPE_VERIFIED":
                 raise ValueError("Host must first verify Worker scope")
-            job = self._job(run_id)
+            self._job(run_id)
             before = self._scope(run_id)
-            # P1 checks cover Harness and ESP-IDF firmware only.
-            # Backend/client/contracts have distinct test contracts and MUST
-            # never be marked verified by unrelated firmware builds.
+            # Trusted-source tests do not exercise candidate code changes.
             supported_prefixes = (
-                "firmware/", "scripts/agent_harness/", "tests/agent_harness/",
-                "docs/", ".agents/agents/",
+                "docs/", "tests/agent_harness/fixtures/pilot/",
             )
             if any(not p.startswith(supported_prefixes) for p in before["paths"]):
-                return self._blocked("Changed component requires unsupported layer-specific tests")
-            prior = json.loads((dest / "scope_verified.json").read_text())
+                return self._blocked("Candidate code needs isolated candidate tests/build cancellation; not supported")
+            prior = _read_json(dest / "scope_verified.json")
             if before != prior:
                 raise ValueError("Candidate changed after scope receipt")
             # Run fixed trusted structure/Harness tests (not model-controlled command).
@@ -308,51 +422,35 @@ class MCPExecution:
                 dest / "harness-unit.log", 240)
             if any(x.get("exit_code") != 0 for x in tests.values()):
                 return self._blocked("Host tests failed; read external log receipts")
-            # Copied source only; no original candidate bind mount. No host creds.
-            from p1.runtime_boundary import BuildBoundary
-            boundary = BuildBoundary(image_id)
-            builds = {}
-            with tempfile.TemporaryDirectory(prefix="lora-mcp-build-") as tmp:
-                scratch = Path(tmp) / "repo"
-                scratch.mkdir(mode=0o700)
-                self._copy_firmware(Path(job["worktree"]), scratch)
-                for app in ("gateway_master", "sensor_node"):
-                    command = boundary.command(scratch, app)
-                    builds[app] = self._command(command, self.host.source,
-                                                dest / (app+".log"), 1800)
-                    if builds[app].get("exit_code") != 0:
-                        return self._blocked("Offline firmware build failed; inspect receipts")
-            after = self._scope(run_id)
-            if before != after:
-                raise ValueError("Candidate SHA/scope changed during verification")
-            receipt = {"status": "CHECKS_VERIFIED", "run_id": run_id,
-                       "candidate": before, "tests": tests, "builds": builds,
-                       "image_id": image_id, "esp_idf": "v6.1",
-                       "hil": "NOT_VERIFIED", "rf": "NOT_VERIFIED"}
-            self._receipt(run_id, "CHECKS_VERIFIED", receipt)
-            return {"status": "CHECKS_VERIFIED", "run_id": run_id,
-                    "tests": tests, "builds": builds, "evidence_dir": str(dest)}
+            # Killing the Docker client does not prove daemon container termination.
+            # No approved daemon cleanup boundary exists here. Never start Docker.
+            return self._blocked("Docker lifecycle supervision unavailable; builds NOT_VERIFIED")
         except Exception as exc:
             return self._blocked("Host check incomplete: " + type(exc).__name__)
 
+    @_stage("CHECKS_VERIFIED")
     def auditor_handoff(self, run_id: str) -> dict:
         """Freeze actual candidate and context; no Gemini/Codex subprocess invoked."""
-        if not self._enabled():
-            return self._blocked("Execution disabled")
         try:
             state, dest = self._state(run_id)
             if state["stage"] != "CHECKS_VERIFIED":
                 raise ValueError("Checks must pass before audit handoff")
             self._job(run_id)
-            checks = json.loads((dest / "checks_verified.json").read_text())
+            checks = _read_json(dest / "checks_verified.json")
             candidate = self._scope(run_id)
             if candidate != checks["candidate"]:
                 raise ValueError("Candidate changed since tests")
             snapshot = dest / "snapshot"
             snapshot.mkdir(mode=0o700)
             # The Auditor must see the actual, pinned Issue Acceptance Criteria.
-            from p1.cli import issue_info
-            issue_body = issue_info(self.host.source, state["issue"])["body"]
+            response = bounded_run(
+                ["gh", "issue", "view", str(state["issue"]), "--repo",
+                 "khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP", "--json", "body,state"],
+                self.host.source, timeout=40, limit=65536)
+            issue = json.loads(response.stdout)
+            if response.returncode != 0 or issue["state"] != "OPEN":
+                raise ValueError("Issue unavailable or closed")
+            issue_body = issue["body"]
             if hashlib.sha256(issue_body.encode()).hexdigest() != state["issue_sha256"]:
                 raise ValueError("Issue body changed since approval")
             issue_copy = snapshot / "issue.md"
@@ -363,7 +461,8 @@ class MCPExecution:
             for reference in ("AGENTS.md", ".github/copilot-instructions.md",
                               "docs/development/agy-native-coordinator-sop.md"):
                 src = source_root / reference
-                if not src.is_file() or src.is_symlink() or src.stat().st_size > 120_000:
+                if (not src.is_file() or src.is_symlink() or src.resolve() != src
+                        or src.stat().st_size > 120_000):
                     raise ValueError("Required policy reference missing/unsafe")
                 dest_ref = snapshot / "source" / reference
                 dest_ref.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -372,7 +471,7 @@ class MCPExecution:
                 manifest["source/"+reference] = _sha(dest_ref)
             for name in candidate["paths"]:
                 item = source_root / name
-                if item.is_symlink():
+                if item.is_symlink() or item.resolve() != item:
                     raise ValueError("Symlink in audit input")
                 rel = snapshot / "source" / name
                 rel.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -380,12 +479,18 @@ class MCPExecution:
                     shutil.copyfile(item, rel)
                     rel.chmod(0o444)
                     manifest["source/"+name] = _sha(rel)
+                    if manifest["source/"+name] != candidate["files_sha256"].get(name):
+                        raise ValueError("Snapshot bytes differ from verified candidate")
                 else:
                     manifest["deleted/"+name] = "DELETED"
             schema = self.host.source / "scripts/agent_harness/adapters/audit.schema.json"
+            if schema.resolve() != schema or not schema.is_file() or schema.stat().st_size > 120_000:
+                raise ValueError("Unsafe audit schema")
             shutil.copyfile(schema, snapshot / "audit.schema.json")
             (snapshot / "audit.schema.json").chmod(0o444)
             manifest["audit.schema.json"] = _sha(snapshot / "audit.schema.json")
+            if candidate != self._scope(run_id):
+                raise ValueError("Candidate changed while freezing snapshot")
             receipt = {"status": "AUDITOR_HANDOFF", "run_id": run_id,
                        "candidate": candidate, "snapshot_files_sha256": manifest,
                        "snapshot": str(snapshot),
@@ -396,29 +501,21 @@ class MCPExecution:
         except Exception as exc:
             return self._blocked("Could not freeze audit snapshot: "+type(exc).__name__)
 
+    @_stage("AUDITOR_HANDOFF")
     def submit_audit(self, run_id: str, report: dict) -> dict:
         """Validate native Auditor's reported JSON; does NOT authenticate model provenance."""
-        if not self._enabled():
-            return self._blocked("Execution disabled")
         try:
             state, dest = self._state(run_id)
             if state["stage"] != "AUDITOR_HANDOFF":
                 raise ValueError("Auditor handoff is required")
             from adapters.antigravity import check_report
-            frozen = json.loads((dest / "auditor_handoff.json").read_text())
+            frozen = _read_json(dest / "auditor_handoff.json")
             candidate = self._scope(run_id)
             if candidate != frozen["candidate"]:
                 raise ValueError("Candidate changed after frozen snapshot")
-            snapshot = Path(frozen["snapshot"])
-            expected = frozen["snapshot_files_sha256"]
-            actual = {}
-            for item in snapshot.rglob("*"):
-                if item.is_symlink():
-                    raise ValueError("Snapshot symlink")
-                if item.is_file():
-                    actual[item.relative_to(snapshot).as_posix()] = _sha(item)
-            if actual != {k: v for k, v in expected.items() if not k.startswith("deleted/")}:
-                raise ValueError("Snapshot files changed")
+            _check_snapshot(dest, frozen)
+            if len(json.dumps(report, allow_nan=False).encode()) > 100_000:
+                raise ValueError("Audit report too large")
             checked = check_report(report, set(candidate["paths"]))
             if checked["status"] != "PASS":
                 return self._blocked("Auditor did not report PASS")
