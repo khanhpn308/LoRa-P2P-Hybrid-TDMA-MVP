@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import time
+import tempfile
 
 from mcp_host import HarnessMCPHost, bounded_run
 from mcp_approval import ApprovalAuthority, _HEX32
