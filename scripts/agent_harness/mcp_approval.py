@@ -104,10 +104,9 @@ class ApprovalAuthority:
         if set(envelope) != {"grant", "signature"}:
             raise ValueError("Approval envelope keys mismatch")
         grant, signature = envelope["grant"], envelope["signature"]
-        if not isinstance(grant, dict) or not isinstance(signature, str) or not _HEX64.fullmatch(signature):
-            # Ed25519 signature is 64 bytes = 128 hex chars.
-            if not isinstance(signature, str) or not re.fullmatch(r"[0-9a-f]{128}", signature):
-                raise ValueError("Invalid approval signature")
+        # Ed25519 signatures are 64 bytes = 128 lowercase hex characters.
+        if not isinstance(grant, dict) or not isinstance(signature, str):
+            raise ValueError("Invalid grant or signature")
         if not re.fullmatch(r"[0-9a-f]{128}", signature):
             raise ValueError("Invalid approval signature size")
         try:
@@ -139,6 +138,7 @@ class ApprovalAuthority:
 def _atomic_root_file(path: Path, data: bytes, mode: int) -> None:
     tmp = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
     fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, mode)
+    os.fchmod(fd, mode)
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(data)
@@ -168,6 +168,8 @@ def main() -> int:
     if args.operation == "init":
         root.mkdir(mode=0o755, exist_ok=True)
         (root / "approvals").mkdir(mode=0o755, exist_ok=True)
+        root.chmod(0o755)
+        (root / "approvals").chmod(0o755)
         if (root / "private.pem").exists() or (root / "public.pem").exists():
             parser.error("Key already initialized")
         key = Ed25519PrivateKey.generate()
