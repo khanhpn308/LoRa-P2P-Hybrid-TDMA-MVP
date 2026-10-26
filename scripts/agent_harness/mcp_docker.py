@@ -101,8 +101,9 @@ class DockerLifecycle:
         finally:
             # On ANY exception or timeout, cleanup remains mandatory.
             cleanup = self._cleanup(label, cidfile)
-        if receipt.get("exit_code") != 0 or not cleanup["cleanup_verified"]:
-            raise ValueError("Docker build failed or cleanup not verified")
+        if (receipt.get("exit_code") != 0 or not cleanup["cleanup_verified"]
+                or cleanup["containers_seen"] == 0):
+            raise ValueError("Docker build failed, missing container ID, or cleanup not verified")
         receipt.update(cleanup)
         receipt["image_id"] = image_id
         receipt["app"] = app
