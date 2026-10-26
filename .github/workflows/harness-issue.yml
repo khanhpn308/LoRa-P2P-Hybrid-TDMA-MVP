@@ -59,7 +59,7 @@ jobs:
 
       - name: Save sanitized report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: harness-issue-report-${{ github.run_id }}
           path: ${{ runner.temp }}/harness-evidence/result.json
