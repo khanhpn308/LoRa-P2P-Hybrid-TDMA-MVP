@@ -22,6 +22,7 @@ import time
 
 from mcp_host import HarnessMCPHost, bounded_run
 from mcp_approval import ApprovalAuthority, _HEX32
+from mcp_docker import DockerLifecycle
 from adapters.antigravity import _reject_duplicate_object_keys, _reject_invalid_constant
 
 _RUN = re.compile(r"[0-9a-f]{32}\Z")
@@ -489,7 +490,7 @@ class MCPExecution:
             before = self._scope(run_id)
             # Trusted-source tests do not exercise candidate code changes.
             supported_prefixes = (
-                "docs/", "tests/agent_harness/fixtures/pilot/",
+                "docs/", "firmware/", "tests/agent_harness/fixtures/pilot/",
             )
             if any(not p.startswith(supported_prefixes) for p in before["paths"]):
                 return self._blocked("Candidate code needs isolated candidate tests/build cancellation; not supported")
@@ -507,9 +508,33 @@ class MCPExecution:
                 dest / "harness-unit.log", 240)
             if any(x.get("exit_code") != 0 for x in tests.values()):
                 return self._blocked("Host tests failed; read external log receipts")
-            # Killing the Docker client does not prove daemon container termination.
-            # No approved daemon cleanup boundary exists here. Never start Docker.
-            return self._blocked("Docker lifecycle supervision unavailable; builds NOT_VERIFIED")
+            # Build only on a fresh disposable copy of candidate firmware.
+            # Docker containers are daemon-owned: the supervisor *must* observe
+            # and verify cleanup of the run/app label even after CLI timeout.
+            builds = {}
+            with tempfile.TemporaryDirectory(prefix="lora-harness-build-") as tmp:
+                scratch = Path(tmp).resolve()
+                self._copy_firmware(Path(state["worktree"]), scratch)
+                docker = DockerLifecycle()
+                for app in ("gateway_master", "sensor_node"):
+                    builds[app] = docker.build(
+                        run_id=run_id, app=app, image_id=image_id,
+                        scratch=scratch, evidence=dest,
+                        command_runner=lambda argv, outfile, timeout:
+                            self._command(argv, self.host.source, outfile, timeout))
+            after = self._scope(run_id)
+            if after != before:
+                raise ValueError("Candidate changed while performing Docker builds")
+            receipt = {
+                "status": "CHECKS_VERIFIED", "run_id": run_id,
+                "candidate": before, "tests": tests, "builds": builds,
+                "image_id": image_id, "esp_idf": "v6.1",
+                "hil": "NOT_VERIFIED", "rf": "NOT_VERIFIED",
+            }
+            self._receipt(run_id, "CHECKS_VERIFIED", receipt)
+            return {"status": "CHECKS_VERIFIED", "run_id": run_id,
+                    "tests": tests, "builds": builds, "image_id": image_id,
+                    "evidence_dir": str(dest)}
         except Exception as exc:
             return self._blocked("Host check incomplete: " + type(exc).__name__)
 
