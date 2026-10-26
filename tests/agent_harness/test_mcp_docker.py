@@ -67,8 +67,11 @@ class DockerTests(unittest.TestCase):
             def fail(*_):
                 cidfile.write_text(cid)
                 raise exception
-            with patch.object(self.runner, "_list", return_value={cid}), \
-                 patch.object(self.runner, "_call", return_value=subprocess.CompletedProcess([], 0, b"", b"")) as cmd:
+            def daemon_call(argv, **_):
+                code = 1 if argv[:2] == ["container", "inspect"] else 0
+                return subprocess.CompletedProcess([], code, b"", b"")
+            with patch.object(self.runner, "_list", side_effect=[{cid}, set()]), \
+                 patch.object(self.runner, "_call", side_effect=daemon_call) as cmd:
                 with self.assertRaises(type(exception)):
                     self.invoke(fail)
                 self.assertTrue(any("rm" in call.args[0] for call in cmd.call_args_list))
