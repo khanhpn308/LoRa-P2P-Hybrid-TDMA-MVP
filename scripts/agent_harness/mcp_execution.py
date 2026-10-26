@@ -21,6 +21,7 @@ import sys
 import time
 
 from mcp_host import HarnessMCPHost, bounded_run
+from mcp_approval import ApprovalAuthority, _HEX32
 from adapters.antigravity import _reject_duplicate_object_keys, _reject_invalid_constant
 
 _RUN = re.compile(r"[0-9a-f]{32}\Z")
@@ -86,8 +87,8 @@ def _stage(expected: str):
     def decorate(method):
         @wraps(method)
         def guarded(self, run_id, *args, **kwargs):
-            if not self._enabled():
-                return self._blocked("Host authorization unavailable; execution disabled")
+            if not self._enabled(run_id):
+                return self._blocked("No valid signed operator grant for this run")
             fd = None
             try:
                 dest = self._external(run_id)
@@ -146,10 +147,32 @@ class MCPExecution:
     def _blocked(reason: str) -> dict:
         return {"status": "BLOCKED", "reason": reason}
 
-    def _enabled(self) -> bool:
-        # No trustworthy per-call approval channel exists in this stdio server.
-        # An environment flag or model-supplied pins cannot authorize execution.
-        return False
+    def _enabled(self, run_id: str | None = None) -> bool:
+        # Signature authority is root-owned and separate from the model/MCP UID.
+        # This is authorization, NOT a sandbox or proof of operator physical presence.
+        if not run_id:
+            return False
+        try:
+            state, _ = self._state(run_id)
+            grant_id = state.get("approval_id")
+            if not isinstance(grant_id, str) or not _HEX32.fullmatch(grant_id):
+                return False
+            ApprovalAuthority().verify(
+                issue=state["issue"], base_sha=state["base_sha"],
+                issue_sha256=state["issue_sha256"],
+                scope=state["approved_scope"], action="prepare",
+                expected_id=grant_id)
+            return True
+        except (OSError, ValueError, KeyError, TypeError):
+            return False
+
+    def _check_evidence_root(self) -> None:
+        if self.root.is_symlink():
+            raise ValueError("Unsafe evidence root")
+        info = self.root.stat(follow_symlinks=False)
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
+                or info.st_mode & 0o077):
+            raise ValueError("Evidence root must be private and Host-owned")
 
     def _external(self, run_id: str, *, create: bool = False) -> Path:
         if not isinstance(run_id, str) or not _RUN.fullmatch(run_id):
@@ -299,8 +322,70 @@ class MCPExecution:
             return self._blocked("Run missing, inconsistent, or evidence changed")
 
     def prepare(self, issue: int, base_sha: str, issue_sha256: str) -> dict:
-        """Fail closed until Host approval and atomic Issue-pin apply are reviewed."""
-        return self._blocked("Host authorization and atomic Issue approval unavailable; execution disabled")
+        """Consume an independent, signed, exact-Issue grant before any mutation.
+
+        A consumed authorization cannot be used to silently retry a failed
+        preparation. Remote GitHub edits are rechecked at the Host CLI boundary.
+        """
+        if (isinstance(issue, bool) or not isinstance(issue, int) or issue <= 0
+                or not isinstance(base_sha, str) or not _SHA.fullmatch(base_sha)
+                or not isinstance(issue_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", issue_sha256)):
+            return self._blocked("Invalid Issue/source approval pins")
+        try:
+            preview = self.host.preflight(issue)
+            if (preview.get("state") != "PREFLIGHT_ONLY"
+                    or preview.get("source_sha") != base_sha
+                    or preview.get("issue_sha256") != issue_sha256):
+                raise ValueError("Issue/source changed since preflight")
+            scope = preview.get("approved_scope")
+            if not isinstance(scope, list) or not scope:
+                raise ValueError("Preflight scope unavailable")
+            grant = ApprovalAuthority().verify(issue=issue, base_sha=base_sha,
+                    issue_sha256=issue_sha256, scope=scope, action="prepare")
+            self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
+            self._check_evidence_root()
+            lock_path = self.root / ".approval.lock"
+            fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                used = self.root / ("consumed-" + grant["grant_id"])
+                if used.exists() or used.is_symlink():
+                    raise ValueError("Approval already consumed; no implicit retry")
+                # Recheck signed grant while holding local consumption lock.
+                ApprovalAuthority().verify(issue=issue, base_sha=base_sha,
+                    issue_sha256=issue_sha256, scope=scope, action="prepare",
+                    expected_id=grant["grant_id"])
+                _atomic_json(used, {"issue": issue, "base_sha": base_sha,
+                    "issue_sha256": issue_sha256, "approval_id": grant["grant_id"],
+                    "disposition": "CONSUMED_BEFORE_LOCAL_MUTATION"})
+            finally:
+                os.close(fd)
+            # Trust the Host CLI to re-fetch the Issue body immediately BEFORE
+            # planning its SQLite journal and worktree. No shell command accepted.
+            receipt = self.host._run("cli.py", [
+                "prepare", "--issue", str(issue), "--source", str(self.host.source),
+                "--state", str(self.host.state), "--apply",
+                "--expected-base-sha", base_sha,
+                "--expected-issue-sha256", issue_sha256], timeout=115)
+            if (receipt.get("state") != "PREPARED" or
+                    receipt.get("issue_sha256") != issue_sha256 or
+                    receipt.get("source_sha") != base_sha or
+                    receipt.get("approved_scope") != scope):
+                raise ValueError("Preparation failed/stale; manual recovery required")
+            run_id = receipt["run_id"]
+            dest = self._external(run_id, create=True)
+            _atomic_json(dest / "run.json", {
+                "issue": issue, "run_id": run_id, "base_sha": base_sha,
+                "issue_sha256": issue_sha256, "approval_id": grant["grant_id"],
+                "stage": "PREPARED", "branch": receipt["branch"],
+                "worktree": receipt["worktree"], "approved_scope": scope,
+                "receipts": {}, "human_review": "PENDING",
+            })
+            return {"status": "PREPARED", "run_id": run_id,
+                    "approved_scope": scope, "worktree": receipt["worktree"],
+                    "branch": receipt["branch"], "evidence_dir": str(dest)}
+        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
+            return self._blocked("Host approval/preparation failed: " + type(exc).__name__)
 
     @_stage("PREPARED")
     def worker_handoff(self, run_id: str) -> dict:
