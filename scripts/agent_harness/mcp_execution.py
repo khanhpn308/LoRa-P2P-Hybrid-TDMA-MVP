@@ -128,6 +128,20 @@ class MCPExecution:
         info = self.host.verify_candidate(run_id)
         if info.get("status") != "SCOPE_SCAN_PASS_ONLY":
             raise ValueError("Deterministic Host scope verification failed")
+        # Existing Host gate excludes gitignored untracked files. They may
+        # contain secrets/build artifacts hidden from the diff, so block them.
+        job = self._job(run_id)
+        worktree = Path(job["worktree"])
+        if not worktree.is_dir() or worktree.is_symlink():
+            raise ValueError("Unsafe candidate directory")
+        ignored = subprocess.run(
+            ["git", "-C", str(worktree), "ls-files", "--others", "--ignored",
+             "--exclude-standard", "-z"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, timeout=30, check=False,
+        )
+        if ignored.returncode or ignored.stdout:
+            raise ValueError("Candidate contains ignored/untracked files")
         return info
 
     def prepare(self, issue: int, base_sha: str, issue_sha256: str) -> dict:
