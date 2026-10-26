@@ -1,0 +1,3 @@
+# Compatible with MCPServer introduced in official Python SDK v2.
+# Pin exact patch after first supported Codex/AGY integration smoke.
+mcp>=2.0,<3.0
