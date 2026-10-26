@@ -41,15 +41,21 @@ class DockerLifecycle:
         return set(ids)
 
     def _cleanup(self, label: str, cidfile: Path) -> dict:
-        """Kill daemon-owned containers, even if their docker CLI process was killed."""
+        """Kill daemon-owned containers even with a missing/bad cidfile.
+
+        Never let a tampered CID receipt suppress the label-based daemon
+        cleanup attempt. Proof requires a healthy daemon query after cleanup.
+        """
         seen = set()
+        malformed = False
         if cidfile.is_symlink():
-            raise ValueError("Container ID file is a symlink")
-        if cidfile.is_file():
+            malformed = True
+        elif cidfile.is_file():
             value = cidfile.read_text().strip()
             if not _CID.fullmatch(value):
-                raise ValueError("Invalid daemon container ID receipt")
-            seen.add(value)
+                malformed = True
+            else:
+                seen.add(value)
         for _ in range(3):
             active = self._list(label)
             seen.update(active)
@@ -57,12 +63,13 @@ class DockerLifecycle:
                 response = self._call(["rm", "-f", cid], timeout=30)
                 if response.returncode != 0:
                     raise ValueError("Daemon refused container cleanup")
-            # Verify that none remain under the unique run/app label.
             if not self._list(label):
                 for cid in seen:
                     check = self._call(["container", "inspect", cid], timeout=20)
                     if check.returncode == 0:
                         raise ValueError("Container still exists after cleanup")
+                if malformed:
+                    raise ValueError("Malformed CID receipt; label-based cleanup attempted")
                 return {"cleanup_verified": True, "containers_seen": len(seen)}
             time.sleep(.3)
         raise ValueError("Docker container cleanup not verified")
