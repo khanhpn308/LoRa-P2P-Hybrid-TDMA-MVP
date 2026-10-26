@@ -6,6 +6,7 @@ Run state/receipts are persisted OUTSIDE the source/worktree. Fail closed.
 from __future__ import annotations
 
 import hashlib
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -88,24 +89,34 @@ class MCPExecution:
         return state, dest
 
     def _receipt(self, run_id: str, stage: str, data: dict) -> None:
-        state, dest = self._state(run_id)
-        current = state["stage"]
-        transitions = {
-            "PREPARED": "WORKER_HANDOFF",
-            "WORKER_HANDOFF": "SCOPE_VERIFIED",
-            "SCOPE_VERIFIED": "CHECKS_VERIFIED",
-            "CHECKS_VERIFIED": "AUDITOR_HANDOFF",
-            "AUDITOR_HANDOFF": "AWAIT_HUMAN",
-        }
-        if transitions.get(current) != stage:
-            raise ValueError("Out-of-order or repeated stage")
-        receipt = dest / (stage.lower() + ".json")
-        _atomic_json(receipt, data)
-        state["stage"] = stage
-        state.setdefault("receipts", {})[stage] = {
-            "file": receipt.name, "sha256": _sha(receipt)
-        }
-        _atomic_json(dest / "run.json", state)
+        _, dest = self._state(run_id)
+        lockpath = dest / ".lock"
+        fd = os.open(lockpath, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            state, _ = self._state(run_id)
+            current = state["stage"]
+            transitions = {
+                "PREPARED": "WORKER_HANDOFF",
+                "WORKER_HANDOFF": "SCOPE_VERIFIED",
+                "SCOPE_VERIFIED": "CHECKS_VERIFIED",
+                "CHECKS_VERIFIED": "AUDITOR_HANDOFF",
+                "AUDITOR_HANDOFF": "AWAIT_HUMAN",
+            }
+            if transitions.get(current) != stage:
+                raise ValueError("Out-of-order or repeated stage")
+            receipt = dest / (stage.lower() + ".json")
+            if receipt.exists() or receipt.is_symlink():
+                raise ValueError("Stage receipt already exists")
+            _atomic_json(receipt, data)
+            state["stage"] = stage
+            state.setdefault("receipts", {})[stage] = {
+                "file": receipt.name, "sha256": _sha(receipt)
+            }
+            _atomic_json(dest / "run.json", state)
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
 
     def _job(self, run_id: str) -> dict:
         response = self.host.status(run_id)
@@ -234,9 +245,9 @@ class MCPExecution:
                 f = top / name
                 if f.is_symlink() or not f.is_file():
                     raise ValueError("Nonregular firmware file")
-                if name.startswith(".") or name.startswith("sdkconfig") and name != "sdkconfig.defaults":
+                if name.startswith(".") or (name.startswith("sdkconfig") and name != "sdkconfig.defaults"):
                     continue
-                if f.suffix not in extensions and name not in ("CMakeLists.txt", "Kconfig", "Kconfig.projbuild"):
+                if f.suffix not in extensions and name not in ("CMakeLists.txt", "Kconfig", "Kconfig.projbuild", "sdkconfig.defaults"):
                     continue
                 count += 1
                 size += f.stat().st_size
@@ -316,8 +327,26 @@ class MCPExecution:
                 raise ValueError("Candidate changed since tests")
             snapshot = dest / "snapshot"
             snapshot.mkdir(mode=0o700)
+            # The Auditor must see the actual, pinned Issue Acceptance Criteria.
+            from p1.cli import issue_info
+            issue_body = issue_info(self.host.source, state["issue"])["body"]
+            if hashlib.sha256(issue_body.encode()).hexdigest() != state["issue_sha256"]:
+                raise ValueError("Issue body changed since approval")
+            issue_copy = snapshot / "issue.md"
+            issue_copy.write_text(issue_body, encoding="utf-8")
+            issue_copy.chmod(0o444)
             source_root = Path(state["worktree"])
-            manifest = {}
+            manifest = {"issue.md": _sha(issue_copy)}
+            for reference in ("AGENTS.md", ".github/copilot-instructions.md",
+                              "docs/development/agy-native-coordinator-sop.md"):
+                src = source_root / reference
+                if not src.is_file() or src.is_symlink() or src.stat().st_size > 120_000:
+                    raise ValueError("Required policy reference missing/unsafe")
+                dest_ref = snapshot / "source" / reference
+                dest_ref.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                shutil.copyfile(src, dest_ref)
+                dest_ref.chmod(0o444)
+                manifest["source/"+reference] = _sha(dest_ref)
             for name in candidate["paths"]:
                 item = source_root / name
                 if item.is_symlink():
