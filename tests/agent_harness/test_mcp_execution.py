@@ -103,6 +103,33 @@ class ExecutionTests(unittest.TestCase):
                         clear=True):
             self.assertEqual(self.runner.run_checks(self.run_id)["status"], "BLOCKED")
 
+    def test_unsupported_components_never_gain_build_pass(self):
+        evidence, _ = self._prepared()
+        state = json.loads((evidence / "run.json").read_text())
+        state["stage"] = "SCOPE_VERIFIED"
+        _atomic_json(evidence / "run.json", state)
+        unrelated = {**self._mock_scope(), "paths": ["backend-go/cmd/server/main.go"]}
+        with patch.dict(os.environ, {
+            "LORA_HARNESS_MUTATIONS": "operator-enabled",
+            "LORA_HARNESS_DOCKER_IMAGE_ID": "sha256:"+"1"*64,
+        }):
+            with patch.object(self.runner, "_job", return_value=self._mock_job()):
+                with patch.object(self.runner, "_scope", return_value=unrelated):
+                    with patch.object(self.runner, "_command") as shell:
+                        actual = self.runner.run_checks(self.run_id)
+                        self.assertEqual(actual["status"], "BLOCKED")
+                        shell.assert_not_called()
+
+    def test_ignored_file_detection_rejects_unreviewed_candidate(self):
+        evidence, worktree = self._prepared()
+        with patch.object(self.host, "verify_candidate", return_value=self._mock_scope()):
+            with patch.object(self.runner, "_job", return_value=self._mock_job()):
+                with patch("mcp_execution.subprocess.run") as sp:
+                    sp.return_value.returncode = 0
+                    sp.return_value.stdout = b".env\x00"
+                    with self.assertRaises(ValueError):
+                        self.runner._scope(self.run_id)
+
     def test_firmware_copy_rejects_symlink_and_copies_allowlisted_source(self):
         base = Path(self.tmp.name) / "candidate"
         firmware = base / "firmware/gateway_master"
