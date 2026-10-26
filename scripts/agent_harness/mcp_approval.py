@@ -18,9 +18,15 @@ import sys
 import time
 import uuid
 
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
-from cryptography.exceptions import InvalidSignature
+try:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+    from cryptography.exceptions import InvalidSignature
+except ImportError:  # The core Harness unittest runner may not install optional MCP crypto.
+    serialization = None
+    Ed25519PrivateKey = None
+    Ed25519PublicKey = None
+    InvalidSignature = None
 
 AUTH_ROOT = Path("/etc/lora-harness")
 _ACTIONS = ("prepare", "worker_handoff", "verify_worker", "run_checks",
@@ -97,6 +103,8 @@ class ApprovalAuthority:
                 or not all(isinstance(x, str) for x in scope)
                 or action not in _ACTIONS):
             raise ValueError("Invalid approval request")
+        if Ed25519PublicKey is None or serialization is None:
+            raise ValueError("Approval signature verifier dependency unavailable")
         approvals, public = self._paths()
         pub = _checked(public, owner=self.owner, maxsize=4096, is_dir=False)
         raw = _checked(approvals / ("issue-%d.json" % issue),
@@ -228,6 +236,8 @@ def _trusted_signer_installation() -> bool:
 
 
 def main() -> int:
+    if Ed25519PrivateKey is None or serialization is None:
+        raise SystemExit("Install reviewed cryptography package in root-owned signer environment")
     parser = argparse.ArgumentParser(description="ROOT-ONLY operator signing station, NEVER an MCP tool")
     parser.add_argument("operation", choices=["init", "approve"])
     parser.add_argument("--issue", type=int)
