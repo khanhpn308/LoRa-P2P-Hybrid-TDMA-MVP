@@ -225,8 +225,8 @@ class MCPExecution:
     def _command(self, argv: list[str], cwd: Path, outfile: Path, timeout: int) -> dict:
         """No shell/AI-provided command. Disk receipt bounded; stderr never returned to model."""
         try:
-            with outfile.open("xb") as f:
-                os.chmod(outfile, 0o600)
+            fd = os.open(outfile, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, "wb") as f:
                 start = time.monotonic()
                 p = subprocess.run(argv, cwd=cwd, stdin=subprocess.DEVNULL,
                                    stdout=f, stderr=subprocess.STDOUT, check=False,
@@ -432,6 +432,7 @@ class MCPExecution:
                       "hil": "NOT_VERIFIED", "rf": "NOT_VERIFIED",
                       "source": state["base_sha"], "issue": state["issue"]}
             _atomic_json(dest / "auditor-report.json", checked)
+            result["auditor_report_sha256"] = _sha(dest / "auditor-report.json")
             self._receipt(run_id, "AWAIT_HUMAN", result)
             return {**result, "evidence_manifest": str(dest / "run.json")}
         except Exception as exc:
