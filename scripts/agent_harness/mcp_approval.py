@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import stat
 import sys
 import time
@@ -155,14 +156,86 @@ def _atomic_root_file(path: Path, data: bytes, mode: int) -> None:
             tmp.unlink()
 
 
+
+def _scope_from_body(body: str) -> list[str]:
+    """Standalone, fail-closed equivalent of Host scope parsing; no repo code imports."""
+    header = re.compile(r"^#{2,6}\s+Target Directories \(allowed paths\)\s*$", re.I)
+    item = re.compile(r"^\s*-\s+\x60([^\x60]+)\x60\s*(?:\([^)]*\))?\s*$")
+    inside = False
+    paths = []
+    for line in body.splitlines():
+        if not inside:
+            if header.match(line):
+                inside = True
+            continue
+        if not line.strip() and not paths:
+            continue
+        match = item.fullmatch(line)
+        if not match:
+            if paths:
+                break
+            raise ValueError("Invalid Issue allowed-path list")
+        path = match.group(1)
+        if (not path or path.startswith(("/", "./")) or "\\" in path
+                or ".." in path.split("/") or "//" in path
+                or any(ch in path for ch in "*?[]{}")
+                or path.strip() != path):
+            raise ValueError("Unsafe Issue allowed path")
+        normalized = "/".join(part for part in path.rstrip("/").split("/") if part != ".")
+        if not normalized:
+            raise ValueError("Root scope forbidden")
+        actual = normalized + ("/" if path.endswith("/") else "")
+        if actual not in paths:
+            paths.append(actual)
+    if not paths or len(paths) > 100:
+        raise ValueError("Missing/unbounded Issue scope")
+    return paths
+
+
+def _trusted_issue_and_source(repo: Path, issue: int) -> tuple[str, str, list[str]]:
+    """Run only pinned read operations under the independent signer process."""
+    cleanenv = {"PATH": "/usr/bin:/bin", "HOME": "/root", "LANG": "C.UTF-8"}
+    git = subprocess.run(
+        ["/usr/bin/git", "-c", "safe.directory="+str(repo),
+         "-C", str(repo), "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=True, timeout=15, env=cleanenv)
+    sha = git.stdout.strip()
+    if not _HEX40.fullmatch(sha):
+        raise ValueError("Invalid source SHA")
+    gh = subprocess.run(
+        ["/usr/bin/gh", "issue", "view", str(issue),
+         "--repo", "khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP",
+         "--json", "body,state"],
+        cwd=repo, capture_output=True, text=True, check=True, timeout=40,
+        env=cleanenv)
+    if len(gh.stdout) > 55000:
+        raise ValueError("Issue payload exceeded limit")
+    info = _strict_json(gh.stdout.encode())
+    if info.get("state") != "OPEN" or not isinstance(info.get("body"), str):
+        raise ValueError("Issue unavailable")
+    body = info["body"]
+    return sha, hashlib.sha256(body.encode()).hexdigest(), _scope_from_body(body)
+
+
+def _trusted_signer_installation() -> bool:
+    # Never execute scripts imported from a user-writable git checkout as root.
+    path = Path(__file__).resolve()
+    for ancestor in (path, *path.parents):
+        stat_info = ancestor.stat(follow_symlinks=False)
+        if stat_info.st_uid != 0 or stat_info.st_mode & 0o022:
+            return False
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="ROOT-ONLY operator signing station, NEVER an MCP tool")
     parser.add_argument("operation", choices=["init", "approve"])
     parser.add_argument("--issue", type=int)
     parser.add_argument("--source", type=Path)
     args = parser.parse_args()
-    if os.geteuid() != 0 or not sys.stdin.isatty() or not sys.stdout.isatty():
-        parser.error("Root operator interactive terminal required (no automation)")
+    if (os.geteuid() != 0 or not sys.stdin.isatty() or not sys.stdout.isatty()
+            or not _trusted_signer_installation()):
+        parser.error("Privileged interactive root-owned installed signer required")
     os.umask(0o077)
     root = AUTH_ROOT
     if args.operation == "init":
@@ -183,14 +256,8 @@ def main() -> int:
     if not args.issue or args.issue < 1 or args.source is None:
         parser.error("Exact Issue number and trusted source checkout required")
     root_real = args.source.resolve(strict=True)
-    # Pin current source SHA, actual Issue body hash and strict allowlist.
-    harness = root_real / "scripts" / "agent_harness"
-    sys.path.insert(0, str(harness))
-    from p1.cli import plan_payload
-    details = plan_payload(root_real, args.issue, run_id=uuid.uuid4().hex)
-    pinned = details["worktree_plan"].base_sha
-    issue_sha = details["issue_sha"]
-    scope = list(details["scope"])
+    # Do not import Python from the mutable repository into this privileged signer.
+    pinned, issue_sha, scope = _trusted_issue_and_source(root_real, args.issue)
     print("Issue #%d\nsource: %s\nbody-sha256: %s\nallowed paths:\n%s" %
           (args.issue, pinned, issue_sha, "\n".join(scope)))
     phrase = "APPROVE #%d %s" % (args.issue, issue_sha[:12])
