@@ -9,9 +9,11 @@ from __future__ import annotations
 from mcp.server import MCPServer
 from mcp_host import HarnessMCPHost
 from mcp_execution import MCPExecution
+from mcp_approval_request import ApprovalRequestMaker
 
 host = HarnessMCPHost()
 execution = MCPExecution(host)
+request_maker = ApprovalRequestMaker(host)
 mcp = MCPServer("lora-harness")
 
 
@@ -22,6 +24,16 @@ def harness_preflight(issue_number: int) -> dict:
     No worktree is created. Operator must approve base_sha and issue_sha256.
     """
     return host.preflight(issue_number)
+
+
+@mcp.tool()
+def harness_approval_request(issue_number: int) -> dict:
+    """Prepare an UNPRIVILEGED approval request using the operator's existing gh login.
+
+    Returns a private JSON request path and a root-signer command for the
+    operator to confirm in their own TTY. Does NOT sign, authorize or execute.
+    """
+    return request_maker.create(issue_number)
 
 
 @mcp.tool()
@@ -41,9 +53,9 @@ def harness_prepare_issue(issue_number: int, approved_base_sha: str,
                           approved_issue_sha256: str) -> dict:
     """HOST MUTATION: create a dedicated pinned Git worktree and external journal.
 
-    BLOCKED in this draft. This transport has no trustworthy Host approval
-    channel or atomic Issue-pin apply. Environment flags and client/model
-    claims cannot authorize execution. No commits, pushes, PRs or main edits.
+    A separately installed root-owned signer must sign the exact Issue/source
+    pins after operator TTY confirmation. Host revalidates them before mutation.
+    Environment flags and model self-claims never grant privileges.
     """
     return execution.prepare(issue_number, approved_base_sha, approved_issue_sha256)
 
@@ -68,9 +80,9 @@ def harness_verify_worker(run_id: str) -> dict:
 def harness_run_checks(run_id: str) -> dict:
     """HOST EXECUTION: bounded structure/Harness tests, two offline ESP-IDF builds.
 
-    BLOCKED pending reviewed Host authorization, isolated candidate tests,
-    and daemon-owned container lifecycle supervision. No Docker is started.
-    Not HIL, RF, timing or tests for unrelated backend/client components.
+    Requires valid root-signed grant, deterministic scope verification, pinned
+    local ESP-IDF image and daemon cleanup. Not RF/HIL/timing verification, nor
+    proof of tests for unrelated backend/client components.
     """
     return execution.run_checks(run_id)
 
