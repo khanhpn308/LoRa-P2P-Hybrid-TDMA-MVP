@@ -21,7 +21,7 @@ Coordinator tự xử lý theo bảng dưới. Không yêu cầu một prompt d�
 
 | Gate | Agent phải làm | Bằng chứng tối thiểu |
 |---|---|---|
-| G0 Intake | Đọc GitHub Issue OPEN, Objective, AC, allowlist; `AGENTS.md`, `.github/copilot-instructions.md`, ADR/requirements/contracts liên quan | Issue URL, body SHA, source SHA, scope |
+| G0 Intake | Đọc GitHub Issue OPEN, Objective, AC, allowlist; `AGENTS.md`, applicable C/Go Standard và ADR/requirements/contracts liên quan | Issue URL, body SHA, source SHA, scope |
 | G1 Workspace | Kiểm tra source sạch; tạo branch/worktree riêng; không đụng `main` hoặc xóa thay đổi tồn tại | Branch, worktree, base SHA |
 | G2 Worker | Native Worker nếu có; nếu không thì Coordinator tự code và công bố fallback. Chỉ thay đổi file trong allowed paths | Changed files, diff, explanation |
 | G3 Host checks | Chạy [quality gates](harness-quality-gates.md) theo changed files với receipts thực tế, trước Auditor; kiểm tra scope, secrets/symlinks, `git diff --check`; chạy test theo module và compiler/contract checks phù hợp. Firmware: ESP-IDF v6.1 với bản sao build disposable, pinned Docker image khi thực thi được | Lệnh, exit code, tool version, log/receipts |
