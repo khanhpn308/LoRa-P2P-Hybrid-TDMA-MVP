@@ -2,6 +2,20 @@
 
 Status: `DRAFT / PENDING CROSS-TEAM REVIEW`, remediation [#60](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/60). Bảng tổ chức lại trách nhiệm từ [contract index](../../contracts/README.md), không tạo interface hoặc schema mới. Implementation/conformance vẫn `NOT_VERIFIED` nếu chưa có báo cáo riêng theo [acceptance gates](../verification/acceptance-gates.md).
 
+## Luồng hành vi Event/Alert và Device Onboarding
+
+| Luồng | Producer → Consumer | Trách nhiệm và điều kiện |
+|---|---|---|
+| Trigger / Alert | Sensor Node → Gateway | Node đánh giá Trigger cục bộ; xếp ưu tiên Alert cao hơn periodic telemetry; dùng Priority Access và ACK/retry trong giới hạn backoff/airtime. `periodic_reporting=OFF` không chặn Alert |
+| Periodic telemetry | Sensor Node → Gateway | Chỉ chạy khi cấu hình `ON` và có slot TDMA hợp lệ. `OFF` vẫn giữ Beacon, Join và downlink cần thiết |
+| Unknown Node Discovery | Unprovisioned Node → Gateway → Backend | Join/identity có rate limit; Gateway đối chiếu registry và gửi detection event; phát hiện không tương đương xác thực hay quyền ứng dụng |
+| Device Approval | Web → Backend | Người có quyền Accept/Reject Node ở trạng thái Pending. Backend sở hữu quyết định authorization |
+| Provisioning / Activation | Backend → Gateway → Node → Gateway/Backend | Backend tạo cấu hình sau approval; Gateway lên lịch downlink phù hợp half-duplex/airtime; Node kiểm tra và ACK. Chỉ chuyển Active khi activation thực sự hợp lệ, không suy từ MQTT PUBACK |
+| Multi-Gateway reception (candidate) | Một Node → nhiều Gateway → Backend | Backend cần nhận diện trùng cùng logical event; cần bổ sung cross-Gateway identity, RF coexistence và serving-Gateway policy trước khi triển khai |
+| Mesh forwarding (candidate riêng) | Node → relay → Gateway | Chưa có approved routing/forwarding contract; định hướng dưới 5 hop không được dùng như tính năng sẵn có |
+
+Các luồng mới mô tả **hành vi hệ thống**, không tự định nghĩa MQTT topic mới, API route mới hay Radio MAC packet byte layout. Short ID 2B / header khoảng 10B trong *Kiến trúc LoRa.docx* đang khác legacy candidate 1B / 8B trong [Radio MAC draft](../../contracts/radio-mac/specification.md); cần Issue thay đổi contract và review Node/Gateway/Backend/Security trước implementation. Phân biệt Multi-Gateway Discovery và Mesh; RF channel, LBT, duty và timing vẫn cần G1/G2/G3.
+
 ## Chủ sở hữu, validation và recovery
 
 | Interface / hướng | Producer và consumer chịu trách nhiệm | Nguồn chuẩn / trạng thái | Failure và recovery owner | RTM / reviewers |
