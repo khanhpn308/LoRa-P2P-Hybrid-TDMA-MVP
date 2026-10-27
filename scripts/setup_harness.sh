@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Native Fast Lane first-run entrypoint. Read-only unless --install-core is given.
+set -euo pipefail
+
+ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd -P)"
+PROFILE="core"
+JSON=0
+ONLINE=0
+INSTALL_CORE=0
+
+usage() {
+  cat <<'HELP'
+Usage: bash scripts/setup_harness.sh [--profile core|firmware|infra|all]
+       [--json] [--check-auth] [--install-core] [--help]
+
+Default: read-only, offline diagnostics; no sudo, downloads or file edits.
+--install-core: explicitly opt in to apt packages python3/git/gh (prompted).
+--check-auth: opt in to gh auth status (may contact GitHub).
+Firmware profile checks local Docker engine + cached ESP-IDF v6.1 image.
+Infra profile checks Docker engine and Docker Compose.
+HELP
+}
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --profile)
+      [ "$#" -ge 2 ] || { echo "Missing --profile value" >&2; exit 2; }
+      PROFILE="$2"; shift 2 ;;
+    --json) JSON=1; shift ;;
+    --check-auth) ONLINE=1; shift ;;
+    --install-core) INSTALL_CORE=1; shift ;;
+    --help|-h) usage; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+case "$PROFILE" in core|firmware|infra|all) ;; *)
+  echo "Invalid profile: $PROFILE" >&2; exit 2 ;; esac
+
+if [ "$INSTALL_CORE" -eq 1 ]; then
+  [ "$JSON" -eq 0 ] || { echo "--json and --install-core cannot be combined" >&2; exit 2; }
+  [ -f /etc/os-release ] || { echo "Automatic package mode requires Debian/Ubuntu." >&2; exit 2; }
+  # Do not execute untrusted shell content; /etc/os-release is the local OS file.
+  . /etc/os-release
+  case "$ID" in ubuntu|debian) ;; *)
+    echo "Package install is only supported for Ubuntu/Debian; install manually." >&2
+    exit 2 ;; esac
+  command -v apt-get >/dev/null || { echo "apt-get unavailable" >&2; exit 2; }
+  set --
+  command -v python3 >/dev/null || set -- "$@" python3
+  command -v git >/dev/null || set -- "$@" git
+  command -v gh >/dev/null || set -- "$@" gh
+  if [ "$#" -gt 0 ]; then
+    printf 'Proposed packages (no Docker or AI CLI):\n'
+    printf '  %s\n' "$@"
+    printf 'Requires sudo apt-get update/install and network access.\n'
+    printf 'Type INSTALL to approve these exact packages: '
+    read -r CONFIRM || { echo "Cancelled" >&2; exit 1; }
+    [ "$CONFIRM" = INSTALL ] || { echo "Cancelled; no packages changed." >&2; exit 1; }
+    command -v sudo >/dev/null || { echo "sudo unavailable" >&2; exit 1; }
+    sudo apt-get update
+    sudo apt-get install -y -- "$@"
+  else
+    echo "Core executables already present; no package changes."
+  fi
+fi
+
+if ! command -v python3 >/dev/null; then
+  echo "Python3 missing. On Ubuntu, run: sudo apt-get install python3" >&2
+  echo "Or use --install-core for an explicit interactive package plan." >&2
+  exit 1
+fi
+
+set -- --profile "$PROFILE"
+if [ "$JSON" -eq 1 ]; then set -- "$@" --json; fi
+if [ "$ONLINE" -eq 1 ]; then set -- "$@" --check-auth; fi
+exec python3 "$ROOT/scripts/harness_doctor.py" "$@"
