@@ -374,6 +374,17 @@ class ExecutionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.runner._copy_firmware(tree, Path(self.tmp.name) / "scratch2")
 
+    def test_firmware_copy_preserves_empty_component_scaffold(self):
+        _, tree = self._prepared()
+        (tree / "firmware/components").mkdir(parents=True)
+        (tree / "firmware/gateway_master").mkdir(parents=True)
+        (tree / "firmware/gateway_master/CMakeLists.txt").write_text(
+            'set(EXTRA_COMPONENT_DIRS "../components")\n')
+        scratch = Path(self.tmp.name) / "scratch-empty-components"
+        self.runner._copy_firmware(tree, scratch)
+        self.assertTrue((scratch / "firmware/components").is_dir())
+        self.assertTrue((scratch / "firmware/gateway_master/CMakeLists.txt").is_file())
+
     def test_audit_pass_does_not_attest_native_provenance(self):
         self._to_audit()
         with patch.object(self.runner, "_enabled", return_value=True), \
