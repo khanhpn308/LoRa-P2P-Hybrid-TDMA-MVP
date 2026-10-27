@@ -179,7 +179,8 @@ def validate_request(record: dict) -> dict:
         raise ValueError("Unexpected approval request fields")
     issue = record["issue"]
     paths = record["scope"]
-    if (record["version"] != 1 or record["repository"] != REPOSITORY
+    if (isinstance(record["version"], bool) or record["version"] != 1
+            or record["repository"] != REPOSITORY
             or isinstance(issue, bool) or not isinstance(issue, int)
             or not 1 <= issue <= 2_147_483_647
             or not isinstance(record["base_sha"], str)
