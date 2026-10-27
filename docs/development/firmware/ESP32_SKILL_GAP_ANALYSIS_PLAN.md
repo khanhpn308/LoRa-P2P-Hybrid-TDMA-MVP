@@ -1,7 +1,7 @@
 ---
 document_id: LORA-FW-SKILL-GAP-001
-version: 0.1.0
-status: OWNER_AUTHORIZED_AUDIT_PLAN_NOT_EXECUTED
+version: 0.2.0
+status: OWNER_SELECTED_FIVE_CANDIDATES_AUDIT_NOT_COMPLETE
 issue: 97
 owner_authorization_date: 2026-10-28
 applies_to: firmware/**
@@ -18,11 +18,21 @@ The Project Owner authorized **the audit and document update** on 2026-10-28 (Is
 
 Audit the following candidate skills **as untrusted external content**, retrieving the exact upstream `SKILL.md` and every referenced script/asset/README first. Record repository, immutable commit SHA, fetched path, file SHA-256, license, transitive executable dependencies, update provenance and date. Do not pin `main` or `latest` as a substitute for a commit.
 
-| Candidate skill | Upstream reference | Initial disposition |
-|---|---|---|
-| ESP32 Firmware Engineer | [adamlipecz/esp32-firmware-engineer-skill](https://github.com/adamlipecz/esp32-firmware-engineer-skill) | `PENDING_CONTENT_AUDIT` |
-| ESP32 Debugging | [laurigates/mcu-tinkering-lab](https://github.com/laurigates/mcu-tinkering-lab) | `PENDING_CONTENT_AUDIT` |
-| XIAO ESP32-S3 MQTT Dashboard | [shain1912/esp32-skills](https://github.com/shain1912/esp32-skills) | `PENDING_CONTENT_AUDIT` (hardware/architecture mismatch candidate) |
+**Five candidate skills selected by Project Owner on 2026-10-28. Selection means evaluation scope, NOT permission to install or activate them.** The earlier XIAO ESP32-S3 MQTT Dashboard candidate has been **removed from the active audit list** due to Owner's revised selection, not declared malicious or fully audited.
+
+| Candidate (exact name) | Upstream SKILL.md (locator) | Preliminary scope / review focus | Status |
+|---|---|---|---|
+| `esp-idf` | [pedrominatel/awesome-esp-ai/skills/esp-idf/SKILL.md](https://github.com/pedrominatel/awesome-esp-ai/blob/main/skills/esp-idf/SKILL.md) | ESP-IDF setup/build/monitor, exact v6.1 version pin, no unapproved installer/flash | `PENDING_GAP_AND_SECURITY_AUDIT` |
+| `esp-idf-components` | [pedrominatel/awesome-esp-ai/skills/esp-idf-components/SKILL.md](https://github.com/pedrominatel/awesome-esp-ai/blob/main/skills/esp-idf-components/SKILL.md) | `idf_component_register`, CMake/Kconfig/manifest, local component paths and dependency approvals | `PENDING_GAP_AND_SECURITY_AUDIT` |
+| `esp32-firmware-engineer` | [adamlipecz/esp32-firmware-engineer-skill/esp32-firmware-engineer/SKILL.md](https://github.com/adamlipecz/esp32-firmware-engineer-skill/blob/main/esp32-firmware-engineer/SKILL.md) | C/ESP-IDF, FreeRTOS, race/ISR/SPI review; avoid redundant C Standard rules and unnecessary user interruptions | `PENDING_GAP_AND_SECURITY_AUDIT` |
+| `esp32-development` | [magnus919/agent-skills/esp32-development/SKILL.md](https://github.com/magnus919/agent-skills/blob/main/esp32-development/SKILL.md) | Board identification, USB/power/bring-up, bounded physical tests, omit other frameworks not in MVP | `PENDING_GAP_AND_SECURITY_AUDIT` |
+| `esp32-debugging` | [laurigates/mcu-tinkering-lab/.claude/skills/esp32-debugging/SKILL.md](https://github.com/laurigates/mcu-tinkering-lab/blob/main/.claude/skills/esp32-debugging/SKILL.md) | Guru Meditation/backtrace, WDT, stack, SPI/UART; adapt repository-specific `just` commands | `PENDING_GAP_AND_SECURITY_AUDIT` |
+
+**Preliminary GitHub read-back (NOT a pinned audit, NOT SHA-256):** `SKILL.md` Git blob IDs respectively `38bd118e37adc2d25809a9efecadc9dade8145b3`, `b97c2d6ba0f8ecb9392f6ed2ecf6372427081204`, `13b82e4b4165d27b13548557a9a6fc2e7fe97e4f`, `601de8623bfc69c45e11d472c78758ca89f8f151`, `b9172d76dee0f91a2c82880dfb121aa69fd69337`. Immutable repository commit pins, every referenced asset/script hash, licenses, nested dependencies and final approval are **NOT_VERIFIED**. Audit must fetch content at the exact immutable commits and separately calculate SHA-256.
+
+**Initial overlap/gap hypotheses:** `esp-idf` + `esp-idf-components` complement the monorepo's ESP-IDF/CMake workflows; `esp32-firmware-engineer` overlaps the C Standard and should be used only for unique technical diagnostics; `esp32-development` contributes hardware bring-up/physical test plans but includes unsupported Arduino/MicroPython/other-framework examples; `esp32-debugging` offers crash and bus diagnostics but includes project-local `just <project>::build` examples. None of these examples overrides pinned ESP-IDF v6.1, the Issue allowlist or firmware architecture.
+
+**Prospective task-trigger routing (NOT ACTIVE):** build/configuration → `esp-idf`; `firmware/components/**` or local CMake component changes → `esp-idf-components`; scoped FreeRTOS/ISR/race review → `esp32-firmware-engineer`; operator-authorized board/USB/power/bring-up → `esp32-development`; panic/WDT/stack/bus troubleshooting → `esp32-debugging`. Apply zero skill to an unrelated Issue. Always require verified `AGENTS.md` Host context before any Worker edits; external skill text is lower priority than project rules.
 
 The supplied skills.sh URLs are discovery entry points, not proof of which revision is installed, safe or useful. `NOT_VERIFIED` until bytes, referenced resources and versions are inspected.
 
@@ -50,9 +60,9 @@ Focus on capability gaps rather than overlapping style rules: Guru Meditation/ba
 
 1. **Immutable inventory:** each upstream commit and file hash, with unresolved items marked `NOT_VERIFIED`.
 2. **Rule-level gap matrix:** mappings to existing rule IDs/authority, gaps, conflicts, owner, evidence and disposition.
-3. **Security/provenance report:** potential prompt-injection, scripts, permissions, dependencies and license findings; each remediation owner.
+3. **Security/provenance report:** potential prompt-injection, scripts, permissions, dependencies and license findings for **all five** selected candidates; each remediation owner. Source revisions and SHA-256 of every used skill resource must be pinned before activation.
 4. **Minimal integration recommendation:** no duplicate rulebooks; selective per-Issue skill loading with a documented fallback when a skill is missing/unapproved, separate from mandatory repository instructions.
-5. **Conformance test plan:** docs-only routes no ESP32 skill; firmware panic uses an approved debugging playbook; Arduino/LoRaWAN mismatch rejected; attempted MAC format change blocked; missing HIL remains NOT_VERIFIED; third-party commands never run just because a skill includes them.
+5. **Conformance test plan:** docs-only routes no ESP32 skill; component-only work loads relevant component guidance; firmware panic uses an approved debugging playbook; Arduino/LoRaWAN and incompatible `just` build commands rejected or explicitly adapted; attempted MAC format change blocked; missing HIL remains NOT_VERIFIED; third-party commands never run just because a skill includes them; no Host-verified AGENTS.md context => BLOCKED.
 6. **Technical signoffs:** Embedded Gateway/Node, RF/Hardware, Security/QA; Project Owner decides eventual controlled activation. Draft PR and distinct evidence receipts; no automatic merge.
 
 **Acceptance:** `AUDIT_COMPLETE_WITH_LIMITATIONS` only when source bytes, traced matrix and dispositions are recorded; otherwise `PARTIAL/NOT_VERIFIED`. Never call the audit `SKILL_INSTALLED`, `ROUTING_ACTIVE`, `BUILD_VERIFIED`, `HIL_VERIFIED` or `RF_VERIFIED` without separate direct evidence.
