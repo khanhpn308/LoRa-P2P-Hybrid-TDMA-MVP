@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import io
 from pathlib import Path
 import subprocess
 import sys
@@ -118,7 +119,7 @@ class SetupTests(unittest.TestCase):
         with patch.object(setup.os, "geteuid", return_value=0):
             self.assertEqual(setup.apply(self.home), 1)
         with patch.object(setup.os, "geteuid", return_value=1000), \
-             patch.object(setup.sys.stdin, "isatty", return_value=False):
+             patch.object(setup.sys, "stdin", io.StringIO()):
             self.assertEqual(setup.apply(self.home), 1)
 
 
