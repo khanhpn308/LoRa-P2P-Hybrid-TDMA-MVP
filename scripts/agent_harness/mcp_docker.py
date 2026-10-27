@@ -96,6 +96,10 @@ class DockerLifecycle:
             "--security-opt=no-new-privileges", "--pids-limit=256",
             "--memory=6g", "--cpus=2", "--user=%d:%d" % (os.getuid(), os.getgid()),
             "--label", label, "--cidfile", str(cidfile),
+            # espressif/idf:v6.1 enables ccache by default. Its default
+            # cache directory is unavailable under --read-only; disable
+            # ccache for one-shot, reproducible scratch builds.
+            "--env=IDF_CCACHE_ENABLE=0",
             "--tmpfs=/tmp:rw,nosuid,size=1024m",
             "--mount", "type=bind,src=%s,dst=/workspace/firmware" % base,
             "--workdir=/workspace/firmware/" + app,
