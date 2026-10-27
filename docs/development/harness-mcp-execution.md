@@ -2,19 +2,43 @@
 
 **State:** `CODE_IMPLEMENTED / LOCAL_TESTS_ON_NEW_HEAD_NOT_VERIFIED / INDEPENDENT_REVIEW_PENDING / PRODUCTION_NO_GO`. GitHub Actions acceptance is `OWNER_WAIVED`, **not** PASS; workflow configuration and protections remain unchanged.
 
-## Operator-signed authority
+## Operator-signed authority — one GitHub login, two trust domains
 
-An MCP prompt, YAML instruction, environment flag or client approval hint is **not** authorization. `mcp_approval.py` verifies a root-signed Ed25519 grant bound to the exact Issue number, approved base SHA, live Issue body SHA-256, canonical allowed paths, six stages, random grant ID and expiry (at most 8 hours). The public key and grants are **root-owned and not writable by the MCP/Worker Linux UID**. The private signing key is root-only and **must never be available to an Agent or a mutable repo checkout**.
+**New design (Issue #83):** `harness_approval_request` is an **unprivileged MCP tool** available in both Codex and AGY. It calls the existing deterministic `HarnessMCPHost.preflight()` using the operator's **already authenticated user `gh` session**, derives Issue number, exact source SHA, Issue-body SHA-256 and allowed paths, and writes a mode-0600 request to `~/.local/state/lora-harness/approval-requests/` (directory mode 0700). The request contains no GitHub token or credentials. Generating it **does not authorize execution**.
 
-Install the reviewed signer as a root-owned, non-group/world-writable file outside Git, for example `/usr/local/sbin/lora-harness-approve`. Its Python runtime and `cryptography` package must also be **root-owned**, not the model-user virtualenv. It refuses to run from a writable checkout, without root, or without an interactive operator TTY. It uses fixed trusted `git` and `gh` read-only queries; root must be provisioned separate read-only GitHub Issue access. Never give the model passwordless sudo or import source modules from a writable checkout into the privileged signer.
+The **independent signer** `mcp_approval.py` must be installed **root-owned outside Git** at `/usr/local/sbin/lora-harness-approve` with a root-owned Python runtime and `cryptography` dependency. It **does not run `gh`**, does not need `root` GitHub authentication, and **never imports the user-writable repository**. In an interactive operator TTY, `approve --request ABSOLUTE_JSON_PATH` reads a bounded untrusted JSON snapshot with `O_NOFOLLOW`, validates exact repository/Issue/source/body SHA/scope fields, prints them, requests comparison against the operator's trusted GitHub Issue view, and requires the specific `APPROVE #N ISSUEHASH12 SOURCEHASH12` confirmation. It then signs a fresh ≤8h Ed25519 grant and stores it in the existing root-owned `/etc/lora-harness/approvals/issue-N.json`. The operator must **not** type the approval phrase on behalf of an Agent without reviewing the requested Issue and paths.
 
-After independent setup and operator review, use a real TTY to invoke the installed signer with `init` once and `approve --issue N --source /trusted/repo` for an individual Issue. The signer displays the Issue/source SHA and allowed paths and requires the exact displayed confirmation phrase. The Agent cannot call this signer through MCP. Each valid grant is consumed once under an external Host lock **before** local journal/worktree mutation; a failed preparation is NOT automatically retried. The Host CLI now separately requires `--expected-issue-sha256` and re-reads Issue scope/body just before creating its local journal.
+For both Codex and AGY the flow is:
 
-**Atomicity limitation:** GitHub's remote Issue API and local SQLite/Git do not have a shared atomic transaction. Host revalidation minimizes stale-issue windows, but a remote edit immediately after the final read cannot be prevented; downstream gates require renewed approval on drift. Do not claim distributed atomicity or cryptographic OS isolation when Worker shares the Host UID.
+```text
+User: "Chạy Issue #N"
+    ↓
+harness_preflight(N)             [existing unprivileged user gh]
+harness_approval_request(N)     [returns private JSON path + operator command]
+    ↓
+Operator verifies Issue + scope; executes command in their OWN WSL TTY:
+sudo /usr/bin/python3 /usr/local/sbin/lora-harness-approve approve --request /home/<user>/.local/state/lora-harness/approval-requests/issue-N-<nonce>.json
+    ↓
+harness_prepare_issue(N, base_sha, issue_sha256)  [must validate signed grant]
+    ↓
+native Worker → Host checks/build → fresh native Auditor → evidence → AWAIT_HUMAN
+```
+
+**Upgrade existing WSL2 signing station (once, after source review):**
+```bash
+cd ~/projects/iot/LoRa-P2P-PR84-verification
+# First fetch/switch the latest reviewed PR #84 commit in this clean detached worktree.
+sudo install -o root -g root -m 0755 scripts/agent_harness/mcp_approval.py /usr/local/sbin/lora-harness-approve
+sudo stat -c '%U %a %n' /etc/lora-harness/private.pem /usr/local/sbin/lora-harness-approve
+```
+
+**Do not rerun `init`**: existing `/etc/lora-harness/private.pem` and `public.pem` remain valid. No `sudo gh auth login`, PAT or separate root GitHub account is needed. The privileged signer is **not** an MCP tool and may not be invoked automatically or with passwordless sudo.
+
+**Limits and trust:** The approval request is **untrusted input** even though it was generated by a Host preflight, because user/Agent code and files may share a UID. The independent root signer authenticates **human approval of displayed hashes and paths**, not authenticity of the original GitHub response; the operator must verify that input. On consumption the Host checks the Ed25519 signature and exact grant IDs, source SHA, live Issue SHA-256 and scope, locks and consumes the grant **once**, and the trusted P1 CLI re-fetches the live Issue before local Git/SQLite mutation. A GitHub API read and a local SQLite write cannot be a distributed atomic transaction; a post-check remote Issue edit requires new review. Do not infer OS isolation from conversation/session isolation. No firmware flash, RF, auto-merge, GitHub write permissions or unrelated backend/client verification is authorized by these tools.
 
 ## ESP-IDF v6.1 ccache / read-only rootfs regression
 
-The official `espressif/idf:v6.1` image enables CCache by default (`IDF_CCACHE_ENABLE=1`). A disposable build with Docker `--read-only` hit `ccache: error: Read-only file system` during the operator's actual WSL2 gateway build. This is a container build-environment failure, not a firmware compilation finding. The fixed Docker argv now explicitly supplies `--env=IDF_CCACHE_ENABLE=0` **without removing** `--read-only`, `--network=none` or capability restrictions. A mocked argv regression test asserts this setting. **Live rerun of Gateway and Node remains NOT_VERIFIED** pending a new unique evidence directory and updated branch checkout.
+The official `espressif/idf:v6.1` image enables CCache by default (`IDF_CCACHE_ENABLE=1`). A disposable build with Docker `--read-only` hit `ccache: error: Read-only file system` during the operator's actual WSL2 gateway build. This is a container build-environment failure, not a firmware compilation finding. The fixed Docker argv now explicitly supplies `--env=IDF_CCACHE_ENABLE=0` **without removing** `--read-only`, `--network=none` or capability restrictions. A mocked argv regression test asserts this setting. The operator's 2026-10-27 WSL2 rerun showed both Gateway and Node project builds and Docker daemon cleanup PASS; this evidence is specific to that run/image and does not cover the new signer-request implementation.
 
 ## Docker lifecycle, build proof and recovery
 
@@ -29,10 +53,11 @@ External evidence is private and SHA-checked. Operations acquire a Host lock, cr
 ## New acceptance tests and status
 
 - `test_mcp_approval.py`: authentic/tampered/expired/wrong-scope Ed25519 approvals, private file modes and symlinks.
+- `test_mcp_approval_request.py`: existing user-gh preflight, private request, precise repository/source/Issue/scope pins, malformed JSON, symlinks and unsafe directory permissions.
 - `test_mcp_docker.py`: fixed Docker argv, restricted mount, leaked container, client crash, timeout, invalid CID and daemon outage.
 - `test_mcp_execution.py`: one-time signed grant consumption, stale Issue SHA checked **before** journal/worktree side effects, evidence/scope/process failure paths.
 - Run on updated branch via the operator's `~/.venvs/lora-mcp/bin/python -m unittest discover -s tests/agent_harness -v`; then `python -m compileall -q scripts/agent_harness tests/agent_harness`, `python scripts/verify_structure.py` and `git diff --check`.
 
-**New code tests are NOT_VERIFIED**, since the assistant cannot execute the user's private worktree or Docker daemon. Earlier Codex 164/164 regressions and 46/46 MCP tests apply only to the earlier commit, not this new implementation. Native Codex/AGY execution, supervised E2E, HIL and RF remain NOT_VERIFIED. This remains a stacked Draft PR; do not merge/activate until independent review and local test evidence.
+**Signer-request refactor tests are NOT_VERIFIED**, since the assistant cannot execute the user's WSL2 checkout or its GitHub auth. Earlier Codex 164/164 regressions and 46/46 MCP tests apply only to the earlier commit, not this new implementation. Native Codex/AGY execution, supervised E2E, HIL and RF remain NOT_VERIFIED. This remains a stacked Draft PR; do not merge/activate until independent review and local test evidence.
 
 
