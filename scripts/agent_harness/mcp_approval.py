@@ -61,7 +61,12 @@ def _strict_json(raw: bytes) -> dict:
 def _checked(path: Path, *, owner: int, maxsize: int, is_dir: bool, private: bool = False) -> bytes:
     if path.is_symlink():
         raise ValueError("Approval path symlink")
-    info = path.stat(follow_symlinks=False)
+    try:
+        info = path.stat(follow_symlinks=False)
+    except OSError as exc:
+        # A missing or unreadable approval must be a normal, fail-closed
+        # validation failure (never an unhandled FileNotFoundError).
+        raise ValueError("Required approval path unavailable") from exc
     if info.st_uid != owner or info.st_mode & 0o022:
         raise ValueError("Untrusted approval owner/mode")
     if private and (info.st_mode & 0o077):
