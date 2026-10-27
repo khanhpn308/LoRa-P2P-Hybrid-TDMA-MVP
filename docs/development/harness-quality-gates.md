@@ -42,7 +42,20 @@ these local checks.
 Routing uses the complete diff from the supplied base to the current worktree,
 including committed changes and nonignored untracked files. Deletions and
 renames retain their old paths in the diff. All selected rules are required.
-Markdown changes select only the common checks. Other paths use these rules:
+Harness control paths are checked before the Markdown fast path. Changes to
+any `AGENTS.md`, `.github/copilot-instructions.md`, `.github/instructions/`,
+`.agents/`, `.agent-harness/`, `.codex/` or `scripts/agent_harness/` select both
+`TOOLING-CHECK` and `SECURITY-CHECK`. The active control runbooks also select both:
+`harness-fast-lane.md`, `harness-quality-gates.md`, `AI_TASK_START_PROTOCOL.md`,
+`agent-harness-firmware.md` and `agy-supervised-pilot.md` under
+`docs/development/`. These paths define execution, review or evidence policy,
+regardless of their file extension. Missing receipts block automatic acceptance
+and human security review remains pending.
+
+Ordinary Markdown, including README files, development notes and architecture
+documents, still selects only the common checks. A filename containing security
+or MQTT does not make ordinary Markdown executable policy. Other paths use
+these rules:
 
 | Rule ID | Selection | Evidence for PASS | Failure or missing proof |
 |---|---|---|---|
@@ -50,13 +63,13 @@ Markdown changes select only the common checks. Other paths use these rules:
 | `DIFF-CHECK` | Every candidate | Actual `git diff --check <base>` exit 0 | Fix whitespace/conflict markers. Stage new files before the final check. |
 | `FIRMWARE-CHECK` | `firmware/` implementation | Reviewed module tests/build receipts, exact ESP-IDF v6.1, relevant contracts | Missing compiler/HIL/RF evidence stays separate; never infer hardware PASS. |
 | `BACKEND-CHECK` | `backend-go/` implementation | Applicable Go tests/build and contract receipts, correct pinned compiler | Scope and Draft Go Standard routing still apply. |
-| `TOOLING-CHECK` | `scripts/`, `tests/agent_harness/`, workflow implementation | Targeted tests for the affected tool and its callers | Do not run candidate-provided shell commands without inspection. |
+| `TOOLING-CHECK` | Harness control paths above, `scripts/`, `tests/agent_harness/`, workflow implementation | Targeted tests for the affected tool and its callers | Do not run candidate-provided shell commands without inspection. |
 | `INFRA-CHECK` | `deploy/`, `tests/integration/`, `.env*`, Compose or MQTT/TLS/ACL paths | Local integration receipts including PostgreSQL health/persistence when affected | Docker unavailable is `NOT_VERIFIED`, never synthetic runtime PASS. |
 | `SEC-KEY-MOUNT` | Same infrastructure/MQTT paths | Complete runtime expanded mount inventory, client isolation and source modes | Reject wrong identity/server/backend keys, writable mounts and unsafe permissions. Expand directory mounts; unresolved inventories cannot PASS. |
 | `MQTT-ACL-PERM` | Same infrastructure/MQTT paths | Non-root broker UID/GID, readable matching ACL owner/group mode0600, complete startup logs | Fix ACL/image ownership and rebuild. Warnings, permissions/startup errors FAIL even with command exit 0. |
 | `NET-LOOPBACK` | Same infrastructure/MQTT paths | All resolved bindings loopback, localhost success, non-loopback rejection with a successful control path in the same probe context | Fix exposed bindings. Missing control/context or WSL2-only proof for a LAN claim is `NOT_VERIFIED`. |
 | `TLS-AUTH/ACL-NEGATIVE` | Same infrastructure/MQTT paths | Server verification, positive flow, wrong-cert and anonymous rejection, cross-Gateway publish and subscribe denial | Config diff or connection failure alone cannot certify TLS/ACL. |
-| `SECURITY-CHECK` | Credential/security/auth/crypto/checker paths, contracts or workflows | Reviewed risk-specific local security test receipt | Human review remains required; tests do not approve a security design. |
+| `SECURITY-CHECK` | Harness control paths above, credential/security/auth/crypto/checker paths, contracts or workflows | Reviewed risk-specific local security test receipt | Human review remains required; tests do not approve a security design. |
 
 Synthetic `tests/agent_harness/` fixtures select tooling/security checks, even
 when fixture names contain ACL or TLS. They do not select live infrastructure.
@@ -159,7 +172,13 @@ Observation details:
 
 Run gates before Auditor handoff. Preserve the exact candidate fingerprint,
 manifest hash, receipt hashes and tool source SHA. Give the fresh Auditor a
-read-only snapshot plus AC and evidence. Request a separate report on false
+read-only snapshot plus AC and evidence. Include `changes.patch` for the entire
+PR base-to-HEAD diff, and a separate `remediation.patch` from the reviewed HEAD
+when fixing review findings. Record each exact Git command, direct exit code,
+base/head SHA and patch SHA256 in a Host patch manifest outside the worktree.
+Hash the patch bytes with the source and log inventory, and compare that same
+patch after Auditor review. Do not omit it from the Host evidence directory
+just because a copy exists in the Auditor snapshot. Request a separate report on false
 positives, filesystem reads and evidence integrity. After review, run gates
 again and compare fingerprint, diff and evidence hashes. Any candidate or
 evidence change invalidates that review. Fixes need fresh tests and review.
@@ -289,3 +308,25 @@ proof of collector authorship. Review the Host artifacts or rerun the inspected
 integration test before relying on runtime claims in another environment.
 CodeGraph MCP and CLI were unavailable, `NOT_RUN`. GitHub Actions acceptance
 remains `OWNER_WAIVED`, with no CI_PASS claim. RF/HIL/timing were not tested.
+
+## PR #89 policy-routing remediation
+
+The original routing returned early for every `.md` file. A change limited to
+`AGENTS.md`, the Coordinator specification or an active Harness runbook could
+therefore report automatic PASS without tooling/security receipts. Control
+paths now take precedence over the ordinary Markdown rule. Regressions exercise
+the control path families, tracked staged/unstaged policy-only CLI changes and
+ordinary documentation. The CLI must block policy-only changes with missing
+receipts while preserving docs-only automatic PASS without Docker evidence.
+
+The original `changes.patch` was present in the final Auditor snapshot but
+missing from `/tmp/issue-88-evidence/`. The remediation restores that historical
+artifact by reproducing the original Git diff and comparing its hash to the
+original snapshot. New full-PR and remediation patches, command/exit/SHA
+receipts, complete Harness test logs, final-HEAD gate reports and fresh Auditor
+report are collected in `/tmp/issue-89-remediation/`. The updated Draft PR
+records exact final counts, HEAD and hashes. These workspace-local artifacts
+can expire; their hashes are integrity evidence, not a substitute for the bytes
+or authenticated Host collection. Previous Docker execution remains historical
+unless explicitly rerun; validating its receipts with a new runner is reported
+separately from executing Docker tests again.

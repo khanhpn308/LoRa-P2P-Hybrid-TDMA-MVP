@@ -17,7 +17,18 @@ try:
 except ImportError:
     from scope import violations
 
-# Rule selection is conservative for implementation files; Markdown stays docs-only.
+# Control paths take precedence over the ordinary Markdown fast path.
+POLICY_FILES = {
+    ".github/copilot-instructions.md",
+    "docs/development/harness-fast-lane.md",
+    "docs/development/harness-quality-gates.md",
+    "docs/development/ai_task_start_protocol.md",
+    "docs/development/agent-harness-firmware.md",
+    "docs/development/agy-supervised-pilot.md",
+}
+POLICY_PREFIXES = (".agents/", ".agent-harness/", ".codex/",
+                   ".github/instructions/", "scripts/agent_harness/")
+
 REGISTRY = {
     "SECRET-SCAN": ("P0", "all"),
     "DIFF-CHECK": ("P1", "all"),
@@ -113,6 +124,10 @@ def route(paths):
     risks = {"all"}
     for name in paths:
         low = name.lower()
+        if (PurePosixPath(low).name == "agents.md" or low in POLICY_FILES
+                or low.startswith(POLICY_PREFIXES)):
+            risks.update(("tooling", "security"))
+            continue
         if low.endswith(".md"):
             continue
         if low.startswith("tests/agent_harness/"):

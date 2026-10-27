@@ -199,6 +199,70 @@ class GitTests(unittest.TestCase):
         for name in gates.VALIDATORS:
             self.assertEqual(self.rule(name)["status"], "NOT_RUN")
 
+    def test_harness_control_paths_require_tooling_and_security(self):
+        controls = (
+            "AGENTS.md", "firmware/AGENTS.md", ".github/copilot-instructions.md",
+            ".github/instructions/backend.instructions.md", ".agents/agents/harness-coordinator.md",
+            ".agents/skills/example/SKILL.md", ".agent-harness/worker.md", ".agent-harness/auditor.md",
+            ".agent-harness/security/provider-decision.md", ".codex/config.toml",
+            "docs/development/harness-fast-lane.md", "docs/development/harness-quality-gates.md",
+            "docs/development/AI_TASK_START_PROTOCOL.md", "docs/development/agent-harness-firmware.md",
+            "docs/development/agy-supervised-pilot.md", "scripts/agent_harness/scope.py",
+            "scripts/agent_harness/p1/pilot.py",
+        )
+        for name in controls:
+            with self.subTest(path=name):
+                self.assertEqual(gates.route([name]), {"all", "tooling", "security"})
+
+    def test_control_only_cli_blocks_without_required_receipts(self):
+        controls = ("AGENTS.md", ".agents/agents/harness-coordinator.md",
+                    ".agent-harness/auditor.md", ".github/copilot-instructions.md",
+                    "docs/development/harness-fast-lane.md", "docs/development/harness-quality-gates.md")
+        for name in controls:
+            self.write(name, "Baseline policy\n")
+        self.git("add", ".")
+        self.git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "policy baseline")
+        base = self.git("rev-parse", "HEAD").decode().strip()
+        for name in controls:
+            for staged in (False, True):
+                with self.subTest(path=name, staged=staged):
+                    self.write(name, "Changed policy\n")
+                    if staged:
+                        self.git("add", name)
+                    result = subprocess.run(
+                        [sys.executable, gates.__file__, "--repo", str(self.root), "--base", base],
+                        capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    report = json.loads(result.stdout)
+                    self.assertEqual(report["changed_paths"], [name])
+                    self.assertEqual(report["risks"], ["all", "security", "tooling"])
+                    for rule in ("TOOLING-CHECK", "SECURITY-CHECK"):
+                        self.assertEqual(next(r for r in report["results"] if r["rule_id"] == rule)["status"], "NOT_RUN")
+                    self.assertEqual(report["human_security_review"], "HUMAN_SECURITY_REVIEW_PENDING")
+                    self.assertFalse(report["ready_to_merge"])
+                    self.write(name, "Baseline policy\n")
+                    if staged:
+                        self.git("add", name)
+
+    def test_ordinary_markdown_only_cli_keeps_fast_path(self):
+        docs = ("README.md", "docs/development/notes.md", "docs/architecture/security-overview.md",
+                "firmware/README.md", "backend-go/README.md", "deploy/README.md",
+                ".github/pull_request_template.md")
+        for name in docs:
+            with self.subTest(path=name):
+                self.assertEqual(gates.route([name]), {"all"})
+        self.write("docs/development/notes.md", "Ordinary documentation update\n")
+        result = subprocess.run(
+            [sys.executable, gates.__file__, "--repo", str(self.root), "--base", self.base],
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["risks"], ["all"])
+        self.assertEqual(report["auto_check"], "AUTO_CHECK_PASS")
+        self.assertEqual(report["human_security_review"], "NOT_REQUIRED")
+        self.assertTrue(all(r["status"] == "NOT_RUN" for r in report["results"]
+                            if r["rule_id"] not in ("SECRET-SCAN", "DIFF-CHECK")))
+
     def test_harness_security_fixtures_do_not_select_live_infrastructure(self):
         self.assertEqual(gates.route(["tests/agent_harness/fixtures/quality_gates/acl-warning.log"]),
                          {"all", "tooling", "security"})

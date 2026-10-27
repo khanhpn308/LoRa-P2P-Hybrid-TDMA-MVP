@@ -40,7 +40,11 @@ python3 scripts/agent_harness/quality_gates.py --repo <candidate> --base <truste
 python3 scripts/agent_harness/quality_gates.py --repo <candidate> --base <trusted-base-sha> --evidence-dir <host-evidence-outside-candidate> --manifest manifest.json
 ```
 
-Docs-only không cần Docker/module receipts; có thể bỏ hai arguments evidence.
+Markdown thông thường không cần Docker/module receipts; có thể bỏ hai arguments
+evidence. File điều khiển như `AGENTS.md`, Coordinator và Harness runbooks vẫn
+phải qua `TOOLING-CHECK` và `SECURITY-CHECK` dù có đuôi `.md`. Snapshot review
+phải chứa `changes.patch` cùng command/exit/base/head/hash receipt; sửa findings
+thì thêm `remediation.patch` từ HEAD đã được review.
 Manifest chỉ chứa actual commands, exits, tool versions, sanitized log hashes và
 Host runtime observations. Runner không chạy lệnh từ manifest. Xem
 [rule matrix, schema và remediation](harness-quality-gates.md).
