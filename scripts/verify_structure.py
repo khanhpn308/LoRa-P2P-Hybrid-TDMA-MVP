@@ -5,7 +5,7 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[1]
 required = [
     ".github/CODEOWNERS",
-    ".github/copilot-instructions.md",
+    "AGENTS.md",
     ".github/pull_request_template.md",
     "docs/architecture/system-overview.md",
     "docs/requirements/requirements.md",
