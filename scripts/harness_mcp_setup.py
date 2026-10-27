@@ -45,8 +45,13 @@ def run(argv: list[str], timeout: int = 15) -> subprocess.CompletedProcess:
 
 def installed_sdk(home: Path) -> bool:
     py = venv_path(home) / "bin/python"
-    return py.is_file() and run([str(py), "-c",
-        f"import importlib.metadata; assert importlib.metadata.version('mcp') == '{SDK_VERSION}'"]).returncode == 0
+    if not py.is_file() or py.is_symlink():
+        return False
+    try:
+        return run([str(py), "-c",
+            f"import importlib.metadata; assert importlib.metadata.version('mcp') == '{SDK_VERSION}'"]).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def parse_codex_entry(value: object) -> tuple[str, list[str]] | None:
@@ -80,6 +85,8 @@ def codex_config(command: list[str]) -> tuple[str, str]:
             return ("BLOCKED", "Unexpected Codex MCP list schema")
         if NAME not in entries:
             return ("INSTALL", "Codex entry missing")
+        if isinstance(entries[NAME], dict) and entries[NAME].get("enabled") is False:
+            return ("BLOCKED", "Codex MCP entry is disabled")
         actual = parse_codex_entry(entries[NAME])
         return ("READY", "Codex configured") if actual == (command[0], command[1:]) else ("BLOCKED", "Conflicting Codex entry; do not overwrite")
     except (OSError, subprocess.TimeoutExpired, ValueError, TypeError):
@@ -165,6 +172,8 @@ def write_agy(home: Path, command: list[str]) -> None:
         tmp.unlink(missing_ok=True)
         if backup is not None:
             os.replace(backup, path)
+        else:
+            path.unlink(missing_ok=True)
         raise
     # Keep backup on success for operator recovery; never print its contents.
     if backup:
