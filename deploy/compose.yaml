@@ -1,4 +1,4 @@
-# DEVELOPMENT-ONLY infrastructure baseline. Not a secured production deployment.
+# Local infrastructure. TLS/ACL sample requires human security review.
 services:
   postgres:
     image: postgres:16-alpine
@@ -15,6 +15,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks: [local]
 
   # Unsafe for real Gateway connections. Local host-only development opt-in.
   mqtt-dev:
@@ -24,16 +25,31 @@ services:
       - "127.0.0.1:1883:1883"
     volumes:
       - ./mosquitto/dev.conf:/mosquitto/config/mosquitto.conf:ro
+    networks: [dev]
 
   # TLS profile requires locally provisioned certificates (gitignored).
   mqtt-tls:
     image: eclipse-mosquitto:2.0
     profiles: ["tls"]
     ports:
-      - "8883:8883"
+      - "127.0.0.1:8883:8883"
     volumes:
       - ./mosquitto/tls.conf:/mosquitto/config/mosquitto.conf:ro
-      - ./secrets:/mosquitto/certs:ro
+      - ./mosquitto/acl:/mosquitto/config/acl:ro
+      - type: bind
+        source: ${MQTT_CERT_DIR:-./secrets/broker}
+        target: /mosquitto/certs
+        read_only: true
+        bind:
+          create_host_path: false
+      - mqtt_data:/mosquitto/data
+    networks: [local]
 
 volumes:
   pg_data:
+  mqtt_data:
+
+networks:
+  local:
+  # Keep the anonymous broker off the TLS/database network.
+  dev:
