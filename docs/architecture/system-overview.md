@@ -27,12 +27,12 @@ Nguồn sơ đồ: ADR-0001/0002, [deployment contexts](deployment.md), [contrac
 | Mosquitto | Xác thực principal, topic ACL, session/expiry | QoS 1 vận chuyển; PUBACK không chứng minh DB commit hay Node execution | [topics §§1–4](../../contracts/mqtt/topics.md); SEC-002, DATA-001/002 |
 | React / Flutter | Gửi yêu cầu qua Backend có server-side RBAC | Hiển thị, dedup và REST resync khi WSS mất continuity; không truy cập MQTT/DB trực tiếp | [API semantics](../../contracts/api/contract-semantics.md); INT-002 |
 
-Đây là decomposition logic, không áp đặt tên task, core affinity hoặc stack/queue size từ planning. Firmware tách driver, MAC, TDMA và airtime policy theo [embedded instructions](../../.github/instructions/embedded.instructions.md). Backend giữ modular monolith + PostgreSQL, không thêm Redis/InfluxDB/microservices theo ADR-0001 và AGENTS.md.
+Đây là decomposition logic, không áp đặt tên task, core affinity hoặc stack/queue size từ planning. Firmware tách driver, MAC, TDMA và airtime policy theo [C Standard v2](../development/firmware/C_CODING_STANDARD_V2.md) (consultative Draft). Backend giữ modular monolith + PostgreSQL, không thêm Redis/InfluxDB/microservices theo ADR-0001 và AGENTS.md.
 
 ## Bất biến và giới hạn an toàn
 
 - Gateway là local TDMA Master; MQTT không phải clock từng slot. Không activate giữa superframe. `STAGE_ACK` khác `ACTIVE_REPORT`; Backend kiểm actual report trước ACTIVE. Nguồn: ADR-0001, MQTT semantics §4; MAC-003.
-- Một radio không TX/RX đồng thời. Single Radio Owner tuần tự hóa SPI/modem; ISR/timer chỉ timestamp và notify có giới hạn, không SPI hoặc blocking network. Nguồn: embedded instructions, Radio MAC §4; FW-002/003, MAC-005.
+- Một radio không TX/RX đồng thời. Single Radio Owner tuần tự hóa SPI/modem; ISR/timer chỉ timestamp và notify có giới hạn, không SPI hoặc blocking network. Nguồn: AGENTS.md, C Standard v2 (consultative Draft), Radio MAC §4; FW-002/003, MAC-005.
 - Mọi TX gồm Beacon, ACK, retry, join và alarm đều qua local airtime admission. Profile/policy chưa được xác minh không tạo quyền TX. Nguồn: Radio MAC §4, [D03](../../contracts/OPEN_DECISIONS.md); RF-001, MAC-006.
 - CRC không xác thực mật mã. TLS/MQTT identity không thay RF authentication, nonce uniqueness hoặc anti-replay. Không production codec trước security/wire approval. Nguồn: Radio MAC §§2–3, D01/D11; SEC-001/003/004.
 - Backhaul mất không vô hiệu hóa local safety. Active chỉ tiếp tục nếu còn hợp lệ; shadow không tự activate sau reboot. Proposal `expires_at` không tự trở thành lease của active schedule. Nguồn: TDMA §3, MQTT semantics §4; SYS-001/002.
@@ -47,7 +47,7 @@ Nguồn sơ đồ: ADR-0001/0002, [deployment contexts](deployment.md), [contrac
 | Alarm latency | Research target, chưa là SLA; xác định endpoints, concurrent alarms, RF load và phân phối đo. Không gán hard real-time guarantee cho mobile push. |
 | GPIO, task/core priorities, stack/queue sizes | Không kế thừa demo. Board mapping cần G1; resource budgets cần review và stress/HIL evidence. |
 
-Nguồn: [OPEN_DECISIONS](../../contracts/OPEN_DECISIONS.md), [G1–G6](../verification/acceptance-gates.md), [Issue #11](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/11), [vector plan](../../contracts/radio-mac/test-vectors/README.md), embedded instructions. Profile `P-10S-15` và numeric examples trong TDMA §1 chỉ là candidate mock/simulation, không là production baseline. R1 không sửa contracts hoặc chốt tham số.
+Nguồn: [OPEN_DECISIONS](../../contracts/OPEN_DECISIONS.md), [G1–G6](../verification/acceptance-gates.md), [Issue #11](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/11), [vector plan](../../contracts/radio-mac/test-vectors/README.md), C Standard v2 (consultative Draft). Profile `P-10S-15` và numeric examples trong TDMA §1 chỉ là candidate mock/simulation, không là production baseline. R1 không sửa contracts hoặc chốt tham số.
 
 ## Truy vết và nghiệm thu
 

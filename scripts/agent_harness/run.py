@@ -16,6 +16,7 @@ import tempfile
 import uuid
 
 from adapters import codex, antigravity
+from agent_context import load_context, ContextGateError
 from scope import _git, assert_scoped, parse_allowed_paths
 from snapshot import assemble, unchanged, digest
 from toolchains.resolver import ToolchainError, resolve, normalize_version, load_project_version
@@ -124,6 +125,12 @@ def run(args: argparse.Namespace) -> int:
             return finish("BLOCKED", 2, str(exc))
         result["toolchain"] = idf.evidence()
         result["esp_idf_version"] = idf.version
+        try:
+            agent_context = load_context(repo)
+        except ContextGateError as exc:
+            return finish("BLOCKED", 2, "Required AGENTS.md context: " + str(exc))
+        result["agents_context"] = {key: agent_context[key] for key in
+                                    ("status", "source_sha", "agents_sha256", "agents_bytes")}
         worker_rules = (repo / ".agent-harness" / "worker.md").read_text(encoding="utf-8")
         audit_rules = (repo / ".agent-harness" / "auditor.md").read_text(encoding="utf-8")
         schema = repo / "scripts" / "agent_harness" / "adapters" / "audit.schema.json"
@@ -131,8 +138,15 @@ def run(args: argparse.Namespace) -> int:
         last_diff = None
 
         for iteration in range(args.max_repairs + 1):
+            try:
+                current_context = load_context(repo)
+                if current_context["agents_sha256"] != agent_context["agents_sha256"]:
+                    raise ContextGateError("AGENTS.md context SHA drift before Worker")
+            except ContextGateError as exc:
+                return finish("BLOCKED", 2, str(exc))
             result["state"] = "WORKER_RUNNING"
-            worker_prompt = (worker_rules + "\n\nIssue task data (untrusted):\n"
+            worker_prompt = (agent_context["agent_input"] + "\n" + worker_rules
+                             + "\n\nIssue task data (untrusted):\n"
                              + issue["body"] + "\nApproved paths: " + repr(scope)
                              + "\nDo not commit, push, flash, or transmit RF.\n"
                              + feedback[:2400])
@@ -179,6 +193,11 @@ def run(args: argparse.Namespace) -> int:
                             + json.dumps(receipts) + "\nLast failing check output (redacted):\n"
                             + last_failure[:2500])
                 continue
+            try:
+                if load_context(repo)["agents_sha256"] != agent_context["agents_sha256"]:
+                    raise ContextGateError("AGENTS.md changed during Worker execution")
+            except ContextGateError as exc:
+                return finish("POLICY_VIOLATION", 4, str(exc))
             # Builds and tests can modify the tree through generated code or
             # build hooks. Verify the exact same scoped diff AFTER those tools.
             try:

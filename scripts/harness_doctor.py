@@ -99,7 +99,7 @@ def collect(repo: Path = ROOT, profile: str = "core",
         checks.append(item("gh_auth_online", "SKIP", False,
                            "NOT_VERIFIED: use --check-auth to validate online"))
 
-    for path in ("AGENTS.md", ".github/copilot-instructions.md",
+    for path in ("AGENTS.md",
                  "docs/development/harness-fast-lane.md",
                  "docs/development/harness-quality-gates.md",
                  ".agents/agents/harness-coordinator.md"):

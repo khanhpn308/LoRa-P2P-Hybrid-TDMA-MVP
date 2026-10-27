@@ -35,20 +35,20 @@ INTAKE → ISSUE_SCOPE → REPO_PREFLIGHT → SELECTIVE_CONTEXT
                      unmet or unknown ───────┘→ BLOCKED / READ_ONLY
 ```
 
-**Separation of duties:** Host Coordinator = deterministic branch/scope/toolchain/evidence checks; Worker = scoped edits only in an authorized execution mode; independent Auditor = read-only immutable snapshot, findings/evidence; Human Engineer/Owner = permission and technical authority, HIL/RF/security/contract review, merge. Current operator-supervised `agy` pilot policy in `AGENTS.md` remains unchanged; this runbook does **not** activate autonomous execution.
+**Separation of duties:** Host Coordinator = deterministic branch/scope/toolchain/evidence checks; Worker = scoped edits only in an authorized execution mode; independent Auditor = read-only immutable snapshot, findings/evidence; Human Engineer/Owner = permission and technical authority, HIL/RF/security/contract review, merge. Native Fast Lane for Codex/AGY is documented in `AGENTS.md` and `docs/development/harness-fast-lane.md`; this DRAFT does **not** grant permissions or verify E2E execution.
 
 ### Choose task route from the Issue, not agent preference
 
 | Route | Trigger | Required context (selectively loaded) | Execution boundary |
 |---|---|---|---|
 | `DOCS_ONLY` | Paths only in `docs/**`, `.github/**` or instructions | Scope/ADR/status sections actually affected; avoid programming Standard unless evaluating it | Do not change firmware/backend/contracts without new scope |
-| `FIRMWARE_C` | Authorized `firmware/**` path | `AGENTS.md`, embedded instructions, [C Standard §0](firmware/C_CODING_STANDARD_V2.md) + relevant Rule IDs/§12/§13, exact silicon/API if relevant | SPI/ISR/security/RF and timing need appropriate human/HIL checks |
-| `BACKEND_GO` | Authorized `backend-go/**` path | `AGENTS.md`, backend instructions, [Go Standard §0](backend-go/GO_BACKEND_ENGINEERING_STANDARD_V2.md) + relevant §2.x/§3/§4, exact `go.mod` | Contracts/DB migrations/new dependency not implicitly authorized |
+| `FIRMWARE_C` | Authorized `firmware/**` path | `AGENTS.md`, [C Standard §0](firmware/C_CODING_STANDARD_V2.md) + relevant Rule IDs/§12/§13, exact silicon/API if relevant | SPI/ISR/security/RF and timing need appropriate human/HIL checks |
+| `BACKEND_GO` | Authorized `backend-go/**` path | `AGENTS.md`, [Go Standard §0](backend-go/GO_BACKEND_ENGINEERING_STANDARD_V2.md) + relevant §2.x/§3/§4, exact `go.mod` | Contracts/DB migrations/new dependency not implicitly authorized |
 | `CROSS_COMPONENT` | Issue explicitly allows both producer + consumer paths | Only relevant C + Go groups and approved `contracts/` or ADRs | Stop at unapproved interface boundary; coordinate owners |
 | `RESEARCH_REVIEW` | No code implementation authorized | Target Issue/files and only necessary documentation/evidence | Read-only; no commit/branch push unless expressly authorized |
 | `TOOLING_CI` | Issue explicitly allows scripts/CI/infra paths | Actual workflow/build instructions and relevant tool versions | No silent runner, permission, credential or deployment change |
 
-**Context budget:** `AGENTS.md` + repository-wide instructions + applicable path-specific instructions → relevant Standard **§0** → exact `rg` Rule IDs/section ranges → direct dependencies/contracts. Never load legacy v1, traceability-only audits, training modules or [agent conformance scenarios](../verification/agent-conformance-scenarios.md) during ordinary implementation. A designated audit/evaluator Issue may authorize those sources.
+**Context budget (Codex/AGY):** `AGENTS.md` + live Issue/approved ADRs/contracts → relevant Standard **§0** → exact `rg` Rule IDs/section ranges → direct dependencies/contracts. Never load legacy v1, traceability-only audits, training modules or [agent conformance scenarios](../verification/agent-conformance-scenarios.md) during ordinary implementation. A designated audit/evaluator Issue may authorize those sources.
 
 ## 1. Mandatory stage checks
 
@@ -57,7 +57,7 @@ INTAKE → ISSUE_SCOPE → REPO_PREFLIGHT → SELECTIVE_CONTEXT
 | T0 `INTAKE` | Record user objective, task route, deliverable, risks, read/write intent. Identify live GitHub Issue. | Missing Issue for write task → `BLOCKED_ISSUE`; read-only discovery is allowed |
 | T1 `ISSUE_SCOPE` | Verify Issue, AC, exact root-relative `Target Directories (allowed paths)`, owner-approved scope, dependencies/contract approval, reviewers. Include tests/docs/migrations explicitly if needed. | Missing/ambiguous/unauthorized paths → `BLOCKED_SCOPE`; report needed path, **do not edit** |
 | T2 `REPO_PREFLIGHT` | Validate repo/remote and baseline SHA; inspect current branch and entire worktree (tracked/untracked), HEAD against trusted base; Host creates Issue branch before Worker if approved. | Worker on `main` or dirty worktree → `BLOCKED_WORKTREE`; never clean/reset/stash user changes implicitly |
-| T3 `SELECTIVE_CONTEXT` | Read relevant `AGENTS.md`, `.github/copilot-instructions.md`, path-specific instructions, Status/Rule IDs and authoritative Requirements/ADRs/contracts. Check exact ESP-IDF v6.1 or Go 1.27.3 pin **if toolchain affects task**. | Conflict/unavailable authoritative source → `BLOCKED_AUTHORITY` or `NOT_VERIFIED`; do not activate draft rules |
+| T3 `SELECTIVE_CONTEXT` | Read `AGENTS.md`, live Issue, selected Standard metadata/Rule IDs and authoritative Requirements/ADRs/contracts; Copilot-specific files are not mandatory for Codex/AGY. Check exact ESP-IDF v6.1 or Go 1.27.3 pin **if toolchain affects task**. | Conflict/unavailable authoritative source → `BLOCKED_AUTHORITY` or `NOT_VERIFIED`; do not activate draft rules |
 | T4 `IMPACT_DISCOVERY` | If MCP exposes `codegraph_explore`, inspect C/Go AST definitions, callers/callees/imports **first**. Check codebase for reusable symbols, composition root, radio ownership, ISR safety and cross-component impact. | Graph results outside allowed paths are **read-only**; required out-of-scope edit → `BLOCKED_SCOPE` |
 | T5 `DECISION_GATE` | Classify interfaces/crypto/RF/legal, schema, D01–D13, backlog dependencies and resource/timing constraints; list test levels and human approvals. | Unresolved mandatory design choice → `BLOCKED_DECISION`; missing evidence required by AC → `BLOCKED_EVIDENCE` |
 | T6 `PRE_EDIT_HANDOFF` | Publish the exact 9-field report below; Host independently confirms all gates and grants only the scoped Worker mode already authorized. | `START_READY` only with verified scope/branch/authority; otherwise `READ_ONLY`/`BLOCKED` |

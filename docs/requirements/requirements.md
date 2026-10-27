@@ -14,7 +14,7 @@ Giữ nguyên tám IDs và verification `NOT_VERIFIED` của baseline. Design ap
 | A1 | [ADR-0001](../adr/0001-hybrid-tdma.md) | Architecture direction accepted; RF/timing chưa verified |
 | A2 | [ADR-0002](../adr/0002-mqtt-5.md) | MQTT 5.0 OWNER_ACCEPTED; cross-team review pending |
 | A3 | [ADR-0003](../adr/0003-esp-idf-v6-1.md) | Exact ESP-IDF v6.1 approved by owner; build/HIL riêng |
-| E | [embedded instructions](../../.github/instructions/embedded.instructions.md) | Repository firmware constraints; không là HIL evidence |
+| E | [C Standard v2](../development/firmware/C_CODING_STANDARD_V2.md) + [AGENTS.md](../../AGENTS.md) | Agent governance, proposed firmware rules; không là HIL evidence |
 | C | [coding standards hiện hành](../development/coding-standards.md) | Engineering/review constraints; không import standard demo |
 | R | [Radio MAC specification](../../contracts/radio-mac/specification.md) | DRAFT, security/wire BLOCKED G2 |
 | T | [TDMA schedule](../../contracts/radio-mac/tdma-schedule.md) | Candidate profile và safety invariants, chưa freeze |

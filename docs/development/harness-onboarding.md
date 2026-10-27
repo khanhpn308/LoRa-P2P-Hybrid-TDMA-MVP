@@ -2,7 +2,7 @@
 
 > **Status:** onboarding tooling, không phải chứng nhận security/HIL/RF.  
 > **Scope:** thành viên mới của `khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP`.  
-> **Authority:** `AGENTS.md`, `.github/copilot-instructions.md`, `docs/development/harness-fast-lane.md` và các Issue/ADR/contracts đã được duyệt.
+> **Authority:** `AGENTS.md`, `docs/development/harness-fast-lane.md` và các Issue/ADR/contracts đã được duyệt.
 
 ## 1. Sau khi clone/pull: một lệnh
 

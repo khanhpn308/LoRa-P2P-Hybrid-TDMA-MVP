@@ -6,8 +6,7 @@ from pathlib import Path
 
 REFERENCES = (
     "AGENTS.md",
-    ".github/copilot-instructions.md",
-    ".github/instructions/embedded.instructions.md",
+    "docs/development/firmware/C_CODING_STANDARD_V2.md",
     "docs/adr/0001-hybrid-tdma.md",
     "docs/architecture/system-overview.md",
     "docs/verification/acceptance-gates.md",

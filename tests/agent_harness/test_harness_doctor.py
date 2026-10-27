@@ -20,7 +20,7 @@ class HarnessDoctorTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.repo = Path(self.tmp.name)
         for path in (
-            "AGENTS.md", ".github/copilot-instructions.md",
+            "AGENTS.md",
             "docs/development/harness-fast-lane.md",
             "docs/development/harness-quality-gates.md",
             ".agents/agents/harness-coordinator.md",
