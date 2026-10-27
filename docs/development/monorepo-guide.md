@@ -31,8 +31,6 @@ LoRa-P2P-Hybrid-TDMA-MVP/
 ├── .github/
 │   ├── ISSUE_TEMPLATE/                 # Form tạo issue thống nhất
 │   ├── workflows/                      # GitHub Actions
-│   ├── instructions/                   # AI instructions riêng theo thư mục
-│   ├── copilot-instructions.md         # Luật AI chung
 │   ├── CODEOWNERS                       # Người review theo đường dẫn
 │   ├── pull_request_template.md
 │   └── dependabot.yml
@@ -332,7 +330,7 @@ Các release gate kế hoạch: G0 scope; G1 RF; G2 protocol; G3 embedded; G4 in
 
 ## 13. Cách dùng AI Coding Assistant an toàn
 
-AI là trợ lý tạo đề xuất, không có quyền tự phê duyệt đúng/sai của RF, bảo mật, compliance, time-critical firmware. Quy tắc trong [.github/copilot-instructions.md](../../.github/copilot-instructions.md), chi tiết theo đường dẫn [.github/instructions/](../../.github/instructions/).
+AI là trợ lý tạo đề xuất, không có quyền tự phê duyệt đúng/sai của RF, bảo mật, compliance, time-critical firmware. Quy tắc tại [AGENTS.md](../../AGENTS.md), theo C/Go Standards và ADR/contracts liên quan.
 
 Trình tự nên dùng:
 
