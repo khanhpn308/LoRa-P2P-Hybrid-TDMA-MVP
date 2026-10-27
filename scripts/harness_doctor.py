@@ -9,7 +9,6 @@ import argparse
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -38,7 +37,7 @@ def item(name: str, status: str, required: bool, detail: str, hint: str = "") ->
 
 def auth_configured() -> bool:
     """Presence only; never open hosts.yml or read token values."""
-    if "GH_TOKEN" in os.environ or "GITHUB_TOKEN" in os.environ:
+    if os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN"):
         return True
     config = os.environ.get("GH_CONFIG_DIR")
     base = Path(config).expanduser() if config else Path.home() / ".config" / "gh"
@@ -66,7 +65,7 @@ def collect(repo: Path = ROOT, profile: str = "core",
         "Install git (Ubuntu: sudo apt-get install git).")
 
     is_repo = bool(git) and probe(
-        ["git", "-C", str(repo), "rev-parse", "--is-inside-work-tree"])
+        ["git", "-C", str(repo), "rev-parse", "--show-toplevel"])
     add("repository", is_repo, True, "Git checkout detected",
         "Not inside a Git checkout", "Run from a cloned repository checkout.")
 
