@@ -12,6 +12,10 @@ After independent setup and operator review, use a real TTY to invoke the instal
 
 **Atomicity limitation:** GitHub's remote Issue API and local SQLite/Git do not have a shared atomic transaction. Host revalidation minimizes stale-issue windows, but a remote edit immediately after the final read cannot be prevented; downstream gates require renewed approval on drift. Do not claim distributed atomicity or cryptographic OS isolation when Worker shares the Host UID.
 
+## ESP-IDF v6.1 ccache / read-only rootfs regression
+
+The official `espressif/idf:v6.1` image enables CCache by default (`IDF_CCACHE_ENABLE=1`). A disposable build with Docker `--read-only` hit `ccache: error: Read-only file system` during the operator's actual WSL2 gateway build. This is a container build-environment failure, not a firmware compilation finding. The fixed Docker argv now explicitly supplies `--env=IDF_CCACHE_ENABLE=0` **without removing** `--read-only`, `--network=none` or capability restrictions. A mocked argv regression test asserts this setting. **Live rerun of Gateway and Node remains NOT_VERIFIED** pending a new unique evidence directory and updated branch checkout.
+
 ## Docker lifecycle, build proof and recovery
 
 `mcp_docker.py` uses a pinned image digest, fixed ESP-IDF targets, a **disposable copy** of approved firmware source, unique run/app Docker labels and `--cidfile`. Docker flags include `--pull=never`, `--network=none`, `--read-only`, `--cap-drop=ALL`, `--security-opt=no-new-privileges`, nonroot UID and memory/CPU/PID bounds. No candidate working tree, credentials or Docker socket is handed to the native Worker through MCP.
