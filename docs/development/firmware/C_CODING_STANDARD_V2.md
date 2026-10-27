@@ -21,7 +21,7 @@ baseline_commit: 8217885c150888e0ecb1eaf39685d79b4cbf56fa
 
 ## 0. Agent entrypoint: execute this decision flow
 
-**Load sequence:** Read `AGENTS.md` → `.github/copilot-instructions.md` → applicable `.github/instructions/*.instructions.md` → active Issue + acceptance criteria + exact allowed paths → affected code/public interfaces → appropriate sections below. Do not load or imitate all 123 upstream demo rules as if already approved.
+**Load sequence for Codex/AGY:** Read `AGENTS.md` → active Issue/AC/exact allowed paths → approved ADRs, versioned contracts and current code → applicable sections below. Copilot-specific `.github/*instructions*` are optional compatibility references, not mandatory Codex/AGY context. Do not load all 123 upstream demo rules as if approved.
 
 **Scope detector:** `firmware/components/sx1276_driver/**` → sections 1–7 + 8 (RAD); `firmware/components/lora_mac/**` → sections 1–7 + 9 (MAC/SEC); `firmware/components/tdma_common/**` → sections 1–7 + 10 (TDMA); `firmware/components/airtime_policy/**` → sections 1–7 + 8/10; `firmware/gateway_master/**` → sections 1–7 + 8–11 as affected; `firmware/sensor_node/**` → sections 1–7 + 8–10 as affected. If actual paths differ, inspect repository; **never create a missing module without an Issue explicitly allowing it**.
 
@@ -60,7 +60,7 @@ Every atomic line uses this format:
 
 | Rule ID | Scope | Directive | Verify | If violated | Source |
 |---|---|---|---|---|---|
-| GOV-001 | all | MUST follow approved Issue allowed paths **exactly**; new tests/docs are not implicitly allowed | STATIC | STOP | SRC: copilot-instructions §Before code changes |
+| GOV-001 | all | MUST follow approved Issue allowed paths **exactly**; new tests/docs are not implicitly allowed | STATIC | STOP | SRC: AGENTS.md; docs/development/coding-standards.md |
 | GOV-002 | all | MUST verify repository, `origin/main`, branch, clean worktree and applicable instructions before mutation; MUST_NOT edit `main` | STATIC | STOP | SRC: AGENTS §Stop conditions |
 | GOV-003 | all | MUST preserve approved ESP-IDF tag `v6.1`; MUST_NOT substitute floating tag, prerelease or other patch implicitly | BUILD/HUMAN | STOP | SRC: ADR-0003 |
 | GOV-004 | all | MUST_NOT change RF region/frequency/power, GPIO/PCB, partition/eFuse, crypto/wire fields, MQTT/API/DB schemas or CI/settings without expressly scoped approval | STATIC/HUMAN | STOP | SRC: AGENTS §Architecture |
@@ -269,7 +269,7 @@ AI agent conformance evaluation scenarios (CASE-01..12) are maintained in [agent
 
 ## 15. Source/provenance and migration matrix
 
-1. **Monorepo authority:** `AGENTS.md`, `.github/copilot-instructions.md`, `.github/instructions/embedded.instructions.md`; `docs/requirements/requirements.md` (23 RTM rows pending approval); `docs/adr/0001-hybrid-tdma.md`; `docs/adr/0002-mqtt-5.md`; `docs/adr/0003-esp-idf-v6-1.md`; `docs/verification/acceptance-gates.md`; `contracts/OPEN_DECISIONS.md`; `contracts/{radio-mac,mqtt,api}/`.
+1. **Monorepo authority:** `AGENTS.md` (Codex/AGY entrypoint); Copilot-specific instructions are optional historical/compatibility sources, not mandatory. `docs/requirements/requirements.md` (23 RTM rows pending approval); `docs/adr/0001-hybrid-tdma.md`; `docs/adr/0002-mqtt-5.md`; `docs/adr/0003-esp-idf-v6-1.md`; `docs/verification/acceptance-gates.md`; `contracts/OPEN_DECISIONS.md`; `contracts/{radio-mac,mqtt,api}/`.
 2. **Upstream demo source:** `khanhpn308/esp32e_sx1768-915Mhz`, immutable commit `2af2bd2a99234b15f59848f4bdd0b1e920c2dcd5`, `docs/C_CODING_STANDARDS.md`, 41,197 bytes, SHA-256 `70fc06ec5f21e21725f0227238ed3ab258e21b113b95f9ef481332d54715c5de`. **Source-local approval does not transfer.**
 3. **Rule-by-rule v1 disposition:** `docs/development/firmware/C_STANDARD_SOURCE_TRACEABILITY.md` is the preserved mapping of **123 upstream IDs across 12 categories**, with KEEP/MODIFY/RELOCATE/BLOCKED dispositions. v2 Rule IDs here are **new operational IDs**; do not pretend they form a one-to-one correspondence with all 123 v1 IDs.
 4. **API reference:** [Espressif ESP-IDF v6.1 / ESP32 esp_timer](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32/api-reference/system/esp_timer.html), specifically TASK vs ISR callback dispatch and task callback blocking. Other API details require exact-version recheck during the actual implementation Issue.
