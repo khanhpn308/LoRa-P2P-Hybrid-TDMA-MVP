@@ -88,12 +88,17 @@ func TestDecodeObjectRejectsInvalidLimit(t *testing.T) {
 func TestDecodeObjectDoesNotClaimSchemaValidation(t *testing.T) {
 	// A decoder cannot enforce JSON Schema 'required' or 'const' constraints.
 	// The caller must reject this message before DB writes or MQTT ACK.
-	var got testEnvelope
-	if err := DecodeObject([]byte(`{"gateway_id":"gw01"}`), 4096, &got); err != nil {
-		t.Fatalf("decode unexpectedly rejected syntactically valid partial DTO: %v", err)
-	}
-	if got.SchemaVersion != "" {
-		t.Fatalf("unexpected schema version: %q", got.SchemaVersion)
+	for _, payload := range []string{
+		`{"gateway_id":"gw01"}`,
+		`{"gateway_id":"gw01","observed_at":null}`,
+	} {
+		var got testEnvelope
+		if err := DecodeObject([]byte(payload), 4096, &got); err != nil {
+			t.Fatalf("decode unexpectedly rejected syntactically valid partial DTO: %v", err)
+		}
+		if got.SchemaVersion != "" || got.ObservedAt != nil {
+			t.Fatalf("unexpected schema or nullable field: %+v", got)
+		}
 	}
 }
 
