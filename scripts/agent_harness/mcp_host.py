@@ -7,13 +7,73 @@ from __future__ import annotations
 
 import json
 import re
+import os
+import selectors
+import signal
+import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
 _RUN_ID = re.compile(r"[0-9a-f]{32}\Z")
 _MAX_STDOUT = 65536
+
+
+def bounded_run(argv: list[str], cwd: Path, *, timeout: float,
+                limit: int = _MAX_STDOUT, log=None, env=None) -> subprocess.CompletedProcess:
+    """Bound both pipes while running; always reap the POSIX process group.
+
+    Only trusted fixed argv may call this helper. It is not a sandbox for a
+    process that can escape its session, or a daemon-owned Docker container.
+    """
+    if os.name != "posix" or not 0 < timeout <= 1800 or not 0 < limit <= 50_000_000:
+        raise ValueError("Unsupported process bounds")
+    start = time.monotonic()
+    output = bytearray()
+    total = 0
+    proc = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            start_new_session=True, env=env)
+    try:
+        with selectors.DefaultSelector() as selector:
+            for stream in (proc.stdout, proc.stderr):
+                os.set_blocking(stream.fileno(), False)
+                selector.register(stream, selectors.EVENT_READ)
+            while selector.get_map():
+                remaining = timeout - (time.monotonic() - start)
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(argv[0], timeout)
+                for key, _ in selector.select(min(remaining, 0.05)):
+                    chunk = os.read(key.fd, min(65536, limit - total + 1))
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    available = limit - total
+                    kept = chunk[:available]
+                    if log is not None:
+                        log.write(kept)
+                    elif key.fileobj is proc.stdout:
+                        output.extend(kept)
+                    total += len(chunk)
+                    if total > limit:
+                        raise ValueError("Host process output limit exceeded")
+            remaining = timeout - (time.monotonic() - start)
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(argv[0], timeout)
+            code = proc.wait(timeout=remaining)
+        return subprocess.CompletedProcess(argv, code, bytes(output), b"")
+    finally:
+        # Also remove background children after a successful leader exit.
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        finally:
+            proc.stdout.close()
+            proc.stderr.close()
+            proc.wait(timeout=5)
 
 
 class HarnessMCPHost:
@@ -30,18 +90,16 @@ class HarnessMCPHost:
 
     def _run(self, script: str, args: list[str], *, timeout: int) -> dict[str, Any]:
         script_path = self.scripts / script
-        if not script_path.is_file() or script_path.is_symlink():
+        if (script not in {"cli.py", "host_gate.py"} or not script_path.is_file()
+                or script_path.is_symlink() or self.scripts.is_symlink()
+                or script_path.resolve() != script_path):
             return self._blocked("Trusted Host script unavailable")
         cmd = [sys.executable, str(script_path), *args]
         try:
-            result = subprocess.run(
-                cmd, cwd=self.source, stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                timeout=timeout, check=False,
-            )
+            result = bounded_run(cmd, self.source, timeout=timeout)
         except subprocess.TimeoutExpired:
             return self._blocked("Host command timed out")
-        except OSError:
+        except (OSError, ValueError):
             return self._blocked("Trusted Host command unavailable")
         if len(result.stdout) > _MAX_STDOUT:
             return self._blocked("Host receipt exceeds size limit")
@@ -63,8 +121,15 @@ class HarnessMCPHost:
                                     "--source", str(self.source)], timeout=100)
 
     def _journal_available(self) -> bool:
-        return (self.state.is_file() and not self.state.is_symlink()
-                and not self.state.parent.is_symlink())
+        try:
+            parent = self.state.parent.stat(follow_symlinks=False)
+            file = self.state.stat(follow_symlinks=False)
+            return (stat.S_ISDIR(parent.st_mode) and stat.S_ISREG(file.st_mode)
+                    and self.state.resolve() == self.state
+                    and parent.st_uid == file.st_uid == os.getuid()
+                    and not (parent.st_mode & 0o077 or file.st_mode & 0o077))
+        except OSError:
+            return False
 
     def status(self, run_id: str) -> dict[str, Any]:
         """Inspect a known Host run; no new job or worktree is created."""

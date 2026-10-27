@@ -65,6 +65,8 @@ def main() -> int:
     prep.add_argument("--apply", action="store_true", help="Create SQLite record + git worktree")
     prep.add_argument("--expected-base-sha", default=None,
                       help="Optional 40-character approved HEAD pin; blocks if source changed")
+    prep.add_argument("--expected-issue-sha256", default=None,
+                      help="Pinned Issue body; required for signed MCP approvals")
     prep.add_argument("--state", type=Path, default=None,
                       help="Local Host SQLite journal, outside source worktree by default")
     status = sub.add_parser("status")
@@ -87,6 +89,9 @@ def main() -> int:
             item = data["worktree_plan"]
             if args.expected_base_sha is not None and item.base_sha != args.expected_base_sha:
                 raise PreflightError("Actual source HEAD does not match approved base SHA")
+            if (args.expected_issue_sha256 is not None
+                    and data["issue_sha"] != args.expected_issue_sha256):
+                raise PreflightError("Issue body changed since explicit approval")
             preview = {"state": "PREFLIGHT_ONLY", "issue": args.issue,
                        "run_id": data["run_id"], "source_sha": item.base_sha,
                        "issue_sha256": data["issue_sha"],
@@ -95,6 +100,13 @@ def main() -> int:
             if not args.apply:
                 print(json.dumps(preview, indent=2))
                 return 0
+            # Re-read the live Issue immediately before the first local mutation.
+            # The remote GitHub API is not transactionally lockable by this client;
+            # changes after this check still require a manual stale-Issue stop.
+            fresh = issue_info(source, args.issue)
+            if (hashlib.sha256(fresh["body"].encode("utf-8")).hexdigest() != data["issue_sha"]
+                    or fresh["scope"] != data["scope"]):
+                raise PreflightError("Issue changed immediately before preparation")
             with Journal(state) as journal:
                 journal.plan(run_id=data["run_id"], issue=args.issue,
                              source_sha=item.base_sha, issue_sha=data["issue_sha"],
