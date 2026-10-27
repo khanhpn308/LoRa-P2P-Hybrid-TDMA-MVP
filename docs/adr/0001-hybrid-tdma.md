@@ -94,6 +94,42 @@ Repo có các công cụ phát triển và AI Coding Harness, nhưng **Harness o
 
 **Nguồn kiểm soát thay đổi:** [RTM](../requirements/requirements.md#rtm), [acceptance gates](../verification/acceptance-gates.md), [TDMA schedule interface](../../contracts/radio-mac/tdma-schedule.md), [MQTT semantic rules](../../contracts/mqtt/semantic-rules.md), [OPEN_DECISIONS](../../contracts/OPEN_DECISIONS.md). Thay đổi layout RF, MQTT/API/DB contract, frequency/power policy, activation/recovery state machine hoặc numeric timing cần Issue + review Gateway/Node/RF/Backend/Security, test vectors và evidence tương ứng; không thể phê duyệt bằng một cập nhật ADR đơn lẻ.
 
+## Mô hình vận hành Event-Driven và tiếp nhận Node (bản thiết kế cập nhật)
+
+Nguồn thiết kế: *Kiến trúc LoRa.docx*, §§1–6, 8, 13. Mô hình này bổ sung hành vi Event-Driven vào quyết định Backend Planner / Gateway Executor. Những chính sách còn thiếu thuật toán và wire schema phải được thiết kế chi tiết trước khi thực thi.
+
+### Hai chế độ báo cáo
+
+| Chế độ | Node | Gateway và kênh RF |
+|---|---|---|
+| `periodic_reporting=OFF` | Đọc cảm biến và đánh giá Trigger cục bộ; phát Event/Alert khi có điều kiện. Không phát telemetry định kỳ | Vẫn duy trì Beacon/synchronization cần thiết, cơ hội Priority Access, Discovery/Join và downlink cấu hình |
+| `periodic_reporting=ON` | Phát Event/Alert và bản tin định kỳ theo cấu hình | Hybrid TDMA kết hợp periodic slots và Priority Access; lịch vẫn do Gateway thực thi cục bộ |
+
+Alert là mức ưu tiên cao nhất **trong các bản tin ứng dụng**. Node xếp Alert vào hàng đợi ưu tiên có giới hạn, thử phát ở cửa sổ được phép khi kênh sẵn sàng; collision, backoff, ACK/retry và airtime admission vẫn áp dụng. Ưu tiên không đồng nghĩa bảo đảm tức thời hoặc quyền phát ngoài giới hạn RF. Khi Periodic OFF, không được vô hiệu hóa Alert, Discovery, đồng bộ và cấu hình cần thiết.
+
+### Discovery → Approval → Provisioning → Activation
+
+1. **Discovery:** Node chưa được provision gửi thông điệp nhận dạng/Join trong cửa sổ cho phép, với rate limit và randomized backoff.
+2. **Detection:** Gateway nhận định danh Node mới, so sánh registry/authorization cache và chuyển sự kiện phát hiện tới Backend; việc thấy Node không cấp quyền phát ứng dụng.
+3. **Approval:** Backend lưu trạng thái `Pending`; Web cho phép người có quyền `Accept` hoặc `Reject`.
+4. **Provisioning:** Chỉ sau `Accept`, Backend tạo/cấp cấu hình và chuyển lệnh đến Gateway.
+5. **Scheduled Downlink:** Gateway xếp cấu hình vào cửa sổ downlink không xung đột Beacon, Alert, periodic traffic và local airtime policy.
+6. **Activation:** Node kiểm tra và xác nhận cấu hình; chỉ chuyển `Active` sau khi hoàn tất điều kiện kích hoạt theo security/session policy được duyệt. Gateway/Backend phải đối chiếu actual result, không suy thành công chỉ từ MQTT PUBACK.
+
+Gateway cần lưu nhận diện Node và trạng thái cho phép truy cập theo chính sách nhất quán với Backend. Các bước cấp khóa, chống giả mạo Join, anti-replay, retry quota và hành vi khi backhaul mất vẫn là open design; không mặc định Join Request tự cấp quyền.
+
+### Mở rộng số Gateway và phạm vi định tuyến
+
+Mô hình khởi đầu là **một Gateway, LoRa P2P một chặng**. Tài liệu đầu vào đồng thời đề xuất 1–4 Gateway, 10–25 Node và nhiều Gateway cùng quan sát một Node, nhưng chưa có topology/scheduling/coexistence contract được phê duyệt cho cấu hình đó.
+
+Multi-Gateway Discovery **khác Mesh multi-hop**. Nếu nhiều Gateway cùng nhận một event, Backend phải chống trùng lặp theo logical event identity, không phụ thuộc số bản sao hoặc Gateway nhận; phải thiết kế identity xuyên Gateway và nguyên tắc lựa chọn Gateway phục vụ, tránh hai Gateway xung đột TX/RX trên một kênh. Mesh và giới hạn dưới 5 hop là candidate mở rộng; chưa có routing/forwarding, loop prevention, airtime budget hoặc security thiết kế được duyệt. Không coi multi-Gateway hay Mesh đã sẵn sàng MVP.
+
+### Ranh giới giao thức và tham số chưa chốt
+
+Tài liệu mới đề xuất Short ID 2 byte, MAC header khoảng 10 byte và payload 0–48 byte, khác candidate 8-byte/1-byte IDs hiện nằm trong [Radio MAC specification](../../contracts/radio-mac/specification.md). **Không có wire format được chốt**: cần quyết lại offsets, endianness, authenticated tag, epoch/version, nonce và golden vectors giữa Node/Gateway/Backend trước khi sửa production codec. CRC-16 không thay authentication.
+
+BW 125 kHz, SF7/SF12, LBT, tỷ lệ airtime 1%/10% và số lượng Node/Gateway là mục tiêu/candidate từ tài liệu; cần thẩm định legal RF tại Việt Nam, tính ToA, CAD/LBT behavior, collision/ACK/turnaround và HIL trước khi chọn cấu hình vận hành. Không áp các giới hạn này thành tuyên bố hợp quy khi chưa có evidence.
+
 ## Truy vết và giới hạn evidence
 
 Requirements chính: MAC-001/002/003/004/005/006/007, SYS-001/002, FW-001/002/003/004, SEC-001/003/004, DATA-001/002 và INT-001 trong RTM. Contract definitions theo Radio MAC/TDMA/MQTT links trên; exact firmware baseline giữ [ADR-0003](0003-esp-idf-v6-1.md).
