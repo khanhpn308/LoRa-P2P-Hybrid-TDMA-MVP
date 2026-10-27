@@ -208,8 +208,18 @@ def apply(home: Path) -> int:
     if before["codex"]["status"] == before["agy"]["status"] == "SKIP":
         print("BLOCKED: neither Codex nor AGY installed")
         return 1
-    if not all(x.is_file() for x in (SERVER, SMOKE, REQUIREMENTS)):
-        print("BLOCKED: reviewed MCP sources unavailable")
+    if not all(x.is_file() and not x.is_symlink()
+               for x in (SERVER, SMOKE, REQUIREMENTS)):
+        print("BLOCKED: reviewed MCP sources unavailable or symlinked")
+        return 1
+    # Do not let an edited requirements file add new pip arguments/packages.
+    try:
+        requested = [line.strip() for line in REQUIREMENTS.read_text(encoding="utf-8").splitlines()
+                     if line.strip() and not line.lstrip().startswith("#")]
+    except (OSError, UnicodeError):
+        requested = []
+    if requested != [f"mcp=={SDK_VERSION}"]:
+        print("BLOCKED: MCP dependency pin does not match reviewed SDK")
         return 1
     if sys.version_info < (3, 11):
         print("BLOCKED: Python 3.11+ required for this MCP SDK")
