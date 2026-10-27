@@ -20,6 +20,7 @@ services:
   # Unsafe for real Gateway connections. Local host-only development opt-in.
   mqtt-dev:
     image: eclipse-mosquitto:2.0
+    user: "1883:1883"
     profiles: ["dev-insecure"]
     ports:
       - "127.0.0.1:1883:1883"
@@ -29,13 +30,11 @@ services:
 
   # TLS profile requires locally provisioned certificates (gitignored).
   mqtt-tls:
-    image: eclipse-mosquitto:2.0
+    build: ./mosquitto
     profiles: ["tls"]
     ports:
       - "127.0.0.1:8883:8883"
     volumes:
-      - ./mosquitto/tls.conf:/mosquitto/config/mosquitto.conf:ro
-      - ./mosquitto/acl:/mosquitto/config/acl:ro
       - type: bind
         source: ${MQTT_CERT_DIR:-./secrets/broker}
         target: /mosquitto/certs

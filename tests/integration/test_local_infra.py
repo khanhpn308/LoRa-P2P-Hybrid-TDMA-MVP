@@ -4,6 +4,7 @@ import json
 import os
 import secrets
 import select
+import shutil
 import socket
 import ssl
 import subprocess
@@ -30,13 +31,14 @@ class LocalInfrastructureTest(unittest.TestCase):
         self.assertEqual(run("git", "-C", str(ROOT), "check-ignore", str(ignored)).returncode, 0)
         with tempfile.TemporaryDirectory(prefix="smoke-", dir=ignored) as directory:
             self.certs = Path(directory) / "certs"
-            self.certs.mkdir(mode=0o755)
+            self.certs.mkdir(mode=0o700)
+            self.broker_certs = Path(directory) / "broker"
             self.provision()
             self.project = "issue16-" + secrets.token_hex(4)
             env = {key: value for key, value in os.environ.items()
                    if not key.startswith(("POSTGRES_", "COMPOSE_", "MQTT_CERT_DIR"))}
             env.update({"POSTGRES_USER": "smoke", "POSTGRES_DB": "smoke",
-                        "POSTGRES_PASSWORD": secrets.token_hex(24), "MQTT_CERT_DIR": str(self.certs)})
+                        "POSTGRES_PASSWORD": secrets.token_hex(24), "MQTT_CERT_DIR": str(self.broker_certs)})
             self.env = env
             base = ["docker", "compose", "--env-file", "/dev/null", "-p", self.project,
                     "-f", str(ROOT / "deploy/compose.yaml"), "--profile", "tls",
@@ -60,15 +62,39 @@ class LocalInfrastructureTest(unittest.TestCase):
             self.compose = ["docker", "compose", "-p", self.project, "-f", str(resolved),
                             "--profile", "tls", "--profile", "dev-insecure"]
             try:
-                run(*self.compose, "up", "-d", "--wait", "--wait-timeout", "60", env=env)
+                run(*self.compose, "up", "-d", "--build", "--wait", "--wait-timeout", "60", env=env)
+                self.broker_permissions()
+                self.client_key_visibility()
                 self.database()
-                self.dev_listener()
+                self.reachability()
                 self.tls_handshakes()
                 self.authorization()
             finally:
                 logs = run(*self.compose, "logs", "--no-color", "mqtt-tls", check=False, env=env)
                 print("BROKER LOG BEGIN\n" + logs.stdout + logs.stderr + "BROKER LOG END", flush=True)
-                run(*self.compose, "down", "-v", "--remove-orphans", env=env)
+                run(*self.compose, "down", "-v", "--rmi", "local", "--remove-orphans", env=env)
+
+    def broker_permissions(self):
+        self.assertEqual(run(*self.compose, "exec", "-T", "mqtt-tls", "id", "-u", env=self.env).stdout.strip(), "1883")
+        acl = run(*self.compose, "exec", "-T", "mqtt-tls", "stat", "-c", "%u:%g %a",
+                  "/mosquitto/config/acl", env=self.env).stdout.strip()
+        self.assertEqual(acl, "1883:1883 600")
+        files = run(*self.compose, "exec", "-T", "mqtt-tls", "ls", "-1", "/mosquitto/certs", env=self.env).stdout.split()
+        self.assertEqual(sorted(files), ["ca.crt", "server.crt", "server.key"])
+        logs = run(*self.compose, "logs", "mqtt-tls", "mqtt-dev", env=self.env).stdout.lower()
+        for warning in ("warning:", "chown:", "read-only file system"):
+            self.assertNotIn(warning, logs)
+        print("PASS: broker uid1883, ACL owner1883:1883 mode0600, server-only key mount; no ownership/startup warnings", flush=True)
+
+    def client_key_visibility(self):
+        for identity in (None, "gw-a", "gw-b", "backend", "unknown", "wrong"):
+            command = self.client(identity, "mosquitto_pub")
+            prefix = command[:command.index(IMAGE) + 1]
+            files = run(*prefix, "find", "/certs", "-type", "f").stdout.split()
+            expected = ["/certs/ca.crt"] + ([] if identity is None else [
+                f"/certs/{identity}.crt", f"/certs/{identity}.key"])
+            self.assertEqual(sorted(files), sorted(expected))
+        print("PASS: each client sees only public CA and its own certificate/key; anonymous sees CA only", flush=True)
 
     def provision(self):
         def openssl(*args):
@@ -91,9 +117,15 @@ class LocalInfrastructureTest(unittest.TestCase):
         # Wrong certificate has the expected CN, but is not signed by the trusted CA.
         openssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-subj", "/CN=gw-a",
                 "-keyout", str(self.certs / "wrong.key"), "-out", str(self.certs / "wrong.crt"))
-        # Docker clients use uid 1883; outer smoke directory remains owner-only 0700.
         for path in self.certs.iterdir():
-            path.chmod(0o644)
+            path.chmod(0o600)
+        self.broker_certs.mkdir(mode=0o750)
+        for name in ("ca.crt", "server.crt", "server.key"):
+            shutil.copyfile(self.certs / name, self.broker_certs / name)
+            (self.broker_certs / name).chmod(0o640)
+        # Change only this disposable mount's group; host user retains ownership for cleanup.
+        run("docker", "run", "--rm", "--user", "0:0", "--entrypoint", "chgrp",
+            "--mount", f"type=bind,src={self.broker_certs},dst=/broker", IMAGE, "-R", "1883", "/broker")
 
     def database(self):
         def sql(statement):
@@ -107,11 +139,34 @@ class LocalInfrastructureTest(unittest.TestCase):
         self.assertEqual(sql("SELECT value FROM smoke_persistence"), "16")
         print("PASS: PostgreSQL healthcheck and persistence after container recreation", flush=True)
 
-    def dev_listener(self):
-        port = int(run(*self.compose, "port", "mqtt-dev", "1883", env=self.env).stdout.strip().rsplit(":", 1)[1])
-        with socket.create_connection(("127.0.0.1", port), timeout=3):
-            pass
-        print("PASS: localhost dev broker reachable on published loopback port", flush=True)
+    def reachability(self):
+        interfaces = json.loads(run("ip", "-j", "-4", "address", "show", "up").stdout)
+        addresses = [entry["local"] for interface in interfaces
+                     if "LOOPBACK" not in interface["flags"]
+                     and not interface["ifname"].startswith(("docker", "br-", "veth"))
+                     for entry in interface["addr_info"] if entry.get("scope") == "global"]
+        self.assertTrue(addresses, "Non-loopback host IPv4 required, reachability NOT_VERIFIED")
+        ports = []
+        for service, target in (("postgres", "5432"), ("mqtt-dev", "1883"), ("mqtt-tls", "8883")):
+            port = int(run(*self.compose, "port", service, target, env=self.env).stdout.strip().rsplit(":", 1)[1])
+            with socket.create_connection(("127.0.0.1", port), timeout=3):
+                pass
+            ports.append((service, port))
+        for address in addresses:
+            def probe(port):
+                return run("docker", "run", "--rm", "--user", "1000:1000", "--network", "bridge",
+                           IMAGE, "nc", "-n", "-z", "-w", "2", address, str(port), check=False)
+
+            with socket.socket() as control:
+                control.bind((address, 0))
+                control.listen()
+                result = probe(control.getsockname()[1])
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                print(f"PASS: separate-network client reaches non-loopback control listener on {address}", flush=True)
+                for service, port in ports:
+                    result = probe(port)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    print(f"PASS: {service} reachable via localhost, rejected via non-loopback {address}:{port}", flush=True)
 
     def tls_handshakes(self):
         port = int(run(*self.compose, "port", "mqtt-tls", "8883", env=self.env).stdout.strip().rsplit(":", 1)[1])
@@ -124,8 +179,11 @@ class LocalInfrastructureTest(unittest.TestCase):
 
     def client(self, identity, tool, *args):
         # A terminal keeps Mosquitto's SUBACK debug output line-buffered.
-        return ["docker", "run", "--rm", "--tty", "--network", self.project + "_local",
-                "--mount", f"type=bind,src={self.certs},dst=/certs,readonly", IMAGE,
+        files = ["ca.crt"] + ([] if identity is None else [f"{identity}.crt", f"{identity}.key"])
+        mounts = [arg for name in files for arg in (
+            "--mount", f"type=bind,src={self.certs / name},dst=/certs/{name},readonly")]
+        return ["docker", "run", "--rm", "--tty", "--user", f"{os.getuid()}:{os.getgid()}",
+                "--network", self.project + "_local", *mounts, IMAGE,
                 tool, "-h", "mqtt-tls", "-p", "8883", "-V", "mqttv5", "-q", "1",
                 "--cafile", "/certs/ca.crt", *([] if identity is None else [
                     "--cert", f"/certs/{identity}.crt", "--key", f"/certs/{identity}.key"]), *args]

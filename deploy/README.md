@@ -75,7 +75,7 @@ the public CA certificate. Verify the broker hostname against its certificate
 SAN. Do not use `--insecure`.
 
 ```bash
-docker compose --env-file .env -f deploy/compose.yaml --profile tls up -d mqtt-tls
+docker compose --env-file .env -f deploy/compose.yaml --profile tls up -d --build mqtt-tls
 docker compose --env-file .env -f deploy/compose.yaml logs mqtt-tls
 ```
 
@@ -94,20 +94,34 @@ keys. The broker enforces topic access. Payload/topic identity, schema, expiry,
 retain policy and application authorization remain application responsibilities.
 `mqtt_data` persists broker state. Session/queue limits, revocation, rotation,
 CA policy, backups, resource limits and remote deployment require review before
-use beyond local testing. Mosquitto 2.0 may warn about ownership of the read-only
-source ACL mount. Review future-image ownership requirements before upgrading.
+use beyond local testing.
+
+The TLS image builds from `deploy/mosquitto/`. Its build context allows only the
+Dockerfile, ACL and TLS configuration. It contains no certificate or private key.
+The ACL is owned by `1883:1883` with mode `0600`, and the broker runs as that
+non-root UID/GID. Rebuild with `--build` after changing ACL/configuration. The
+broker mount must contain only the public CA, server certificate and server key;
+never mount a CA private key or client keys there. The smoke test mounts each
+client's CA and its own certificate/key as individual read-only files. Anonymous
+clients receive only the public CA. Client keys remain mode `0600` on the host.
 
 ## Checks and cleanup
 
 ```bash
 python3 scripts/verify_no_secrets.py
 python3 -m unittest discover -s tests/integration -p test_verify_no_secrets.py -v
+python3 -m unittest discover -s tests/integration -p test_infra_security.py -v
 python3 -u tests/integration/test_local_infra.py
 ```
 
 The Docker test uses random loopback ports, a unique Compose project and ignored
 one-day test keys. It prints separate results and broker logs for health,
-persistence, positive MQTT flows, authentication failures and ACL denials. It
+persistence, credential isolation, broker ownership, positive MQTT flows,
+authentication failures and ACL denials. A separate Docker bridge client must
+reach a temporary non-loopback host listener, then fail to reach each published
+service on that same host address. Localhost service connections must succeed.
+This Linux test needs `ip` from iproute2 and a usable non-loopback host IPv4; it
+fails rather than skipping the check if no address or control path is available. It
 removes only its own containers, volumes and temporary keys after completion or
 a failed assertion. See [`tests/integration/README.md`](../tests/integration/README.md).
 
@@ -129,6 +143,15 @@ Adding `-v` permanently deletes that project's database and MQTT volumes. Remove
 local test certificates and `.env` only when no longer needed. Do not delete
 shared CA material.
 
+Human Security Audit still needs to assess CA issuance/revocation/rotation,
+Backend identity privileges, Docker daemon/network access and deployment on the
+intended host. The non-loopback probe runs inside a separate Docker network on
+the tested host. It does not replace tests from physical LAN/Internet clients,
+IPv6 checks or firewall/direct-routing review. Docker documents localhost port
+exposure on releases older than 28.0.0; use a supported patched engine and verify
+the deployment network independently.
+
 Sources: [Mosquitto authentication and ACL configuration](https://mosquitto.org/man/mosquitto-conf-5.html),
 [Compose profiles](https://docs.docker.com/compose/how-tos/profiles/),
-[Compose required environment variables](https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/).
+[Compose required environment variables](https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/),
+[Docker port publishing and direct-routing limits](https://docs.docker.com/engine/network/port-publishing/).
