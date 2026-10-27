@@ -1,8 +1,8 @@
-# SOP v1.1 — Native Harness Fast Lane (Codex & AGY)
+# SOP v1.2 — Native Harness Fast Lane (Codex & AGY)
 
 > **Status:** OWNER-SELECTED / IMPLEMENTED_AS_AGENT_INSTRUCTIONS / E2E_NOT_VERIFIED.
 > **Áp dụng:** Coding Issue thông thường trong `khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP`.
-> **Mục tiêu UX:** Mỗi Issue, operator chỉ nhập `Chạy Issue #N` trong Codex hoặc AGY.
+> **Mục tiêu UX:** Mỗi Issue, operator chỉ nhập `Chạy Issue #N` trong Codex hoặc AGY. `Nghiệm thu PR #N` chạy review read-only theo cùng quality gates, chỉ sửa khi operator đã cho phép.
 > **Phân biệt:** Fast Lane này là **native AI-agent orchestration**, không phải signed MCP execution runner. `scripts/agent_harness/mcp_execution.py` vẫn yêu cầu grant và KHÔNG được báo cáo là đã tự động chạy không cần chữ ký.
 
 ## 0. Cài đặt một lần (không phải mỗi Issue)
@@ -24,12 +24,33 @@ Coordinator tự xử lý theo bảng dưới. Không yêu cầu một prompt d�
 | G0 Intake | Đọc GitHub Issue OPEN, Objective, AC, allowlist; `AGENTS.md`, `.github/copilot-instructions.md`, ADR/requirements/contracts liên quan | Issue URL, body SHA, source SHA, scope |
 | G1 Workspace | Kiểm tra source sạch; tạo branch/worktree riêng; không đụng `main` hoặc xóa thay đổi tồn tại | Branch, worktree, base SHA |
 | G2 Worker | Native Worker nếu có; nếu không thì Coordinator tự code và công bố fallback. Chỉ thay đổi file trong allowed paths | Changed files, diff, explanation |
-| G3 Host checks | Kiểm tra scope, secrets/symlinks, `git diff --check`; chạy test theo module và compiler/contract checks phù hợp. Firmware: ESP-IDF v6.1 với bản sao build disposable, pinned Docker image khi thực thi được | Lệnh, exit code, tool version, log/receipts |
-| G4 Auditor | Fresh native Auditor (nếu hỗ trợ) đọc AC và diff; không được thay đổi candidate trong audit; Host/Coordinator kiểm tra lại diff. Không có Auditor thì ghi `AUDIT_NOT_VERIFIED` | Findings, limitations, provenance trung thực |
+| G3 Host checks | Chạy [quality gates](harness-quality-gates.md) theo changed files với receipts thực tế, trước Auditor; kiểm tra scope, secrets/symlinks, `git diff --check`; chạy test theo module và compiler/contract checks phù hợp. Firmware: ESP-IDF v6.1 với bản sao build disposable, pinned Docker image khi thực thi được | Lệnh, exit code, tool version, log/receipts |
+| G4 Auditor | Fresh native Auditor (nếu hỗ trợ) đọc AC và diff; không được thay đổi candidate trong audit; Host/Coordinator chạy lại quality gates, so fingerprint/diff/source SHA, manifest và receipt hashes sau review. Không có Auditor thì ghi `AUDIT_NOT_VERIFIED` | Findings, limitations, provenance trung thực |
 | G5 Delivery | Nếu gates thích hợp pass: commit Conventional Commits vào feature branch, push, tạo **Draft PR** link Issue; tuyệt đối không auto-merge | Commit SHA, PR URL |
 | G6 Human review | Người dùng và reviewer xử lý PR; RF/ISR/timer/security/protocol cần technical sign-off khi liên quan | AWAIT_HUMAN / BLOCKED / PARTIAL |
 
 **Không auto-block chỉ vì GitHub Actions không chạy:** theo quyết định owner, acceptance GitHub Actions là `OWNER_WAIVED`, KHÔNG được ghi `CI_PASS`. Build/unit/contract tests có bằng chứng vẫn phải chạy khi phù hợp.
+
+### Local quality gates, không thêm bước nhập lệnh
+
+Coordinator tự chạy từ trusted checkout, trước và sau Auditor:
+
+```bash
+python3 scripts/agent_harness/quality_gates.py --repo <candidate> --base <trusted-base-sha> --fingerprint-only
+python3 scripts/agent_harness/quality_gates.py --repo <candidate> --base <trusted-base-sha> --evidence-dir <host-evidence-outside-candidate> --manifest manifest.json
+```
+
+Docs-only không cần Docker/module receipts; có thể bỏ hai arguments evidence.
+Manifest chỉ chứa actual commands, exits, tool versions, sanitized log hashes và
+Host runtime observations. Runner không chạy lệnh từ manifest. Xem
+[rule matrix, schema và remediation](harness-quality-gates.md).
+Missing required receipt, FAIL hoặc P0/P1 chưa giải quyết chặn `READY_TO_MERGE`.
+Security-critical PR còn chờ reviewer human, kể cả khi local checks PASS.
+Tách `AUTO_CHECK_PASS`, model `AUDIT_PASS` và
+`HUMAN_SECURITY_REVIEW_PENDING/PASS`; giữ Draft PR nếu còn findings và ghi đúng
+PARTIAL/BLOCKED. Human Security Audit của Issue #16 vẫn do người có thẩm quyền
+thực hiện. CLI luôn trả `ready_to_merge: false`, không chứng thực người thu thập
+receipts, không thay thế human review và không enforcement GitHub branch rules.
 
 ## 2. Trạng thái chuẩn
 
@@ -61,7 +82,9 @@ RESULT: DONE_FOR_REVIEW | PARTIAL | BLOCKED
 BRANCH / WORKTREE: ...
 CHANGED FILES: ...
 TESTS / BUILDS: command + PASS/FAIL/NOT_RUN + receipt path
+AUTO CHECKS: AUTO_CHECK_PASS/BLOCKED + receipt manifest
 AUDIT: PASS/FAIL/NOT_VERIFIED + findings
+HUMAN SECURITY REVIEW: PENDING/PASS/NOT_REQUIRED + actual review URL/SHA
 PR: Draft PR URL hoặc NOT_CREATED
 RF / HIL / TIMING: NOT_VERIFIED (trừ khi đo thực tế)
 NEXT ACTION: Review & merge | Fix blocker

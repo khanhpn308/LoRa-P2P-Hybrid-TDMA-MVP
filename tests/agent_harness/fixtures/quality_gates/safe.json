@@ -1,0 +1,136 @@
+{
+  "SEC-KEY-MOUNT": {
+    "runtime_inventory_complete": true,
+    "clients": [
+      {
+        "identity": "anonymous",
+        "mounts": [
+          {
+            "source": "/disposable/ca.crt",
+            "target": "/certs/ca.crt",
+            "read_only": true,
+            "kind": "public_certificate"
+          }
+        ]
+      },
+      {
+        "identity": "gw-a",
+        "mounts": [
+          {
+            "source": "/disposable/ca.crt",
+            "target": "/certs/ca.crt",
+            "read_only": true,
+            "kind": "public_certificate"
+          },
+          {
+            "source": "/disposable/gw-a.key",
+            "target": "/certs/gw-a.key",
+            "read_only": true,
+            "kind": "private_key",
+            "mode": "0600"
+          }
+        ]
+      },
+      {
+        "identity": "gw-b",
+        "mounts": [
+          {
+            "source": "/disposable/ca.crt",
+            "target": "/certs/ca.crt",
+            "read_only": true,
+            "kind": "public_certificate"
+          },
+          {
+            "source": "/disposable/gw-b.key",
+            "target": "/certs/gw-b.key",
+            "read_only": true,
+            "kind": "private_key",
+            "mode": "0600"
+          }
+        ]
+      },
+      {
+        "identity": "backend",
+        "mounts": [
+          {
+            "source": "/disposable/ca.crt",
+            "target": "/certs/ca.crt",
+            "read_only": true,
+            "kind": "public_certificate"
+          },
+          {
+            "source": "/disposable/backend.key",
+            "target": "/certs/backend.key",
+            "read_only": true,
+            "kind": "private_key",
+            "mode": "0600"
+          }
+        ]
+      }
+    ],
+    "broker": {
+      "mounts": [
+        {
+          "source": "/disposable/ca.crt",
+          "target": "/certs/ca.crt",
+          "read_only": true,
+          "kind": "public_certificate"
+        },
+        {
+          "source": "/disposable/server.key",
+          "target": "/certs/server.key",
+          "read_only": true,
+          "kind": "private_key",
+          "mode": "0640"
+        }
+      ]
+    }
+  },
+  "MQTT-ACL-PERM": {
+    "runtime": true,
+    "startup_logs_complete": true,
+    "broker_uid": 1883,
+    "broker_gid": 1883,
+    "acl_uid": 1883,
+    "acl_gid": 1883,
+    "acl_mode": "0600",
+    "acl_readable": true
+  },
+  "NET-LOOPBACK": {
+    "runtime": true,
+    "inventory_complete": true,
+    "network_context": "separate Docker bridge on tested Linux host, IPv4 only",
+    "representative": true,
+    "non_loopback_address": "192.0.2.1",
+    "control_reachable": true,
+    "bindings": [
+      {
+        "service": "postgres",
+        "host_ip": "127.0.0.1",
+        "localhost_reachable": true,
+        "non_loopback_reachable": false
+      },
+      {
+        "service": "mqtt-dev",
+        "host_ip": "127.0.0.1",
+        "localhost_reachable": true,
+        "non_loopback_reachable": false
+      },
+      {
+        "service": "mqtt-tls",
+        "host_ip": "127.0.0.1",
+        "localhost_reachable": true,
+        "non_loopback_reachable": false
+      }
+    ]
+  },
+  "TLS-AUTH/ACL-NEGATIVE": {
+    "runtime": true,
+    "server_verified": true,
+    "allowed_flow": true,
+    "wrong_cert_rejected": true,
+    "anonymous_rejected": true,
+    "cross_gateway_publish_denied": true,
+    "cross_gateway_subscribe_denied": true
+  }
+}

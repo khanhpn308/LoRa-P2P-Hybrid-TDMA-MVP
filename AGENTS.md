@@ -10,6 +10,22 @@ This is a **native-agent workflow**, NOT a claim that the signed MCP `harness_pr
 
 Always read `.github/copilot-instructions.md` and the active Issue's exact `Target Directories (allowed paths)` before routing.
 
+## Native Fast Lane quality gates — Issue #88
+
+For `Chạy Issue #N` and read-only `Nghiệm thu PR #N`, the Coordinator MUST follow
+[Quality gates](docs/development/harness-quality-gates.md). From a trusted checkout,
+run `python3 scripts/agent_harness/quality_gates.py --repo <candidate> --base <trusted-base-sha>`
+and supply Host-collected receipts for selected rules as documented there. Run
+before and after the fresh Auditor; compare candidate fingerprint, diff, manifest
+and receipt hashes. No extra operator command or signer is required. Never execute
+manifest commands or infer runtime PASS from a config diff or model report.
+Report `AUTO_CHECK_PASS`, model `AUDIT_PASS` and human security review separately.
+Any required missing evidence, FAIL or unresolved P0/P1 finding blocks
+`READY_TO_MERGE`; security-critical changes require actual human security review.
+Draft PRs with findings remain allowed, accurately marked PARTIAL/BLOCKED.
+GitHub Actions `OWNER_WAIVED` does not waive local checks. The CLI does not
+authenticate receipts, certify human review or enforce GitHub merge policy.
+
 ## Task Start Gate — mandatory pre-edit handshake
 
 Before any **write/implementation** task, AI Workers and Auditors MUST consult [AI Task Start Protocol](docs/development/AI_TASK_START_PROTOCOL.md) and the active Issue, then complete the scoped `INTAKE → ISSUE_SCOPE → REPO_PREFLIGHT → SELECTIVE_CONTEXT → IMPACT_DISCOVERY → DECISION_GATE → PRE_EDIT_HANDOFF` sequence. The deterministic Host/Human, not the Worker, decides `START_READY | READ_ONLY | BLOCKED`. Do not edit before `START_READY`; produce the canonical 9-field pre-edit report (see protocol §2) and preserve the exact unified final-report fields below. Ordinary answers and authorized research may remain `READ_ONLY` without creating or modifying repository files.
