@@ -1,0 +1,88 @@
+name: Harness onboarding checklist
+description: Check developer environment readiness for WSL2/Linux without sharing credentials
+title: "[ONBOARD] "
+labels: ["type:feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Run bash scripts/setup_harness.sh from the repository root first.
+        Never paste tokens, passwords, private keys, GitHub hosts.yml, or Docker credentials.
+        This checklist is environment evidence only, NOT a Build/HIL/RF/CI/security sign-off.
+  - type: textarea
+    id: target_directories
+    attributes:
+      label: "Target Directories (allowed paths)"
+      description: "REQUIRED for repository policy. Use NONE — onboarding/checklist only unless actual code change is separately approved."
+      value: "NONE — onboarding/checklist only"
+    validations:
+      required: true
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      options:
+        - WSL2 Ubuntu 24.04
+        - WSL2 other Linux
+        - Linux native
+        - Other (specify below)
+    validations:
+      required: true
+  - type: dropdown
+    id: role
+    attributes:
+      label: Required profile
+      options:
+        - core
+        - firmware
+        - infra
+        - all
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Preferred AI CLI
+      options:
+        - Codex
+        - AGY
+        - Either
+        - Not installed yet
+    validations:
+      required: true
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Onboarding verification
+      description: "Check only steps you actually verified. Leave untested items unchecked."
+      options:
+        - label: "Cloned repository; verified branch and preserved local changes"
+        - label: "Read AGENTS.md and harness-fast-lane.md"
+        - label: "Ran bash scripts/setup_harness.sh using intended profile"
+        - label: "Verified gh auth status separately (no auth secrets shared)"
+        - label: "Selected CLI permissions deliberately; no root signer"
+        - label: "Docker daemon/Compose inspected if required by role"
+        - label: "Cached ESP-IDF v6.1 Docker image checked if firmware role"
+        - label: "Reviewed NOT_VERIFIED/limitations and pending human reviews"
+    validations:
+      required: false
+  - type: textarea
+    id: doctor_report
+    attributes:
+      label: Sanitized doctor results and blockers
+      description: "Record only check names, statuses, next steps; do not paste tokens or private paths."
+      placeholder: |
+        profile: core
+        status: NOT_READY
+        failed_required_checks: [gh_auth_config]
+        Build/HIL/RF: NOT_VERIFIED
+    validations:
+      required: true
+  - type: textarea
+    id: remedy_plan
+    attributes:
+      label: Approved installation/remediation plan
+      description: "List tools needing installation and who approves system changes. Never include credentials."
+      placeholder: "Need to install gh; package plan approved by local admin"
+    validations:
+      required: false
