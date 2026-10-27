@@ -3,7 +3,7 @@
 
 ## 1. Topics, QoS và ownership
 
-Root `iot/v1/gw/{gateway_id}`. **MQTT 5.0 bắt buộc** cho Gateway và Backend (xem [ADR-0002](../../docs/adr/0002-mqtt-5.md)); MQTT 3.1.1 không thuộc contract v1. Dùng TLS với xác thực broker/Gateway, ACL theo client ID thật; chỉ profile `dev-insecure` localhost bị cô lập mới được chạy cleartext.
+Root `iot/v1/gw/{gateway_id}`. **MQTT 5.0 bắt buộc** cho Gateway và Backend (xem [ADR-0002](../../docs/adr/0002-mqtt-5.md)); MQTT 3.1.1 không thuộc contract v1. Dùng TLS với xác thực broker/Gateway, ACL theo **authenticated principal** (username/verified client certificate); ràng buộc với gateway_id, không tin ClientID tự khai báo; chỉ profile `dev-insecure` localhost bị cô lập mới được chạy cleartext.
 
 | Suffix | Publisher → Consumer | QoS | Retain | Schema |
 |---|---|---:|---|---|
@@ -15,7 +15,7 @@ Root `iot/v1/gw/{gateway_id}`. **MQTT 5.0 bắt buộc** cho Gateway và Backend
 | `downlink/schedule` | Backend → Gateway | 1 | **false** | [schedule](schemas/schedule.schema.json) |
 | `downlink/command` | Backend → Gateway | 1 | false | [command](schemas/command.schema.json) |
 
-Gateway chỉ publish `uplink/#` và subscribe `downlink/#` của **chính mình**; Backend ngược lại. Web/Mobile không truy cập MQTT trực tiếp. Không tạo ngầm alias `iot/gw/{id}/control/schedule/set` hay `uplink/sched_ack` nêu trong tài liệu đính kèm: namespace canonical là của repository.
+Gateway chỉ publish `uplink/#` và subscribe `downlink/#` của **chính mình**; Backend ngược lại. Topic `gateway_id` phải khớp danh tính đã được Broker xác thực; payload `gateway_id` phải khớp topic/identity (semantic check), không dùng riêng `ClientID` tự khai báo để cấp quyền. Web/Mobile không truy cập MQTT trực tiếp. Không tạo ngầm alias `iot/gw/{id}/control/schedule/set` hay `uplink/sched_ack` nêu trong tài liệu đính kèm: namespace canonical là của repository.
 
 ## 1.1. MQTT 5.0 — session và expiry
 
@@ -50,7 +50,17 @@ Backend: `PROPOSED → SENT → STAGED → ACTIVE` hoặc `REJECTED / EXPIRED`; 
 
 `command_id` idempotent; `created_at/expires_at` bắt buộc, action theo allowlist và RBAC chỉ do Backend kiểm. `uplink/command-ack` (proposed) phân biệt `QUEUED`, `DISPATCHED`, `NODE_ACKED`, `REJECTED`, `EXPIRED`, `UNKNOWN`. Broker PUBACK **không phải** chứng cứ Node thi hành lệnh. Gateway không phát lệch slot hoặc vượt airtime policy. `uplink/status` retained không chứng minh thiết bị đang online; Backend phải có timeout/LWT và server ingest time.
 
-## 5. Negative tests / giới hạn
+## 5. Quy tắc chính xác và tài liệu chi tiết
+
+Các ràng buộc **MUST/SHOULD**, state transition table, error-code ownership, trường phân biệt planned/actual activation, checklist 7 schemas, ví dụ/negative scenarios nằm tại [semantic-rules.md](semantic-rules.md). Đây là phần hợp đồng cần Gateway/Backend/Infra-Security review, không phải chứng cứ chạy test.
+
+- MQTT 5 `SUBACK`: nếu subscription yêu cầu QoS 1 thì Granted QoS `0x01` mới đáp ứng profile; `0x00` là downgraded QoS 0, không đánh dấu pipeline `READY`.
+- `downlink/#`: subscribe `Retain Handling=2` để không nhận retained history ở thời điểm SUBSCRIBE; vẫn phải reject bất kỳ retained/live stale proposal nếu xuất hiện. Không dùng cờ `RETAIN` đơn lẻ làm chứng cứ freshness.
+- Broker TLS/ACL: bind topic identity theo authenticated username/certificate; `ClientID` do client tự khai báo không phải credential.
+- Session: `Clean Start` và `Session Expiry` độc lập; Will Delay có thể kết thúc sớm khi `Session Expiry=0`. `uplink/status` retained chỉ là snapshot; online/offline phải đối chiếu thời điểm ingest/timeout/broker connection/LWT design được duyệt.
+- MQTT `PUBACK` trên từng hop không đồng nghĩa Go DB commit hay radio application ACK; Backend cần thiết kế commit-before-ACK và durable idempotency ở Issue #18 (chưa triển khai/verify ở #14).
+
+## 6. Negative tests / giới hạn
 
 - QoS1 duplicate, reconnect và offline replay: giữ ID, chỉ lưu một lần vào DB.
 - MQTT 5.0: thử CONNECT/session, Message Expiry (thiếu, quá dài, hết hạn), Reason Codes và khởi động lại Broker/Gateway.

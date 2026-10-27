@@ -1,12 +1,13 @@
-# Backend ↔ Web/Mobile contracts
+# Backend ↔ Web/Mobile API & WSS contracts
 
-**Draft for owner review; no API/WebSocket production implementation.**
+**Issue #15 revision: DRAFT / requires Backend + Web/Mobile + Security review. Not implemented.** OpenAPI version `1.0.0-draft`; WSS envelope `1.0-draft`. Never infer G4 integration PASS from schema or CI syntax.
 
-- [OpenAPI REST](openapi.yaml): `/api/v1` status, nodes, paginated telemetry/alerts, schedule generation+read state, alert acknowledge, queued commands, admin audit, provisional login; `/healthz` is liveness, not RF readiness.
-- [WebSocket design](websocket.md), [event JSON Schema](schemas/realtime-event.schema.json) and [mock fixtures](examples/realtime-cases.json).
-- OpenAPI `x-roles` lists authorization roles; Backend **must** enforce roles and resource ownership. Common 401/403/404/409/422 errors modeled by Error body. 202 means **accepted for processing**, not radio success.
-- Current auth scheme JWT bearer and login are **proposals**, not approved token issuance, refresh, cookie/WS-ticket or MFA design. Do not expose bearer in URL.
-- API numeric primary keys transmitted as **decimal strings** to avoid JS 53-bit integer precision loss. MQTT raw integers remain raw; sensor calibration units are not invented.
-- Client can start with mocks, but completed code and field mappings to PostgreSQL require separate authorized Issue/PR and producer/consumer review.
+- [OpenAPI REST](openapi.yaml) — **14** operations (11 previous + 3 PROPOSED extensions: human schedule review, activation request, command ticket polling); `/healthz` is process liveness only. Commands / activation requests require an `X-Idempotency-Key` in this proposed revision (breaking vs older examples; cross-team approval mandatory). No client directly connects to MQTT/PostgreSQL.
+- [WSS semantics](websocket.md) and [machine schema](schemas/realtime-event.schema.json) — server→client best effort, 4 legacy event types + **proposed** `COMMAND_STATE_CHANGED`, no durable replay. See [REST/WSS contract invariants](contract-semantics.md).
+- [WSS examples](examples/realtime-cases.json), [REST examples](examples/rest-cases.json), [behavioral tests](../../tests/contract/test_api_contract.py) — synthetic conformance cases, not live client or RF evidence.
+- Server `x-roles` **and object-level authorization** required; 401/403 must be distinguished. HTTP 202 means accepted for processing, not Gateway/Node execution. `STAGED` is not `ACTIVE`.
+- D13 (JWT issuance/refresh, cookie/WS ticket auth, revocation) remains **BLOCKED_SECURITY/TBD**. Dev-only mocks are never credentials for production.
+- All 64-bit numeric IDs are decimal strings in JSON. MQTT `event_id` uses `gateway_id:gateway_epoch(UUID):event_seq`; server WSS envelope event ID is separate. RF timing/airtime/legal decisions remain independent `NOT_VERIFIED`.
+- Breaking/extension changes require review of Backend, React and Flutter client use-cases, schema bump/compatibility assessment and test evidence **before** merge.
 
-All examples are synthetic. Test with `python3 contracts/tests/check_contracts.py` (dependencies documented in `contracts/verification.md`).
+Local validation (requires installed `jsonschema`, `PyYAML`, `openapi-spec-validator` as declared in `contracts/tests/requirements.txt`): `python3 -m unittest discover -s tests/contract -p 'test_*.py' -v`. CI's existing `ci-contracts.yml` is syntax-only; it does **not** run these tests.

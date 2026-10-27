@@ -1,13 +1,13 @@
 # GO BACKEND ENGINEERING STANDARD v1.0
 
-**Document ID:** BE-STD-001  
-**Version:** 1.0.1-draft (JSON boundary clarification; rule IDs preserved)  
-**Status:** **DRAFT — PENDING HUMAN TECHNICAL REVIEW**  
-**Prepared:** 2026-10-23  
-**Amendment:** Issue #41 — Go 1.27 JSON trust-boundary policy + tests; branch `feature/41-json-boundary-go127` depends on #40.  
-**Repository:** `khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP`  
-**Target Path:** docs/development/backend-go/GO_BACKEND_ENGINEERING_STANDARD_V1.0.md  
-**Scope:** `backend-go/**`; interfaces với `contracts/mqtt/**`, `contracts/api/**`, `contracts/radio-mac/**` và migrations; AI agents + human reviewers.  
+**Document ID:** BE-STD-001
+**Version:** 1.0.1-draft (JSON boundary clarification; rule IDs preserved)
+**Status:** **DRAFT — PENDING HUMAN TECHNICAL REVIEW**
+**Prepared:** 2026-10-23
+**Amendment:** Issue #41 — Go 1.27 JSON trust-boundary policy + tests; branch `feature/41-json-boundary-go127` depends on #40.
+**Repository:** `khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP`
+**Target Path:** docs/development/backend-go/GO_BACKEND_ENGINEERING_STANDARD_V1.0.md
+**Scope:** `backend-go/**`; interfaces với `contracts/mqtt/**`, `contracts/api/**`, `contracts/radio-mac/**` và migrations; AI agents + human reviewers.
 **Baseline trên nhánh chuẩn hóa Issue #39 (DRAFT, chưa merge):** `backend-go/go.mod` khai báo **Go 1.27.3**, `.go-version` khóa `1.27.3`, CI phải xác minh đúng `go1.27.3` với `GOTOOLCHAIN=local`; `backend-go/README.md` và `cmd/server/main.go` là **scaffold only**, chưa có service production hoạt động. **Pre-approved Stack của standard v1.0 (định hướng mặc định, chưa đồng nghĩa đã khai báo trong `go.mod` hoặc được phê duyệt ở cấp repository):**
 - **HTTP Routing:** `net/http` — `http.ServeMux` của stdlib Go 1.27.3. MUST NOT tự thêm Gin, Echo, Fiber hoặc router bên thứ ba.
 - **PostgreSQL:** `github.com/jackc/pgx/v5` — ưu tiên `pgxpool`; MAY dùng adapter `stdlib` qua `database/sql` nếu có lý do cụ thể. Không sử dụng song song hai cách truy cập DB chỉ vì sở thích.

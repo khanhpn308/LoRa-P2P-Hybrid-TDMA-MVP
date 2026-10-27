@@ -24,20 +24,42 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Resolve project-pinned ESP-IDF release
+        id: idf
+        shell: bash
+        run: |
+          version="$(tr -d '\r\n' < firmware/esp-idf-version.txt)"
+          if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "Invalid ESP-IDF release: $version" >&2
+            exit 1
+          fi
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
       - name: ESP-IDF Gateway scaffold build
         uses: espressif/esp-idf-ci-action@v1
         with:
-          esp_idf_version: "release-v5.4"
+          esp_idf_version: ${{ steps.idf.outputs.version }}
           target: esp32
           path: firmware/gateway_master
+          command: idf.py --version && idf.py build
   node-build:
     name: node-esp32-build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Resolve project-pinned ESP-IDF release
+        id: idf
+        shell: bash
+        run: |
+          version="$(tr -d '\r\n' < firmware/esp-idf-version.txt)"
+          if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "Invalid ESP-IDF release: $version" >&2
+            exit 1
+          fi
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
       - name: ESP-IDF Node scaffold build
         uses: espressif/esp-idf-ci-action@v1
         with:
-          esp_idf_version: "release-v5.4"
+          esp_idf_version: ${{ steps.idf.outputs.version }}
           target: esp32
           path: firmware/sensor_node
+          command: idf.py --version && idf.py build

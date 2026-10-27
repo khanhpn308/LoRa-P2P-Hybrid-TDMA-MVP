@@ -1,5 +1,7 @@
 # HƯỚNG DẪN MONOREPO — LoRa P2P Hybrid TDMA MVP
 
+> **Baseline ESP-IDF (approved 2026-10-22):** v6.1 for Gateway and Sensor Node, controlled by `firmware/esp-idf-version.txt` and ADR-0003. Both firmware CI jobs use this pinned release; Harness automatically loads it. Any other process/guidance below must use v6.1 for firmware. This handbook's other Draft decisions remain Draft. Build success is not HIL/RF PASS.
+
 > **Document ID:** DEV-MONOREPO-001  
 > **Version:** 1.0 — Draft for team review  
 > **Audience:** Nhóm phát triển ban đầu 6 người (Firmware / RF / Backend / Web / Mobile / QA kiêm nhiệm)  

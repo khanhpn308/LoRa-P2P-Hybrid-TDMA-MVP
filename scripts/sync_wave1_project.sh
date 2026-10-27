@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# WAVE 1: only link existing GitHub Issues #8–#19 to personal Project #1 and set Gate.
+# WAVE 1 (post-rebaseline): link only #8–#12, #14–#16 to Project #1 and set Gate.
 # Does NOT create issues, edit Issue bodies, alter labels, change assignees or delete Project data.
 # Safe to rerun after interruption; uses existing Project item when already present.
 set -euo pipefail
@@ -15,7 +15,7 @@ gh auth status -h github.com >/dev/null || { echo "ERROR: login first"; exit 1; 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-# Confirm Project, Gate and all expected issue titles before any mutation.
+# Confirm Project, canonical Gate options and Wave labels before any mutation.
 gh project view "$PROJECT" --owner "$OWNER" --format json > "$TMP_DIR/project.json"
 gh project field-list "$PROJECT" --owner "$OWNER" --format json --limit 100 > "$TMP_DIR/fields.json"
 gh project item-list "$PROJECT" --owner "$OWNER" --format json --limit 500 > "$TMP_DIR/items.json"
@@ -59,29 +59,27 @@ for item in items:
 PY
 }
 
-while IFS='|' read -r n code; do
+# Verify Issue membership from the canonical Wave label, NOT from the title prefix.
+# Titles now use only domain tags such as [RF]/[Backend] and GitHub Issue numbers.
+while IFS= read -r n; do
   [ -n "$n" ] || continue
-  title="$(gh issue view "$n" -R "$REPO" --json title --jq '.title')"
-  case "$title" in
-    "[W1-$code]"*) ;;
-    *) echo "ERROR: Issue #$n unexpected title: $title"; exit 1 ;;
-  esac
+  has_label="$(gh issue view "$n" -R "$REPO" --json labels --jq '[.labels[].name] | index("wave:1") != null')"
+  if [ "$has_label" != "true" ]; then
+    echo "ERROR: Issue #$n must have canonical label wave:1, got=$has_label"
+    exit 1
+  fi
 done <<'ISSUE_CHECK'
-8|01
-9|02
-10|03
-11|04
-12|05
-13|06
-14|07
-15|08
-16|09
-17|10
-18|11
-19|12
+8
+9
+10
+11
+12
+14
+15
+16
 ISSUE_CHECK
 
-echo "Preflight PASS: 12 actual Issues and canonical Gate field."
+echo "Preflight PASS: 8 actual Wave 1 Issues (label wave:1) and canonical Gate field."
 declare -i changed=0
 while IFS='|' read -r number gate; do
   [ -n "$number" ] || continue
@@ -120,15 +118,11 @@ done <<'ISSUE_GATES'
 10|G1: RF
 11|G1: RF
 12|G2: Protocol
-13|G3: Embedded
 14|G2: Protocol
 15|G4: Integration
 16|G4: Integration
-17|G4: Integration
-18|G4: Integration
-19|G4: Integration
 ISSUE_GATES
 
-[ "$changed" -eq 12 ] || { echo "ERROR: only $changed / 12 processed"; exit 1; }
-echo "SUCCESS: 12/12 Wave 1 Issues linked and Gate VERIFIED on GitHub Project #1."
+[ "$changed" -eq 8 ] || { echo "ERROR: only $changed / 8 processed"; exit 1; }
+echo "SUCCESS: 8/8 Wave 1 Issues linked and Gate VERIFIED on GitHub Project #1."
 echo "NOTE: Priority, Status, Sprint, Estimate, owners are NOT automatically modified."

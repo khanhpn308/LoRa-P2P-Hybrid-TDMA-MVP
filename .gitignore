@@ -44,3 +44,6 @@ __pycache__/
 artifacts/
 *.pcap
 *.pcapng
+
+# CodeGraph MCP local SQLite index and WAL artifacts
+.codegraph/

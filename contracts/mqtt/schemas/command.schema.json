@@ -24,18 +24,23 @@
     },
     "created_at": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "pattern": "Z$",
+      "description": "Backend-issued UTC timestamp; semantic validation requires created_at < expires_at."
     },
     "expires_at": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "pattern": "Z$",
+      "description": "Absolute UTC proposal/command acceptance deadline; MQTT Message Expiry is separate and also mandatory."
     },
     "action": {
       "enum": [
         "SET_THRESHOLD",
         "SET_SAMPLE_PERIOD",
         "SET_RELAY"
-      ]
+      ],
+      "description": "Draft action allowlist; no action authorized for physical execution before producer/consumer review."
     },
     "params": {
       "type": "object",
@@ -50,7 +55,11 @@
             "type": "boolean"
           }
         ]
-      }
+      },
+      "propertyNames": {
+        "pattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$"
+      },
+      "description": "Shape-only: each action's allowed keys, ranges and safe actuator preconditions require Gateway/Backend semantic validation."
     }
   },
   "required": [
@@ -62,5 +71,6 @@
     "expires_at",
     "action",
     "params"
-  ]
+  ],
+  "description": "DRAFT MQTT v1 payload; schema checks local shape, not topic authorization, replay, clock freshness, state transitions or MQTT properties. Cross-team review pending (Issue #14)."
 }
