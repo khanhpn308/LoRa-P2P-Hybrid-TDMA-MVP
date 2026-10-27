@@ -19,6 +19,10 @@ applyTo: "backend-go/**"
 - REST/WSS AuthN/RBAC/token lifecycle D13 remains BLOCKED. Do not store/log secrets, skip server-side auth, interpolate untrusted SQL, treat CRC as RF authentication, or claim RF/HIL outcomes from Go CI.
 - For Go style: Google [Guide](https://google.github.io/styleguide/go/guide) is canonical/normative, [Decisions](https://google.github.io/styleguide/go/decisions) normative/subordinate, [Best Practices](https://google.github.io/styleguide/go/best-practices) advisory. Follow `gofmt`, MixedCaps and sensible Go naming; use `%w` only when exposing inspected error chains is deliberate, otherwise translate/hide errors at boundaries.
 
+## JSON boundary policy (Issue #41)
+- [GO-006, CT-003/004, TS-003] Preserve existing outbound serialization with `encoding/json`. For new inbound JSON object DTOs, use `internal/jsonboundary.DecodeObject(payload, maxBytes, &dto)` with a caller-approved positive byte limit and typed struct fields. The stdlib `encoding/json/v2` rejects duplicate names, invalid UTF-8 and unknown struct members, with case-sensitive matching. Keep decimal identifiers as strings.
+- Decode success does not establish JSON Schema conformance. Validate required fields, version, enum/range/regex, nullability and cross-field invariants before side effects. Do not wire this helper into services or choose MQTT ACK policy without a scoped implementation Issue. Do not log raw payloads or unredacted decoder errors.
+
 ## Verify and handoff
 - Implement only a small correct vertical slice, explicitly bounded goroutines/timeouts, DB transactions and shutdown handling. Do not create speculative packages, interfaces, caches or frameworks.
 - Run actual checks when available: version guard, `gofmt -l .` **empty stdout**, `go vet ./...`, `go test ./...`, `go test -race ./...`; use real PostgreSQL/Mosquitto integration when making those claims. `NOT_RUN` is not PASS, and scaffold tests do not verify end-to-end service.

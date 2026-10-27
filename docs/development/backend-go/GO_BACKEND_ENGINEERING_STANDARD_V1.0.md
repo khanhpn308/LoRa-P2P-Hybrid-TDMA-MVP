@@ -1,13 +1,14 @@
 # GO BACKEND ENGINEERING STANDARD v1.0
 
-**Document ID:** BE-STD-001  
-**Version:** 1.0.0  
-**Status:** **DRAFT — PENDING HUMAN TECHNICAL REVIEW**  
-**Prepared:** 2026-10-23  
-**Repository:** `khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP`  
-**Target Path:** docs/development/backend-go/GO_BACKEND_ENGINEERING_STANDARD_V1.0.md  
-**Scope:** `backend-go/**`; interfaces với `contracts/mqtt/**`, `contracts/api/**`, `contracts/radio-mac/**` và migrations; AI agents + human reviewers.  
-**Baseline trên nhánh chuẩn hóa Issue #39 (DRAFT, chưa merge):** `backend-go/go.mod` khai báo **Go 1.27.3**, `.go-version` khóa `1.27.3`, CI phải xác minh đúng `go1.27.3` với `GOTOOLCHAIN=local`; `backend-go/README.md` và `cmd/server/main.go` là **scaffold only**, chưa có service production hoạt động. **Pre-approved Stack của standard v1.0 (định hướng mặc định, chưa đồng nghĩa đã khai báo trong `go.mod` hoặc được phê duyệt ở cấp repository):**
+**Document ID:** BE-STD-001
+**Version:** 1.0.1-draft (JSON boundary clarification; rule IDs preserved)
+**Status:** **DRAFT — PENDING HUMAN TECHNICAL REVIEW**
+**Prepared:** 2026-10-23
+**Amendment:** Issue #41 — Go 1.27 JSON trust-boundary policy + tests; PR #40 đã merge; PR #42 được cập nhật trên `main`.
+**Repository:** `khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP`
+**Target Path:** docs/development/backend-go/GO_BACKEND_ENGINEERING_STANDARD_V1.0.md
+**Scope:** `backend-go/**`; interfaces với `contracts/mqtt/**`, `contracts/api/**`, `contracts/radio-mac/**` và migrations; AI agents + human reviewers.
+**Baseline Go từ Issue #39 / PR #40 đã merge; standard vẫn DRAFT:** `backend-go/go.mod` khai báo **Go 1.27.3**, `.go-version` khóa `1.27.3`, CI phải xác minh đúng `go1.27.3` với `GOTOOLCHAIN=local`; `backend-go/README.md` và `cmd/server/main.go` là **scaffold only**, chưa có service production hoạt động. **Pre-approved Stack của standard v1.0 (định hướng mặc định, chưa đồng nghĩa đã khai báo trong `go.mod` hoặc được phê duyệt ở cấp repository):**
 - **HTTP Routing:** `net/http` — `http.ServeMux` của stdlib Go 1.27.3. MUST NOT tự thêm Gin, Echo, Fiber hoặc router bên thứ ba.
 - **PostgreSQL:** `github.com/jackc/pgx/v5` — ưu tiên `pgxpool`; MAY dùng adapter `stdlib` qua `database/sql` nếu có lý do cụ thể. Không sử dụng song song hai cách truy cập DB chỉ vì sở thích.
 - **MQTT 5.0:** `github.com/eclipse/paho.golang/autopaho` + `github.com/eclipse/paho.golang/paho` (cùng Go module); MUST NOT dùng `github.com/eclipse/paho.mqtt.golang` (client MQTT 3.1.1) cho contract v1.
@@ -96,7 +97,7 @@ backend-go/
 
 **GO-005.** Comments giải thích **why/invariant/security/contract**, không tường thuật cú pháp. Exported identifiers nên có GoDoc khi public API thực sự cần.
 
-**GO-006.** Dùng struct typed cho contract; JSON tags tường minh. Phân biệt DTO với DB row và domain value khi khác ngữ nghĩa; không biến mọi dữ liệu thành `map[string]any`.
+**GO-006.** Dùng struct typed cho contract; JSON tags tường minh, matching field theo schema chính xác (case-sensitive ở strict input). Phân biệt DTO với DB row và domain value khi khác ngữ nghĩa; không biến mọi dữ liệu thành `map[string]any` (đặc biệt với integer IDs lớn, có nguy cơ mất precision do `float64`). IDs/số thứ tự thập phân dạng string theo contract phải giữ nguyên string.
 
 **GO-007.** Không dùng `panic` cho input, network hoặc DB error bình thường; chỉ `panic` cho programmer invariant cực kỳ bất thường nếu phù hợp, để entrypoint kiểm soát process exit.
 
@@ -137,9 +138,9 @@ Ví dụ chỉ minh hoạ style, **không** thay thế validation/idempotency/tr
 
 **CT-002.** `contracts/mqtt/topics.md` và `schemas/` kiểm soát topic, QoS, Retain, expiry, event ID, message semantics. Mọi thay đổi backward-incompatible phải có migration/compatibility plan và contract tests.
 
-**CT-003.** Validate input **at trust boundary**: HTTP body/query/path, MQTT topic/payload, DB external data. Không validate y nguyên lần nữa qua mọi layer, nhưng domain MUST enforce invariant khi được gọi từ nhiều entrypoints.
+**CT-003.** Validate input **at trust boundary**: HTTP body/query/path, MQTT topic/payload, DB external data. **Go 1.27.3 JSON policy:** tiếp tục dùng `encoding/json` tương thích v1 cho outbound wire contract hiện tại; không bulk-migrate marshal/unmarshal sang v2 hoặc thay đổi biểu diễn `null`/empty, string-number hay field case khi chưa có contract review. **Đối với inbound JSON object mới tại HTTP/MQTT boundary**, dùng `backend-go/internal/jsonboundary.DecodeObject` (stdlib `encoding/json/v2` + `RejectUnknownMembers(true)`) với typed DTO: reject duplicate member names (kể cả nested), invalid UTF-8, unknown struct fields và malformed/trailing JSON. Quyết định strict inbound này KHÔNG có nghĩa đã đổi API/MQTT schemas, và không tự động áp dụng cho handler đã triển khai nếu thay semantics. Không validate y nguyên lần nữa qua mọi layer, nhưng domain MUST enforce invariant khi được gọi từ nhiều entrypoints.
 
-**CT-004.** Giới hạn kích thước body/message, array, string, pagination, time range, ID và worker queue. Reject unknown/invalid values theo schema đang áp dụng; không suy diễn field thiếu từ RF packet.
+**CT-004.** Giới hạn kích thước body/message, array, string, pagination, time range, ID và worker queue **trước khi decode** (caller MUST cung cấp positive `maxBytes`, HTTP body phải bounded read, MQTT payload bounded trước enqueue); `DecodeObject` chỉ enforce byte size và strict syntax/typed-field decoding. **JSON Schema validation vẫn riêng:** phải kiểm `required`, `const`/`enum` (`schema_version`), regex, số nguyên trong giới hạn (uint32/uint64), nullable fields, nested `additionalProperties`, cross-field invariant, timestamps và ID. Không suy diễn field thiếu từ RF packet. `event_seq`, `schedule_id` và decimal identifiers giữ string theo contract, không đi qua `float64`; tránh so khớp nguyên văn error text của JSON decoder (Go 1.27 có thể đổi error wording).
 
 **CT-005.** Lỗi HTTP trả status/domain error nhất quán theo contract; client nhận thông báo an toàn, server log giữ error cause; không trả SQL query, stacktrace, credentials hoặc internal path.
 
@@ -298,7 +299,7 @@ Ví dụ chỉ minh hoạ style, **không** thay thế validation/idempotency/tr
 
 **TS-002.** Unit tests cho pure domain functions, table-driven khi làm rõ các trường hợp; dùng test names mô tả behavior, failure output chứa input/expected/got.
 
-**TS-003.** Boundary tests: missing field, empty string, overflow, negative/zero, max length, invalid type, duplicate, reordered, expired, malformed JSON, unsupported version.
+**TS-003.** Boundary tests: missing required field, empty string, numeric overflow, negative/zero, max length, invalid type, duplicate/out-of-order, expired, malformed JSON, unsupported version. **Go 1.27 JSON:** MUST test duplicate object member names at top-level AND nested, invalid UTF-8/unpaired surrogate, unknown top-level/nested fields, case mismatch, `null` vs missing, trailing second JSON value, too-large payload, uint16/uint32 overflow, large decimal string ID (no `float64`), and outbound legacy v1 `null`/empty compatibility. Test semantic classes/sentinels; MUST NOT assert raw stdlib error message text.
 
 **TS-004.** Contract tests dùng chính `contracts/mqtt` schemas, `contracts/api` OpenAPI và test vectors ở `contracts/radio-mac` khi phù hợp; consumer/producer cùng review.
 
@@ -355,7 +356,7 @@ govulncheck ./...        # nếu đã cài
 
 **AI-005 — Search before create:** Tìm model, helper, schema, query đã có; reuse nếu đúng ownership. Không duplicate contracts hoặc business logic.
 
-**AI-006 — Avoid invented APIs:** Xác minh Go version, dependency versions, function signatures từ source/`go doc`; không phỏng đoán thư viện.
+**AI-006 — Avoid invented APIs:** Xác minh Go version, dependency versions, function signatures từ source/`go doc`; không phỏng đoán thư viện. Với JSON: phân biệt `encoding/json` v1-compat và `encoding/json/v2` strict, dùng boundary decoder chỉ ở input được duyệt, giữ output wire semantics; **không** nhận parser success là schema success, hoặc sửa contract khi chưa review.
 
 **AI-007 — Stable contracts:** Không đổi MQTT topic, frame layout, API schema, SQL migration hoặc state semantics nếu chưa được yêu cầu, không tương thích hoặc chưa review.
 
@@ -444,6 +445,7 @@ REVIEWERS REQUIRED:
 - Go Team, *gofmt command*: <https://go.dev/cmd/gofmt/> (đường dẫn thư mục được duyệt đệ quy; `-l` không tự fail khi có unformatted files).
 - Eclipse Paho Go MQTT 5 client & ack semantics: <https://github.com/eclipse-paho/paho.golang> và <https://pkg.go.dev/github.com/eclipse/paho.golang/paho>.
 - Go 1.27 release history: <https://go.dev/doc/devel/release>; download: <https://go.dev/dl/>. Dependency versions will be selected and tested in a separate implementation Issue.
+- Go Team, *Go 1.27 Release Notes — JSON v2*: <https://go.dev/doc/go1.27>; *JSON v2 Migration Guide*: <https://go.dev/doc/jsonv2-migration>; stdlib APIs: <https://pkg.go.dev/encoding/json/v2>, <https://pkg.go.dev/encoding/json/jsontext>.
 
 ### Nguồn nội bộ (đã đối chiếu trên default branch khi biên soạn)
 
@@ -457,4 +459,4 @@ REVIEWERS REQUIRED:
 - `docs/verification/acceptance-gates.md` (G0–G6 và evidence).
 - User-provided `esp32_sx1762.md` (architecture reference); `monorepo-guide.md` (v1.0 draft planning reference, not adopted policy).
 
-**Tuyên bố trạng thái:** Tài liệu này là **biên soạn/chưa được merge**. Chưa chạy build, test, security scan, integration, RF hoặc HIL cho bất kỳ implementation mới nào. Repo không được sửa bởi việc tạo bản tài liệu này.
+**Tuyên bố trạng thái:** Bổ sung JSON của Issue #41 đang chờ review ở PR #42. Standard v1 là tài liệu tham chiếu lịch sử; agent routing hiện dùng v2 DRAFT theo `AGENTS.md`. Code `jsonboundary` của Issue #41 là implementation mới nhưng **chưa được wire vào MQTT/API**; xem GitHub Actions của đúng commit để xác minh build/test, không coi unit PASS là full JSON Schema/MQTT/DB integration PASS. Security scan, HIL và RF không thuộc phạm vi thay đổi này.
