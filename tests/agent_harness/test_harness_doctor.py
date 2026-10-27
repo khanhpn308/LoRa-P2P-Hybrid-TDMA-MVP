@@ -120,7 +120,7 @@ class HarnessDoctorTests(unittest.TestCase):
         self.assertEqual(sentinel.read_text(), "preserve")
 
     def test_token_never_printed_or_serialized(self):
-        secret = "ghp_SECRET_SHOULD_NEVER_BE_PRINTED_123"
+        secret = "SENTINEL_DO_NOT_DISCLOSE_123"
         with patch.dict(doctor.os.environ, {"GH_TOKEN": secret}):
             result, _ = self.report()
         self.assertNotIn(secret, json.dumps(result))
