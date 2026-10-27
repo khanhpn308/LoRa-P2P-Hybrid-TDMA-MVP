@@ -96,6 +96,11 @@ class ApprovalTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 _strict_json(raw)
 
+    def test_missing_grant_has_validation_error_not_uncaught_file_not_found(self):
+        self.path.unlink()
+        with self.assertRaisesRegex(ValueError, "Required approval path unavailable"):
+            self.valid()
+
     def test_grant_symlink_rejected(self):
         self.path.unlink()
         self.path.symlink_to("/etc/passwd")
