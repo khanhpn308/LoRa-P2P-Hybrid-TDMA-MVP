@@ -455,6 +455,7 @@ class MCPExecution:
                       ".csv", ".json", ".yml", ".yaml", ".ld", ".py"}
         count = 0
         size = 0
+        directory_count = 0
         firmware = source / "firmware"
         if not firmware.is_dir() or firmware.is_symlink():
             raise ValueError("Firmware directory is invalid")
@@ -464,6 +465,13 @@ class MCPExecution:
                        and not d.startswith(".")]
             if any((top / d).is_symlink() for d in dirs):
                 raise ValueError("Symlink firmware directory")
+            # A CMake EXTRA_COMPONENT_DIRS path may legitimately be an empty
+            # scaffold directory. Preserve such directories in the disposable
+            # source copy, not just directories containing copied source files.
+            directory_count += 1
+            if directory_count > 1000:
+                raise ValueError("Excessive firmware directory count")
+            (dest / top.relative_to(source)).mkdir(mode=0o700, parents=True, exist_ok=True)
             for name in files:
                 f = top / name
                 if f.is_symlink() or not f.is_file():
