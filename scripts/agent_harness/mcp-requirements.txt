@@ -1,0 +1,2 @@
+# MCP Python SDK v2 validated target (review upgrades separately)
+mcp==2.3.0
