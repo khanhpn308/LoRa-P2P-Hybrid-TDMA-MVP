@@ -52,10 +52,19 @@ any `AGENTS.md`, `.github/copilot-instructions.md`, `.github/instructions/`,
 regardless of their file extension. Missing receipts block automatic acceptance
 and human security review remains pending.
 
+All files under `contracts/` and `docs/adr/` also bypass the Markdown exemption
+and require `SECURITY-CHECK` with human security review pending. This protects
+versioned contract Markdown and approved decisions such as ADR-0002. The guard
+uses authority directories rather than candidate-editable approval text, so
+changing a document's status to DRAFT cannot enable docs-only routing. It
+conservatively covers draft decisions and authority-directory README/index
+files too. Existing MQTT/TLS path routing still applies, including infrastructure
+and runtime security receipt requirements for MQTT contracts and ADR-0002.
+
 Ordinary Markdown, including README files, development notes and architecture
-documents, still selects only the common checks. A filename containing security
-or MQTT does not make ordinary Markdown executable policy. Other paths use
-these rules:
+documents outside those authority/control paths, still selects only the common
+checks. A filename containing security or MQTT does not make ordinary Markdown
+executable policy. Other paths use these rules:
 
 | Rule ID | Selection | Evidence for PASS | Failure or missing proof |
 |---|---|---|---|
@@ -69,7 +78,7 @@ these rules:
 | `MQTT-ACL-PERM` | Same infrastructure/MQTT paths | Non-root broker UID/GID, readable matching ACL owner/group mode0600, complete startup logs | Fix ACL/image ownership and rebuild. Warnings, permissions/startup errors FAIL even with command exit 0. |
 | `NET-LOOPBACK` | Same infrastructure/MQTT paths | All resolved bindings loopback, localhost success, non-loopback rejection with a successful control path in the same probe context | Fix exposed bindings. Missing control/context or WSL2-only proof for a LAN claim is `NOT_VERIFIED`. |
 | `TLS-AUTH/ACL-NEGATIVE` | Same infrastructure/MQTT paths | Server verification, positive flow, wrong-cert and anonymous rejection, cross-Gateway publish and subscribe denial | Config diff or connection failure alone cannot certify TLS/ACL. |
-| `SECURITY-CHECK` | Harness control paths above, credential/security/auth/crypto/checker paths, contracts or workflows | Reviewed risk-specific local security test receipt | Human review remains required; tests do not approve a security design. |
+| `SECURITY-CHECK` | Harness control paths above, `contracts/`, `docs/adr/`, credential/security/auth/crypto/checker paths or workflows | Reviewed risk-specific local security test receipt | Human review remains required; tests do not approve a security design. |
 
 Synthetic `tests/agent_harness/` fixtures select tooling/security checks, even
 when fixture names contain ACL or TLS. They do not select live infrastructure.

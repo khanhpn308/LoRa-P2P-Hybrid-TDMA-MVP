@@ -128,7 +128,9 @@ def route(paths):
                 or low.startswith(POLICY_PREFIXES)):
             risks.update(("tooling", "security"))
             continue
-        if low.endswith(".md"):
+        if low.startswith(("contracts/", "docs/adr/")):
+            risks.add("security")
+        elif low.endswith(".md"):
             continue
         if low.startswith("tests/agent_harness/"):
             risks.update(("tooling", "security"))
@@ -143,7 +145,7 @@ def route(paths):
             risks.update(("infra", "mqtt"))
         if any(word in low for word in ("mqtt", "mosquitto", "tls", "acl")):
             risks.update(("infra", "mqtt"))
-        if low.startswith(("contracts/", ".github/workflows/")):
+        if low.startswith(".github/workflows/"):
             risks.add("security")
         if forbidden(name) or any(word in low for word in (
                 "secret", "credential", "security", "quality_gates", "auth", "crypto")):

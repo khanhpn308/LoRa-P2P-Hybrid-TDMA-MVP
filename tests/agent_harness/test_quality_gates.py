@@ -214,6 +214,48 @@ class GitTests(unittest.TestCase):
             with self.subTest(path=name):
                 self.assertEqual(gates.route([name]), {"all", "tooling", "security"})
 
+    def test_contract_and_adr_markdown_require_security_routing(self):
+        for name in ("contracts/mqtt/topics.md", "contracts/mqtt/semantic-rules.md",
+                     "contracts/mqtt/schemas/schedule.schema.json", "docs/adr/0002-mqtt-5.md"):
+            with self.subTest(path=name):
+                self.assertEqual(gates.route([name]), {"all", "infra", "mqtt", "security"})
+        for name in ("contracts/api/contract-semantics.md", "contracts/radio-mac/specification.md",
+                     "contracts/v1/overview.md", "contracts/README.md", "docs/adr/0003-esp-idf-v6-1.md",
+                     "docs/adr/README.md"):
+            with self.subTest(path=name):
+                self.assertEqual(gates.route([name]), {"all", "security"})
+
+    def test_contract_and_adr_only_cli_blocks_without_receipts(self):
+        authorities = ("contracts/mqtt/topics.md", "contracts/mqtt/semantic-rules.md",
+                       "contracts/api/contract-semantics.md", "docs/adr/0002-mqtt-5.md")
+        for name in authorities:
+            self.write(name, "Baseline authority\n")
+        self.git("add", ".")
+        self.git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "authority baseline")
+        base = self.git("rev-parse", "HEAD").decode().strip()
+        for name in authorities:
+            for staged in (False, True):
+                with self.subTest(path=name, staged=staged):
+                    self.write(name, "Changed authority\nStatus: DRAFT\n")
+                    if staged:
+                        self.git("add", name)
+                    try:
+                        result = subprocess.run(
+                            [sys.executable, gates.__file__, "--repo", str(self.root), "--base", base],
+                            capture_output=True, text=True, timeout=30)
+                        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                        report = json.loads(result.stdout)
+                        self.assertEqual(report["changed_paths"], [name])
+                        self.assertEqual(report["auto_check"], "BLOCKED")
+                        self.assertIn("security", report["risks"])
+                        self.assertEqual(next(r for r in report["results"] if r["rule_id"] == "SECURITY-CHECK")["status"], "NOT_RUN")
+                        self.assertEqual(report["human_security_review"], "HUMAN_SECURITY_REVIEW_PENDING")
+                        self.assertFalse(report["ready_to_merge"])
+                    finally:
+                        self.write(name, "Baseline authority\n")
+                        if staged:
+                            self.git("add", name)
+
     def test_control_only_cli_blocks_without_required_receipts(self):
         controls = ("AGENTS.md", ".agents/agents/harness-coordinator.md",
                     ".agent-harness/auditor.md", ".github/copilot-instructions.md",
