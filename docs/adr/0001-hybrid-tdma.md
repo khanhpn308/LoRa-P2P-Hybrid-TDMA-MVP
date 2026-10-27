@@ -63,6 +63,37 @@ Canonical register: [OPEN_DECISIONS](../../contracts/OPEN_DECISIONS.md). Options
 
 R2 giữ nguyên canonical statuses D01–D13. RF/MAC/Security/Backend owners còn phải quyết validity/reconciliation và clock/key lifecycle; [RTM open items](../requirements/requirements.md) chỉ đề xuất coverage gaps sau khi đối chiếu các requirement hiện có. Không chọn cipher/MIC/nonce/key lifecycle, RF power/frequency/profile, slot/guard, clock thresholds hoặc alarm SLA. G0 vẫn `NOT_VERIFIED` cho đến human Requirements/ADR approval; evidence G1–G6 là nghĩa vụ riêng.
 
+
+## Đối chiếu baseline hiện hành — R3 (2026-10-28)
+
+> **Phân loại:** Đây là bản cập nhật **truy vết và làm rõ**, không phải ADR mới hoặc human design sign-off. Mọi quyết định đang mở vẫn theo [D01–D13](../../contracts/OPEN_DECISIONS.md). Tình trạng triển khai/kiểm thử chỉ được nâng khi có evidence đúng commit và phần cứng thực.
+
+### Quyết định đã ghi nhận và những gì chưa được phê duyệt
+
+| Nội dung | Design status / nguồn có thẩm quyền | Không được suy diễn |
+|---|---|---|
+| Hybrid TDMA: Backend Planner + Gateway-local Executor | `ARCHITECTURE_DIRECTION_ACCEPTED` tại ADR-0001; `G0 NOT_VERIFIED` cho R1/R2/R3 | Không chứng minh scheduler, timer hoặc RF timing đã chạy đúng |
+| LoRa P2P, Custom Binary MAC, một SX1276 half-duplex | Hướng kiến trúc đã chọn; [Radio MAC specification](../../contracts/radio-mac/specification.md) vẫn draft | Không mặc định LoRaWAN/ChirpStack, header 8B đã freeze hoặc CRC là authentication |
+| MQTT 5.0 qua Wi-Fi/TLS, QoS 1 | `OWNER_ACCEPTED` tại [ADR-0002](0002-mqtt-5.md); semantic/topic schemas chờ producer–consumer review | `PUBACK` không chứng minh DB commit, Node ACK hay lịch ACTIVE |
+| ESP-IDF exact `v6.1` | Owner approval tại [ADR-0003](0003-esp-idf-v6-1.md); source of truth `firmware/esp-idf-version.txt` | Version pin không có nghĩa firmware build/HIL đã PASS |
+| Go Modular Monolith + PostgreSQL, Mosquitto; React/TypeScript và Flutter theo roadmap | [System overview](../architecture/system-overview.md) và [RTM](../requirements/requirements.md) | Không thêm Redis, InfluxDB, microservices hoặc mobile realtime guarantee vào MVP |
+| Profile `P-10S-15`, `921.4 MHz`, power/duty, slot/guard/latency | D02/D03/D04/D05: candidate hoặc blocked, `NOT_VERIFIED` | Không coi tham số tham khảo là cấu hình phát hợp quy tại Việt Nam hoặc SLA đã cam kết |
+
+### Invariants vận hành cần giữ nguyên khi triển khai
+
+1. **Lập lịch và kích hoạt:** Backend quản proposal/version; Gateway kiểm identity, expiry, timing, ownership/airtime và persist shadow trước `STAGE_ACK`. Chỉ kích hoạt tại ranh giới superframe cục bộ sau đủ **complete announcement superframes**, sau đó mới gửi `ACTIVE_REPORT`. Độ dài horizon chưa phê duyệt; `K+3` không là mặc định.
+2. **Mất backhaul:** Gateway có thể duy trì **persisted authenticated active schedule** khi các điều kiện validity, RF policy và clock/synchronization confidence còn được chứng minh; không dùng MQTT delivery làm clock từng slot. `expires_at` của proposal không tự là active lease. Khi không bảo đảm điều kiện TX, chặn TX liên quan và ghi reason; lease/revocation/holdover policy vẫn cần duyệt.
+3. **Mất Beacon hoặc reboot:** Node không đoán mapping/slot; shadow chưa active không được tự nâng thành active. Restore cần kiểm identity, epoch, version, dữ liệu NVS và giới hạn replay. Ba miền thời gian (**trusted UTC**, **Gateway monotonic**, **Beacon-derived Node sync**) không hoán đổi; cần fault-injection/HIL cho UTC jump, reset và drift.
+4. **Một radio half-duplex:** Beacon, downlink, PCSS, DATA, ACK/retry, JOIN và guard phải được admission/validation trên toàn timeline, kể cả boundary cuối superframe. CAD không bảo đảm tránh collision; mọi TX kể cả cảnh báo P0 phải tuân local airtime policy đã được duyệt.
+5. **Bảo mật và độ tin cậy:** RF CRC chỉ phát hiện lỗi, không xác thực khung. Cipher/tag, nonce uniqueness, replay, epoch/version mapping (D01/D11) phải duyệt trước production codec. Bounded queues, overflow counters và idempotency xuyên RF/MQTT/DB không có nghĩa offline buffer không bao giờ mất dữ liệu.
+6. **Tích hợp:** MQTT 5.0 `Retain=false` cho schedule/command và Message Expiry là transport safeguards; Gateway vẫn tự validate. Backend phải đối chiếu report đến muộn/đảo thứ tự; `EXPIRED → ACTIVE` không được tự ý mở transition. REST/WSS chỉ đi qua Backend với server-side authorization; D13 chưa đóng.
+
+### Ranh giới với tiến độ repository và Harness
+
+Repo có các công cụ phát triển và AI Coding Harness, nhưng **Harness onboarding/MCP read-only là developer tooling**, không phải thành phần control plane/data plane sản phẩm và không cấp quyền thay đổi radio protocol. Trạng thái feature branch hoặc PR, kết quả doctor/unit tests/stdio handshake, và `OWNER_WAIVED` của Actions không được đưa vào làm evidence của G0–G6. Issue #95/PR #96 theo dõi riêng onboarding; không thay đổi quyết định Hybrid TDMA ở ADR này.
+
+**Nguồn kiểm soát thay đổi:** [RTM](../requirements/requirements.md#rtm), [acceptance gates](../verification/acceptance-gates.md), [TDMA schedule interface](../../contracts/radio-mac/tdma-schedule.md), [MQTT semantic rules](../../contracts/mqtt/semantic-rules.md), [OPEN_DECISIONS](../../contracts/OPEN_DECISIONS.md). Thay đổi layout RF, MQTT/API/DB contract, frequency/power policy, activation/recovery state machine hoặc numeric timing cần Issue + review Gateway/Node/RF/Backend/Security, test vectors và evidence tương ứng; không thể phê duyệt bằng một cập nhật ADR đơn lẻ.
+
 ## Truy vết và giới hạn evidence
 
 Requirements chính: MAC-001/002/003/004/005/006/007, SYS-001/002, FW-001/002/003/004, SEC-001/003/004, DATA-001/002 và INT-001 trong RTM. Contract definitions theo Radio MAC/TDMA/MQTT links trên; exact firmware baseline giữ [ADR-0003](0003-esp-idf-v6-1.md).
