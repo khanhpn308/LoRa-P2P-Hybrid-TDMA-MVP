@@ -287,8 +287,8 @@ def main() -> int:
         return apply(home)
     report = plan(home)
     if args.needs_setup:
-        return 0 if (report["codex"]["status"] == "INSTALL" or
-                     report["agy"]["status"] == "INSTALL" or
+        return 0 if (report["codex"]["status"] in ("INSTALL", "BLOCKED") or
+                     report["agy"]["status"] in ("INSTALL", "BLOCKED") or
                      (report["sdk"] == "INSTALL" and
                       (report["codex"]["status"] != "SKIP" or
                        report["agy"]["status"] != "SKIP"))) else 1
