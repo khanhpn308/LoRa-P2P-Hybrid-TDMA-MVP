@@ -20,7 +20,7 @@ Issue + Acceptance Criteria
   -> AWAIT_HUMAN -> separate owner-directed review/publication decision
 ```
 
-**Authority hierarchy:** approved Issues/ADR/contracts > pinned trusted Host scripts > actual deterministic evidence > AGY text. Follow `AGENTS.md`, `.github/copilot-instructions.md`, scope declarations, relevant `contracts/`, `docs/verification/acceptance-gates.md` and ESP-IDF v6.1 baseline. This is LoRa **P2P Custom MAC + Hybrid TDMA**, NOT a LoRaWAN MAC stack. No implicit protocol, GPIO/RF, timing, security or contract change.
+**Authority hierarchy:** approved Issues/ADR/contracts > pinned trusted Host scripts > actual deterministic evidence > AGY text. Follow `AGENTS.md`, scope declarations, relevant `contracts/`, `docs/verification/acceptance-gates.md` and ESP-IDF v6.1 baseline. This is LoRa **P2P Custom MAC + Hybrid TDMA**, NOT a LoRaWAN MAC stack. No implicit protocol, GPIO/RF, timing, security or contract change.
 
 **Consumer plan:** start `agy` **directly** and use its **native** subagents. Do not embed consumer `agy -p` inside Codex, third-party apps or the P1-B3 `auto_issue.py --execute` runner; no automated account switching. The latter has separate Enterprise entitlement/runtime gates and is **not** this SOP. Google reference: https://www.antigravity.google/docs/faq and https://www.antigravity.google/docs/subagents/.
 
