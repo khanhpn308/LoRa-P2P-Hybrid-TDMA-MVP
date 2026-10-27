@@ -2,7 +2,7 @@
 
 A MCP server exposes trusted Host capabilities. It does NOT start native
 Gemini/Codex model sessions or attest Auditor provenance. Require explicit
-reviewed Host authorization before execution. Mutations currently fail closed.
+reviewed independent signed Host authorization before execution. Unsigned mutations fail closed.
 """
 from __future__ import annotations
 
