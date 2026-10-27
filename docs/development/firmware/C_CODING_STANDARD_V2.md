@@ -82,6 +82,18 @@ Every atomic line uses this format:
 | C-008 | all | MUST initialize state explicitly, validate nullable pointers/bounds and avoid undefined shift, overflow, signedness or alignment assumptions | STATIC/UNIT | FIX | SRC: S1 §05 TYP |
 | C-009 | all | MUST_NOT define application wire width/endian/scale from a C struct or demo code; approved contracts own serialization | CONTRACT/HUMAN | STOP | SRC: S1 TYP-005/006, PRO-002/004; D01/D09/D11 |
 | C-010 | all | SHOULD avoid macros with side effects and global mutable state; any unavoidable shared state needs documented owner/synchronization | STATIC/HUMAN | FIX | SRC: S1 NAM/TYP; embedded instructions |
+| C-011 | newly defined C functions | MUST default to descriptive lowercase `snake_case` with `<module>_<verb>_<object>` order; use explicit C-016..018 callback/task/ISR forms where relevant, with C-020 exceptions | STATIC | FIX | SRC: C-002; S1 §03 NAM |
+| C-012 | exported functions / `*.h` | MUST namespace new public function names to their actual owning component and use distinct domain verbs; examples `sx1276_read_register`, `lora_mac_decode_frame`, `tdma_calculate_slot_offset` are illustrative, not implemented/approved API claims | STATIC/BUILD | FIX | SRC: C-002/004; ARCH-001/004 |
+| C-013 | function behavior | SHOULD choose accurate verbs: `init/deinit` for lifecycle, `start/stop` for operations, `read/write` for I/O, `get/set` for accessors, `encode/decode` for codecs, `validate` for checking, `calculate` for derived values and `handle` for events; MUST_NOT conceal I/O, state changes or blocking behind misleading `get`/`calculate` names | STATIC/HUMAN | FIX | SRC: S1 §03 NAM; ERR-001; C-004 |
+| C-014 | Boolean predicates | SHOULD name `bool` predicates as `<module>_is_<condition>`, `<module>_has_<property>` or `<module>_can_<action>` when the actual return type is `bool`; MUST_NOT force an existing `esp_err_t`/status API into `bool` for naming consistency | STATIC/BUILD | FIX | SRC: C-002/004; ERR-001 |
+| C-015 | internal `.c` helpers | MUST keep non-exported functions `static` and avoid generic ambiguous names (`process_data`, `do_work`, `helper1`); SHOULD retain a clear owner prefix unless truly unambiguous within the translation unit | STATIC | FIX | SRC: C-002/003; S1 §03 NAM |
+| C-016 | FreeRTOS task entry | MUST use `<module>_<purpose>_task` for newly defined task entry functions (e.g. `tdma_executor_task`) and validate the actual FreeRTOS entry signature/ownership; MUST_NOT treat a normal helper as a task solely because of its name | STATIC/BUILD | FIX | SRC: RTOS-001/002; C-004 |
+| C-017 | hardware IRQ | MUST reserve `<module>_<source>_isr_handler` for actual interrupt-context handlers (e.g. `sx1276_dio0_isr_handler`); task-context processing uses action names such as `sx1276_handle_irq_event`, never the ISR suffix | STATIC/HIL | FIX | SRC: RTOS-003/006; RAD-003 |
+| C-018 | event/timer callbacks | MUST use `<module>_<event>_callback` for newly defined registered callbacks (e.g. `tdma_slot_timer_callback`) and document API-defined signature and actual TASK vs ISR dispatch context; name alone is NOT context or IRAM-safety evidence | STATIC/BUILD/HIL | FIX | SRC: RTOS-004/005/006; C-004 |
+| C-019 | existing public symbols | MUST_NOT rename exported functions, callback types or external linkage solely to satisfy a naming proposal; changes to public interfaces require explicitly authorized scope, cross-component caller review and compatibility evidence | STATIC/CONTRACT/HUMAN | STOP | SRC: GOV-001/007; ARCH-004 |
+| C-020 | framework-defined entrypoints | MUST preserve required SDK/standard/library names and callback signatures (e.g. `app_main`) even when they differ from project naming pattern; record exceptions rather than silently wrapping, breaking or renaming them | STATIC/BUILD | FIX | SRC: ESP-IDF v6.1 API; GOV-003; C-004 |
+
+**Function-naming examples (illustrative only, not approved interfaces):** `sx1276_read_register`, `lora_mac_decode_frame`, `tdma_calculate_slot_offset`, `tdma_is_schedule_valid`, `tdma_executor_task`, `sx1276_dio0_isr_handler`, `sx1276_handle_irq_event`, `tdma_slot_timer_callback`. Default naming applies to **newly defined functions**, not retroactive public API renames; ISR/timer execution context and return types must be checked against the actual ESP-IDF v6.1 API and active design.
 
 ## 3. MEM — bounded resource ownership and lifetime
 
@@ -262,7 +274,7 @@ AI agent conformance evaluation scenarios (CASE-01..12) are maintained in [agent
 
 | Upstream v1 domain | v2 implementation | Disposition boundary |
 |---|---|---|
-| FMT, NAM, API, TYP | C-001..010; ARCH | Preserve style/interface intent, amend namespace/header/CMake and remove demo fixed-wire assumptions |
+| FMT, NAM, API, TYP | C-001..020; ARCH | Preserve style/interface intent, amend namespace/header/CMake and remove demo fixed-wire assumptions |
 | MEM, ERR | MEM-001..008; ERR-001..007 | Preserve bounded resource/error behavior; reject fixed demo 256B stack and unvalidated DMA assumptions |
 | RTOS | RTOS-001..010 | Single Radio Owner; accurate v6.1 timer contexts; measurement required for timing |
 | RAD | RAD-001..009 | Driver rules only; exact registers, PHY and hardware profiles owned by datasheet/G1 |
