@@ -1,4 +1,4 @@
-# Kiến trúc hệ thống, baseline R1
+# Kiến trúc hoạt động — LoRa P2P Event-Driven Hybrid TDMA
 
 Status: `DRAFT / DESIGN-READY FOR FEASIBILITY`. RF, timing và HIL: `NOT_VERIFIED`. Remediation [#60](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/60) không chứng minh implementation. Firmware vẫn là scaffold theo [AGENTS.md](../../AGENTS.md).
 
@@ -8,14 +8,26 @@ Status: `DRAFT / DESIGN-READY FOR FEASIBILITY`. RF, timing và HIL: `NOT_VERIFIE
 
 ```mermaid
 flowchart TB
-  USERS[Admin / Operator / Viewer] <--> CLIENTS[React Web / Flutter Mobile]
-  CLIENTS <-->|HTTPS / WSS| GO[Go Modular Monolith + PostgreSQL]
-  GO <-->|MQTT 5.0 / TLS| BROKER[Mosquitto]
-  BROKER <-->|Wi-Fi / MQTT 5.0 / TLS| GW[ESP32 + SX1276 Gateway: Local TDMA Master]
-  GW <-->|LoRa P2P / Custom MAC draft| NODES[ESP32 + SX1276 Nodes]
+    WEB["Web Dashboard: Approval, Config, Event Monitoring"] <--> |"HTTPS / WSS"| GO["Backend Go: Device Registry, Approval, Planner, Event Dedup"]
+    GO <--> DB[("PostgreSQL")]
+    GO <--> |"MQTT 5.0 / TLS"| MQ["Mosquitto"]
+    MQ <--> |"Wi-Fi / MQTT 5.0 / TLS"| GW["Gateway: Beacon, Local Hybrid TDMA, Priority Access"]
+    GW <--> |"LoRa P2P / Custom MAC"| NODE["Sensor Nodes: Sensing, Trigger, Event/Alert, Optional Periodic"]
+    GW2["Additional Gateways: candidate"] -.-> |"Multi-Gateway reception; not yet approved"| NODE
+    GW2 -.-> MQ
 ```
 
 Nguồn sơ đồ: ADR-0001/0002, [deployment contexts](deployment.md), [contract index](../../contracts/README.md). Quy mô thử nghiệm trong planning không phải capacity đã nghiệm thu; xem MAC-001 và ALERT-001 trong [RTM](../requirements/requirements.md#rtm).
+
+## Chế độ vận hành và luồng thiết bị
+
+Hệ thống hoạt động theo Event-Driven: Sensor Node đánh giá Trigger ngay tại biên, sinh Event/Alert và gửi khi có cơ hội RF hợp lệ. Telemetry định kỳ là tùy chọn cấu hình `ON/OFF`. Ở chế độ `OFF`, Node vẫn duy trì khả năng Beacon sync, Priority Alert, Discovery và nhận cấu hình; ở chế độ `ON`, periodic transmission được xếp lịch Hybrid TDMA. Alert có ưu tiên cao nhất trong các bản tin ứng dụng nhưng vẫn chịu collision/backoff, RF admission và giới hạn retry.
+
+Node mới tuân thủ chuỗi **Discovery → Detect → User Approval → Provisioning → Scheduled Downlink → Activation**. Gateway chỉ báo Node chưa được đăng ký về Backend, không tự cấp quyền ứng dụng; Backend quản trạng thái `Pending`, người có quyền Accept/Reject, sau đó cấp cấu hình qua Gateway. Chỉ kích hoạt sau khi Node xác nhận cấu hình hợp lệ và điều kiện bảo mật được thỏa mãn. Chi tiết giao thức Join, ACK và identity còn cần thiết kế/review.
+
+Một Gateway là baseline vận hành hiện có; tài liệu thiết kế đề xuất mở rộng 1–4 Gateway, 10–25 Node chung kênh và Multi-Gateway Discovery. Khi nhiều Gateway nhận cùng một Event, Backend cần loại trùng theo logical identity; còn lựa chọn Gateway phục vụ, đồng tồn tại RF, tránh phát xung đột giữa Gateway, routing và Mesh dưới 5 hop đều chưa được chốt. **Multi-Gateway reception không tương đương Mesh routing.**
+
+Short ID 2-byte và MAC header khoảng 10-byte trong bản thiết kế mới **không tương thích trực tiếp** candidate 1-byte/8-byte trong radio-mac draft. Không coi hai định dạng là production contract; xem [ADR-0001](../adr/0001-hybrid-tdma.md) và [OPEN_DECISIONS](../../contracts/OPEN_DECISIONS.md). Các ví dụ SF7/SF12, BW125 kHz, LBT và duty 1%/10% chưa là RF policy đã xác minh tại Việt Nam.
 
 ## Ranh giới trách nhiệm
 
