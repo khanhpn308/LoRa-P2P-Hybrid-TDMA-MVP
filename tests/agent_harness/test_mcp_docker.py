@@ -45,6 +45,9 @@ class DockerTests(unittest.TestCase):
             self.assertEqual(argv[:2], ["/usr/bin/docker", "run"])
             self.assertIn("--network=none", argv)
             self.assertIn("--read-only", argv)
+            # The official espressif/idf image has ccache enabled by
+            # default, which fails writing its cache under --read-only.
+            self.assertIn("--env=IDF_CCACHE_ENABLE=0", argv)
             self.assertIn("--cap-drop=ALL", argv)
             self.assertIn("--security-opt=no-new-privileges", argv)
             self.assertIn("--pull=never", argv)
