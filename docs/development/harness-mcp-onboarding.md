@@ -1,73 +1,84 @@
-# Harness MCP onboarding — Codex + AGY (Issue #95)
+# Hướng dẫn tích hợp Harness MCP — Codex + AGY (Issue #95)
 
-> **Status:** proposed implementation, pending WSL2 real-client testing and Human Security Review.  
-> **Dependencies:** MCP Python SDK v2.3.0, Python 3.11+, GitHub CLI for preflight only.  
-> **Security boundary:** the MCP tool surface is read-only P1 Host inspection; it **does not** run Native Fast Lane coding tasks or activate Draft PR #84's signed execution.
+> **Trạng thái:** Bản triển khai đề xuất; **chưa nghiệm thu** kết nối client thực tế trên WSL2 và chưa hoàn tất Human Security Review.  
+> **Phụ thuộc:** MCP Python SDK v2.3.0, Python 3.11+, GitHub CLI (chỉ dùng khi kiểm tra preflight).  
+> **Ranh giới bảo mật:** MCP chỉ cung cấp công cụ kiểm tra Host P1 ở chế độ **read-only**; không chạy nhiệm vụ lập trình qua Native Fast Lane và không kích hoạt signed execution từ Draft PR #84.
 
-## One command on a new WSL2/Linux checkout
+## 1. Cài đặt trên WSL2/Linux bằng một lệnh
+
+Tại terminal Ubuntu trong WSL2 hoặc Linux, mở thư mục repository:
 
 ```bash
 cd ~/projects/iot/LoRa-P2P-Hybrid-TDMA-MVP
 bash scripts/setup_harness.sh
 ```
 
-In an interactive terminal, if Codex or AGY is installed and MCP is absent, the setup shows an explicit plan and asks you to enter `INSTALL MCP` before making **any** user configuration change. Decline to continue with plain Doctor checks. Noninteractive execution and `--json` remain read-only. A developer can explicitly request installation later:
+Nếu terminal đang ở chế độ tương tác, Codex hoặc AGY đã được cài và cấu hình MCP còn thiếu, script sẽ hiển thị kế hoạch cài đặt. Người dùng **phải nhập chính xác `INSTALL MCP`** trước khi script được phép thay đổi cấu hình. Nếu từ chối, chỉ tiếp tục các kiểm tra Doctor. Chế độ non-interactive và `--json` vẫn read-only.
+
+Muốn chủ động yêu cầu cài MCP:
 
 ```bash
 bash scripts/setup_harness.sh --install-mcp
 ```
 
-For a **dry-run plan without changing anything**:
+Muốn **xem trước kế hoạch mà không thay đổi hệ thống**:
 
 ```bash
 python3 scripts/harness_mcp_setup.py --plan
 ```
 
-## What is installed and how it is registered
+## 2. Thành phần được cài đặt và cách đăng ký
 
-1. Create/reuse isolated user venv at `~/.local/share/lora-harness/mcp-venv` (never write a venv to Git working tree).
-2. Install **pinned** SDK `mcp==2.3.0` using `pip --no-input`. Requires network on the first install; does not require sudo. Review dependency/provenance risks before confirmation.
-3. Launch a temporary **stdio** MCP server with the venv Python and verify protocol negotiation, exactly three tools in `tools/list` and an invalid Issue #0 returning `BLOCKED`. The negative call is offline and must not trigger any GitHub request.
-4. Register `lora_harness` in **Codex** via the supported `codex mcp add lora_harness -- <venv-python> <server.py>` command, then re-read the config. Existing unrelated MCP servers remain unchanged.
-5. Register `lora_harness` in **AGY** `~/.gemini/config/mcp_config.json`, modifying only `mcpServers.lora_harness`. Original entries are preserved, a 0600 backup is created for existing config, and new config is written atomically (0600).
-6. If Codex or AGY is absent, skip that client with an explicit `SKIP`. Conflicting `lora_harness` entries, malformed AGY JSON and symlinked configs are **BLOCKED**, never overwritten automatically.
+1. Tạo hoặc dùng lại Python virtual environment riêng tại `~/.local/share/lora-harness/mcp-venv`; không tạo venv bên trong Git working tree.
+2. Sau khi người dùng xác nhận, dùng `pip --no-input` để cài SDK được pin `mcp==2.3.0`. Lần cài đầu có thể cần Internet; không dùng `sudo`. Cần review nguồn gốc và phụ thuộc trước khi xác nhận.
+3. Khởi chạy tạm thời MCP Server qua **stdio** bằng Python trong venv. Kiểm tra protocol negotiation, đúng ba công cụ trong `tools/list`, và một yêu cầu không hợp lệ với Issue #0 phải trả về `BLOCKED`. Negative smoke test này phải chạy offline, không gọi GitHub.
+4. Đăng ký `lora_harness` trong **Codex** qua `codex mcp add lora_harness -- <venv-python> <server.py>`, sau đó đọc lại cấu hình để xác minh. Giữ nguyên các MCP khác.
+5. Đăng ký `lora_harness` trong **AGY** tại `~/.gemini/config/mcp_config.json`, chỉ chỉnh `mcpServers.lora_harness`. Giữ nguyên entry khác; tạo bản sao lưu với permission `0600` nếu cấu hình đã tồn tại và ghi file mới theo cơ chế atomic write, cũng với permission `0600`.
+6. Nếu chưa cài Codex hoặc AGY, đánh dấu `SKIP` cho client tương ứng. Nếu `lora_harness` trùng tên nhưng khác launcher, JSON không hợp lệ hoặc cấu hình là symlink, đánh dấu `BLOCKED`; không tự động ghi đè.
 
-**The installer will not:** install Codex/AGY, request account passwords/tokens, change shell profiles, use root, add Docker permissions, initialize signer, start firmware/Go services or push/merge a PR.
+**Installer không thực hiện:** cài Codex/AGY, yêu cầu mật khẩu/token, sửa shell profile, dùng quyền root, cấp quyền Docker, khởi tạo signer, bật dịch vụ Firmware/Go, push hoặc merge PR.
 
-## MCP tools and limits
+## 3. Ba công cụ MCP và giới hạn quyền
 
-| MCP tool | Allowed operation | Not implied |
+| Công cụ | Thao tác được phép | Không bao gồm |
 |---|---|---|
-| `harness_preflight(issue_number)` | P1 `prepare` dry-run for a scoped OPEN Issue; needs local `gh auth` | No worktree, no code, no approval |
-| `harness_status(run_id)` | Read existing Host SQLite journal (may touch SQLite WAL metadata outside repo) | No agent execution |
-| `harness_verify_candidate(run_id)` | Read scope/hash check with trusted `host_gate.py` | No build/audit/security sign-off |
+| `harness_preflight(issue_number)` | Dry-run `prepare` cho Issue đang OPEN và đúng phạm vi P1; cần `gh auth` local | Không tạo worktree, sửa code hoặc tự phê duyệt |
+| `harness_status(run_id)` | Đọc journal SQLite hiện có của Host (có thể chạm metadata WAL ngoài repository) | Không chạy Agent |
+| `harness_verify_candidate(run_id)` | Đọc, kiểm tra phạm vi và hash qua `host_gate.py` đáng tin cậy | Không chứng nhận build, audit hoặc security PASS |
 
-MCP does **not** automatically create an Agent. With Codex or AGY you can still type **`Chạy Issue #N`**; this invokes the existing Native Fast Lane Coordinator under `AGENTS.md` and SOP, **not** the read-only MCP tools. MCP lets both clients call the same P1 read tools. Full execution through MCP remains unmerged and not authorized in this onboarding change.
+**Phân biệt MCP và Native Fast Lane:** MCP không tự tạo hoặc khởi chạy Agent. Người dùng vẫn có thể gõ **`Chạy Issue #N`** trong Codex/AGY để kích hoạt Native Fast Lane Coordinator theo `AGENTS.md` và SOP. Đó là luồng riêng, **không phải** ba MCP read-only tools ở trên. Khả năng thực thi task qua MCP chưa được merge hoặc cấp phép trong Issue #95.
 
-## After installation: client connection verification
+## 4. Xác minh kết nối sau cài đặt
 
-Exit existing CLI sessions and **restart** both Codex and AGY so they reload MCP configs. In Codex run `codex mcp list` and open `/mcp` in the TUI. In AGY use `/mcp` and inspect `lora_harness`. The setup smoke proves that the server works from an isolated MCP SDK **client**, but it cannot prove live connection inside both interactive clients; record these as `NOT_VERIFIED` until checked separately.
+Đóng các phiên CLI đang mở và **khởi động lại Codex/AGY** để tải cấu hình MCP mới.
 
-Re-run the safe local smoke after install:
+- **Codex:** chạy `codex mcp list`, sau đó mở `/mcp` trong giao diện TUI để kiểm tra `lora_harness`.
+- **AGY:** mở `/mcp` và kiểm tra mục `lora_harness`.
+
+Smoke test trong installer chỉ chứng minh MCP Server giao tiếp được với MCP SDK client riêng. **Nó không chứng minh** Codex hoặc AGY đã kết nối thành công trong phiên tương tác thực tế. Giữ trạng thái `NOT_VERIFIED` đến khi kiểm tra độc lập từng client.
+
+Chạy lại smoke test cục bộ:
 
 ```bash
 ~/.local/share/lora-harness/mcp-venv/bin/python scripts/agent_harness/mcp_smoke.py scripts/agent_harness/mcp_server.py
 ```
 
-Expected: `MCP_STDIO_SMOKE_PASS`. No issue mutation, Docker, code editing or RF test occurs.
+Kết quả kỳ vọng: `MCP_STDIO_SMOKE_PASS`. Test này không thay đổi Issue, chỉnh code, chạy Docker hoặc kiểm thử RF.
 
-## Troubleshooting and security
+## 5. Xử lý sự cố và lưu ý bảo mật
 
-- `python3 -m venv` fails: install `python3-venv` through approved package management; never use `sudo pip`.
-- Missing `codex` or `agy`: install from that provider's official instructions and rerun.
-- Config conflict: inspect existing entry and resolve manually; do not reset/delete unrelated MCPs.
-- `gh auth` missing: only `harness_preflight` needs authenticated GitHub; the offline smoke still runs.
-- Installer abort after successful SDK install: venv remains reusable; client config remains unchanged until smoke succeeds.
-- Python SDK/transitive dependencies: **pin and review** upgrades separately; exact top-level SDK pin is not an entire transitive lockfile.
-- MCP server runs as the current OS user. Separate CLI conversations are **not** filesystem, credential or provider isolation.
-- No claims of CI, Firmware Build, HIL, RF or penetration-test PASS from setup/handshake.
+- **`python3 -m venv` lỗi:** kiểm tra gói `python3-venv`; cài theo chính sách quản trị máy, tuyệt đối không dùng `sudo pip`.
+- **Thiếu `codex` hoặc `agy`:** cài theo hướng dẫn chính thức của nhà cung cấp rồi chạy lại installer.
+- **Xung đột cấu hình:** kiểm tra entry hiện có và xử lý thủ công; không reset hay xóa MCP không liên quan.
+- **Thiếu `gh auth`:** chỉ `harness_preflight` cần xác thực GitHub. Offline smoke vẫn có thể chạy.
+- **Installer dừng sau khi cài SDK:** venv được giữ lại để dùng tiếp; cấu hình client chưa được ghi trước khi smoke PASS.
+- **Rủi ro dependency:** chỉ pin trực tiếp `mcp==2.3.0`; **chưa** có lockfile hash cho toàn bộ transitive dependencies. Phải review riêng khi nâng version.
+- **Giới hạn cách ly:** MCP Server chạy dưới quyền người dùng hệ điều hành hiện tại. Hai phiên CLI khác nhau **không đồng nghĩa** được cô lập filesystem, credentials hay provider.
+- **Giới hạn bằng chứng:** cài đặt/handshake thành công không chứng minh CI, Firmware Build, HIL, RF hoặc penetration test đã PASS.
 
-## Developer verification before merging
+## 6. Checklist kiểm tra trước merge
+
+Chạy trên checkout đã được review:
 
 ```bash
 bash -n scripts/setup_harness.sh
@@ -78,4 +89,6 @@ python3 scripts/harness_mcp_setup.py --plan
 git diff --check
 ```
 
-**Acceptance needs additional real WSL2 testing** with installed Codex/AGY, a genuine stdio client smoke, config backup verification, independent security review, and evidence of CLI `/mcp` connection. GitHub Actions `OWNER_WAIVED` does not mean `CI_PASS`.
+Ngoài các lệnh trên, **Acceptance Criteria** còn yêu cầu: kiểm tra WSL2 thực tế với Codex/AGY đã cài; stdio handshake thực; xác minh backup và permissions của cấu hình; Human Security Review độc lập; cùng evidence `/mcp` từ từng CLI.
+
+**Chưa được đánh dấu PASS chỉ vì file test hoặc hướng dẫn đã tồn tại.** Trạng thái GitHub Actions `OWNER_WAIVED` không tương đương `CI_PASS`. Chưa merge khi thiếu nghiệm thu và phê duyệt của con người.
