@@ -271,11 +271,18 @@ def main() -> int:
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--plan", action="store_true")
     group.add_argument("--apply", action="store_true")
+    group.add_argument("--needs-setup", action="store_true")
     args = parser.parse_args()
     home = Path.home()
     if args.apply:
         return apply(home)
     report = plan(home)
+    if args.needs_setup:
+        return 0 if (report["codex"]["status"] == "INSTALL" or
+                     report["agy"]["status"] == "INSTALL" or
+                     (report["sdk"] == "INSTALL" and
+                      (report["codex"]["status"] != "SKIP" or
+                       report["agy"]["status"] != "SKIP"))) else 1
     print(json.dumps(report, indent=2))
     return 0
 
