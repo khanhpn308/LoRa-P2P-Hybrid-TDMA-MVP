@@ -4,11 +4,11 @@
 **Version:** 1.0.1-draft (JSON boundary clarification; rule IDs preserved)
 **Status:** **DRAFT — PENDING HUMAN TECHNICAL REVIEW**
 **Prepared:** 2026-10-23
-**Amendment:** Issue #41 — Go 1.27 JSON trust-boundary policy + tests; branch `feature/41-json-boundary-go127` depends on #40.
+**Amendment:** Issue #41 — Go 1.27 JSON trust-boundary policy + tests; PR #40 đã merge; PR #42 được cập nhật trên `main`.
 **Repository:** `khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP`
 **Target Path:** docs/development/backend-go/GO_BACKEND_ENGINEERING_STANDARD_V1.0.md
 **Scope:** `backend-go/**`; interfaces với `contracts/mqtt/**`, `contracts/api/**`, `contracts/radio-mac/**` và migrations; AI agents + human reviewers.
-**Baseline trên nhánh chuẩn hóa Issue #39 (DRAFT, chưa merge):** `backend-go/go.mod` khai báo **Go 1.27.3**, `.go-version` khóa `1.27.3`, CI phải xác minh đúng `go1.27.3` với `GOTOOLCHAIN=local`; `backend-go/README.md` và `cmd/server/main.go` là **scaffold only**, chưa có service production hoạt động. **Pre-approved Stack của standard v1.0 (định hướng mặc định, chưa đồng nghĩa đã khai báo trong `go.mod` hoặc được phê duyệt ở cấp repository):**
+**Baseline Go từ Issue #39 / PR #40 đã merge; standard vẫn DRAFT:** `backend-go/go.mod` khai báo **Go 1.27.3**, `.go-version` khóa `1.27.3`, CI phải xác minh đúng `go1.27.3` với `GOTOOLCHAIN=local`; `backend-go/README.md` và `cmd/server/main.go` là **scaffold only**, chưa có service production hoạt động. **Pre-approved Stack của standard v1.0 (định hướng mặc định, chưa đồng nghĩa đã khai báo trong `go.mod` hoặc được phê duyệt ở cấp repository):**
 - **HTTP Routing:** `net/http` — `http.ServeMux` của stdlib Go 1.27.3. MUST NOT tự thêm Gin, Echo, Fiber hoặc router bên thứ ba.
 - **PostgreSQL:** `github.com/jackc/pgx/v5` — ưu tiên `pgxpool`; MAY dùng adapter `stdlib` qua `database/sql` nếu có lý do cụ thể. Không sử dụng song song hai cách truy cập DB chỉ vì sở thích.
 - **MQTT 5.0:** `github.com/eclipse/paho.golang/autopaho` + `github.com/eclipse/paho.golang/paho` (cùng Go module); MUST NOT dùng `github.com/eclipse/paho.mqtt.golang` (client MQTT 3.1.1) cho contract v1.
@@ -459,4 +459,4 @@ REVIEWERS REQUIRED:
 - `docs/verification/acceptance-gates.md` (G0–G6 và evidence).
 - User-provided `esp32_sx1762.md` (architecture reference); `monorepo-guide.md` (v1.0 draft planning reference, not adopted policy).
 
-**Tuyên bố trạng thái:** Tài liệu ở **feature branch/PR pending review**, chưa merge `main`. Code `jsonboundary` của Issue #41 là implementation mới nhưng **chưa được wire vào MQTT/API**; xem GitHub Actions của đúng commit để xác minh build/test, không coi unit PASS là full JSON Schema/MQTT/DB integration PASS. Security scan, HIL và RF không thuộc phạm vi thay đổi này.
+**Tuyên bố trạng thái:** Bổ sung JSON của Issue #41 đang chờ review ở PR #42. Standard v1 là tài liệu tham chiếu lịch sử; agent routing hiện dùng v2 DRAFT theo `AGENTS.md`. Code `jsonboundary` của Issue #41 là implementation mới nhưng **chưa được wire vào MQTT/API**; xem GitHub Actions của đúng commit để xác minh build/test, không coi unit PASS là full JSON Schema/MQTT/DB integration PASS. Security scan, HIL và RF không thuộc phạm vi thay đổi này.
