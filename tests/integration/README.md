@@ -44,8 +44,24 @@ default bridge must first connect to a temporary control listener. It must then
 fail to connect to each published service on that same address. Missing usable
 addresses or a failed control connection fails the test, never records PASS.
 
+The MQTT subscriber uses a 45-second receive window to cover Docker publisher
+startup. A negative test requires publication to finish within 37 seconds of
+starting the subscriber process, leaving at least 8 seconds to observe delivery.
+Exceeding this budget fails, even if the subscriber later reports exit 27.
+Python separately allows 60 seconds for Docker process completion after publishing.
+A negative receive passes only with SUBACK, successful control publication,
+Mosquitto exit 27 and no test payload. A Docker process timeout,
+connection error or other exit code fails without certifying authorization.
+Each subscriber has a unique project-scoped container name. Every exit path
+kills a lingering local Docker process, allows at most 10 seconds to reap it,
+then removes that exact container with a separate 10-second bound. Cleanup
+errors fail the test. Mocked regressions cover delayed teardown, process hangs,
+missing SUBACK, publisher failure, payload leakage, wrong exits and cleanup.
+They also reject slow publication that consumes the negative observation window.
+
 Output includes separate assertions and broker logs; a failed assertion exits
-nonzero. Subprocesses and waits are bounded. Cleanup removes only the generated
+nonzero. Both brokers' startup logs are retained. Subprocesses and waits are bounded.
+Cleanup removes only the generated
 project, volumes and the generated broker image. Abrupt termination or a Docker daemon failure can require
 manual cleanup using the project name printed in the broker logs.
 

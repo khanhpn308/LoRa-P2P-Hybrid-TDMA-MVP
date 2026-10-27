@@ -1,0 +1,241 @@
+diff --git a/tests/integration/README.md b/tests/integration/README.md
+index ec32ae5..6322fa1 100644
+--- a/tests/integration/README.md
++++ b/tests/integration/README.md
+@@ -46,0 +47,15 @@ addresses or a failed control connection fails the test, never records PASS.
++The MQTT subscriber uses a 45-second receive window to cover Docker publisher
++startup. A negative test requires publication to finish within 37 seconds of
++starting the subscriber process, leaving at least 8 seconds to observe delivery.
++Exceeding this budget fails, even if the subscriber later reports exit 27.
++Python separately allows 60 seconds for Docker process completion after publishing.
++A negative receive passes only with SUBACK, successful control publication,
++Mosquitto exit 27 and no test payload. A Docker process timeout,
++connection error or other exit code fails without certifying authorization.
++Each subscriber has a unique project-scoped container name. Every exit path
++kills a lingering local Docker process, allows at most 10 seconds to reap it,
++then removes that exact container with a separate 10-second bound. Cleanup
++errors fail the test. Mocked regressions cover delayed teardown, process hangs,
++missing SUBACK, publisher failure, payload leakage, wrong exits and cleanup.
++They also reject slow publication that consumes the negative observation window.
++
+@@ -48 +63,2 @@ Output includes separate assertions and broker logs; a failed assertion exits
+-nonzero. Subprocesses and waits are bounded. Cleanup removes only the generated
++nonzero. Both brokers' startup logs are retained. Subprocesses and waits are bounded.
++Cleanup removes only the generated
+diff --git a/tests/integration/test_infra_security.py b/tests/integration/test_infra_security.py
+index eb4fddd..cc008a3 100644
+--- a/tests/integration/test_infra_security.py
++++ b/tests/integration/test_infra_security.py
+@@ -1 +1 @@
+-"""Fast regression checks for credential mount boundaries without Docker."""
++"""Credential boundaries and subscriber process regressions without Docker."""
+@@ -2,0 +3,3 @@
++import contextlib
++import io
++import subprocess
+@@ -4,0 +8 @@ from pathlib import Path
++from unittest import mock
+@@ -22,0 +27,129 @@ class ClientCredentialTests(unittest.TestCase):
++class SubscriberProcessTests(unittest.TestCase):
++    def setUp(self):
++        self.output = self.enterContext(contextlib.redirect_stdout(io.StringIO()))
++        self.case = infra.LocalInfrastructureTest("test_local_infrastructure")
++        self.case.project = "unit-test"
++        self.case.certs = Path("/private/test-certificates")
++        self.case.publish = mock.Mock()
++        self.process = mock.Mock()
++        self.process.returncode = 27
++        self.process.poll.return_value = 27
++        self.process.communicate.return_value = (b"Timed out\n", None)
++        self.popen = self.enterContext(mock.patch.object(infra.subprocess, "Popen", return_value=self.process))
++        self.remove = self.enterContext(mock.patch.object(
++            infra.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")))
++        self.enterContext(mock.patch.object(infra.select, "select", return_value=([self.process.stdout], [], [])))
++        self.read = self.enterContext(mock.patch.object(
++            infra.os, "read", return_value=b"received SUBACK\nSubscribed (mid: 1): 1\n"))
++
++    def exchange(self, allowed=False):
++        self.case.exchange("gw-b", "backend", "iot/v1/gw/gw-a/downlink/command", allowed)
++
++    def assert_owned_container_removed(self):
++        command = self.popen.call_args.args[0]
++        name = command[command.index("--name") + 1]
++        self.assertTrue(name.startswith("unit-test-sub-"))
++        self.remove.assert_called_once_with(["docker", "rm", "-f", name],
++                                            capture_output=True, text=True, timeout=10)
++        self.process.stdout.close.assert_called_once()
++
++    def test_docker_teardown_can_outlast_old_process_deadline(self):
++        completed = False
++
++        def communicate(timeout):
++            nonlocal completed
++            if not completed and timeout < 12:
++                raise subprocess.TimeoutExpired("docker run", timeout)
++            completed = True
++            return b"Timed out\n", None
++
++        self.process.communicate.side_effect = communicate
++        self.exchange()
++        command = self.popen.call_args.args[0]
++        self.assertEqual(command[command.index("-W") + 1], "45")
++        self.assert_owned_container_removed()
++
++    def test_process_timeout_is_not_authorization_success_and_cleans_owned_container(self):
++        self.process.poll.return_value = None
++        self.process.communicate.side_effect = [
++            subprocess.TimeoutExpired("docker run", 60, output=b"partial debug output\n"), (b"", None)]
++        with self.assertRaisesRegex(AssertionError, "Docker subscriber process timeout.*gw-b") as error:
++            self.exchange()
++        self.assertIn("NOT_VERIFIED", str(error.exception))
++        self.assertIn("partial debug output", str(error.exception))
++        self.process.kill.assert_called_once()
++        self.process.communicate.assert_has_calls([mock.call(timeout=60), mock.call(timeout=10)])
++        self.assert_owned_container_removed()
++
++    def test_slow_publisher_cannot_turn_an_expired_window_into_negative_success(self):
++        elapsed = 0
++
++        def publish(*args):
++            nonlocal elapsed
++            elapsed = 38
++
++        self.case.publish.side_effect = publish
++        with mock.patch.object(infra.time, "monotonic", side_effect=lambda: elapsed):
++            with self.assertRaisesRegex(AssertionError, "consumed the negative receive window"):
++                self.exchange()
++        self.assert_owned_container_removed()
++        self.assertNotIn("PASS:", self.output.getvalue())
++
++    def test_negative_receive_rejects_payload_and_unexpected_exit_codes(self):
++        for code, output in ((0, b"issue16-smoke\n"), (27, b"issue16-smoke\n"),
++                             (1, b"TLS failure\n"), (125, b"Docker failure\n")):
++            with self.subTest(code=code):
++                self.process.returncode = code
++                self.process.communicate.return_value = (output, None)
++                with self.assertRaises(AssertionError):
++                    self.exchange()
++
++    def test_missing_suback_does_not_publish_and_still_cleans_process(self):
++        self.read.return_value = b""
++        self.process.poll.return_value = None
++        with self.assertRaisesRegex(AssertionError, "received SUBACK"):
++            self.exchange()
++        self.case.publish.assert_not_called()
++        self.process.kill.assert_called_once()
++        self.assert_owned_container_removed()
++
++    def test_publisher_failure_still_cleans_subscriber(self):
++        self.case.publish.side_effect = RuntimeError("publisher failed")
++        self.process.poll.return_value = None
++        with self.assertRaisesRegex(RuntimeError, "publisher failed"):
++            self.exchange()
++        self.process.kill.assert_called_once()
++        self.assert_owned_container_removed()
++
++    def test_positive_receive_still_requires_payload_and_success(self):
++        for code, output in ((0, b"issue16-smoke\n"), (0, b""), (27, b"issue16-smoke\n")):
++            with self.subTest(code=code, output=output):
++                self.process.returncode = code
++                self.process.communicate.return_value = (output, None)
++                if code == 0 and output:
++                    self.exchange(allowed=True)
++                else:
++                    with self.assertRaises(AssertionError):
++                        self.exchange(allowed=True)
++
++    def test_container_cleanup_error_is_not_ignored(self):
++        self.remove.return_value = subprocess.CompletedProcess([], 1, "", "permission denied")
++        with self.assertRaisesRegex(AssertionError, "Subscriber container cleanup failed"):
++            self.exchange()
++        self.assertNotIn("PASS:", self.output.getvalue())
++
++    def test_container_removal_timeout_fails_with_a_bounded_wait(self):
++        self.remove.side_effect = subprocess.TimeoutExpired("docker rm", 10)
++        with self.assertRaises(subprocess.TimeoutExpired):
++            self.exchange()
++        self.assert_owned_container_removed()
++        self.assertNotIn("PASS:", self.output.getvalue())
++
++    def test_container_removal_still_runs_when_local_reap_times_out(self):
++        self.process.communicate.side_effect = [(b"Timed out\n", None),
++                                               subprocess.TimeoutExpired("docker run", 10)]
++        with self.assertRaises(subprocess.TimeoutExpired):
++            self.exchange()
++        self.assert_owned_container_removed()
++
++
+diff --git a/tests/integration/test_local_infra.py b/tests/integration/test_local_infra.py
+index afe8f32..47d9e06 100644
+--- a/tests/integration/test_local_infra.py
++++ b/tests/integration/test_local_infra.py
+@@ -73 +73 @@ class LocalInfrastructureTest(unittest.TestCase):
+-                logs = run(*self.compose, "logs", "--no-color", "mqtt-tls", check=False, env=env)
++                logs = run(*self.compose, "logs", "--no-color", "mqtt-tls", "mqtt-dev", check=False, env=env)
+@@ -202,5 +202,23 @@ class LocalInfrastructureTest(unittest.TestCase):
+-        with subprocess.Popen(self.client(reader, "mosquitto_sub", "-d", "-t", subscription or topic,
+-                                          "-C", "1", "-W", "8"), stdout=subprocess.PIPE,
+-                              stderr=subprocess.STDOUT) as subscriber:
+-            initial = b""
+-            deadline = time.monotonic() + 10
++        name = self.project + "-sub-" + secrets.token_hex(4)
++        command = self.client(reader, "mosquitto_sub", "-d", "-t", subscription or topic,
++                              "-C", "1", "-W", "45")
++        command[2:2] = ["--name", name]
++        started = time.monotonic()
++        subscriber = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
++        initial = b""
++        deadline = time.monotonic() + 10
++        try:
++            while b"Subscribed (mid: 1):" not in initial and time.monotonic() < deadline:
++                if select.select([subscriber.stdout], [], [], 0.2)[0]:
++                    chunk = os.read(subscriber.stdout.fileno(), 4096)
++                    if not chunk:
++                        break
++                    initial += chunk
++            self.assertIn(b"received SUBACK", initial, initial.decode())
++            if allowed:
++                self.assertIn(b"Subscribed (mid: 1): 1", initial, initial.decode())
++            self.publish(writer, topic)
++            if not allowed:
++                # Reserve at least 8 seconds after publishing, even with slow Docker startup.
++                self.assertLess(time.monotonic() - started, 37,
++                                "Docker publisher consumed the negative receive window; NOT_VERIFIED")
+@@ -208,15 +226,6 @@ class LocalInfrastructureTest(unittest.TestCase):
+-                while b"Subscribed (mid: 1):" not in initial and time.monotonic() < deadline:
+-                    if select.select([subscriber.stdout], [], [], 0.2)[0]:
+-                        chunk = os.read(subscriber.stdout.fileno(), 4096)
+-                        if not chunk:
+-                            break
+-                        initial += chunk
+-                self.assertIn(b"received SUBACK", initial, initial.decode())
+-                if allowed:
+-                    self.assertIn(b"Subscribed (mid: 1): 1", initial, initial.decode())
+-                self.publish(writer, topic)
+-                tail, _ = subscriber.communicate(timeout=10)
+-            finally:
+-                if subscriber.poll() is None:
+-                    subscriber.kill()
+-                    subscriber.wait(timeout=10)
++                # MQTT's receive timer and Docker's process completion are separate deadlines.
++                tail, _ = subscriber.communicate(timeout=60)
++            except subprocess.TimeoutExpired as error:
++                output = (initial + (error.output or b"")).decode(errors="replace")
++                self.fail(f"Docker subscriber process timeout after 60s for {reader} on {subscription or topic}; "
++                          f"MQTT authorization result NOT_VERIFIED\n{output}")
+@@ -230,0 +240,15 @@ class LocalInfrastructureTest(unittest.TestCase):
++        finally:
++            try:
++                if subscriber.poll() is None:
++                    subscriber.kill()
++                subscriber.communicate(timeout=10)
++            finally:
++                subscriber.stdout.close()
++                removed = subprocess.run(["docker", "rm", "-f", name], capture_output=True,
++                                         text=True, timeout=10)
++                self.assertTrue(removed.returncode == 0 or "No such container" in removed.stderr,
++                                f"Subscriber container cleanup failed: {removed.stderr}")
++        if not allowed:
++            print(f"PASS: denied receive {reader} on {subscription or topic}: "
++                  f"MQTT exit27, no payload; Docker process completed in {time.monotonic() - started:.2f}s",
++                  flush=True)

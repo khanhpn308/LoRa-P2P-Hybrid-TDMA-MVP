@@ -70,7 +70,7 @@ class LocalInfrastructureTest(unittest.TestCase):
                 self.tls_handshakes()
                 self.authorization()
             finally:
-                logs = run(*self.compose, "logs", "--no-color", "mqtt-tls", check=False, env=env)
+                logs = run(*self.compose, "logs", "--no-color", "mqtt-tls", "mqtt-dev", check=False, env=env)
                 print("BROKER LOG BEGIN\n" + logs.stdout + logs.stderr + "BROKER LOG END", flush=True)
                 run(*self.compose, "down", "-v", "--rmi", "local", "--remove-orphans", env=env)
 
@@ -199,27 +199,36 @@ class LocalInfrastructureTest(unittest.TestCase):
             self.assertIn("RC:135", output, "Expected MQTT5 PUBACK Not authorized")
 
     def exchange(self, reader, writer, topic, allowed=True, subscription=None):
-        with subprocess.Popen(self.client(reader, "mosquitto_sub", "-d", "-t", subscription or topic,
-                                          "-C", "1", "-W", "8"), stdout=subprocess.PIPE,
-                              stderr=subprocess.STDOUT) as subscriber:
-            initial = b""
-            deadline = time.monotonic() + 10
+        name = self.project + "-sub-" + secrets.token_hex(4)
+        command = self.client(reader, "mosquitto_sub", "-d", "-t", subscription or topic,
+                              "-C", "1", "-W", "45")
+        command[2:2] = ["--name", name]
+        started = time.monotonic()
+        subscriber = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        initial = b""
+        deadline = time.monotonic() + 10
+        try:
+            while b"Subscribed (mid: 1):" not in initial and time.monotonic() < deadline:
+                if select.select([subscriber.stdout], [], [], 0.2)[0]:
+                    chunk = os.read(subscriber.stdout.fileno(), 4096)
+                    if not chunk:
+                        break
+                    initial += chunk
+            self.assertIn(b"received SUBACK", initial, initial.decode())
+            if allowed:
+                self.assertIn(b"Subscribed (mid: 1): 1", initial, initial.decode())
+            self.publish(writer, topic)
+            if not allowed:
+                # Reserve at least 8 seconds after publishing, even with slow Docker startup.
+                self.assertLess(time.monotonic() - started, 37,
+                                "Docker publisher consumed the negative receive window; NOT_VERIFIED")
             try:
-                while b"Subscribed (mid: 1):" not in initial and time.monotonic() < deadline:
-                    if select.select([subscriber.stdout], [], [], 0.2)[0]:
-                        chunk = os.read(subscriber.stdout.fileno(), 4096)
-                        if not chunk:
-                            break
-                        initial += chunk
-                self.assertIn(b"received SUBACK", initial, initial.decode())
-                if allowed:
-                    self.assertIn(b"Subscribed (mid: 1): 1", initial, initial.decode())
-                self.publish(writer, topic)
-                tail, _ = subscriber.communicate(timeout=10)
-            finally:
-                if subscriber.poll() is None:
-                    subscriber.kill()
-                    subscriber.wait(timeout=10)
+                # MQTT's receive timer and Docker's process completion are separate deadlines.
+                tail, _ = subscriber.communicate(timeout=60)
+            except subprocess.TimeoutExpired as error:
+                output = (initial + (error.output or b"")).decode(errors="replace")
+                self.fail(f"Docker subscriber process timeout after 60s for {reader} on {subscription or topic}; "
+                          f"MQTT authorization result NOT_VERIFIED\n{output}")
             output = (initial + tail).decode()
             if allowed:
                 self.assertEqual(subscriber.returncode, 0, output)
@@ -228,6 +237,21 @@ class LocalInfrastructureTest(unittest.TestCase):
                 # Mosquitto may grant a subscription while filtering unauthorized delivery.
                 self.assertEqual(subscriber.returncode, 27, output)
                 self.assertNotIn("issue16-smoke", output)
+        finally:
+            try:
+                if subscriber.poll() is None:
+                    subscriber.kill()
+                subscriber.communicate(timeout=10)
+            finally:
+                subscriber.stdout.close()
+                removed = subprocess.run(["docker", "rm", "-f", name], capture_output=True,
+                                         text=True, timeout=10)
+                self.assertTrue(removed.returncode == 0 or "No such container" in removed.stderr,
+                                f"Subscriber container cleanup failed: {removed.stderr}")
+        if not allowed:
+            print(f"PASS: denied receive {reader} on {subscription or topic}: "
+                  f"MQTT exit27, no payload; Docker process completed in {time.monotonic() - started:.2f}s",
+                  flush=True)
 
     def authorization(self):
         for identity in (None, "wrong"):
