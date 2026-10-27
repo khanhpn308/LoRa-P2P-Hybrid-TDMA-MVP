@@ -2,6 +2,12 @@
 
 > Status: P0 Issue #30 remains DRAFT. For the single **operator-supervised Issue #47 pilot**, the active choice is **Gemini Worker + Gemini Auditor through two separate direct Antigravity CLI sessions**. No unattended AGY Harness integration is authorized.
 
+## Owner-selected native Full Access fast lane (2026-10-27)
+
+For **ordinary GitHub Issue coding tasks**, the owner authorizes a native Codex/AGY Coordinator with the operator-selected **Full Access CLI preset** to complete Issue → separate branch/worktree → code → targeted local tests/build → fresh review → commit/push → Draft PR **without a per-Issue signer, manual pre-edit approval prompt or root GitHub login**. Trigger: `Chạy Issue #N`. Follow `docs/development/harness-fast-lane.md`.
+
+This is a **native-agent workflow**, NOT a claim that the signed MCP `harness_prepare_issue` authorizes unsigned operations. Do not misrepresent the two execution paths. The owner controls actual CLI privileges; files inside this repository do not grant OS/MCP permissions. For normal work, perform required intake/standards/Issue-scope checks **internally**, without a mandatory human handshake or a long preliminary report, and report concise results in the Draft PR. Legacy P1-B2 supervised-pilot restrictions below are historical for that pipeline; they do not require operator approval for this explicit native fast lane. Sensitive RF/ISR/timer/PCB/security/contract changes still require human technical review, including scope/ADR compatibility, and no automatic merge, force-push to main, RF TX or flash is permitted. Never expose credentials; Full Access is not evidence that an Auditor is independent.
+
 Always read `.github/copilot-instructions.md` and the active Issue's exact `Target Directories (allowed paths)` before routing.
 
 ## Task Start Gate — mandatory pre-edit handshake
