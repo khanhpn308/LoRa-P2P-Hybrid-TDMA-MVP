@@ -1,5 +1,7 @@
 # Upstream skill audit — Issue #102 (Cold Audit Archive)
 
+> Current archival content lifecycle: `OWNER_APPROVED_FROZEN` (Issue #108, 2026-10-28). The historical observations and review dispositions below retain their original dates and scope; this freeze does not imply technical approval or verification.
+
 Provenance evidence only, not Worker instructions. U1/U2/U3 remain `PENDING_LICENSE`; U4/U5 are attributed workflow-idea adaptations. [Hot Playbook](../../development/firmware/ESP32_LORA_ENGINEERING_PLAYBOOK.md#task-index).
 
 <a id="source-audit"></a>

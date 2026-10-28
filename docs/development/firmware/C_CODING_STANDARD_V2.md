@@ -1,7 +1,8 @@
 ---
 document_id: LORA-FW-CSTD
-version: 2.0.0-DRAFT
-status: OWNER_APPROVED_PENDING_TECHNICAL_REVIEW
+version: 2.0.0
+status: OWNER_APPROVED_FROZEN
+agent_use: OWNER_AUTHORIZED
 audience: AI_CODING_WORKER_AND_AUDITOR
 repository: khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP
 applies_to: firmware/**
@@ -14,12 +15,12 @@ enforcement_scope: REVIEW_ONLY_UNTIL_TECHNICAL_SIGNOFF
 enforcement: REVIEW_PROPOSAL_ONLY
 baseline_commit: 8217885c150888e0ecb1eaf39685d79b4cbf56fa
 ---
-# C Firmware Coding Standard v2.0.0-DRAFT — AI Agent Operational Rules
-> `OWNER_APPROVED_PENDING_TECHNICAL_REVIEW / REVIEW_PROPOSAL_ONLY`: proposed engineering constraints, not activated policy.
+# C Firmware Coding Standard v2.0.0 — AI Agent Operational Rules
+> `OWNER_APPROVED_FROZEN / REVIEW_PROPOSAL_ONLY`: Owner-frozen content with technical review pending; engineering constraints are not activated policy.
 > Apply in-scope `MUST`/`MUST_NOT` as conservative review safeguards; never override approved ADRs, contracts or `AGENTS.md`.
 > On scope/authority conflicts or blocked D01–D13: `STOP_AND_REPORT`; G0–G6 remain `NOT_VERIFIED` without evidence.
 ## 0. Agent entrypoint: execute this decision flow
-**Authority:** Host-verified `AGENTS.md`/G0 → live Issue/AC/allowed paths/branch → approved ADRs/contracts → current code. No draft grants permission; conflicts/D01–D13 → `STOP_AND_REPORT`.
+**Authority:** Host-verified `AGENTS.md`/G0 → live Issue/AC/allowed paths/branch → approved ADRs/contracts → current code. This document does not grant scope or override higher authority; conflicts/D01–D13 → `STOP_AND_REPORT`.
 
 **Core for every firmware task:** §0 + §1 GOV + §2 C + §3 MEM + §4 ERR + §11 QA + §12 decisions + §13 evidence. Load only relevant IDs.
 
@@ -38,7 +39,7 @@ rg -n '^\| (GOV|C|MEM|ERR|RTOS|RAD|QA)-[0-9]{3} ' docs/development/firmware/C_CO
 
 **Flow:** `PRECHECK` (G0/Issue/tree) → `DESIGN_BOUNDARY` (authority/ownership) → `IMPLEMENT` (scope) → `VERIFY` (actual receipts) → `HANDOFF` (Draft PR + humans). Missing G0, dirty tree, forbidden writes or unapproved RF/wire/security/pin/timing decision → `STOP_AND_REPORT`.
 
-**Status semantics:** (1) `MUST`/`MUST_NOT` = conservative draft review safeguards, not activated policy; (2) Owner approval permits technical review, not technical sign-off; (3) `NOT_VERIFIED` is neither PASS nor FAIL and G0–G6 need distinct evidence.
+**Status semantics:** (1) `MUST`/`MUST_NOT` = conservative review safeguards, not activated policy; (2) Owner content approval and agent use do not constitute technical sign-off; (3) `NOT_VERIFIED` is neither PASS nor FAIL and G0–G6 need distinct evidence.
 ### Rule grammar and verification evidence
 Every atomic line uses this format:
 
@@ -57,7 +58,7 @@ Every atomic line uses this format:
 | GOV-007 | all | MUST classify changed public API, wire/version, persistence, scheduling and auth semantics for producer/consumer compatibility before code edits | STATIC(CG)/CONTRACT/HUMAN | STOP |
 | GOV-008 | all | MUST_NOT expose passwords, tokens, keys, MAC/session secrets or sensitive dumps in code, tests, logs, commits or PR | STATIC/SECURITY | STOP |
 | GOV-009 | all | MUST produce a Draft PR with actual test evidence and requested human reviewers; MUST_NOT auto-merge, auto-approve, flash or TX | STATIC/HUMAN | STOP |
-| GOV-010 | all | MUST distinguish current `DRAFT` document guidance from APPROVED repository policy; do not claim this standard is effective merely because it exists | STATIC/HUMAN | STOP |
+| GOV-010 | all | MUST distinguish `OWNER_APPROVED_FROZEN` document guidance from APPROVED repository policy; do not claim this standard is effective merely because it exists | STATIC/HUMAN | STOP |
 ## 2. C — formatting, names, types and interface boundaries
 | Rule ID | Scope | Directive | Verify | If violated |
 |---|---|---|---|---|
@@ -218,7 +219,7 @@ Read the Issue's exact allowed paths before editing. A clean worktree assertion 
 | TDMA scheduling | static validator, simulation then measured ToA/IRQ/drift/guard and recovery HIL | Numeric guarantees from planner |
 | MQTT/API boundary | reviewed schema/version, producer/consumer integration, ACL/replay/expiry | PUBACK = application ACK |
 ### PR result contract
-**Final task/review report:** `TASK_ID`, `ISSUE_URL`, `BASE_SHA`, `HEAD_SHA`, `BRANCH`, `CHANGED_PATHS`, `SCOPE_CHECK`, `RULE_IDS_CONSULTED`, `RULE_IDS_APPLIED`, `CONFLICTS_OR_EXCEPTIONS`, `BLOCKED_DECISIONS`, `TOOLCHAIN_VERSION`, `TEST_COMMANDS`, `TESTS_RUN`, `NOT_RUN`, `KNOWN_LIMITATIONS`, `EVIDENCE_STATUS`, `EVIDENCE_URLS`, `REVIEWERS_REQUIRED`, `PR_URL`, `FINAL_STATUS`. Values must be truthful. Current status is `PROJECT_OWNER_APPROVED_2026-10-28 / TECHNICAL_REVIEW_PENDING / ENFORCEMENT_REVIEW_ONLY`; relevant G0–G6 gates remain `NOT_VERIFIED` absent their distinct signed/independent evidence.
+**Final task/review report:** `TASK_ID`, `ISSUE_URL`, `BASE_SHA`, `HEAD_SHA`, `BRANCH`, `CHANGED_PATHS`, `SCOPE_CHECK`, `RULE_IDS_CONSULTED`, `RULE_IDS_APPLIED`, `CONFLICTS_OR_EXCEPTIONS`, `BLOCKED_DECISIONS`, `TOOLCHAIN_VERSION`, `TEST_COMMANDS`, `TESTS_RUN`, `NOT_RUN`, `KNOWN_LIMITATIONS`, `EVIDENCE_STATUS`, `EVIDENCE_URLS`, `REVIEWERS_REQUIRED`, `PR_URL`, `FINAL_STATUS`. Values must be truthful. Current status is `OWNER_APPROVED_FROZEN / TECHNICAL_REVIEW_PENDING / ENFORCEMENT_REVIEW_ONLY`; relevant G0–G6 gates remain `NOT_VERIFIED` absent their distinct signed/independent evidence.
 ## 14. AI agent conformance evaluation (test specification; NOT_EXECUTED)
 AI agent conformance evaluation scenarios (CASE-01..12) are maintained in [agent-conformance-scenarios.md](../../verification/agent-conformance-scenarios.md) (`NOT_EXECUTED`). AI Coding Workers must not load that file during normal implementation tasks.
 ## 15. Source/provenance and migration matrix
@@ -238,8 +239,8 @@ AI agent conformance evaluation scenarios (CASE-01..12) are maintained in [agent
 | HW | GOV-004; RAD-005/007 | Hardware/GPIO/power facts relocated to board revision and legal/RF evidence |
 | DOC, QA | QA-001..008; §13/14 | Distinguish proof types, explicit claims and agent conformance |
 ## 16. Human review / activation conditions
-This file remains `v2.0.0-DRAFT`; **Project Owner approval to advance the standard and perform a Skill Gap Analysis is RECORDED on 2026-10-28 (Issue #97).** This satisfies the *Owner decision* checkpoint only. **Technical approval and rule enforcement remain PENDING** until: (a) Embedded Gateway/Node reviewers validate C, FreeRTOS, ISR and exact ESP-IDF v6.1 API claims; (b) RF/Hardware reviewers validate radio/hardware boundaries with manufacturer sources and actual board revision; (c) Security/QA reviewers validate crypto/replay/evidence boundaries; (d) required conflicts/dependencies and any exceptions are dispositioned; and (e) a separately scoped, reviewed policy activation change explicitly updates the applicable agent entrypoints and enforcement. Record each reviewer, exact reviewed SHA, findings and approval evidence. No review, merge or Owner approval of this *document* freezes D01–D13, approves a radio profile or constitutes any G0–G6/HIL/RF/Timing/Security PASS.
+This `v2.0.0` content is `OWNER_APPROVED_FROZEN` and agent use is `OWNER_AUTHORIZED` under Issue #108. Project Owner approval to advance the standard and perform a Skill Gap Analysis was recorded on 2026-10-28 (Issue #97). These decisions do not constitute technical sign-off. **Technical approval and rule enforcement remain PENDING** until: (a) Embedded Gateway/Node reviewers validate C, FreeRTOS, ISR and exact ESP-IDF v6.1 API claims; (b) RF/Hardware reviewers validate radio/hardware boundaries with manufacturer sources and actual board revision; (c) Security/QA reviewers validate crypto/replay/evidence boundaries; (d) required conflicts/dependencies and any exceptions are dispositioned; and (e) a separately scoped, reviewed policy activation change explicitly updates the applicable agent entrypoints and enforcement. Record each reviewer, exact reviewed SHA, findings and approval evidence. No review, merge or Owner approval of this *document* freezes D01–D13, approves a radio profile or constitutes any G0–G6/HIL/RF/Timing/Security PASS.
 
 **Skills boundary (Issue #97):** [ESP32 Skill Gap Analysis plan](ESP32_SKILL_GAP_ANALYSIS_PLAN.md) is authorized for read-only evaluation, not automatic installation, execution, skill routing or policy override. Approved repository authority always precedes third-party skill instructions.
 
-**Output expectation:** a worker applying this document must cite exact v2 Rule IDs **and** authoritative repository/contract paths. If a rule remains proposed or conflicts with an approved instruction, the agent reports that fact rather than assuming this DRAFT overrides it.
+**Output expectation:** a worker applying this document must cite exact v2 Rule IDs **and** authoritative repository/contract paths. If a rule remains proposed or conflicts with an approved instruction, the agent reports that fact rather than assuming this document overrides it.

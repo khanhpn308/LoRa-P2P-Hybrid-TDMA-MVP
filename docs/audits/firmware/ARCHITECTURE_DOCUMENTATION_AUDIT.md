@@ -1,5 +1,7 @@
 # Audit baseline kiến trúc và requirements R1
 
+> Current archival content lifecycle: `OWNER_APPROVED_FROZEN` (Issue #108, 2026-10-28). The historical observations and review dispositions below retain their original dates and scope; this freeze does not imply technical approval or verification.
+
 ## Metadata và preflight
 
 TASK_ID: ARCH-DOC-BASELINE-R1
