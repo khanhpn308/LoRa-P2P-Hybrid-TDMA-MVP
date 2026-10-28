@@ -28,8 +28,8 @@ Hash trong bảng là SHA-256 của bytes **tại base SHA**, kể cả file đ�
 | Source path | Authority / phạm vi review | Base content SHA-256 |
 |---|---|---|
 | [AGENTS.md](../../../AGENTS.md) | Repository authority; scaffold, experimental reference và evidence dimensions | `7058ba01fce43361ed17632d591eb9c0f17348e2e9713cb7a7707ea4b0d17cbb` |
-| [.github/copilot-instructions.md](../../../.github/copilot-instructions.md) | Repository scope/Issue/governance constraints | `8182eabe61a1b88e1c84aa67e4be53f7527eed4b6bfa40ae29ea0b710bcc40ac` |
-| [.github/instructions/embedded.instructions.md](../../../.github/instructions/embedded.instructions.md) | Firmware ownership/ISR/bounded-memory constraints | `d3276bdbcf13f058ab32724f961f90f821a5403482a66979d06b8f8833f17a8e` |
+| `.github/copilot-instructions.md` (historical path; absent at current HEAD) | Repository scope/Issue/governance constraints | `8182eabe61a1b88e1c84aa67e4be53f7527eed4b6bfa40ae29ea0b710bcc40ac` |
+| `.github/instructions/embedded.instructions.md` (historical path; absent at current HEAD) | Firmware ownership/ISR/bounded-memory constraints | `d3276bdbcf13f058ab32724f961f90f821a5403482a66979d06b8f8833f17a8e` |
 | [docs/architecture/system-overview.md](../../architecture/system-overview.md) | System design DRAFT; toàn file | `a7ab2a8d7fff8a86ea71902bbc02004cde704ecfb22373983742e0172e1a2ef3` |
 | [docs/architecture/interfaces.md](../../architecture/interfaces.md) | Interface design DRAFT; toàn file | `1b6fd6bd504342b3eee91182635cf80a033b5fe2cc4d6e9cc0bc491730936e94` |
 | [docs/architecture/deployment.md](../../architecture/deployment.md) | Deployment contexts; scaffold warning | `d65c83eb486e5c11c401298bd239c9c232324ecbfc9b189b3fed26298815fd80` |
@@ -50,8 +50,8 @@ Hash trong bảng là SHA-256 của bytes **tại base SHA**, kể cả file đ�
 | [contracts/api/contract-semantics.md](../../../contracts/api/contract-semantics.md) | REST/WSS proposed validation/recovery; toàn file | `316459726b7f9e7a3ca3bed7151a95f63afcc1afc365503dc0404fd75cbeef70` |
 | [contracts/verification.md](../../../contracts/verification.md) | Static checks và integration/HIL plan | `d48558d91b46bc5e95db3d6d69d74ea1c4b8fd3adcacff4231a2f58f3334f5c3` |
 | [docs/verification/acceptance-gates.md](../../verification/acceptance-gates.md) | G0–G6 evidence requirements, không là verdict | `e14d7a1bd2f18f399d62e582050390897af58d16fc9f756a00c16df6d776aba3` |
-| [docs/development/coding-standards.md](../coding-standards.md) | Engineering constraints; Go draft tách firmware standard | `1816187f7340d7c411c7f8a7c131babc44100d9c1a6b9ba81cc404a44cf9e559` |
-| [docs/development/agent-harness-firmware.md](../agent-harness-firmware.md) | Historical Harness P0; AGENTS integration guard có thẩm quyền hiện hành | `6d05d98fb3047ac9af1907f38d3dd6b4ddd0e2227c202fdd0999b14357a90c0c` |
+| [docs/development/coding-standards.md](../../development/coding-standards.md) | Engineering constraints; Go draft tách firmware standard | `1816187f7340d7c411c7f8a7c131babc44100d9c1a6b9ba81cc404a44cf9e559` |
+| [docs/development/agent-harness-firmware.md](../../development/agent-harness-firmware.md) | Historical Harness P0; AGENTS integration guard có thẩm quyền hiện hành | `6d05d98fb3047ac9af1907f38d3dd6b4ddd0e2227c202fdd0999b14357a90c0c` |
 | [.github/workflows/ci-contracts.yml](../../../.github/workflows/ci-contracts.yml) | Actual contract CI behavior: syntax only | `13606a40d684e432b5e71b616134581207c63d150a8c88e922e44f64b874e7e3` |
 | [.github/workflows/ci-foundation.yml](../../../.github/workflows/ci-foundation.yml) | Actual structural check entry point | `d43bf6b826672bdb5f4ecacc1bd0aa9e6f92e1c7b8b11a2ce017dac7153bcf2e` |
 | [scripts/verify_structure.py](../../../scripts/verify_structure.py) | Actual static structural check, không HIL proof | `a6144afbff08ffb708a53446f1b0e8321b69d26b459c90617bf6b01da958c543` |
