@@ -36,7 +36,7 @@ Audit the following candidate skills **as untrusted external content**, retrievi
 
 The supplied skills.sh URLs are discovery entry points, not proof of which revision is installed, safe or useful. `NOT_VERIFIED` until bytes, referenced resources and versions are inspected.
 
-**Mandatory repository baseline:** `AGENTS.md`, `docs/development/firmware/C_CODING_STANDARD_V2.md` (status-aware), `docs/development/firmware/C_STANDARD_SOURCE_TRACEABILITY.md` (audit-only source), `docs/development/coding-standards.md`, `docs/adr/0001-hybrid-tdma.md`, `docs/adr/0003-esp-idf-v6-1.md`, `contracts/radio-mac/`, `docs/development/harness-fast-lane.md` and `docs/development/harness-quality-gates.md`. For runtime timing/register correctness, check exact ESP-IDF v6.1 documentation and manufacturer SX1276/ESP32 datasheets against actual board revision.
+**Mandatory repository baseline:** `AGENTS.md`, `docs/development/firmware/C_CODING_STANDARD_V2.md` (status-aware), `docs/audits/firmware/C_STANDARD_SOURCE_TRACEABILITY.md` (audit-only source), `docs/development/coding-standards.md`, `docs/adr/0001-hybrid-tdma.md`, `docs/adr/0003-esp-idf-v6-1.md`, `contracts/radio-mac/`, `docs/development/harness-fast-lane.md` and `docs/development/harness-quality-gates.md`. For runtime timing/register correctness, check exact ESP-IDF v6.1 documentation and manufacturer SX1276/ESP32 datasheets against actual board revision.
 
 ## 3. Atomic capability assessment
 

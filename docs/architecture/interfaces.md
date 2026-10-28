@@ -28,4 +28,4 @@ Không chép schemas vào tài liệu này. Khi architecture và contract khác 
 
 ## Review và evidence
 
-Producer/consumer cùng duyệt theo [contract verification](../../contracts/verification.md). Syntax/schema/OpenAPI tests chỉ hỗ trợ phần thực sự kiểm; MQTT/TLS/DB/WSS runtime, security, C↔Go vectors và RF/HIL cần evidence riêng với Issue/commit/environment/versions/expected/actual/reviewer. Xem [audit R1](../development/firmware/ARCHITECTURE_DOCUMENTATION_AUDIT.md) cho gap và reviewer handoff.
+Producer/consumer cùng duyệt theo [contract verification](../../contracts/verification.md). Syntax/schema/OpenAPI tests chỉ hỗ trợ phần thực sự kiểm; MQTT/TLS/DB/WSS runtime, security, C↔Go vectors và RF/HIL cần evidence riêng với Issue/commit/environment/versions/expected/actual/reviewer. Xem [audit R1](../audits/firmware/ARCHITECTURE_DOCUMENTATION_AUDIT.md) cho gap và reviewer handoff.

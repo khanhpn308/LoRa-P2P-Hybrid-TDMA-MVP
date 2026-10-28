@@ -51,4 +51,4 @@ Nguồn: [OPEN_DECISIONS](../../contracts/OPEN_DECISIONS.md), [G1–G6](../verif
 
 ## Truy vết và nghiệm thu
 
-Xem [RTM](../requirements/requirements.md#rtm), [interface ownership](interfaces.md), [ADR register](../adr/README.md), [contract verification](../../contracts/verification.md), [audit R1](../development/firmware/ARCHITECTURE_DOCUMENTATION_AUDIT.md). Theo acceptance gates và AGENTS.md, design approval độc lập với verification; syntax/schema/build/simulation không thay HIL/RF/security evidence. Closed Issue hoặc tài liệu tồn tại không đủ để gán PASS.
+Xem [RTM](../requirements/requirements.md#rtm), [interface ownership](interfaces.md), [ADR register](../adr/README.md), [contract verification](../../contracts/verification.md), [audit R1](../audits/firmware/ARCHITECTURE_DOCUMENTATION_AUDIT.md). Theo acceptance gates và AGENTS.md, design approval độc lập với verification; syntax/schema/build/simulation không thay HIL/RF/security evidence. Closed Issue hoặc tài liệu tồn tại không đủ để gán PASS.

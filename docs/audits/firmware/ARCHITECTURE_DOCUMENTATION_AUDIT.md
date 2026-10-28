@@ -302,8 +302,8 @@ Mọi lựa chọn biên tập R1 là `PROPOSED / PENDING HUMAN REVIEW`. Giữ a
 | docs/requirements/requirements.md | Giữ tám IDs/status, thêm 15 PROPOSED và observable AC/evidence requirements |
 | docs/adr/0001-hybrid-tdma.md | Giữ accepted direction, mở rộng rationale/dependencies dưới DRAFT |
 | docs/adr/README.md | Register ADR-0001/0002/0003, tách review/evidence |
-| docs/development/firmware/ARCHITECTURE_DOCUMENTATION_AUDIT.md | Audit sources/findings/options/validation/handoff |
-| docs/development/firmware/C_STANDARD_SOURCE_TRACEABILITY.md | Map 123 S1 IDs/12 categories và future-rule domains; chưa viết v2 |
+| docs/audits/firmware/ARCHITECTURE_DOCUMENTATION_AUDIT.md | Audit sources/findings/options/validation/handoff |
+| docs/audits/firmware/C_STANDARD_SOURCE_TRACEABILITY.md | Map 123 S1 IDs/12 categories và future-rule domains; chưa viết v2 |
 
 ## Remaining blockers và reviewer handoff
 

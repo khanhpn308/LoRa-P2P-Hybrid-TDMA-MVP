@@ -14,4 +14,4 @@ ADR-0002/0003 không sửa trong R1. Requirements mới trong [RTM](../requireme
 
 Thêm ADR theo số duy nhất với Context, Decision, Alternatives, Consequences, Status, Reviewers, Issue và evidence limitations. Cross-component change cần owner phía gửi/nhận review theo [contract index](../../contracts/README.md). Proposal không tự thành hard requirement.
 
-[OPEN_DECISIONS](../../contracts/OPEN_DECISIONS.md) là canonical register D01–D13. [Audit R1](../development/firmware/ARCHITECTURE_DOCUMENTATION_AUDIT.md) chỉ phân tích options/dependencies/evidence theo IDs sẵn có, không đóng decision. C Firmware Coding Standard v2.0.0 là task sau; hiện chỉ có [source traceability đề xuất](../development/firmware/C_STANDARD_SOURCE_TRACEABILITY.md).
+[OPEN_DECISIONS](../../contracts/OPEN_DECISIONS.md) là canonical register D01–D13. [Audit R1](../audits/firmware/ARCHITECTURE_DOCUMENTATION_AUDIT.md) chỉ phân tích options/dependencies/evidence theo IDs sẵn có, không đóng decision. C Firmware Coding Standard v2.0.0 là task sau; hiện chỉ có [source traceability đề xuất](../audits/firmware/C_STANDARD_SOURCE_TRACEABILITY.md).
