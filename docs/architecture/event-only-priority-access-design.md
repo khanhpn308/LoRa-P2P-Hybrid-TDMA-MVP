@@ -8,18 +8,14 @@
 
 ## 1. Mục tiêu của giai đoạn này
 
-Quân tự giải thích được đường đi của một cảnh báo từ nút nhấn đến ứng dụng, đầu vào/đầu ra của từng khối và phần việc thuộc #78 hoặc #17. Đây là bài học và bản nháp mở đầu cho tài liệu thiết kế #78, **chưa phải Algorithm Specification đầy đủ** và chưa đạt Definition of Done của #78/#17.
+Giải thích được đường đi của một cảnh báo từ nút nhấn đến ứng dụng, đầu vào/đầu ra của từng khối và phần việc thuộc #78 hoặc #17. Đây là bài học và bản nháp mở đầu cho tài liệu thiết kế #78, **chưa phải Algorithm Specification đầy đủ** và chưa đạt Definition of Done của #78/#17.
 
 Ví dụ xuyên suốt: nhấn nút ở **Node số 3**, tạo cảnh báo quá nhiệt **giả lập 55°C**. Số Node và nhiệt độ này chỉ phục vụ giải thích theo Note.md; không phải sensor thật, threshold production, payload đã duyệt hoặc kết quả chạy thử.
 
-Trong giai đoạn 1 chỉ đọc, vẽ, diễn giải và ghi câu hỏi. Không cần flash board, phát RF, chạy MQTT, đổi contract hoặc chọn thuật toán. Việc Quân chốt roadmap học không phải phê duyệt kỹ thuật cho một phương án MAC.
+Trong giai đoạn 1 chỉ đọc, vẽ, diễn giải và ghi câu hỏi. Không cần flash board, phát RF, chạy MQTT, đổi contract hoặc chọn thuật toán. Việc chốt roadmap học không phải phê duyệt kỹ thuật cho một phương án MAC.
 
-## 2. Bắt đầu học trong khoảng 60 đến 90 phút
+## 2. Bắt đầu
 
-Thời lượng dưới đây là gợi ý học, không phải timing của hệ thống.
-
-| Bước | Quân thực hiện | Đầu ra có thể kiểm tra |
-|---|---|---|
 | 1 — Đọc sơ đồ, khoảng 10 phút | Đọc mục 3 và nói tên từng khối theo thứ tự. | Chỉ được đoạn LoRa và đoạn MQTT. |
 | 2 — Theo một sự kiện, khoảng 20 phút | Đọc mục 4, kể lại lần nhấn ở Node 3. | Mô tả được đầu vào, xử lý và đầu ra từng bước. |
 | 3 — Phân biệt bằng chứng, khoảng 15 phút | Đọc mục 5; trả lời vì sao phát xong chưa chắc đã lưu DB. | Tách được RF TX, ACK radio, MQTT PUBACK và DB commit. |
