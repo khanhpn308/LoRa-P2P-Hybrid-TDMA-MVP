@@ -1,24 +1,3 @@
----
-document_id: LORA-FW-CSTD
-version: 2.0.0
-status: OWNER_APPROVED_FROZEN
-agent_use: OWNER_AUTHORIZED
-audience: AI_CODING_WORKER_AND_AUDITOR
-repository: khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP
-applies_to: firmware/**
-toolchain: ESP-IDF v6.1
-issue: 68
-approval: PROJECT_OWNER_APPROVED_2026-10-28
-technical_review: PENDING_EMBEDDED_RF_HARDWARE_SECURITY_QA
-authorization_record: Issue #97
-enforcement_scope: REVIEW_ONLY_UNTIL_TECHNICAL_SIGNOFF
-enforcement: REVIEW_PROPOSAL_ONLY
-baseline_commit: 8217885c150888e0ecb1eaf39685d79b4cbf56fa
----
-# C Firmware Coding Standard v2.0.0 — AI Agent Operational Rules
-> `OWNER_APPROVED_FROZEN / REVIEW_PROPOSAL_ONLY`: Owner-frozen content with technical review pending; engineering constraints are not activated policy.
-> Apply in-scope `MUST`/`MUST_NOT` as conservative review safeguards; never override approved ADRs, contracts or `AGENTS.md`.
-> On scope/authority conflicts or blocked D01–D13: `STOP_AND_REPORT`; G0–G6 remain `NOT_VERIFIED` without evidence.
 ## 0. Agent entrypoint: execute this decision flow
 **Authority:** Host-verified `AGENTS.md`/G0 → live Issue/AC/allowed paths/branch → approved ADRs/contracts → current code. This document does not grant scope or override higher authority; conflicts/D01–D13 → `STOP_AND_REPORT`.
 

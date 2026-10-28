@@ -1,7 +1,5 @@
 # C standard source traceability cho task v2.0.0-DRAFT
 
-> Current archival content lifecycle: `OWNER_APPROVED_FROZEN` (Issue #108, 2026-10-28). The historical observations and review dispositions below retain their original dates and scope; this freeze does not imply technical approval or verification.
-
 Status: `PROPOSED / PENDING HUMAN REVIEW`, [Issue #60](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/60). Đây là evidence foundation và disposition đề xuất, **không phải C Coding Standard mới**, không có rule nào được tự phê duyệt cho monorepo.
 
 ## Provenance và giới hạn nguồn

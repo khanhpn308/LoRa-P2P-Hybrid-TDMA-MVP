@@ -1,23 +1,5 @@
----
-document_id: LORA-FW-PLAYBOOK-001
-version: 0.1.0
-status: OWNER_APPROVED_FROZEN
-agent_use: OWNER_AUTHORIZED
-issue: 102
-source_baseline: 34678739880f09af9f779358820d8b8c2ade0873
-supported_module: ESP32-WROOM-32E
-supported_radio: SX1276
-supported_sdk: ESP-IDF v6.1
-board_revision: NOT_VERIFIED_REQUIRES_TASK_INPUT
-technical_review: PENDING_EMBEDDED_GATEWAY_NODE_RF_HARDWARE_SECURITY_QA_PROJECT_OWNER
-runtime_router: NOT_IMPLEMENTED
-upstream_skills: NOT_INSTALLED_OR_ACTIVATED
----
-# ESP32 and SX1276 engineering playbook
 <a id="task-index"></a>
 ## Task index
-This Owner-frozen playbook provides manually selected project workflow guidance and an audit of five upstream candidates. Agent use is authorized within the live Issue scope and higher-authority instructions; runtime routing is not implemented. Read the Host-verified `AGENTS.md` first, then select the smallest relevant row. Load that workflow, its authority locators and the cited C Standard rows. The source inventory is for audit, not routine Worker context.
-
 | Task or symptom | Proposed capability | Workflow | EXISTING_C_RULE_IDS | Initial evidence tier |
 |---|---|---|---|---|
 | SDK identity, configuration or build failure | `FW-IDF-001` | [Build and configuration](#fw-idf-001) | GOV-002/003/004; QA-001/002/005/006 | Host/build |
