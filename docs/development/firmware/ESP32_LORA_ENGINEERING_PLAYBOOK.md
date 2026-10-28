@@ -1,22 +1,5 @@
----
-document_id: LORA-FW-PLAYBOOK-001
-version: 0.1.0
-status: PROPOSED
-issue: 102
-source_baseline: 34678739880f09af9f779358820d8b8c2ade0873
-supported_module: ESP32-WROOM-32E
-supported_radio: SX1276
-supported_sdk: ESP-IDF v6.1
-board_revision: NOT_VERIFIED_REQUIRES_TASK_INPUT
-technical_review: PENDING_EMBEDDED_GATEWAY_NODE_RF_HARDWARE_SECURITY_QA_PROJECT_OWNER
-runtime_router: NOT_IMPLEMENTED
-upstream_skills: NOT_INSTALLED_OR_ACTIVATED
----
-# ESP32 and SX1276 engineering playbook
 <a id="task-index"></a>
 ## Task index
-This is a proposed project workflow, with an audit of five upstream candidates. It adds no runtime routing or agent instructions. Read the Host-verified `AGENTS.md` first, then select the smallest relevant row. Load that workflow, its authority locators and the cited C Standard rows. The source inventory is for audit, not routine Worker context.
-
 | Task or symptom | Proposed capability | Workflow | EXISTING_C_RULE_IDS | Initial evidence tier |
 |---|---|---|---|---|
 | SDK identity, configuration or build failure | `FW-IDF-001` | [Build and configuration](#fw-idf-001) | GOV-002/003/004; QA-001/002/005/006 | Host/build |
@@ -31,14 +14,14 @@ This is a proposed project workflow, with an audit of five upstream candidates. 
 Related sections: [authority](#authority), [capability mapping](#capability-mapping), [handoff design](#selection-contract), [negative cases](#selection-examples), [source audit](#source-audit), [file inventory](../../audits/firmware/UPSTREAM_SKILL_AUDIT_ISSUE_102.md#file-inventory), [licensing](#licensing), [verification record](#verification-record).
 <a id="authority"></a>
 ## Authority and applicability
-The C Standard contains constraints; this playbook provides task procedures and evidence locators. [C Standard metadata and §0](C_CODING_STANDARD_V2.md#0-agent-entrypoint-execute-this-decision-flow), [§12](C_CODING_STANDARD_V2.md#12-blocked-decisions--never-resolve-in-coding-standard) and [§13](C_CODING_STANDARD_V2.md#13-deterministic-agent-checklist-required-pr-evidence) retain their actual status, `OWNER_APPROVED_PENDING_TECHNICAL_REVIEW / REVIEW_PROPOSAL_ONLY`. Its 104 existing Rule IDs are unchanged. Capability IDs below are proposed lookup keys, not new C Rule IDs or enforcement authority.
+C Standard: [§0](C_CODING_STANDARD_V2.md#0-agent-entrypoint-execute-this-decision-flow), [§12](C_CODING_STANDARD_V2.md#12-blocked-decisions--never-resolve-in-coding-standard), [§13](C_CODING_STANDARD_V2.md#13-deterministic-agent-checklist-required-pr-evidence). Load applicable Rule IDs; Capability IDs route workflows and do not grant enforcement authority.
 The supported architecture is C/FreeRTOS, ESP32-WROOM-32E and one SX1276 running Custom LoRa P2P MAC / Hybrid TDMA. Gateway executes the local radio schedule. The Go Backend plans future schedules over MQTT 5.0/TLS; it does not time RF slots. Arduino, PlatformIO, MicroPython, ESPHome, Zephyr, LoRaWAN, OTAA, adaptive-data-rate LoRaWAN procedures and ChirpStack are excluded. ESP32-S3/C3 examples do not establish WROOM-32E pins, flash/PSRAM configuration or native USB support.
 The board revision, schematic, USB bridge, pin map, supply and fitted radio module are required task inputs for physical work. No specific PCB revision has been established by this document. `firmware/gateway_master/main/main.c` and `firmware/sensor_node/main/main.c` at the baseline are scaffolds. `firmware/components/{sx1276_driver,lora_mac,tdma_common,airtime_policy}/` contain README placeholders, with no implemented driver or timing test interface. Workflows describe how a future scoped task would investigate those features; they do not assert those features exist.
 
 | Authority key | Exact source/revision and section | Status and use |
 |---|---|---|
 | `P-AGENTS` | [AGENTS.md](../../../AGENTS.md), baseline above; Git blob `0ca557b3d28db3c33c01dc1112ad65b1ee5f0647`; SHA-256 `aaa4a63bb551346fbd998f5cea868d97086d52b21fece21933f23fa4fafc8f89` | Execution scope and G0 entrypoint. A new task verifies its own current tracked bytes. |
-| `P-C` | [C Standard](C_CODING_STANDARD_V2.md), baseline above, metadata/§0/affected rows/§12/§13 | Owner approved for technical review; enforcement activation pending. |
+| `P-C` | [C Standard](C_CODING_STANDARD_V2.md), §0/affected Rule IDs/§12/§13 | Owner-authorized reference (Issue #108); technical review/enforcement remain separate. |
 | `P-ADR` | [ADR-0001](../../adr/0001-hybrid-tdma.md), [ADR-0003](../../adr/0003-esp-idf-v6-1.md), baseline above; decision sections | ADR-0001 architecture direction accepted; its R1 rationale remains draft/pending technical review. ADR-0003 exact `v6.1` baseline approved by Owner. `firmware/esp-idf-version.txt` is the toolchain input. |
 | `P-OPEN` | [Open decisions](../../../contracts/OPEN_DECISIONS.md), baseline above, D01–D13 and unlock conditions | Preserve each row's distinct status. D01/D11 security/wire and D03 RF permission remain blocked. No numeric profile is approved here. |
 | `P-MAC` | [Radio MAC](../../../contracts/radio-mac/specification.md) §1/§3/§4; [TDMA schedule](../../../contracts/radio-mac/tdma-schedule.md) §1–§4, baseline above | `0.1.0-draft`, security/wire not frozen; P-10S-15 is a proposed simulator profile. Read for candidate behavior, not production authority. |
@@ -48,7 +31,7 @@ The board revision, schematic, USB bridge, pin map, supply and fitted radio modu
 | `V-SX` | [Local Semtech datasheet](../../Books/SX1276_Datasheet.pdf), baseline above, Rev. 7, May 2020, §4.1/§4.3/§6.4/§7.2 | Manufacturer reference for the fitted revision; hardware reviewer confirms applicability and errata. No generic register access authorizes RF. |
 | `V-ESP` | [Local WROOM datasheet](../../Books/esp32-wroom-32e_esp32-wroom-32ue_datasheet_en.pdf), baseline above, v2.1, §1.2/§3/§4/§6/§8/§9 | Module identification, pins, strapping, electrical and peripheral/reference-circuit lookup. Board schematic remains missing. |
 
-Repository locators in this document refer to the exact source baseline in metadata, which includes merged PR #101. Recheck live Issue scope, source approval state and hardware revision at each task. The [system overview](../../architecture/system-overview.md) is R1 DRAFT and cannot supersede approved ADRs. A conflict, missing necessary authority or out-of-scope write is `STOP_AND_REPORT` under the existing entrypoint.
+Repository source baseline for this workflow audit: `34678739880f09af9f779358820d8b8c2ade0873`. Recheck live Issue, hardware revision and approved ADR/contracts per task. [System overview](../../architecture/system-overview.md) cannot override approved ADRs; conflicts or out-of-scope writes → `STOP_AND_REPORT`.
 <a id="capability-mapping"></a>
 ## Capability mapping
 Every row has the requested routing fields. Affected paths identify where to investigate, not authorization to change those paths. Rule references name existing rows within linked Standard sections; they remain review proposals. Inputs, procedures, evidence and stops link to the corresponding detailed workflow. A row's `PROPOSED` status applies even when its vendor API source is verified. Unsupported board, numeric or contract mappings are `NOT_VERIFIED`.
@@ -201,7 +184,7 @@ Sources: `P-OPEN`, `P-MAC`, `P-ADR`; `V-SX` §4.1.1, particularly LoRa time-on-a
 ## Coordinator / Worker / Auditor selection (manual; router not implemented)
 1. **Coordinator/G0:** Read live Issue/AC/allowed paths, branch and read-only consumers. Trusted Host must run `python3 scripts/agent_harness/agent_context.py --repo <candidate>` and inject the complete `agent_input` per [AGENTS.md](../../../AGENTS.md). Missing or drifted verification → `BLOCKED / STOP_AND_REPORT`.
 2. **Route:** Match observed triggers and affected paths to [task index](#task-index), deduplicate, and record selected/excluded Capability IDs and rationale. Docs-only tasks select none by default; unresolved classification → `NOT_VERIFIED`.
-3. **Load:** Read Standard metadata/§0/§12/§13 and only applicable existing Rule IDs, authority pins and D01–D13 stops. Do not load all 104 rules or all upstream skill content by default.
+3. **Load:** Read Standard §0/§12/§13 plus applicable Rule IDs, authority pins and D01–D13 stops. Do not load all 104 rules or upstream skill content by default.
 4. **Worker + Host:** Edit only within scope and record diff, rules, commands/exits, limits. Host independently gathers quality receipts, hashes and frozen artifacts; build/simulation never implies HIL/RF/security PASS.
 5. **Auditor + handoff:** Fresh read-only Auditor checks identical AGENTS version, frozen diff and Host receipts; Host rechecks fingerprints. Drift, unresolved P0/P1 or pending human reviews block readiness. Commit to Issue branch and Draft PR for human review only; no automatic merge, RF TX/flash, skill activation or policy change.
 <a id="selection-examples"></a>
@@ -232,7 +215,7 @@ Each result binds Issue/base/head, source/config/toolchain and board/fixture ide
 | RF measurement | Measured on-air behavior with calibrated setup/profile | Authorization to transmit, regional conformity or security approval |
 | Legal/RF approval | Recorded authorized reviewer decision for exact profile/jurisdiction | Firmware timing or test completion |
 
-Required reviewers are Embedded Gateway and Node, RF/Hardware, Security/QA and Project Owner. Record actual reviewer, reviewed SHA, finding disposition and approval evidence. No signature or activation is supplied by this draft. Preserve D01–D13 states. C Standard review, playbook review, build/CI, model audit, human security review, HIL/RF/timing and G0–G6 have separate evidence. GitHub Actions `OWNER_WAIVED` is not CI PASS.
+Required reviewers are Embedded Gateway and Node, RF/Hardware, Security/QA and Project Owner. Record actual reviewer, reviewed SHA, finding disposition and approval evidence. The content freeze supplies no technical signature or policy activation. Preserve D01–D13 states. C Standard review, playbook review, build/CI, model audit, human security review, HIL/RF/timing and G0–G6 have separate evidence. GitHub Actions `OWNER_WAIVED` is not CI PASS.
 <a id="source-audit"></a>
 ## Upstream sources — Cold Audit Archive
 [U1–U5 provenance, dispositions, executable/dependency audit and SHA-256 inventory](../../audits/firmware/UPSTREAM_SKILL_AUDIT_ISSUE_102.md#source-audit). Do **not** activate or install U1–U5; U1/U2/U3 remain `PENDING_LICENSE` and only U4/U5 ideas are attributed. See retained [MIT notice](#licensing).
@@ -262,5 +245,5 @@ SOFTWARE.
 License sources: [U4 LICENSE.md](https://github.com/magnus919/agent-skills/blob/f4950d8743b6590762b3227b8ba9ecc55b936855/LICENSE.md), [U5 LICENSE](https://github.com/laurigates/mcu-tinkering-lab/blob/34437ae5875057d4d407886ab3c9b8f84f6ea523/LICENSE). Template-local [U2 Apache text](https://github.com/pedrominatel/awesome-esp-ai/blob/ed3956d8572f7d179a96887d66fbf089d1502720/skills/esp-idf-components/component-template/template/license.txt) is inventoried for audit only and is not a grant inferred for sibling prose.
 <a id="verification-record"></a>
 ## Verification record and unresolved work
-This deliverable is `PLAYBOOK_DRAFTED / ROUTER_NOT_IMPLEMENTED / SKILLS_NOT_INSTALLED / HIL_RF_NOT_VERIFIED`. Source pin/hash inventory and static audit were performed; no upstream scripts were executed. Document validation, scope/diff/quality receipts, exact final head, fresh Auditor findings and Draft PR URL belong in the Coordinator's delivery evidence/PR, bound to the final candidate. This text itself is not a claim that those later checks passed.
-Issue #102 changes only this Markdown file. No firmware build, simulation, hardware probe/monitor, flash, RF transmission, legal assessment, HIL/timing test, skill installation or router activation was run for this documentation work. Those dimensions are `NOT_RUN / NOT_VERIFIED`, not failures of the proposed workflows. Required human technical/Owner reviews remain PENDING. U1/U2/U3 prose-license resolution is PENDING and blocks their adoption. PCB/radio-revision applicability and all dependent physical procedures remain NOT_VERIFIED until actual task inputs exist.
+Current content status is `OWNER_APPROVED_FROZEN`; the Issue #102 delivery record was `PLAYBOOK_DRAFTED / ROUTER_NOT_IMPLEMENTED / SKILLS_NOT_INSTALLED / HIL_RF_NOT_VERIFIED`. Source pin/hash inventory and static audit were performed; no upstream scripts were executed. Document validation, scope/diff/quality receipts, exact final head, fresh Auditor findings and Draft PR URL belong in the Coordinator's delivery evidence/PR, bound to the final candidate. This text itself is not a claim that those later checks passed.
+Issue #102 changes only this Markdown file. No firmware build, simulation, hardware probe/monitor, flash, RF transmission, legal assessment, HIL/timing test, skill installation or router activation was run for this documentation work. Those dimensions are `NOT_RUN / NOT_VERIFIED`, not failures of the proposed workflows. Required human technical reviews remain PENDING; Owner content approval is recorded in Issue #108. U1/U2/U3 prose-license resolution is PENDING and blocks their adoption. PCB/radio-revision applicability and all dependent physical procedures remain NOT_VERIFIED until actual task inputs exist.
