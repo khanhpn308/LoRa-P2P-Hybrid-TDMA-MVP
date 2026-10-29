@@ -18,7 +18,7 @@ Một Monorepo quản lý thống nhất **mã nguồn, hợp đồng giao tiế
 - 10–15 ESP32 + SX1276 Sensor Nodes, LoRa **P2P** với custom MAC.
 - Một ESP32 + SX1276 Gateway **đồng thời là TDMA Master cục bộ**, điều khiển chính xác lịch phát/thu qua firmware.
 - Backend **Go Modular Monolith** tính và phát hành lịch TDMA theo phiên bản; **không** điều khiển bật/tắt TX/RX cho từng slot qua Internet.
-- Backhaul Wi-Fi → Mosquitto MQTT → Backend Go → PostgreSQL; web React/TypeScript; mobile Flutter là giai đoạn sau.
+- Backhaul Wi-Fi → Mosquitto MQTT → Backend Go → PostgreSQL; web Next.js + TypeScript; mobile Kotlin native Android là giai đoạn sau (planned, chưa triển khai).
 - **Không** dùng ChirpStack, LoRaWAN Gateway, OTAA/LoRaWAN MAC trong MVP.
 - Các thông số như MAC Header 8B, superframe 10s, công suất/tần số, duty cycle, guard time, độ trễ cảnh báo < 3s **chưa được nghiệm thu**; yêu cầu số liệu RF/HIL và thẩm định quy định tương ứng.
 
@@ -58,8 +58,8 @@ LoRa-P2P-Hybrid-TDMA-MVP/
 │   ├── migrations/                     # Phiên bản schema PostgreSQL
 │   └── go.mod
 ├── clients/
-│   ├── web-dashboard/                  # React + TypeScript (planned)
-│   └── mobile-app/                     # Flutter + Dart (planned)
+│   ├── web-dashboard/                  # Next.js + TypeScript (planned)
+│   └── mobile-app/                     # Kotlin native Android (planned)
 ├── simulator/
 │   ├── radio-network/                  # Mô phỏng logic RF/MAC/TDMA (planned)
 │   ├── gateway-mqtt/                   # MQTT test publisher (planned)
@@ -92,7 +92,7 @@ LoRa-P2P-Hybrid-TDMA-MVP/
 | REST endpoints | contracts/api/openapi.yaml | Chỉ lưu trên màn hình Web |
 | Lập lịch Go, alert, ingest | backend-go/internal/ | simulator/ hoặc firmware/ |
 | Migration SQL | backend-go/migrations/ | SQL chạy tay không version |
-| UI React / mobile Flutter | clients/ | backend-go/internal/ |
+| UI Next.js / mobile Kotlin Android | clients/ | backend-go/internal/ |
 | Mô phỏng va chạm/đồng bộ/airtime | simulator/radio-network/ | Gọi nhầm “HIL passed” |
 | Giả lập gateway MQTT cho Backend | simulator/gateway-mqtt/ | Giả định Node gửi MQTT trực tiếp |
 | Kiểm thử trên bo mạch thực | tests/hil/ và báo cáo docs/verification/ | Chỉ thay bằng mô phỏng |
@@ -249,7 +249,7 @@ Các tài liệu hợp đồng: [Radio MAC](../../contracts/radio-mac/specificat
 
 | Dữ liệu | Nơi quản lý | Chính sách |
 |---|---|---|
-| Source C/Go/TypeScript/Dart | Git tracked source đúng module | Review, versioned, không commit build output |
+| Source C/Go/TypeScript/Kotlin | Git tracked source đúng module | Review, versioned, không commit build output |
 | Mẫu cấu hình | .env.example, sdkconfig.defaults, deploy/ | Chỉ placeholder không chứa mật khẩu |
 | Secrets/keys/certs TLS thật | Secure secret store / máy phát triển / CI secrets | Không commit, không đính vào Issue/PR |
 | DB schema | backend-go/migrations/ | Migration version, review và test restore |
@@ -313,7 +313,7 @@ docker compose --env-file .env -f deploy/compose.yaml --profile dev-insecure up 
 | ci-contracts.yml | Cú pháp schema/vectors JSON | C/Go protocol conformance |
 | ci-firmware.yml | Build hai ESP-IDF log-only scaffolds | SX1276, TDMA, RF hoặc HIL |
 | ci-backend.yml | Go fmt/vet/test/build scaffold | MQTT/PostgreSQL/API business |
-| ci-clients.yml | Kiểm tra placeholder README | React/Flutter compile |
+| ci-clients.yml | Kiểm tra placeholder README | Next.js/Kotlin compile |
 | ci-integration.yml | Manual placeholder kiểm tra README | End-to-end Integration |
 
 CI phải trở thành gate bắt buộc khi nhóm cấu hình nhánh bảo vệ. HIL cần **self-hosted runner có thiết bị và dụng cụ đo**, không giả định GitHub-hosted runner có kết nối ESP32. Không release RF firmware chỉ vì CI build xanh.
