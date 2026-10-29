@@ -5,7 +5,7 @@
 
 ## Architecture
 - ESP32-WROOM-32E + SX1276, C/FreeRTOS/ESP-IDF **v6.1** ([ADR-0003](docs/adr/0003-esp-idf-v6-1.md), `firmware/esp-idf-version.txt`). **Custom LoRa P2P MAC / Hybrid TDMA**, never LoRaWAN/OTAA/ADR/ChirpStack.
-- Gateway owns local TDMA execution; Go Modular Monolith plans schedules via MQTT 5.0/TLS (Mosquitto), PostgreSQL; React/Flutter through authenticated REST/WSS, never direct broker/DB. Backend must not time individual RF slots.
+- Gateway owns local TDMA execution; Go Modular Monolith plans schedules via MQTT 5.0/TLS (Mosquitto), PostgreSQL; Next.js + TypeScript Web / Kotlin native Android through authenticated REST/WSS, never direct broker/DB. Backend must not time individual RF slots.
 - Single SX1276 radio owner, serialized SPI, minimal nonblocking ISR/timer handling, bounded buffers/queues, explicit ownership/timeouts. Client authorization is enforced by Backend, not UI.
 - Do not invent/modify unapproved RF/legal profile, PCB pins, binary frame, keys/replay, airtime/guard/drift, MQTT/API/DB semantics or latency targets; respect [open decisions](contracts/OPEN_DECISIONS.md). CRC is not authentication.
 
