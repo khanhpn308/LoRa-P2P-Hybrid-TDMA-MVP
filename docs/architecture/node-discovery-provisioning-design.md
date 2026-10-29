@@ -20,7 +20,6 @@ sequenceDiagram
     participant U as Authorized User
 
     N->>G: Bounded Discovery attempt
-    Note over N,G: Candidate exchange only; identity proof and RF format remain TBD
     G->>M: Report observed Discovery with stable event identity
     M->>B: QoS 1 delivery (duplicates possible)
     B->>B: Authenticate Gateway; deduplicate; create or update pending case
