@@ -17,25 +17,25 @@ sequenceDiagram
     participant G as Gateway
     participant M as MQTT 5 Broker
     participant B as Backend
-    participant U as Người dùng Web/Mobile được cấp quyền
+    participant U as Authorized User
 
-    N->>G: Thử Discovery có giới hạn
-    Note over N,G: Chỉ là trao đổi ứng viên; bằng chứng danh tính và định dạng RF vẫn TBD
-    G->>M: Báo Discovery đã quan sát, kèm event identity ổn định
-    M->>B: Chuyển giao QoS 1 (có thể trùng lặp)
-    B->>B: Xác thực Gateway; khử trùng lặp; tạo/cập nhật hồ sơ chờ xử lý
-    U->>B: Xem xét chi tiết; approve hoặc reject (Backend kiểm tra RBAC)
-    B->>B: Lưu quyết định, actor, revision và audit record
-    B->>M: Publish provisioning command có version và thời hạn
-    M->>G: Chuyển command; ACK của broker chỉ là bằng chứng vận chuyển
-    G->>G: Kiểm tra identity, version, expiry, queue và điều kiện RF tại chỗ
-    G->>N: Downlink vào cơ hội phù hợp do Gateway chọn tại chỗ
-    N->>G: RF ACK nếu MAC đã duyệt có định nghĩa; sau đó áp dụng/xác minh cấu hình
-    N->>G: CONFIG_APPLIED gắn với command và config revision
-    G->>M: Chuyển tiếp trạng thái có correlation
-    M->>B: Chuyển giao QoS 1 (có thể trùng lặp/đổi thứ tự)
-    B->>B: Xác minh trust proof, correlation, revision và trạng thái hiện tại
-    B->>B: Chỉ đánh dấu ACTIVE khi mọi điều kiện kích hoạt đều đạt
+    N->>G: Bounded Discovery attempt
+    Note over N,G: Candidate exchange only; identity proof and RF format remain TBD
+    G->>M: Report observed Discovery with stable event identity
+    M->>B: QoS 1 delivery (duplicates possible)
+    B->>B: Authenticate Gateway; deduplicate; create or update pending case
+    U->>B: Review details; approve or reject (RBAC checked server-side)
+    B->>B: Persist decision, actor, revision and audit record
+    B->>M: Publish versioned, expiring provisioning command
+    M->>G: Deliver command; broker ACK is transport evidence only
+    G->>G: Validate identity, version, expiry, queue and local RF eligibility
+    G->>N: Downlink at a locally selected eligible opportunity
+    N->>G: RF ACK if defined by approved MAC; then apply and verify config
+    N->>G: CONFIG_APPLIED bound to command and config revision
+    G->>M: Forward correlated status
+    M->>B: QoS 1 delivery (duplicates or reordering possible)
+    B->>B: Verify trust proof, correlation, revision and current state
+    B->>B: Mark ACTIVE only after all activation predicates pass
 ```
 
 Gateway chịu trách nhiệm thực thi TDMA tại chỗ và quản lý radio half-duplex duy nhất. Backend chịu trách nhiệm approval, authorization, lifecycle record, ý định gửi command, expiry và đối soát trạng thái cuối. Backend không lập lịch từng RF slot. Web và Mobile gọi API Backend đã xác thực và nhận event từ Backend; chúng không truy cập trực tiếp MQTT hay PostgreSQL.
