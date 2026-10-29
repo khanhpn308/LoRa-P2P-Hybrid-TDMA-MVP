@@ -11,6 +11,7 @@ Tài liệu này kết nối phần việc Node/Gateway trong [#90](https://gith
 
 Luồng đề xuất:
 
+```mermaid
 sequenceDiagram
     participant N as Node
     participant G as Gateway
@@ -31,7 +32,7 @@ sequenceDiagram
     M->>B: Chuyển trạng thái
     B->>B: Xác minh trạng thái và điều kiện kích hoạt
     B->>U: Hiển thị ACTIVE sau khi xác minh
-
+```
 Gateway chịu trách nhiệm thực thi TDMA tại chỗ và quản lý radio half-duplex duy nhất. Backend chịu trách nhiệm approval, authorization, lifecycle record, ý định gửi command, expiry và đối soát trạng thái cuối. Backend không lập lịch từng RF slot. Web và Mobile gọi API Backend đã xác thực và nhận event từ Backend; chúng không truy cập trực tiếp MQTT hay PostgreSQL.
 
 ### Ranh giới tin cậy
