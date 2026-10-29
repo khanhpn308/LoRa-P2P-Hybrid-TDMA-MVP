@@ -8,7 +8,7 @@ Status: `DRAFT / DESIGN-READY FOR FEASIBILITY`. RF, timing và HIL: `NOT_VERIFIE
 
 ```mermaid
 flowchart TB
-  USERS[Admin / Operator / Viewer] <--> CLIENTS[React Web / Flutter Mobile]
+  USERS[Admin / Operator / Viewer] <--> CLIENTS[Next.js + TypeScript Web / Kotlin Android App]
   CLIENTS <-->|HTTPS / WSS| GO[Go Modular Monolith + PostgreSQL]
   GO <-->|MQTT 5.0 / TLS| BROKER[Mosquitto]
   BROKER <-->|Wi-Fi / MQTT 5.0 / TLS| GW[ESP32 + SX1276 Gateway: Local TDMA Master]
@@ -25,7 +25,7 @@ Nguồn sơ đồ: ADR-0001/0002, [deployment contexts](deployment.md), [contrac
 | Gateway | Executor validate, persist shadow, quảng bá và chọn local activation boundary | Single-radio half-duplex, Beacon/ACK, local airtime; tiếp tục active schedule còn an toàn khi mất backhaul; bounded buffer | [TDMA §§2–3](../../contracts/radio-mac/tdma-schedule.md); MAC-003/005/006, SYS-001/002 |
 | Node | Xác thực Beacon/session/mapping; chỉ dùng slot/cửa sổ ưu tiên được phép | Đọc sensor, phát hiện alarm cục bộ, sync/holdover có điều kiện; ngừng periodic TX nếu không còn an toàn | [Radio MAC §§1/3/4](../../contracts/radio-mac/specification.md); MAC-002/004/007, SEC-001 |
 | Mosquitto | Xác thực principal, topic ACL, session/expiry | QoS 1 vận chuyển; PUBACK không chứng minh DB commit hay Node execution | [topics §§1–4](../../contracts/mqtt/topics.md); SEC-002, DATA-001/002 |
-| React / Flutter | Gửi yêu cầu qua Backend có server-side RBAC | Hiển thị, dedup và REST resync khi WSS mất continuity; không truy cập MQTT/DB trực tiếp | [API semantics](../../contracts/api/contract-semantics.md); INT-002 |
+| Next.js Web / Kotlin Android | Gửi yêu cầu qua Backend có server-side RBAC | Hiển thị, dedup và REST resync khi WSS mất continuity; không truy cập MQTT/DB trực tiếp | [API semantics](../../contracts/api/contract-semantics.md); INT-002 |
 
 Đây là decomposition logic, không áp đặt tên task, core affinity hoặc stack/queue size từ planning. Firmware tách driver, MAC, TDMA và airtime policy theo [C Standard v2](../development/firmware/C_CODING_STANDARD_V2.md) (consultative Draft). Backend giữ modular monolith + PostgreSQL, không thêm Redis/InfluxDB/microservices theo ADR-0001 và AGENTS.md.
 
