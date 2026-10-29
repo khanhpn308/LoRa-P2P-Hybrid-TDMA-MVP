@@ -9,8 +9,8 @@ Các tệp trong thư mục này định nghĩa giao diện để Firmware Node,
 | Node ↔ Gateway RF Custom MAC | [radio-mac/specification.md](radio-mac/specification.md) | Embedded Node + Gateway → RF/Security, Backend | [#12](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/12) |
 | Backend Planner → Gateway Executor → Node | [radio-mac/tdma-schedule.md](radio-mac/tdma-schedule.md) | Backend + Gateway → Node/RF | #12, #14 |
 | Gateway ↔ Mosquitto ↔ Backend Go | [mqtt/topics.md](mqtt/topics.md), [mqtt/schemas/](mqtt/schemas/) | Gateway + Backend/Infra → Security | [#14](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/14) |
-| Backend REST → React/Flutter | [api/openapi.yaml](api/openapi.yaml) | Backend → Web/Mobile | [#15](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/15) |
-| Backend WSS → React/Flutter | [api/websocket.md](api/websocket.md), [api/schemas/](api/schemas/) | Backend → Web/Mobile | #15 |
+| Backend REST → Next.js/Kotlin Android | [api/openapi.yaml](api/openapi.yaml) | Backend → Web/Mobile | [#15](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/15) |
+| Backend WSS → Next.js/Kotlin Android | [api/websocket.md](api/websocket.md), [api/schemas/](api/schemas/) | Backend → Web/Mobile | #15 |
 
 ## Quy tắc hợp đồng
 
