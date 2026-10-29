@@ -11,31 +11,26 @@ Tài liệu này kết nối phần việc Node/Gateway trong [#90](https://gith
 
 Luồng đề xuất:
 
-```mermaid
 sequenceDiagram
     participant N as Node
     participant G as Gateway
-    participant M as MQTT 5 Broker
+    participant M as MQTT Broker
     participant B as Backend
-    participant U as Authorized User
+    participant U as Người dùng được cấp quyền
 
-    N->>G: Bounded Discovery attempt
-    G->>M: Report observed Discovery with stable event identity
-    M->>B: QoS 1 delivery (duplicates possible)
-    B->>B: Authenticate Gateway; deduplicate; create or update pending case
-    U->>B: Review details; approve or reject (RBAC checked server-side)
-    B->>B: Persist decision, actor, revision and audit record
-    B->>M: Publish versioned, expiring provisioning command
-    M->>G: Deliver command; broker ACK is transport evidence only
-    G->>G: Validate identity, version, expiry, queue and local RF eligibility
-    G->>N: Downlink at a locally selected eligible opportunity
-    N->>G: RF ACK if defined by approved MAC; then apply and verify config
-    N->>G: CONFIG_APPLIED bound to command and config revision
-    G->>M: Forward correlated status
-    M->>B: QoS 1 delivery (duplicates or reordering possible)
-    B->>B: Verify trust proof, correlation, revision and current state
-    B->>B: Mark ACTIVE only after all activation predicates pass
-```
+    N->>G: Gửi yêu cầu Discovery
+    G->>M: Báo cáo Discovery
+    M->>B: Chuyển báo cáo
+    B->>U: Hiển thị hồ sơ đang chờ
+    U->>B: Phê duyệt hoặc từ chối
+    B->>M: Gửi provisioning command
+    M->>G: Chuyển command
+    G->>N: Gửi command vào cơ hội radio hợp lệ
+    N->>G: Trả về trạng thái CONFIG_APPLIED
+    G->>M: Chuyển tiếp trạng thái
+    M->>B: Chuyển trạng thái
+    B->>B: Xác minh trạng thái và điều kiện kích hoạt
+    B->>U: Hiển thị ACTIVE sau khi xác minh
 
 Gateway chịu trách nhiệm thực thi TDMA tại chỗ và quản lý radio half-duplex duy nhất. Backend chịu trách nhiệm approval, authorization, lifecycle record, ý định gửi command, expiry và đối soát trạng thái cuối. Backend không lập lịch từng RF slot. Web và Mobile gọi API Backend đã xác thực và nhận event từ Backend; chúng không truy cập trực tiếp MQTT hay PostgreSQL.
 
