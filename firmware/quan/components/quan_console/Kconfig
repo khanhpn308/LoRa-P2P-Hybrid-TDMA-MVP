@@ -1,9 +1,0 @@
-menu "Quan local bench (not an RF profile)"
-config QUAN_BENCH_DEBOUNCE_MS
-    int "Logical button debounce for UART bench, milliseconds"
-    range 1 10000
-    default 30
-    help
-        Bench example only, NOT_VERIFIED for a physical switch.
-        No GPIO mapping or radio timing is configured by this setting.
-endmenu
