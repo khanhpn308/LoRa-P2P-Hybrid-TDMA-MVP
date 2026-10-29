@@ -2,7 +2,7 @@
 
 Thời gian: 26–30/10/2026. Wave 1 — Foundation.
 
-Đây là bộ bàn giao thiết kế và báo cáo cá nhân; chưa có firmware ứng dụng chạy radio.
+Đã bổ sung firmware C local bench cho Node/Gateway: debounce, bounded FIFO và UART console. Xem [hướng dẫn firmware](FIRMWARE.md). Chưa có luồng truyền radio.
 Mã dùng chung thuộc `../components/`; không sao chép hoặc sửa các component trong phần bàn giao này.
 
 - [Báo cáo tuần 2](BAO_CAO_TUAN_2.md)
@@ -16,7 +16,7 @@ Phạm vi `firmware/quan/**` được Quân yêu cầu trực tiếp trong chat.
 ## Trình tự tiếp tục
 
 1. Review/merge driver dùng chung qua #10; xác minh pin map và RF profile theo owner.
-2. Bổ sung project cá nhân `gateway/` và `node/`, tham chiếu `../../components` từ từng project; không đặt một bản driver riêng trong `quan/`.
+2. Project cá nhân `gateway/` và `node/` đã có; dùng component `quan_event` và `quan_console`. Liên kết shared driver bằng tùy chọn rõ ràng theo FIRMWARE.md; không đặt một bản driver riêng trong `quan/`.
 3. Build cả hai project bằng ESP-IDF v6.1; ghi SHA, toolchain, command và logs.
 4. Chạy HIL theo kế hoạch; sau review #11/#12/#78 mới triển khai MAC/TDMA.
 

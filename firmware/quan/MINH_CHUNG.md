@@ -1,5 +1,7 @@
 # Minh chứng và đối chiếu quy chuẩn
 
+**Snapshot:** phần dưới là minh chứng bản docs-only PR113 ban đầu. Firmware bổ sung được mô tả tại [FIRMWARE.md](FIRMWARE.md); kết quả build/test mới được ghi riêng trong PR để không đánh đồng với RF/HIL.
+
 ## Nguồn
 
 - Kế hoạch tuần 2.docx, Kiến trúc LoRa.docx, Note.md và C_CODING_STANDARD_V2.md do Quân cung cấp; trích xuất text trực tiếp từ DOCX.
@@ -18,8 +20,8 @@ Coordinator thực hiện fallback; không khẳng định Host isolation, hard 
 | Rule IDs | Áp dụng trong bộ bàn giao |
 |---|---|
 | GOV-001/002/004/005/006/007/009/010 | Scope cá nhân trực tiếp từ user; branch riêng; không sửa RF/pin/wire; custom P2P; không bịa kết quả; Draft PR/human review |
-| C-001..020 | Đã tham khảo; không có source C/public API mới để khẳng định compliance compile |
-| MEM-001..008, ERR-001..007 | Ownership/bounded queues/retry/loss/recovery là yêu cầu thiết kế, chưa có runtime implementation |
+| C-001..020 | Đã tham khảo; source mới có namespace, ownership/bounds/context, header guards và test biên |
+| MEM-001..008, ERR-001..007 | Ownership/bounded queues/retry/loss/recovery được triển khai trong quan_event: caller-owned FIFO, drop-newest và debounce hữu hạn |
 | RTOS-001..010, RAD-001..009 | Single owner, ISR tối thiểu, DIO/PHY cần review/HIL; chưa sửa driver |
 | QA-001..008 | Tách text inspection, build, simulation, audit, HIL/RF; chỉ báo kết quả thực |
 | §12 D01–D13 | Giữ quyết định mở; không freeze wire/RF/security/timing |
@@ -28,9 +30,9 @@ Quân yêu cầu tuân thủ quy chuẩn C bắt buộc cho công việc của m
 
 ## Trạng thái bằng chứng
 
-CODE_WRITTEN: không có implementation firmware mới; DOCS_WRITTEN: có.
-BUILD_VERIFIED / SIMULATION_VERIFIED / HIL_VERIFIED / RF_VERIFIED / SECURITY_VERIFIED: NOT_VERIFIED, chưa chạy.
+CODE_WRITTEN: có quan_event, quan_console và hai project Node/Gateway local bench.
+BUILD_VERIFIED: Node/Gateway ESP-IDF v6.1 PASS; host C tests PASS (-std=c99 -Wall -Wextra -Werror -pedantic). Node liên kết driver local PASS, chỉ identity API, chưa start radio. SIMULATION/HIL/RF/SECURITY: NOT_VERIFIED. Logs thực: output/quan-host-tests.log, quan-node-final.log, quan-gateway-final.log, quan-node-shared.log ngoài candidate.
 codegraph_explore: NOT_RUN, không có tool trong phiên; dùng kiểm kê source/read-only call-site review, không có caller/callee driver vì chưa có implementation trên baseline.
-Audit độc lập: NOT_VERIFIED cho tới khi có reviewer riêng.
+Review mã chỉ đọc đã thực hiện: sửa baseline UART và kiểm tra tag SDK/CMake; không còn finding được báo. Không chứng minh auditor isolation hoặc human technical sign-off.
 
 Các báo cáo kiểm tra tự động được lưu ngoài candidate để không thay đổi fingerprint. Không dùng docs hay build để suy ra RF/legal/security PASS.

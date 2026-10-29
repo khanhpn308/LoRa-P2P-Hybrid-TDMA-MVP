@@ -1,5 +1,7 @@
 # Báo cáo dự án tuần 2 — Quân
 
+**Cập nhật sau bản tài liệu ban đầu:** đã có source C local bench tại `node/`, `gateway/` và `components/quan_event`, `components/quan_console`. Xem [FIRMWARE.md](FIRMWARE.md) cho phạm vi và cách chạy. Các bảng dưới ghi hiện trạng lần bàn giao tài liệu ban đầu; không dùng chúng để phủ nhận code bổ sung hoặc khẳng định radio đã hoạt động.
+
 **Dự án:** LoRa P2P Hybrid TDMA · **Tuần:** 26–30/10/2026 · **Ngày lập:** 29/10/2026.
 
 ## 1. Mục tiêu và phần việc
@@ -43,7 +45,7 @@ Không chọn tần số, công suất, GPIO, guard, slot hay SLA từ ví dụ.
 |---|---|---|
 | Báo cáo/thiết kế cá nhân | DRAFT, đã viết | Review nhóm và mentor |
 | #10 driver chung | Chưa có implementation trên baseline kiểm tra | Port/review driver theo scope #10 |
-| Hai bản build ESP-IDF | NOT_RUN | Component thật + ESP-IDF đúng v6.1 |
+| Hai project cá nhân ESP-IDF | BUILD_VERIFIED: v6.1 PASS | Local bench, chưa RF |
 | #11 phép đo | PLANNED / NOT_VERIFIED | Board, profile được duyệt, dụng cụ và raw logs |
 | #78 thuật toán | PROPOSED, chưa mô phỏng | RF/Embedded/Backend/Security review |
 | E2E, HIL, RF, timing, security | NOT_VERIFIED | Bằng chứng riêng từng loại |
@@ -55,3 +57,7 @@ Không gán phần trăm hoàn thành Issue từ số tài liệu đã viết. C
 Quân và Phước rà soát driver hiện có trong máy, tách thay đổi theo #10 và chuẩn hóa single Radio Owner; build hai firmware. Quân chuẩn bị capture sheet và thực hiện các phép đo #11 sau khi RF owner duyệt profile. Nhóm #78 dùng kết quả đó để chọn tham số, chạy mô phỏng và trình mentor trước Wave 2.
 
 Mentor/owner cần quyết định: PR driver nào làm baseline dùng chung; ai duyệt RF profile/pin map; điều kiện gỡ #11; lựa chọn thuật toán #78; phạm vi demo 6 Node và công nghệ Mobile thống nhất.
+
+## Bổ sung firmware cá nhân
+
+Đã triển khai module C quan_event (debounce, FIFO bounded, overflow counters), quan_console và project Node/Gateway. Host unit tests và hai build ESP-IDF v6.1 đã PASS. Tùy chọn liên kết driver local đã build Node PASS nhưng chỉ gọi identity API; chưa nối luồng sự kiện qua LoRa. Xem FIRMWARE.md. Không coi kết quả này là hoàn thành driver chung #10 hoặc nghiệm thu HIL/RF.
