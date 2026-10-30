@@ -2,11 +2,11 @@
 
 **Status: MONOREPO FOUNDATION / NOT PRODUCTION READY.**
 
-One ESP32 + SX1276 gateway is both LoRa P2P packet bridge and **local TDMA Master** for 10–15 ESP32 + SX1276 sensor nodes. Go plans/version-controls schedules; Gateway validates and executes them without per-slot MQTT commands. Backhaul: Wi-Fi → Mosquitto MQTT → Go modular monolith → PostgreSQL; clients are React/TypeScript and (later) Flutter.
+**Owner-approved G0 direction:** Multi-Gateway Star (1–4 ESP32 + SX1276 Gateways), four separate operating channels at LoRa BW 125 kHz, each Node fixed to its configured Gateway/channel; Mesh is out of current scope. Backend Go plans schedules approved by the User; Gateways validate and execute locally. Backhaul: Wi-Fi → Mosquitto MQTT 5/TLS → Go modular monolith → PostgreSQL. Web/Mobile are in MVP scope; detailed client technology and functions must follow approved specifications. See [G0 Owner Decisions](docs/architecture/g0-owner-decisions.md).
 
 ## Repository map
 
-- [Architecture](docs/architecture/system-overview.md) and [requirements](docs/requirements/requirements.md)
+- [Approved G0 decisions](docs/architecture/g0-owner-decisions.md), [architecture](docs/architecture/system-overview.md), and [requirements](docs/requirements/requirements.md)
 - [Radio MAC](contracts/radio-mac/specification.md), [MQTT topics](contracts/mqtt/topics.md), [OpenAPI](contracts/api/openapi.yaml)
 - `firmware/gateway_master` and `firmware/sensor_node` — minimal ESP-IDF **scaffolds, not radio implementations**
 - `backend-go` — minimal Go scaffold; no MQTT/TDMA implementation yet
