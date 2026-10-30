@@ -1,40 +1,44 @@
-# TDMA Schedule Interface — profile P-10S-15 (đề xuất, chưa freeze)
+# TDMA Schedule — Backend Planner ↔ Gateway Executor ↔ Node
 
-**Nguồn:** kiến trúc đính kèm §5.1–5.3, §7.3–7.4 · #12, #14. **Giá trị thời gian chỉ là baseline để làm mock/simulator; G1/G2/G3 chưa PASS.**
+**Trạng thái:** `DRAFT / G1–G3 NOT_VERIFIED`. Các quy tắc C03/C04/C08 đã được Owner phê duyệt; thông số Superframe/Slot/Guard/ToA chưa được duyệt.
 
-## 1. Mẫu superframe danh định
+## 1. Quyền và phạm vi
 
-- `superframe_ms = 10000`; 5 subframe × 2000ms; mỗi subframe có 250ms BCN/DL + 400ms PCSS + 3 data slot × 400ms + 150ms guard.
-- Slot data #1..#15 theo thứ tự: tại subframe i (0..4) và slot c (0..2), `start_ms = 2000*i + 650 + 400*c`. Trong slot: leading guard 0..25ms; TX budget 25..125ms; turnaround 125..145ms; ACK 145..245ms; trailing guard 245..400ms.
-- Tại subframe 0, 0..250ms dành Beacon. Tại subframe 1..4, 0..250ms là downlink. PCSS subframe i = `2000*i + [250,650)`. Kết thúc SF4 `[9850,10000)` là candidate JOIN window; 4 subframe trước là guard.
-- `ACK_BITMAP` (candidate 15 bit) phản ánh thành công từ chu kỳ trước; bản tin khẩn cấp yêu cầu ACK sớm trong PCSS nếu có thời gian và RF budget. Không khẳng định ACK luôn đủ thời gian nếu va chạm hoặc radio đang TX.
-- LoRa PHY không cấp "guaranteed free" trong CAD; collision/retry/radio turnaround làm thay đổi worst-case latency. Không sử dụng <3 s làm SLA.
+- **Backend** tạo/version lịch và phân bổ khe; **User phê duyệt** lịch cùng **activation window**. Mỗi lịch thuộc đúng `gateway_id`, đúng kênh RF đã provision. `node_id` chỉ có nghĩa trong Gateway đó.
+- **Gateway** kiểm tra auth/topic/identity, monotonic version, expiry, RF/half-duplex/airtime, xung đột slot và thời gian có thể tin cậy; chỉ được **từ chối/chặn TX không an toàn**, không được sửa `Slot Assignment` hoặc tự thay kênh.
+- **Node** chỉ sử dụng lịch và cơ hội truyền đã xác thực; `Periodic OFF` không gửi dữ liệu chu kỳ nhưng vẫn được dùng cửa sổ cảnh báo nếu còn quyền C07.
 
-## 2. Hợp đồng trao đổi lịch
+## 2. Transaction chuyển lịch (C04)
 
-Payload Backend→Gateway: `contracts/mqtt/schemas/schedule.schema.json`. Gateway phải kiểm `gateway_id`, auth transport, request ID, `expires_at`, lịch trùng/rollback, vẹn toàn cấu trúc thời gian, slot ownership, giới hạn airtime và phiên bản protocol. `schedule_version` rộng hơn `SCHED_VER` 8-bit trên bản candidate RF; **không được truncate** để tự quyết lịch mới.
+| Pha | Điều kiện bắt buộc | Báo cáo |
+|---|---|---|
+| `PROPOSED` | Backend tạo version/epoch và lịch chưa kích hoạt | Không |
+| `APPROVED` (review state) | User có quyền phê duyệt nội dung lịch **và activation window**; chưa kích hoạt | Backend lưu quyết định |
+| `SENT` | Backend dispatch proposal còn hạn | MQTT PUBACK chỉ xác nhận vận chuyển |
+| `STAGED` | Gateway kiểm tra và **persist Shadow**; ACK chuẩn bị của Node chịu ảnh hưởng/lease sẽ được kiểm chứng trước cutover | `STAGE_ACK` |
+| `ACTIVE` | Gateway đã xác nhận affected Node chuẩn bị, old slot lease kết thúc an toàn và chuyển tại đầu Superframe **trong activation window** | `ACTIVE_REPORT` |
+| `REJECTED/EXPIRED` | Không đủ auth/ACK/lease/timing/expiry/window hoặc lịch lỗi; không kích hoạt Shadow | `VERIFY_NACK`/Backend reconcile |
 
-| Trạng thái | Chủ sở hữu | Điều kiện chuyển | Báo cáo MQTT |
-|---|---|---|---|
-| PROPOSED | Backend | Planner tạo lịch chưa gửi | không |
-| SENT | Backend | publish yêu cầu chưa xác nhận | không |
-| STAGED | Gateway | shadow hợp lệ và persist, chọn activation horizon còn đủ quảng bá | `STAGE_ACK` (không phải ACTIVE) |
-| REJECTED | Gateway/Backend | invalid/expired/conflict/airtime | `VERIFY_NACK` kèm code |
-| ACTIVE | Gateway | **thực sự** kích hoạt tại đầu superframe đã định; beacon/active state được commit | `ACTIVE_REPORT` |
-| EXPIRED | Backend | hết hạn trước activate / không có xác nhận kịp | trạng thái reconciliation; không tự cho là ACTIVE |
+- `STAGE_ACK` **không phải** Node prepare ACK hay bằng chứng kích hoạt. Ba Beacon/thông báo (nếu thử nghiệm) **không đủ thay** affected Node prepare ACK và old lease safety.
+- Sau reboot, Active/Shadow riêng; không tự promote Shadow. Nếu không chứng minh continuity identity/version/lease/time thì suppress affected TX; không cấp khe cũ cho Node mới sớm.
+- Gateway lựa chọn mốc Superframe nội bộ trong khoảng đã duyệt, **không** chọn lại kế hoạch hoặc mở rộng khoảng. `expires_at` của đề xuất là deadline nhận/kích hoạt, **không phải** thời hạn của Active Schedule hay quyền thiết bị.
+- Cơ chế prepare ACK, lease expiry, trust clock, activation-report reconciliation và rollback đầy đủ còn **OPEN G2/G3/G4**.
 
-Không được thực thi lịch nhận qua MQTT lập tức giữa một superframe. `STAGE_ACK` không chứng minh các Node đều nhận được lịch. Gateway phải chọn `activate_at_superframe_seq` đủ xa để phát **tối thiểu 3 thông báo hoàn chỉnh** (nếu lựa chọn horizon =3), không chỉ tính `K+3` từ lúc vừa nhận MQTT ở giữa SF. Nên đòi Node xác nhận/quan sát epoch nếu thiết kế bảo mật cho phép; thiếu bằng chứng cập nhật thì Node phải bảo toàn an toàn bằng cách không phát khe lỗi thời.
+## 3. Phân xử các cơ hội truyền (C08)
 
-## 3. Các bất biến và xử lý lỗi
+- Một radio SX1276 bán song công: Beacon/downlink, cửa sổ Alert tranh chấp, DATA, ACK/retry, Join và guard **không được chồng lấn TX/RX trái phép**.
+- Alert ưu tiên sử dụng cửa sổ contention với bounded backoff/CAD khi phù hợp; retry chỉ tại những cơ hội dự phòng hợp lệ trong lịch Backend/User đã duyệt. Gateway không được tự giành DATA Slot của Node khác.
+- Quản hàng đợi/airtime/retry hữu hạn, theo dõi fairness và các trường hợp mất cảnh báo. Gói đang phát không thể bị ngắt tùy tiện; kênh có thể có hidden terminal/collision.
 
-- **Node chỉ TX DATA** nếu đã xác thực Beacon và phiên lịch, còn lease/slot hợp lệ, timer drift dưới guard đã thẩm định, airtime còn đủ.
-- Beacon loss 1–2 lần: holdover **chỉ khi** drift/guard được chứng minh; từ lần thứ 3 (candidate) hoặc không thể xác thực: listen-only + recovery, không TX định kỳ theo slot cũ.
-- Beacon báo phiên bản khác khi Node chưa có đầy đủ mapping hợp lệ: Node phải ngừng TX đến khi xác thực lịch mới; không đoán slot.
-- Sau reset Gateway: nạp **active** được xác thực từ NVS; shadow chưa active không được kích hoạt âm thầm; bật beacon cục bộ không phụ thuộc MQTT. Sequence/epoch phải không khiến replay cũ thành hợp lệ.
-- Gateway mất backend: tiếp tục lịch active nếu vẫn hợp lệ và tuân TX airtime, lưu buffer có giới hạn; không phát lịch hoặc lệnh đã hết hạn khi reconnect.
-- Uniqueness: một slot data có nhiều nhất một Node chủ; offset/duration không giao nhau hoặc chèn lên Beacon, PCSS, guard. Các trường ID phải hợp lệ; semantic validation ngoài JSON Schema là bắt buộc.
-- Half-duplex: TX Beacon/DL/ACK chỉ trong cửa sổ phù hợp, không vừa TX vừa nhận PCSS/data.
+## 4. Profile thử nghiệm, không phải baseline production
 
-## 4. Kiểm thử chưa thực hiện
+`P-10S-15` mô tả **10.000 ms/Superframe, 5 subframe × 2.000 ms, 15 DATA slots**, trong bản nháp có Beacon/DL 250 ms, PCSS 400 ms, 3 DATA slots × 400 ms, guard 150 ms mỗi subframe. Các con số này **chỉ dành mock/simulation**, không được hardcode như contract đã phê duyệt. Các khung cần tính lại sau khi có frame authentication, ACK, ToA và guard thực tế.
 
-Các tình huống HIL bắt buộc: slot collision, late schedule arrival, duplicate MQTT, retained stale schedule, schedule rollover, mất một hoặc ba Beacon, reboot GW/Node trong staging, mất Wi-Fi, nhiều Alert cùng PCSS, ISR jitter, RF duty exhausted. **Kết quả: NOT_VERIFIED**; bản mô tả không phải test log.
+## 5. Verification bắt buộc
+
+- **Static/Contract:** validation version/identity, activation window, affected Node ACK, lease overlap/reuse, schedule conflict, malformed/wrong-scope/replayed reports.
+- **Simulation:** 1–4 Gateway độc lập, 10–15 Node/cấu hình kiểm thử, nhiều Alert, OFF/ON, contention/fairness, retry/missing ACK.
+- **HIL/RF:** ToA/guard/turnaround/jitter, sync loss/reboot, long offline, RF airtime/collision, legal limits.
+- **Trạng thái:** `NOT_VERIFIED`; mọi giới hạn số học, SLA và acceptance threshold chờ evidence.
+
+Xem [Radio MAC](specification.md), [MQTT Schedule](../mqtt/topics.md) và [Architecture](../../docs/architecture/system-overview.md).
