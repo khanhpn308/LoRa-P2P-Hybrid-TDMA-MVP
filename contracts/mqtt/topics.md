@@ -30,15 +30,15 @@ Gateway chỉ publish `uplink/#` và subscribe `downlink/#` của **chính mình
 
 ## 2. Envelope & dữ liệu
 
-MQTT JSON UTF-8; `schema_version="1.1-draft"` độc lập với tiền tố topic `v1`. **Telemetry/Alert:** `event_id` do Node tạo và giữ nguyên qua RF retry/reboot và MQTT replay; Backend lưu unique `(gateway_id,node_id,event_id)` và phát hiện conflict payload. `gateway_epoch/event_seq` chỉ theo dõi lần tiếp nhận Gateway. **Gateway-origin Status/ACK:** `event_id=gateway_id:gateway_epoch:event_seq` theo quy tắc hiện có. Format Node Event ID chờ G2.
+MQTT JSON UTF-8; `schema_version="1.1-draft"` độc lập với tiền tố topic `v1`. **Telemetry/Alert:** `event_id` do **Gateway cấp một lần khi persist RF uplink hợp lệ**; Backend chống trùng theo `(gateway_id,event_id)` và kiểm tra xung đột payload/source Node. `gateway_epoch/event_seq` thuộc Event ID đã cấp và phải giữ nguyên qua retransmission/reboot/MQTT replay, không đánh số lại theo lần RX. **Status/ACK** tiếp tục dùng Gateway-origin event IDs. Gateway lưu bền ánh xạ `(gateway_id,node_id,security_session,frame_counter) → event_id`; phương thức DB/key/nonce còn G2/G4.
 
-`observed_at` là RFC3339 UTC hoặc null; `observed_time_source` nêu cơ sở clock, `radio_rx_monotonic_us` là chuỗi thời gian tương đối theo boot Gateway, `buffered` xác định sự kiện phát lại. Backend gán `ingested_at` bằng server clock. `data` truyền integer raw RF §6.2; unit/scale cần mapping theo phiên bản cấu hình cảm biến, không suy diễn. Nếu PRIORITY_ALERT 12B thiếu kênh/ngưỡng thì **không bịa `trigger`**; trường này optional đến khi RF v1 được duyệt.
+`observed_at` là RFC3339 UTC hoặc null; `observed_time_source` nêu cơ sở clock, `radio_rx_monotonic_us` là chuỗi thời gian tương đối theo boot Gateway, `buffered` xác định sự kiện phát lại. Backend gán `ingested_at` bằng server clock. `data.temp_x10` là số nguyên int16 (nhiệt độ °C ×10), RF Telemetry chỉ 2 byte measurement. Các trường ch1/ch2/ch3/battery/slot/duty cũ **không nằm trong RF Telemetry**. `frame_counter` là metadata nguồn RF chống replay, không phải Event ID. `trigger` của Alert chỉ cho phép từ nhiệt độ và threshold cấu hình có nguồn xác thực; nếu không có bằng chứng thì bỏ qua, không tự bịa.
 
 QoS1 có thể giao trùng và sai thứ tự; không có cam kết latency, exactly-once hay bảo đảm buffer không bao giờ tràn. Gateway cung cấp `offline_dropped_telemetry`, `offline_dropped_alert` khi mất dữ liệu; `event_id` của một bản ghi không đổi khi resubmit.
 
 ## 3. Transaction lịch TDMA
 
-Backend: `PROPOSED → SENT → STAGED → ACTIVE` hoặc `REJECTED/EXPIRED`; User phê duyệt lịch và `activation_window`. Gateway validate → persist Shadow → announce/collect affected Node prepare ACK → verify old slot lease safe expiration → activate tại đầu Superframe trong window → `ACTIVE_REPORT`. Không tự sửa slot/kênh; thông báo nhiều lần không thay ACK/lease.
+Backend: `PROPOSED → SENT → STAGED → ACTIVE` hoặc `REJECTED/EXPIRED`; User phê duyệt lịch và `activation_window`. Gateway validate → persist Shadow → **announce 3 nhịp hoàn chỉnh 3→2→1**/collect affected Node prepare ACK → verify old slot lease safe expiration → activate tại đầu Superframe trong window → `ACTIVE_REPORT`. Không tự sửa slot/kênh; thông báo nhiều lần không thay ACK/lease.
 
 - `STAGE_ACK`: Gateway đã validate/persist; **không** chứng minh các Node nhận được lịch và **không** cho Backend cập nhật ACTIVE.
 - `VERIFY_NACK`: từ chối với `reason_code`; active trước đó giữ nguyên.
