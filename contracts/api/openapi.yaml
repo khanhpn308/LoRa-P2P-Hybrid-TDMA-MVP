@@ -2,8 +2,8 @@
 openapi: "3.0.3"
 info:
   title: "LoRa Hybrid TDMA MVP — Backend/Client REST Contract"
-  version: "1.0.0-draft"
-  description: "DRAFT v1 contract only; 14 operations, including three PROPOSED additions for Issue #15. No business endpoints implemented. Bearer/JWT + browser WSS auth are D13 BLOCKED_SECURITY pending ADR. No client direct MQTT/DB; no physical actuation guarantee from HTTP 202."
+  version: "1.1.0-draft"
+  description: "DRAFT v1.1 contract only; 14 operations, including three PROPOSED additions for Issue #15. No business endpoints implemented. Bearer/JWT + browser WSS auth are D13 BLOCKED_SECURITY pending ADR. No client direct MQTT/DB; no physical actuation guarantee from HTTP 202."
 servers:
   -
     url: "http://localhost:8080"
@@ -124,7 +124,7 @@ paths:
           "$ref": "#/components/responses/Forbidden"
         "422":
           "$ref": "#/components/responses/Unprocessable"
-  "/api/v1/nodes/{node_id}/telemetry":
+  "/api/v1/gateways/{gw_id}/nodes/{node_id}/telemetry":
     get:
       operationId: "nodes_telemetry"
       summary: "Cursor-paginated telemetry; UTC filter"
@@ -135,6 +135,8 @@ paths:
         - "OPERATOR"
         - "VIEWER"
       parameters:
+        -
+          "$ref": "#/components/parameters/GatewayId"
         -
           "$ref": "#/components/parameters/NodeId"
         -
@@ -294,17 +296,19 @@ paths:
           "$ref": "#/components/responses/NotFound"
         "422":
           "$ref": "#/components/responses/Unprocessable"
-  "/api/v1/nodes/{node_id}/commands":
+  "/api/v1/gateways/{gw_id}/nodes/{node_id}/commands":
     post:
       operationId: "nodes_command"
       description: "Requires stable X-Idempotency-Key on retries (DRAFT BREAKING CHANGE). Same authenticated actor/key and canonical request returns the original ticket; mismatched payload returns 409. HTTP 202 is acceptance, NOT radio execution."
-      summary: "Queue downlink command with application expiry"
+      summary: "Queue scoped Node command (periodic/access) with application expiry"
       tags:
         - "nodes"
       x-roles:
         - "ADMIN"
         - "OPERATOR"
       parameters:
+        -
+          "$ref": "#/components/parameters/GatewayId"
         -
           "$ref": "#/components/parameters/NodeId"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -391,7 +395,7 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/Unprocessable" }
         "503": { $ref: "#/components/responses/Unavailable" }
-  "/api/v1/nodes/{node_id}/commands/{command_id}":
+  "/api/v1/gateways/{gw_id}/nodes/{node_id}/commands/{command_id}":
     get:
       operationId: "nodes_command_get"
       summary: "PROPOSED: read a persisted command ticket after HTTP 202"
@@ -400,6 +404,7 @@ paths:
         - "nodes"
       x-roles: ["ADMIN", "OPERATOR", "VIEWER"]
       parameters:
+        - $ref: "#/components/parameters/GatewayId"
         - $ref: "#/components/parameters/NodeId"
         - $ref: "#/components/parameters/CommandId"
       responses:
@@ -893,13 +898,25 @@ components:
     ScheduleActivationRequest:
       type: "object"
       additionalProperties: false
-      required: ["expected_version"]
+      required: ["expected_version", "activation_window"]
       properties:
+        activation_window:
+          type: "object"
+          additionalProperties: false
+          required: ["not_before", "not_after"]
+          properties:
+            not_before:
+              type: "string"
+              format: "date-time"
+            not_after:
+              type: "string"
+              format: "date-time"
+          description: "Owner-approved UTC activation range; chronology/time confidence validated semantically."
         expected_version:
           type: "integer"
           minimum: 0
           maximum: 4294967295
-      description: "Optimistic version check. Backend only accepts review_state APPROVED and a valid proposal; Gateway retains local activation authority."
+      description: "Optimistic version check. Backend accepts Owner-approved activation_window; Gateway chooses local boundary within it after Node ACK and old slot lease safety checks."
     GenerateScheduleRequest:
       type: "object"
       additionalProperties: false
@@ -908,12 +925,13 @@ components:
       properties:
         profile_id:
           type: "string"
-          enum:
-            - "P-10S-15"
+          minLength: 1
+          maxLength: 64
+          description: "Approved RF profile ID; P-10S-15 only a candidate for tests."
         min_announce_superframes:
           type: "integer"
-          minimum: 3
-          maximum: 30
+          minimum: 1
+          description: "Announcements do not replace affected Node ACK or old Slot Lease expiry."
     CommandRequest:
       type: "object"
       additionalProperties: false
@@ -927,6 +945,10 @@ components:
           enum:
             - "SET_THRESHOLD"
             - "SET_SAMPLE_PERIOD"
+            - "SET_PERIODIC_MODE"
+            - "SUSPEND_NODE"
+            - "RESUME_NODE"
+            - "REVOKE_NODE"
             - "SET_RELAY"
         params:
           type: "object"
@@ -936,8 +958,9 @@ components:
                 type: "integer"
               -
                 type: "boolean"
-          minProperties: 1
+          minProperties: 0
           maxProperties: 4
+          description: "SET_PERIODIC_MODE requires boolean enabled; access admin actions require empty params. Security keys/reprovision OPEN G2."
         expires_at:
           type: "string"
           format: "date-time"
@@ -947,6 +970,7 @@ components:
       required:
         - "command_id"
         - "node_id"
+        - "gateway_id"
         - "state"
         - "created_at"
       properties:
@@ -957,6 +981,9 @@ components:
           type: "integer"
           minimum: 1
           maximum: 254
+        gateway_id:
+          type: "string"
+          pattern: "^[A-Za-z0-9_-]{1,32}$"
         state:
           type: "string"
           enum:
