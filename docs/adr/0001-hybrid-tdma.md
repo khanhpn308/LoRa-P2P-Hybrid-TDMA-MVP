@@ -13,16 +13,16 @@ Inference kỹ thuật R1: điều khiển từng slot qua Backend làm executor
 
 ## Quyết định và phạm vi
 
-Giữ quyết định gốc: Go Backend tính và quản lý version của lịch tương lai; Gateway validate, stage và execute locally; Node timestamp Beacon và theo slot đã được cho phép. Gateway có local fallback/bootstrap design, không cần Backend cho từng TX/RX instant. Nguồn: ADR gốc, Radio MAC §1, TDMA §§2–3.
+**Quyết định hiện hành:** Go Backend độc quyền lập và quản lý phiên bản lịch, User có quyền phê duyệt lịch và cửa sổ kích hoạt. Gateway kiểm tra/stage và thực thi cục bộ, không tự sửa phân bổ khe hay kênh. Gateway chọn điểm chuyển tại ranh giới Superframe **trong cửa sổ đã duyệt**; Node chỉ TX theo ánh xạ, quyền và đồng bộ đã xác thực. Hướng Planner/Executor của ADR gốc vẫn giữ nguyên; bổ sung điều kiện chuyển lịch và quyền theo C03–C04 Owner-approved (2026-10-30).
 
 | Vai trò | Trách nhiệm và giới hạn | RTM / contract |
 |---|---|---|
-| Backend Planner | Lưu proposal/review/dispatch intent, publish ID/version/expiry, reconcile actual report. Không tự suy ACTIVE từ PUBACK hoặc STAGE_ACK | SYS-001, MAC-003; MQTT semantics §4, [API semantics](../../contracts/api/contract-semantics.md) |
-| Gateway Executor | Validate identity/version/expiry, collision/half-duplex/airtime; persist shadow; đủ complete announcement cycles; switch tại local boundary rồi report actual activation | MAC-003/005/006; TDMA §2, MQTT semantics §4 |
-| Node TDMA client | Xác thực Beacon/session/mapping. Thiếu lịch mới hoặc mất bảo đảm timing thì không phát slot cũ | MAC-002/004, SEC-001; TDMA §3 |
+| Backend Planner | Tạo và version lịch, quản lý quyết định phê duyệt của User và khoảng kích hoạt, publish ID/version/expiry, reconcile actual report. Không tự suy ACTIVE từ PUBACK hoặc STAGE_ACK | SYS-001, MAC-003; MQTT semantics §4, [API semantics](../../contracts/api/contract-semantics.md) |
+| Gateway Executor | Validate identity/version/expiry, collision/half-duplex/airtime; persist shadow trước STAGE_ACK; Node chịu ảnh hưởng xác nhận chuẩn bị và lease khe cũ hết an toàn; switch tại boundary trong cửa sổ đã duyệt rồi report actual activation. Không tự đổi Slot Assignment | MAC-003/005/006; TDMA §2, MQTT semantics §4 |
+| Node TDMA client | Xác thực Beacon/session/mapping, quyền truy cập còn hiệu lực và có thể xác minh. Thiếu lịch mới hoặc mất bảo đảm timing thì không phát slot cũ; Periodic OFF vẫn có Alert | MAC-002/004, SEC-001; TDMA §3 |
 | Radio owner / driver | Tuần tự hóa SPI/state; ISR không SPI/log/blocking; chuyển event sang task có giới hạn | FW-002/003/004; [embedded instructions](../../.github/instructions/embedded.instructions.md) |
 
-IDs tham chiếu [RTM](../requirements/requirements.md#rtm); IDs mới vẫn PROPOSED. ADR không freeze wire layout, cipher, timer API, GPIO hoặc numeric RF/timing profile.
+Quy mô hiện hành: Multi-Gateway Star 1–4 Gateway, mỗi Gateway kênh riêng BW 125 kHz và Node cố định một Gateway/kênh (C01/C02). Node ID 8-bit theo Gateway (C06); Node tạo mã sự kiện và Backend chống lưu trùng (C05). Cảnh báo ưu tiên dùng cửa sổ tranh chấp và cơ hội dự phòng thuộc lịch đã duyệt (C08); Gateway không tự tái cấp slot. Mesh ngoài phạm vi hiện tại; mọi chức năng Owner yêu cầu thuộc MVP (C09). Xem [kiến trúc](../architecture/system-overview.md). IDs tham chiếu [RTM](../requirements/requirements.md#rtm); các yêu cầu kỹ thuật chưa được duyệt vẫn PROPOSED. ADR không freeze wire layout, cipher, GPIO hoặc numeric RF/timing profile.
 
 ## Control plane và data plane
 
@@ -41,7 +41,7 @@ Control plane quản lý proposal, version, authorization, staging và activatio
 
 Clarification R2 theo [Issue #64](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/64) và [review #63](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/63#issuecomment-6395708147), vẫn thuộc R1 `DRAFT / PENDING TECHNICAL REVIEW`. Các inference/limitations dưới đây không đổi accepted direction hoặc contract state machine.
 
-Theo TDMA §3 và MQTT semantics §§3–4, Gateway mất Backend chỉ tiếp tục persisted active đã xác thực khi identity/version, profile/airtime, sync/time confidence và local safety còn hợp lệ theo policy được review. `expires_at` giới hạn acceptance/activation của proposal, không phải active lease và không tự dừng lịch active khi deadline đó qua. Active validity/lease/revocation, cách chứng minh còn được phép chạy offline và xử lý khi mất confidence vẫn là open design, không có mặc định chạy vô hạn. Proposed safety inference cho SYS-001: khi không chứng minh được điều kiện TX thì chặn TX bị ảnh hưởng, reason phải quan sát được; fallback/bootstrap và resume procedure cần Gateway/Node/RF/Security review, không tự chọn ở R2.
+Theo quyết định C07, Gateway mất Backend chỉ chấp nhận Node khi quyền thiết bị còn hiệu lực **và chứng minh được**; không tự gia hạn. Đồng thời, Gateway chỉ tiếp tục persisted Active schedule đã xác thực khi identity/version, profile/airtime, sync/time confidence và local safety còn hợp lệ. `expires_at` của schedule proposal chỉ giới hạn acceptance/activation của proposal, **không phải** thời hạn Active Schedule hoặc Device Authorization Lease. Định dạng/thời hạn quyền, nguồn thời gian và cách kiểm tra sau reboot vẫn OPEN G2/G3; không có mặc định chạy vô hạn. Proposed safety inference cho SYS-001: khi không chứng minh được điều kiện TX thì chặn TX bị ảnh hưởng, reason phải quan sát được; fallback/bootstrap và resume procedure cần Gateway/Node/RF/Security review, không tự chọn ở R2.
 
 Buffer phải bounded, có overflow/drop observability; không hứa giữ mọi event khi offline vô hạn. Reconnect reconcile identity/version/current status, không execute stale retained schedule/command. Event đã persist trong durable queue giữ identity gốc khi replay. Nguồn: MQTT semantics §2/§4, D12; SYS-001/002, DATA-001/002.
 
@@ -61,7 +61,7 @@ Single-radio half-duplex buộc Beacon, downlink, PCSS, DATA, ACK/retry, JOIN v�
 
 Canonical register: [OPEN_DECISIONS](../../contracts/OPEN_DECISIONS.md). Options/constraints/evidence handoff R1 trong [audit](../audits/firmware/ARCHITECTURE_DOCUMENTATION_AUDIT.md) chỉ dẫn về IDs sẵn có, không đóng decisions hoặc sửa contracts.
 
-R2 giữ nguyên canonical statuses D01–D13. RF/MAC/Security/Backend owners còn phải quyết validity/reconciliation và clock/key lifecycle; [RTM open items](../requirements/requirements.md) chỉ đề xuất coverage gaps sau khi đối chiếu các requirement hiện có. Không chọn cipher/MIC/nonce/key lifecycle, RF power/frequency/profile, slot/guard, clock thresholds hoặc alarm SLA. G0 vẫn `NOT_VERIFIED` cho đến human Requirements/ADR approval; evidence G1–G6 là nghĩa vụ riêng.
+Các hướng C01–C08 đã được Owner chốt, nhưng không tự đóng canonical D01–D13 về tham số RF, wire/crypto, thời gian và contract. RF/MAC/Security/Backend owners còn phải quyết validity/reconciliation và clock/key lifecycle; [RTM open items](../requirements/requirements.md) chỉ đề xuất coverage gaps sau khi đối chiếu các requirement hiện có. Không chọn cipher/MIC/nonce/key lifecycle, RF power/frequency/profile, slot/guard, clock thresholds hoặc alarm SLA. G0 vẫn `NOT_VERIFIED` cho đến human Requirements/ADR approval; evidence G1–G6 là nghĩa vụ riêng.
 
 ## Truy vết và giới hạn evidence
 
