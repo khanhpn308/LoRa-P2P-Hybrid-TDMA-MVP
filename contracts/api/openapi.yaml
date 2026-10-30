@@ -922,6 +922,7 @@ components:
       additionalProperties: false
       required:
         - "profile_id"
+        - "min_announce_superframes"
       properties:
         profile_id:
           type: "string"
@@ -930,8 +931,8 @@ components:
           description: "Approved RF profile ID; P-10S-15 only a candidate for tests."
         min_announce_superframes:
           type: "integer"
-          minimum: 1
-          description: "Announcements do not replace affected Node ACK or old Slot Lease expiry."
+          enum: [3]
+          description: "Owner-approved exactly three complete announcement Superframes: countdown 3→2→1; affected Node ACK and old Slot Lease safety still required for activation."
     CommandRequest:
       type: "object"
       additionalProperties: false
