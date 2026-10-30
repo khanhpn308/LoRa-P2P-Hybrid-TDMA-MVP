@@ -172,7 +172,8 @@
       "schema": "GenerateScheduleRequest",
       "valid": true,
       "message": {
-        "profile_id": "P-10S-15"
+        "profile_id": "P-10S-15",
+        "min_announce_superframes": 3
       }
     },
     {
@@ -180,7 +181,8 @@
       "schema": "GenerateScheduleRequest",
       "valid": true,
       "message": {
-        "profile_id": "REGION-UNKNOWN"
+        "profile_id": "REGION-UNKNOWN",
+        "min_announce_superframes": 3
       },
       "note": "Well-formed, but unapproved profile MUST be rejected by Backend semantic approval policy; schema validity is not authorization."
     },
@@ -209,6 +211,15 @@
         "node_id": 1,
         "state": "QUEUED",
         "created_at": "2026-10-20T08:00:05Z"
+      }
+    },
+    {
+      "id": "REST-GENERATE-BAD-COUNTDOWN",
+      "schema": "GenerateScheduleRequest",
+      "valid": false,
+      "message": {
+        "profile_id": "P-10S-15",
+        "min_announce_superframes": 2
       }
     }
   ]
