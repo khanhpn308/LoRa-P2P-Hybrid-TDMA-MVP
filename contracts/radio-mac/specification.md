@@ -1,66 +1,62 @@
-# Custom LoRa P2P Radio MAC — giao diện Node ↔ Gateway
+# Radio MAC — Node ↔ Gateway (LoRa P2P)
 
-**Revision 0.1.0-draft · SECURITY / WIRE LAYOUT NOT FROZEN · Issue #12 · Gate G2: NOT_VERIFIED.**
+**Trạng thái:** `DRAFT / G2 NOT_VERIFIED`. Kiến trúc C01–C08 được Owner phê duyệt; **định dạng byte, mật mã, nonce, phiên bản vô tuyến và timing chưa được đóng băng**.
 
-## 1. Phạm vi và trách nhiệm
+## 1. Mạng, định danh và quyền (C01/C02/C06/C07)
 
-- **Node**: thu Beacon, đồng bộ, chỉ TX trong slot được phân hoặc cửa sổ ưu tiên được phép, theo dõi ACK, backoff, giới hạn airtime cục bộ.
-- **Gateway**: nguồn thời gian/superframe cục bộ, RX/TX trên một SX1276 bán song công, validate MAC, ACK, lưu active/shadow schedule, phát Beacon và fallback khi mất MQTT.
-- **Backend**: không được tạo lệnh bật/tắt TX/RX theo slot. Định nghĩa JSON lịch trên MQTT; radio schedule do Gateway thực thi.
-- **PHY**: SX1276 LoRa P2P, không phải LoRaWAN. Tần số, SF, BW, CR, preamble, sync word, power, header mode, CRC PHY phải được provision nhất quán và G1 phê duyệt.
+- Mạng **Multi-Gateway Star**, 1–4 Gateway, một SX1276 bán song công mỗi Gateway. Khi đủ bốn Gateway, mỗi Gateway dùng **một kênh riêng, BW 125 kHz**. Node chỉ kết nối trực tiếp với **Gateway/kênh cố định**; không Mesh, relay, handover hay quét kênh tự động.
+- `node_id` là **8-bit theo phạm vi Gateway**, logic identity `(gateway_id, node_id)`. Bản nháp legacy dành `0x00` cho Gateway, `1..254` cho Node và `0xFF` cho broadcast; cách mã hóa cuối cùng phải được G2 phê duyệt. ID không là bằng chứng mật mã; Device UID 128-bit **chưa được chọn**.
+- Node chỉ phát dữ liệu ứng dụng khi có mapping/schedule, đồng bộ, quyền thiết bị **còn hiệu lực và có thể kiểm chứng**, cũng như airtime hợp lệ. Gateway mất Internet **không tự gia hạn quyền**. Tạm ngừng/khôi phục/thu hồi/cấp lại quyền thuộc MVP; thu hồi quyền không tự tái cấp slot (C04).
+- `Periodic OFF` chỉ tắt báo cáo chu kỳ, **không** tắt phát hiện/gửi Alert hợp lệ.
 
-## 2. Candidate legacy envelope — KHÔNG ĐƯỢC DÙNG NHƯ PRODUCTION v1
+## 2. Lịch và chuyển lịch (C03/C04)
 
-Tài liệu đính kèm §6.1 đề xuất chuỗi octet (offset từ 0):
+- Backend tạo/version lịch; User có quyền phê duyệt kế hoạch và **activation window**. Gateway kiểm tra, bền vững hóa `Shadow` trước `STAGE_ACK`, truyền chuẩn bị và nhận ACK xác thực từ các Node bị ảnh hưởng.
+- Gateway kích hoạt tại đầu Superframe **bên trong cửa sổ được duyệt** chỉ khi quyền dùng khe cũ đã chấm dứt an toàn, không chồng lấn; nếu không chứng minh được phải **fail closed**. Gateway không thay Slot Assignment/kênh hoặc tự mở rộng cửa sổ.
+- `ACTIVE_REPORT` chỉ gửi sau kích hoạt thực tế. `STAGE_ACK`, Beacon hay MQTT PUBACK **không** chứng minh `ACTIVE`. Reboot không tự biến `Shadow` thành `Active`.
 
-| Offset | Trường | Quy tắc candidate |
-|---:|---|---|
-| 0 | MAGIC | 0xA5 |
-| 1 | VER_TYPE | b7..6 protocol version, b5..0 packet type |
-| 2 | CTRL_FLAGS | b7..6 priority; b5 ACK_REQ; b4 IS_RETRY; b3 PENDING_SCHED; b2 DUTY_LIMITED; b1..0 reserved=0 |
-| 3 | SRC_ID | 0x00 Gateway; 1..254 Node |
-| 4 | DST_ID | 0x00 Gateway; 1..254 Node; 0xFF broadcast |
-| 5 | SCHED_VER | chỉ 8-bit, **không đủ** để giải quyết wrap/epoch |
-| 6 | SEQ_NUM | chỉ 8-bit, **không phải** replay/identity key |
-| 7 | PAYLOAD_LEN | 0..48 byte được đề xuất |
-| 8.. | PAYLOAD | độ dài PAYLOAD_LEN |
-| last 2 | CRC16-CCITT | phụ thuộc tham số init/reflection/xor/endian **chưa chốt** |
+## 3. Cảnh báo, định danh sự kiện và ACK (C05/C08)
 
-Tổng kích thước candidate: 8 + n + 2 byte (tối đa 58). `CRC16` và PHY CRC **chỉ phát hiện lỗi ngẫu nhiên**, không bảo vệ khỏi sửa dữ liệu có chủ ý, giả mạo Beacon/ACK/Schedule/Command hoặc replay. Giá trị đầu ra "8 bytes" và giả định ToA 22B từ tài liệu là giả thuyết và có thể phải thay hoàn toàn sau khi thêm MIC, counters và network/session identity. **Cấm xuất bản codec production từ bảng trên khi D01/D11 còn BLOCKED.**
+**CT-01-ACK-01 — `OWNER_APPROVED / LOCKED` (2026-10-30):** Gateway gộp ACK của Telemetry định kỳ vào Beacon. **Không có gói `RF_ACK` riêng** cho Telemetry định kỳ. `ACK_BITMAP` có độ dài cố định **16 bit = 2 byte** cho tối đa 15 Node trên mỗi Gateway; danh sách Node ID trong Beacon không được dùng cho ACK Telemetry.
 
-### Loại bản tin candidate
+- **Bit mapping:** mỗi Node có một `ACK_INDEX` duy nhất trong phạm vi Gateway, được provision/sync cùng cấu hình (đề xuất index `1..15`, bit `0` reserved). `NODE_ID` 8-bit không đồng nhất với `ACK_INDEX`; thay đổi mapping phải chuyển cấu hình an toàn để không báo ACK nhầm. Mapping chính xác và byte order thuộc wire codec G2 chưa freeze.
+- **ACK epoch:** Beacon của Superframe `N+1` xác nhận các uplink đủ điều kiện trong Superframe `N`; tính liên kết epoch phải được bảo vệ bởi cơ chế xác thực Beacon. Bit `1` chỉ được set khi frame hợp lệ **đã được Gateway persist thành công** (không phải PostgreSQL commit). Bit `0` chỉ là **NOT_ACKNOWLEDGED**, không khẳng định Gateway mất frame.
+- **Giới hạn không nhập nhằng:** mỗi Node chỉ có **một Telemetry uplink đang chờ ACK** trong cửa sổ Bitmap tương ứng; Node không gửi Telemetry mới làm mất dấu bản tin chưa xác nhận. Cơ chế nhiều uplink/Node, ACK Alert/Command/Join là **OPEN**, không được gán nghĩa tùy tiện cho Bitmap này.
+- **Retry và chống trùng:** khi thiếu ACK hoặc mất Beacon, Node giữ frame chờ và retry trong cơ hội lịch cho phép, không tự chiếm slot. Retransmit cùng ứng dụng giữ nguyên identity/counter và authenticated frame bytes; Gateway dedup theo Gateway/Node/security-session/frame-counter và tái ACK khi nhận retransmission hợp lệ. ACK bit của cửa sổ cũ **không được carry forward** sang cửa sổ mới để tránh ACK nhầm packet khác; trường hợp mất Beacon liên tiếp phải kiểm thử.
+- **RF constraints:** Beacon phải xác thực và tuân TX/RX half-duplex, airtime admission; verify ToA/PHY payload và failure modes trong HIL/RF. 2 byte chỉ là `ACK_BITMAP`, không phải tổng Beacon frame length.
 
-| Type | Mã candidate | TX → RX | Ý nghĩa |
+
+
+- **Owner revised G06:** Gateway tạo Event ID khi lần đầu nhận, xác thực và persist một uplink mới; Node không mang Event ID. Gateway persist ánh xạ `(gateway_id,node_id,security_session,frame_counter) → (event_id,payload)` và giữ nguyên qua RF retry/reset, offline spool và MQTT QoS1 replay. Backend dedup theo Gateway Event ID và phát hiện conflict payload. Mất mapping/không bảo đảm tính duy nhất thì fail closed/reconcile, không cấp ID khác cho cùng frame. PR #116 vẫn còn G06 cũ, phải cập nhật riêng.
+- Alert ưu tiên dùng **cửa sổ tranh chấp + bounded randomized backoff/CAD khi phù hợp**, sau đó dùng cơ hội retry dự phòng **đã nằm trong lịch Backend/User duyệt**. CAD clear không chứng minh không có va chạm; tất cả retry hữu hạn và không tự giành DATA Slot.
+- **Phân biệt** ACK trong Beacon (Gateway đã persist uplink hợp lệ) với Backend DB commit. ACK Bitmap phải ràng buộc Gateway, Node, phiên bảo mật và Superframe/packet context qua Beacon được xác thực; MQTT PUBACK không phải xác nhận lưu DB.
+- Gateway chỉ có một Radio Owner; TX/RX không đồng thời. Mọi Beacon, join, ACK, Alert, retry đều qua local airtime admission; ưu tiên không bỏ qua RF/legal policy.
+
+## 4. Phân loại Uplink/Downlink và byte layout (CT-01)
+
+**Chỉ Node phát Uplink; chỉ Gateway phát Downlink.** Mỗi loại gói có Payload riêng. Mã `VER_TYPE` và kích thước Header/MIC là DRAFT, không coi là production codec.
+
+| Node → Gateway | Chức năng | Gateway → Node | Chức năng |
 |---|---|---|---|
-| BEACON | 0x01 | GW → Broadcast | Superframe, active/pending version, ACK bitmap |
-| SCHED_ANNOUNCE | 0x02 | GW → Broadcast/Node | Bảng mapping node/slot cho lịch sẽ kích hoạt |
-| DATA_TELEMETRY | 0x03 | Node → GW | Định kỳ trong slot riêng |
-| PRIORITY_ALERT | 0x04 | Node → GW | Cảnh báo trong PCSS hoặc retry slot riêng |
-| ACK_PACKET | 0x05 | GW → Node | Xác nhận RF cụ thể theo frame/session |
-| CMD_DOWNLINK | 0x06 | GW → Node | Lệnh được Backend duyệt qua GW |
-| JOIN_SLOT_REQ | 0x07 | Node → GW | Gia nhập/khôi phục có rate limit |
-| JOIN_SLOT_RSP | 0x08 | GW → Node | Thông tin cấp slot/trạng thái |
+| `UP_TELEMETRY` | Nhiệt độ định kỳ | `DOWN_BEACON_ACK` | Đồng bộ + ACK_BITMAP |
+| `UP_ALERT` | Cảnh báo | `DOWN_SCHED_PREPARE` | Lịch mới |
+| `UP_SCHED_READY` | Node xác nhận chuẩn bị lịch | `DOWN_COMMAND` | Lệnh tới Node |
+| `UP_CMD_RESULT` | Kết quả lệnh | `DOWN_JOIN_ACCEPT` | Chấp thuận gia nhập |
+| `UP_JOIN_REQUEST` | Gia nhập/khôi phục | `DOWN_AUTH_UPDATE` | Cập nhật quyền |
 
-Payload candidate từ §6.2: BEACON 14B (`superframe_seq:u32`, `epoch_sec:u32`, `superframe_dur_ms:u16`, `pending_sched_ver:u8`, `countdown:u8`, `ack_bitmap:u16`); DATA/ALERT 12B (`slot_id:u8`, `sensor_status_mask:u8`, `ch1:i16`, `ch2:u16`, `ch3:u16`, `battery_mv:u16`, `node_duty_permille:u16`). Byte order, signedness và scale trong bảng chỉ mô tả **đề xuất**, chưa có vector chuẩn.
+**OWNER DECIDED Telemetry Payload:** chỉ `TEMP_X10` (int16 2B, nhiệt độ °C×10; 35,5°C→355). Loại `PROVISION_INSTANCE`, `EVENT_COUNTER`, `SCHED_TOKEN`, `SLOT_ID`, các channel khác, battery và duty khỏi RF Telemetry. Endian, rounding, sentinel còn OPEN G2.
 
-## 3. Security acceptance requirements trước khi freeze v1
+**DRAFT RF Telemetry frame candidate = 17B:** `[VER_TYPE:1][NODE_ID:1][KEY_ID:1][FRAME_COUNTER:4][TEMP_X10:2][MIC:8]`. Frame Counter cho chống replay/dedup, không phải Event ID. Thuật toán, nonce, MIC length/key lifecycle, endian, counter persistence, golden vectors còn OPEN G2; không triển khai codec production từ candidate.
 
-1. Mỗi gói điều khiển (**Beacon, Schedule, Join response, Downlink, ACK**) và gói data phải có xác thực nguồn và toàn vẹn mật mã; **không** chỉ CRC, MQTT TLS hoặc sync word. Quyết định AEAD/tag length, nonce và MIC/AAD bằng ADR security review.
-2. Nonce phải duy nhất **trên cùng khóa**, bao gồm **sau mất điện/reset**, phiên/mạng, chiều GW→Node vs Node→GW và rollover counter. Chặn TX nếu không chứng minh được nonce uniqueness; cấm tự reset counter về 0 trên khóa cũ.
-3. Rx giữ replay window theo identity + crypto session + hướng; đồng hồ không được dùng làm replay protection duy nhất. Retry có thể trùng packet/ciphertext, nhưng không tái sử dụng nonce cho **plaintext khác**. ACK được liên kết session + message ID/sequence, tránh ACK giả.
-4. Key provisioning, rotate/revoke, node join trust bootstrap, gateway replacement, key storage và MAC tag verification **chưa phê duyệt**; không tự sinh khóa mặc định dùng production.
-5. Parser kiểm version, direction, destination, reserved bits, payload length, auth tag, replay window, bounds **trước** xử lý payload. Serialize từng octet rõ ràng, không cast raw FIFO thành `packed struct`; integer endian phải được G2 chốt.
-6. Thống kê rejected reason bằng mã cố định (`BAD_LENGTH`, `UNSUPPORTED_VERSION`, `BAD_AUTH`, `REPLAY`, `WRONG_DEST`, `STALE_SCHEDULE`, `UNSYNCED`, `AIRTIME_DENIED`). Không xuất tag, key hay nonce bí mật vào log.
+**LOCKED:** Gateway gửi ACK_BITMAP 16-bit (2B) trong Beacon cho Telemetry, Beacon N+1 xác nhận uplink N đã Gateway persist. Bitmap chưa có byte order/offset/on-air encoding được duyệt; ACK cho Alert vẫn OPEN. Retry phải giữ nguyên frame identity; ACK của kỳ trước không tự chuyển sang kỳ sau.
 
-## 4. Timing/safety và acceptance
+**OWNER DECIDED schedule countdown:** Gateway phát 3 nhịp thông báo hoàn chỉnh `3 → 2 → 1` trước khi đổi lịch tại đầu Superframe. Không bắt đầu nhịp giữa Superframe. Ba thông báo không thay affected Node ACK hoặc old Slot Lease safe termination; thiếu điều kiện, hết activation window hoặc mất trusted clock thì fail closed và báo Backend. Wire format countdown còn OPEN G2.
 
-Xem [tdma-schedule.md](tdma-schedule.md) để biết profile thời gian *đề xuất*, staged switch, xử lý mất Beacon. Giới hạn airtime áp dụng **mọi** gói RF, kể cả alert/join/retry/ACK/beacon; lỗi policy là **deny TX** và log. CAD không bảo đảm kênh rỗi; Gateway chỉ RX/TX một chế độ tại một thời điểm. ISR chỉ ghi timestamp/chuyển sự kiện, không SPI hay MQTT blocking.
+**Legacy:** frame 8B + CRC16 và 12B sensor payload trong thiết kế ban đầu không còn là RF codec hiện hành.
+## 5. Security và acceptance
 
-### Freeze checklist (chưa đạt)
+- Phải xác thực nguồn và toàn vẹn cho dữ liệu, Beacon, Schedule, ACK, Join, Command; **CRC không phải xác thực**. Nonce không được tái sử dụng trên cùng khóa qua reboot, rollover hoặc khác hướng; nếu không chứng minh được tính duy nhất thì chặn TX. RX kiểm replay window theo identity/session/direction.
+- Khóa, quy trình cấp/thu hồi, Gateway-origin Event ID/persistent dedup, kích thước frame/tag, endian, epoch/version mapping, bộ đếm và ACK cho Alert/Command/Join: **OPEN G2**. **Ngoại lệ đã LOCKED:** Beacon mang ACK_BITMAP Telemetry 2 byte theo CT-01-ACK-01; không được xem là đã freeze codec. Không tự chọn khóa hoặc format production.
+- G1/G3: kiểm tra airtime/guard, CAD hidden terminal, nhiều Node cùng báo động, mất Beacon, reboot, RF compliance Việt Nam. G4/G5: Gateway receipt tracking, Backend dedup, nonce/replay và quyền truy cập. **Chưa có PASS thực nghiệm**.
 
-- [ ] ADR security + byte layout endianness + key/nonce/replay lifecycle + boot persistence (D01/D11).
-- [ ] RF airtime/guard/antenna/frequency/power/duty G1 + HIL timing.
-- [ ] Canonical test vectors thực có valid/bad MIC/truncated/wrong version/replay/wrap/reset; C và Go đối chiếu byte-đối-byte.
-- [ ] Review bởi Node, Gateway, Security, Backend và QA; ghi nhận chứng cứ G2.
-
-Test-plan hiện tại: [test-vectors/README.md](test-vectors/README.md); chưa có golden byte vectors vì thiết kế xác thực chưa được chốt.
+Xem [TDMA Schedule](tdma-schedule.md), [MQTT contracts](../mqtt/topics.md), [Architecture](../../docs/architecture/system-overview.md).

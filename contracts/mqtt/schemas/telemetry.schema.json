@@ -1,20 +1,19 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:loratdma:mqtt:telemetry:v1-draft",
+  "$id": "urn:loratdma:mqtt:telemetry:v1.1-draft",
   "title": "LoRa TDMA telemetry (proposed contract)",
   "type": "object",
   "additionalProperties": false,
   "properties": {
     "schema_version": {
-      "const": "1.0-draft",
+      "const": "1.1-draft",
       "type": "string"
     },
     "event_id": {
       "type": "string",
       "minLength": 1,
       "maxLength": 128,
-      "pattern": "^[A-Za-z0-9_-]{1,32}:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}:(0|[1-9][0-9]{0,19})$",
-      "description": "MUST equal gateway_id + ':' + gateway_epoch + ':' + event_seq (semantic equality validated by consumers). Stable on QoS1 retransmission/replay."
+      "description": "Gateway-origin stable Event ID assigned once on durable first acceptance of authenticated RF frame; retained through RF retransmit, reboot/offline queue and MQTT QoS1 replay. Gateway retains mapping from (gateway_id,node_id,security_session,frame_counter) to original ID; exact encoding pending G2/G4."
     },
     "gateway_id": {
       "type": "string",
@@ -23,12 +22,12 @@
     "gateway_epoch": {
       "type": "string",
       "format": "uuid",
-      "description": "Unique boot epoch; regenerate on Gateway reboot, never on MQTT reconnect. Offline queued events retain original epoch."
+      "description": "Originating Gateway boot epoch for this Event ID; preserve original value with persisted event across Gateway reboot/replay. A re-reception must not replace a previously durably assigned event ID."
     },
     "event_seq": {
       "type": "string",
       "pattern": "^(0|[1-9][0-9]{0,19})$",
-      "description": "Decimal uint64 counter scoped to gateway_epoch; semantic integer <= 18446744073709551615 and no wrap/reuse."
+      "description": "Gateway-assigned uint64 Event sequence in original gateway_epoch; stable for this logical event, never increment for duplicate RF reception or MQTT redelivery."
     },
     "observed_at": {
       "oneOf": [
@@ -58,22 +57,18 @@
     },
     "buffered": {
       "type": "boolean",
-      "description": "Indicates offline queue/replay path; QoS1 DUP flag is NOT a business dedup key. Event identity never changes after buffering."
+      "description": "Offline spool/MQTT replay; retain the original Gateway event_id, gateway_epoch, event_seq and measurement. Repeated RF frames MUST map to same persisted Event ID."
     },
     "node_id": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 254
+      "maximum": 254,
+      "description": "Node ID in range 1..254, scoped to gateway_id (C06); authenticated source must match the provisioned mapping."
     },
     "superframe_seq": {
       "type": "integer",
       "minimum": 0,
       "maximum": 4294967295
-    },
-    "seq_num": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 255
     },
     "schedule_version": {
       "type": "integer",
@@ -84,52 +79,22 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "slot_id",
-        "sensor_status_mask",
-        "ch1_raw",
-        "ch2_raw",
-        "ch3_raw",
-        "battery_mv",
-        "node_duty_permille"
+        "temp_x10"
       ],
       "properties": {
-        "slot_id": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 15
-        },
-        "sensor_status_mask": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 255
-        },
-        "ch1_raw": {
+        "temp_x10": {
           "type": "integer",
           "minimum": -32768,
-          "maximum": 32767
-        },
-        "ch2_raw": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 65535
-        },
-        "ch3_raw": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 65535
-        },
-        "battery_mv": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 65535
-        },
-        "node_duty_permille": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 1000
+          "maximum": 32767,
+          "description": "Temperature Celsius multiplied by 10; raw signed 16-bit value, e.g. 35.5 C -> 355. Byte order/rounding/error sentinel OPEN G2."
         }
-      },
-      "description": "Raw integer RF fields only; scale/unit are versioned sensor configuration, not derived by Gateway."
+      }
+    },
+    "frame_counter": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295,
+      "description": "Node RF FRAME_COUNTER candidate uint32, scoped with authenticated Node and security session; 4-byte wire width remains draft G2. Not Event ID."
     }
   },
   "required": [
@@ -144,11 +109,11 @@
     "buffered",
     "node_id",
     "superframe_seq",
-    "seq_num",
+    "frame_counter",
     "schedule_version",
     "data"
   ],
-  "description": "DRAFT MQTT v1 payload; schema checks local shape, not topic authorization, replay, clock freshness, state transitions or MQTT properties. Cross-team review pending (Issue #14).",
+  "description": "DRAFT owner-updated: Gateway-origin Event ID; RF Node transmits TEMP_X10 only for Telemetry, does not transmit Event ID; Backend dedup Gateway event_id, detect payload conflict. Authentication, nonce and exact wire format NOT_VERIFIED.",
   "allOf": [
     {
       "if": {

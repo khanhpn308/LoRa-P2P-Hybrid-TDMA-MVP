@@ -25,9 +25,9 @@ Sơ đồ biểu diễn cấu hình tối đa bốn Gateway; một hệ thống 
 
 | Thành phần | Trách nhiệm đã chốt |
 |---|---|
-| **Node** | Đọc cảm biến, phát hiện ngưỡng/cảnh báo tại chỗ, tạo mã sự kiện gốc ổn định qua retry, đồng bộ Beacon và chỉ phát trong cơ hội được cấp phép. **Periodic OFF không tắt cảnh báo**. |
-| **Gateway** | TDMA Master cục bộ; kiểm tra danh tính/quyền, lịch, đồng bộ và airtime; lưu Active/Shadow; xử lý RX/TX SX1276 bán song công, ACK và buffer hữu hạn. **Không tự sửa hoặc cấp lại Slot Assignment**. |
-| **Backend Go** | Lập kế hoạch và quản lý phiên bản lịch/kênh, quản lý trạng thái cấp quyền, đối soát Gateway, tiếp nhận dữ liệu và chống ghi trùng theo mã sự kiện Node, lưu PostgreSQL. |
+| **Node** | Đọc cảm biến, phát hiện ngưỡng/cảnh báo tại chỗ; gửi `TEMP_X10` và `FRAME_COUNTER` theo security context đã cấp, đồng bộ Beacon và chỉ phát trong cơ hội được cấp phép. **Periodic OFF không tắt cảnh báo**. |
+| **Gateway** | TDMA Master cục bộ; kiểm tra danh tính/quyền, lịch, đồng bộ và airtime; lưu Active/Shadow; xử lý RX/TX SX1276 bán song công, ACK Bitmap và buffer hữu hạn; **cấp Event ID bền vững** khi nhận gói RF mới và chống trùng khi phát lại. **Không tự sửa hoặc cấp lại Slot Assignment**. |
+| **Backend Go** | Lập kế hoạch và quản lý phiên bản lịch/kênh, quản lý trạng thái cấp quyền, đối soát Gateway, tiếp nhận dữ liệu và chống ghi trùng theo Event ID do Gateway cấp, lưu PostgreSQL. |
 | **User có quyền** | Phê duyệt lịch và khoảng thời gian kích hoạt trước khi phân phối; phân quyền được Backend kiểm tra, không chỉ ở giao diện. |
 | **Web/Mobile** | Cấu hình, quản trị và hiển thị thông qua REST/WSS của Backend; không truy cập trực tiếp broker/DB. Công nghệ Mobile trong các tài liệu cũ chưa thống nhất (Flutter/Kotlin), cần quyết định riêng trước implementation. |
 
@@ -37,7 +37,7 @@ Dùng **ESP-IDF v6.1** cho Gateway/Node ([ADR-0003](../adr/0003-esp-idf-v6-1.md)
 
 1. **Backend tạo/phiên bản hóa** lịch. **User duyệt** lịch và khoảng được phép kích hoạt.
 2. **Gateway kiểm tra** quyền, phiên bản, hết hạn, xung đột slot, đồng bộ và giới hạn phát. Kế hoạch không an toàn phải bị từ chối hoặc chặn TX; Gateway không thay trường phân bổ slot/kênh của lịch.
-3. Gateway **lưu bền vững Shadow** trước khi báo `STAGE_ACK`; phát thông tin lịch mới và thu ACK chuẩn bị của các Node chịu ảnh hưởng. **Không** xem đủ ba Beacon là bằng chứng tất cả Node đã nhận lịch.
+3. Gateway **lưu bền vững Shadow** trước khi báo `STAGE_ACK`; phát ba nhịp thông báo lịch trọn Superframe **3 → 2 → 1** và thu ACK chuẩn bị của các Node chịu ảnh hưởng. Ba nhịp **không thay** bằng chứng Node đã chuẩn bị và old Slot Lease safety.
 4. Gateway chỉ chuyển sang lịch mới tại **ranh giới Superframe bên trong cửa sổ đã duyệt**, khi quyền dùng khe cũ đã kết thúc an toàn. Không chắc chắn thì **không kích hoạt**, tiếp tục Active chỉ khi còn an toàn; nếu không thì dừng TX chịu ảnh hưởng.
 5. Gateway phát `ACTIVE_REPORT` **sau khi thực sự kích hoạt**. `MQTT PUBACK` và `STAGE_ACK` không chứng minh lịch ACTIVE. Sau reboot, **không tự nâng Shadow thành Active**.
 
@@ -45,10 +45,10 @@ Gateway điều khiển mốc thời gian RF tại chỗ; Backend **không** kí
 
 ## 4. Dữ liệu, cảnh báo và xác nhận (C05/C08)
 
-- **Sự kiện do Node tạo** mã định danh gốc; retry RF, gửi lại MQTT QoS 1, phát lại buffer hoặc reboot **không** tạo thêm một sự kiện nghiệp vụ. Gateway ghi nhận lần thu; Backend thực thi durable deduplication trong PostgreSQL. Định dạng Event ID, quy tắc reset và khóa duy nhất DB chưa chốt.
+- **Gateway tạo và persist Event ID gốc** sau khi xác thực/tiếp nhận frame RF mới; Node không truyền Event ID. Retry RF, MQTT QoS 1 replay, phát lại buffer hoặc reboot **không** tạo thêm một sự kiện nghiệp vụ: Gateway phải giữ ánh xạ `(gateway_id,node_id,security_session,frame_counter) → event_id` bền vững; Backend dedup theo `(gateway_id,event_id)` và phát hiện payload conflict. Định dạng Event ID, bảo vệ counter/nonce và khóa duy nhất DB còn G2/G4 OPEN.
 - Node ở `Periodic OFF` **không gửi telemetry định kỳ**, nhưng tiếp tục phát hiện và gửi Alert nếu quyền truy cập còn hợp lệ.
 - Alert dùng **cửa sổ tranh chấp ưu tiên** với backoff hữu hạn; thất bại thì retry qua **cơ hội dự phòng thuộc lịch Backend/User đã duyệt**. Không giành khe DATA của Node khác hoặc tự thay lịch.
-- Phải tách rõ **RF ACK**, xác nhận tiếp nhận/lưu bền vững ở Gateway và xác nhận lưu Backend. Không suy `BACKEND_STORED` từ RF ACK/MQTT PUBACK.
+- **ACK Telemetry tích hợp trong Beacon dưới dạng ACK_BITMAP 2 byte**, xác nhận frame trước đó đã Gateway persist; không phát ACK Telemetry riêng. Phải tách rõ Gateway durable acceptance với Backend DB commit; không suy `BACKEND_STORED` từ Beacon/MQTT PUBACK.
 - CAD (Channel Activity Detection) không bảo đảm hết va chạm; TX, kể cả Beacon/ACK/Alert/retry, luôn tuân chính sách airtime và điều kiện hợp quy.
 
 ## 5. Quyền thiết bị và xử lý lỗi (C07)
