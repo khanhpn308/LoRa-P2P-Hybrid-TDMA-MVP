@@ -43,6 +43,6 @@ Machine-readable envelope: `schema_version="1.1-draft"`, `event_id` (Backend-ori
 
 - [BM04] `BM04_GIAO_TRINH_REST_HTTPS_OPENAPI_FINAL(1).md`: HTTP 202, RBAC, OpenAPI draft, command ticket polling extension (proposed).
 - [BM05] `BM05_GIAO_TRINH_WEBSOCKET_WSS_FINAL(1).md`: RFC 6455, Origin/auth, bounded hub, best-effort resync.
-- [System design] `esp32_sx1762.md` and `docs/architecture/system-overview.md`: Backend plans; Gateway local TDMA Master.
+- [Authoritative architecture] `docs/architecture/system-overview.md` on architecture PR #116; Owner's later Radio MAC/Event ID revisions are incorporated in contracts PR #119. `esp32_sx1762.md` is historical reference only and cannot override Owner-approved decisions.
 - Existing [D13](../OPEN_DECISIONS.md) **BLOCKED Security** — leave unresolved pending approved auth ADR; no production token policy invented.
 - Existing #14 MQTT draft: durable Gateway-event identity for Telemetry/Alert and `STAGE_ACK != ACTIVE_REPORT`; backend must perform cross-contract mapping.
