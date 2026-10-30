@@ -20,6 +20,9 @@
 | D12 §6.3, §7.4 | QoS1 / ring buffer được mô tả lưu mọi Alert không mất | Bắt buộc buffer có giới hạn, overflow counter và điều kiện mất dữ liệu rõ; không cam kết lưu 100% khi mất kết nối vô hạn | CANDIDATE · Gateway/Backend |
 | D13 §9.3 | JWT/login, HTTP+WSS, RBAC; cơ chế identity chưa duyệt | Mô tả bearer token trong OpenAPI **provisional**; bổ sung ADR authn/token lifecycle trước production, luôn enforce RBAC tại Backend | BLOCKED Security · Backend/Web/Mobile |
 
+| **CT-01-ACK-01** (Owner decision, 2026-10-30) | ACK Telemetry trong Beacon | **LOCKED:** `ACK_BITMAP` 16-bit cho tối đa 15 Node, bit ánh xạ theo cấu hình, Beacon `N+1` ACK dữ liệu `N` Gateway persist; không gửi RF ACK Telemetry riêng. **OPEN G2:** Beacon byte order/authentication/epoch binding, ACK Alert, nhiều uplink/Node/cửa sổ, retransmit cases; HIL/ToA NOT_VERIFIED | OWNER_APPROVED bitmap · G2/RF review pending |
+| **D14 / G06 migration** | Chủ thể tạo Event ID trong G06 hiện là Node, nhưng Owner đã yêu cầu Gateway đánh số sự kiện | **CONFLICT — NOT_SYNCHRONIZED:** cần sửa G06, MQTT/API schemas và dedup semantics bằng review cross-team riêng; không âm thầm thay đổi bằng quyết định ACK Bitmap | REQUIRES CONTRACT AMENDMENT · All teams |
+
 ## Điều kiện mở khóa
 
 - **G1**: đo ToA, drift, turnaround; thẩm định RF và chính sách airtime có thể áp dụng.
