@@ -221,6 +221,44 @@
         "profile_id": "P-10S-15",
         "min_announce_superframes": 2
       }
+    },
+    {
+      "id": "REST-TELEMETRY-OWNER-VALID",
+      "schema": "TelemetryReading",
+      "valid": true,
+      "message": {
+        "reading_id": "50",
+        "node_id": 1,
+        "gateway_id": "gw01",
+        "event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:42",
+        "observed_at": "2026-10-20T08:00:00Z",
+        "received_at": "2026-10-20T08:00:01Z",
+        "buffered": false,
+        "superframe_seq": 100,
+        "frame_counter": 51,
+        "data": {
+          "temp_x10": 355
+        }
+      }
+    },
+    {
+      "id": "REST-TELEMETRY-LEGACY-DATA-INVALID",
+      "schema": "TelemetryReading",
+      "valid": false,
+      "message": {
+        "reading_id": "50",
+        "node_id": 1,
+        "gateway_id": "gw01",
+        "event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:42",
+        "observed_at": "2026-10-20T08:00:00Z",
+        "received_at": "2026-10-20T08:00:01Z",
+        "buffered": false,
+        "superframe_seq": 100,
+        "frame_counter": 51,
+        "data": {
+          "ch1_raw": 355
+        }
+      }
     }
   ]
 }
