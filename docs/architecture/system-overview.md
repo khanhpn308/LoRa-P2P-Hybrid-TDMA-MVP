@@ -1,6 +1,6 @@
 # Kiến trúc hệ thống, baseline R1
 
-Status: `DRAFT / DESIGN-READY FOR FEASIBILITY`. RF, timing và HIL: `NOT_VERIFIED`. Remediation [#60](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/60) không chứng minh implementation. Firmware vẫn là scaffold theo [AGENTS.md](../../AGENTS.md).
+Status: `DRAFT / DESIGN-READY FOR FEASIBILITY` (chi tiết R1). **Quyết định Owner C01–C09:** [g0-owner-decisions.md](g0-owner-decisions.md); ưu tiên áp dụng khi R1 mâu thuẫn. RF, timing và HIL: `NOT_VERIFIED`. Remediation [#60](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/60) không chứng minh implementation. Firmware vẫn là scaffold theo [AGENTS.md](../../AGENTS.md).
 
 ## Quyết định và phạm vi
 
@@ -11,11 +11,15 @@ flowchart TB
   USERS[Admin / Operator / Viewer] <--> CLIENTS[Next.js + TypeScript Web / Kotlin Android App]
   CLIENTS <-->|HTTPS / WSS| GO[Go Modular Monolith + PostgreSQL]
   GO <-->|MQTT 5.0 / TLS| BROKER[Mosquitto]
-  BROKER <-->|Wi-Fi / MQTT 5.0 / TLS| GW[ESP32 + SX1276 Gateway: Local TDMA Master]
-  GW <-->|LoRa P2P / Custom MAC draft| NODES[ESP32 + SX1276 Nodes]
+  BROKER <-->|Wi-Fi / MQTT 5.0 / TLS| GW1[Gateway 01: TDMA Master / CH-1]
+  BROKER <-->|Wi-Fi / MQTT 5.0 / TLS| GW2[Gateway 02..04: mỗi Gateway một kênh]
+  GW1 <-->|LoRa P2P / BW125 / kênh đã cấu hình| NODES1[Node thuộc Gateway 01]
+  GW2 <-->|LoRa P2P / BW125 / kênh tương ứng| NODES2[Node thuộc Gateway 02..04]
 ```
 
-Nguồn sơ đồ: ADR-0001/0002, [deployment contexts](deployment.md), [contract index](../../contracts/README.md). Quy mô thử nghiệm trong planning không phải capacity đã nghiệm thu; xem MAC-001 và ALERT-001 trong [RTM](../requirements/requirements.md#rtm).
+Sơ đồ minh họa phạm vi 1–4 Gateway đã được Owner chọn; không giả định Node đổi Gateway hay Gateway dùng chung tần số. Nguồn sơ đồ: [G0 decisions](g0-owner-decisions.md), ADR-0001/0002, [deployment contexts](deployment.md), [contract index](../../contracts/README.md). Quy mô thử nghiệm trong planning không phải capacity đã nghiệm thu; xem MAC-001 và ALERT-001 trong [RTM](../requirements/requirements.md#rtm).
+
+**Ưu tiên cập nhật từ G0:** (1) Backend/User sở hữu lịch và quyền cấp phát; Gateway chỉ chọn ranh giới chuyển lịch trong khoảng đã duyệt. (2) Node tạo mã sự kiện; Backend chống ghi trùng; Node ID 8-bit theo từng Gateway. (3) Quyền truy cập Node có thời hạn; cảnh báo vẫn hoạt động khi Periodic OFF. (4) Tất cả chức năng được Owner yêu cầu thuộc MVP, Mesh tạm ngoài phạm vi. Chi tiết và các mục còn OPEN xem [quyết định G0](g0-owner-decisions.md).
 
 ## Ranh giới trách nhiệm
 
