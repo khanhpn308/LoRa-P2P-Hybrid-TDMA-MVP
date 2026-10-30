@@ -41,10 +41,9 @@
         "SET_PERIODIC_MODE",
         "SUSPEND_NODE",
         "RESUME_NODE",
-        "REVOKE_NODE",
-        "SET_RELAY"
+        "REVOKE_NODE"
       ],
-      "description": "Proposed allowlist: C07 administrative actions apply at Gateway authorization enforcement; SET_PERIODIC_MODE OFF retains alert rights; REPROVISION requires a separate authenticated credential lifecycle (OPEN G2). SET_RELAY remains unapproved candidate."
+      "description": "Proposed allowlist: C07 administrative actions apply at Gateway authorization enforcement; SET_PERIODIC_MODE OFF retains alert rights; REPROVISION requires a separate authenticated credential lifecycle (OPEN G2). No actuator control is authorized by this allowlist."
     },
     "params": {
       "type": "object",
