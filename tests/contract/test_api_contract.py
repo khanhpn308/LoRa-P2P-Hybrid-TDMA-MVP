@@ -53,7 +53,7 @@ class ApiContractTest(unittest.TestCase):
     def test_post_idempotency_and_async_contract(self):
         paths = self.openapi["paths"]
         for endpoint in (
-            "/api/v1/nodes/{node_id}/commands",
+            "/api/v1/gateways/{gw_id}/nodes/{node_id}/commands",
             "/api/v1/gateways/{gw_id}/schedules/{schedule_id}/activation-requests",
         ):
             op = paths[endpoint]["post"]
@@ -93,8 +93,12 @@ class ApiContractTest(unittest.TestCase):
             if b["if"]["properties"]["type"].get("const") == "TELEMETRY_UPDATE"
         )
         source_id = telemetry_branch["then"]["properties"]["payload"]["properties"]["event_id"]
-        self.assertIn("pattern", source_id)
-        self.assertIn("gateway_epoch", source_id["description"])
+        self.assertIn("Node-origin", source_id["description"])
+        self.assertNotIn("pattern", source_id)
+        self.assertIn("gateway_id", source_id["description"])
+        self.assertIn("/api/v1/gateways/{gw_id}/nodes/{node_id}/telemetry", self.openapi["paths"])
+        ticket_required = self.openapi["components"]["schemas"]["CommandTicket"]["required"]
+        self.assertIn("gateway_id", ticket_required)
         command_branch = next(
             b for b in self.wss_schema["allOf"]
             if b["if"]["properties"]["type"].get("const") == "COMMAND_STATE_CHANGED"
