@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Integrated App Wireframe: 8 Screens LoRa Maintenance MVP (Gate G0)</title>
+    <style>
+        :root {
+            --bg-page: #0d1117;
+            --bg-phone: #161b22;
+            --border-phone: #30363d;
+            --text-main: #c9d1d9;
+            --text-muted: #8b949e;
+            --accent-cyan: #58a6ff;
+            --accent-orange: #d29922;
+            --accent-red: #f85149;
+            --accent-green: #238636;
+            --block-bg: #21262d;
+            --block-border: #484f58;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-page);
+            color: var(--text-main);
+            display: flex;
+            min-height: 100vh;
+            padding: 20px;
+            gap: 24px;
+            justify-content: center;
+            align-items: flex-start;
+        }
+
+        /* SIDEBAR BÊN TRÁI */
+        .sidebar {
+            width: 400px;
+            background: var(--bg-phone);
+            border: 1px solid var(--border-phone);
+            border-radius: 16px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        .gate-badge {
+            display: inline-block;
+            background: rgba(88, 166, 255, 0.15);
+            color: var(--accent-cyan);
+            border: 1px solid var(--accent-cyan);
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: bold;
+        }
+
+        .screen-nav-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+        }
+
+        .btn-screen {
+            background: var(--block-bg);
+            border: 1px solid var(--block-border);
+            color: var(--text-main);
+            padding: 8px 10px;
+            border-radius: 8px;
+            font-size: 0.75rem;
+            text-align: left;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-screen:hover, .btn-screen.active {
+            border-color: var(--accent-cyan);
+            background: rgba(88, 166, 255, 0.15);
+            color: var(--accent-cyan);
+            font-weight: bold;
+        }
+
+        .role-selector {
+            display: flex;
+            gap: 6px;
+            background: #0d1117;
+            padding: 4px;
+            border-radius: 8px;
+            border: 1px solid var(--border-phone);
+        }
+
+        .role-btn {
+            flex: 1;
+            text-align: center;
+            padding: 6px 0;
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            border-radius: 6px;
+            cursor: pointer;
+            border: none;
+            background: transparent;
+        }
+
+        .role-btn.active {
+            background: var(--block-bg);
+            color: var(--accent-green);
+            font-weight: bold;
+            border: 1px solid var(--block-border);
+        }
+
+        .info-card {
+            background: var(--block-bg);
+            border: 1px solid var(--block-border);
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 0.75rem;
+            line-height: 1.4;
+        }
+
+        /* KHUNG MOCKUP ĐIỆN THOẠI */
+        .phone-wrapper {
+            position: relative;
+            width: 390px;
+            height: 820px;
+            background: #010409;
+            border: 12px solid #21262d;
+            border-radius: 48px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8), 0 0 0 2px #30363d;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .phone-notch {
+            position: absolute;
+            top: 0; left: 50%;
+            transform: translateX(-50%);
+            width: 140px; height: 22px;
+            background: #21262d;
+            border-bottom-left-radius: 14px;
+            border-bottom-right-radius: 14px;
+            z-index: 999;
+        }
+
+        .phone-screen {
+            flex: 1;
+            background: var(--bg-phone);
+            overflow-y: auto;
+            padding: 28px 12px 68px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            position: relative;
+        }
+
+        /* BANNER CẢNH BÁO MẠNG DÙNG CHUNG */
+        .global-stale-banner {
+            background: rgba(210, 153, 34, 0.15);
+            border: 1px solid var(--accent-orange);
+            color: var(--accent-orange);
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 0.65rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        /* TIÊU CHUẨN MÀN HÌNH (SCR-01 ĐẾN SCR-08) */
+        .view-screen {
+            display: none;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .view-screen.active {
+            display: flex;
+        }
+
+        /* BADGES & COMMON UI */
+        .badge {
+            font-size: 0.6rem;
+            font-weight: bold;
+            padding: 2px 6px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+
+        .badge-green { background: rgba(35, 134, 54, 0.15); color: var(--accent-green); border: 1px solid var(--accent-green); }
+        .badge-orange { background: rgba(210, 153, 34, 0.15); color: var(--accent-orange); border: 1px solid var(--accent-orange); }
+        .badge-red { background: rgba(248, 81, 73, 0.15); color: var(--accent-red); border: 1px solid var(--accent-red); }
+        .badge-blue { background: rgba(88, 166, 255, 0.15); color: var(--accent-cyan); border: 1px solid var(--accent-cyan); }
+
+        .card {
+            background: var(--block-bg);
+            border: 1px solid var(--block-border);
+            border-radius: 8px;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .input-field, .select-field {
+            background: #0d1117;
+            border: 1px solid var(--block-border);
+            color: var(--text-main);
+            padding: 6px 8px;
+            border-radius: 6px;
+            font-size: 0.72rem;
+            width: 100%;
+        }
+
+        .btn-primary {
+            background: var(--accent-green);
+            color: #fff;
+            font-weight: bold;
+            border: none;
+            padding: 8px;
+            border-radius: 6px;
+            font-size: 0.72rem;
+            cursor: pointer;
+            text-align: center;
+        }
+
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--accent-cyan);
+            color: var(--accent-cyan);
+            padding: 6px;
+            border-radius: 6px;
+            font-size: 0.7rem;
+            cursor: pointer;
+            text-align: center;
+        }
+
+        /* BOTTOMSHEET & OVERLAY DIALOGS */
+        .overlay-sheet {
+            position: absolute;
+            bottom: 0; left: 0; right: 0;
+            background: #161b22;
+            border-top: 2px solid var(--accent-cyan);
+            border-top-left-radius: 16px;
+            border-top-right-radius: 16px;
+            padding: 14px;
+            display: none;
+            flex-direction: column;
+            gap: 10px;
+            box-shadow: 0 -10px 25px rgba(0,0,0,0.8);
+            z-index: 900;
+        }
+
+        .overlay-sheet.active { display: flex; }
+
+        /* BOTTOM NAV BAR */
+        .phone-bottom-nav {
+            position: absolute;
+            bottom: 0; left: 0; right: 0;
+            height: 56px;
+            background: #161b22;
+            border-top: 1px solid var(--border-phone);
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            align-items: center;
+            text-align: center;
+            z-index: 999;
+        }
+
+        .nav-item {
+            font-size: 0.6rem;
+            color: var(--text-muted);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+            cursor: pointer;
+        }
+
+        .nav-item.active {
+            color: var(--accent-cyan);
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- SIDEBAR BÊN TRÁI -->
+    <div class="sidebar">
+        <div>
+            <span class="gate-badge">INTEGRATED APP WIREFRAME</span>
+            <h2 style="font-size: 1.1rem; margin-top: 4px; color: var(--accent-cyan);">Tích Hợp 8 Màn Hình MVP</h2>
+        </div>
+
+        <div>
+            <label style="font-size: 0.7rem; color: var(--text-muted);">1. Chọn Màn Hình Kiểm Thử (Screen Switcher):</label>
+            <div class="screen-nav-grid" style="margin-top: 6px;">
+                <button class="btn-screen" id="nav-scr-1" onclick="navigateToScreen(1)">1. Login (D13)</button>
+                <button class="btn-screen active" id="nav-scr-2" onclick="navigateToScreen(2)">2. Home Dashboard</button>
+                <button class="btn-screen" id="nav-scr-3" onclick="navigateToScreen(3)">3. Node List</button>
+                <button class="btn-screen" id="nav-scr-4" onclick="navigateToScreen(4)">4. Node Detail & Chart</button>
+                <button class="btn-screen" id="nav-scr-5" onclick="navigateToScreen(5)">5. Alert Management</button>
+                <button class="btn-screen" id="nav-scr-6" onclick="navigateToScreen(6)">6. Discovery Approval</button>
+                <button class="btn-screen" id="nav-scr-7" onclick="navigateToScreen(7)">7. Downlink Config</button>
+                <button class="btn-screen" id="nav-scr-8" onclick="navigateToScreen(8)">8. System & Connection</button>
+            </div>
+        </div>
+
+        <div>
+            <label style="font-size: 0.7rem; color: var(--text-muted);">2. Giả Lập Vai Trò RBAC (Role Switcher):</label>
+            <div class="role-selector" style="margin-top: 4px;">
+                <button class="role-btn" id="role-viewer" onclick="setRole('viewer')">Viewer</button>
+                <button class="role-btn active" id="role-operator" onclick="setRole('operator')">Operator</button>
+                <button class="role-btn" id="role-admin" onclick="setRole('admin')">Admin</button>
+            </div>
+        </div>
+
+        <div>
+            <label style="font-size: 0.7rem; color: var(--text-muted);">3. Bật/Tắt Cảnh Báo Trạng Thái Mạng:</label>
+            <div style="display: flex; gap: 6px; margin-top: 4px;">
+                <button class="btn-outline" style="flex: 1; border-color: var(--accent-orange);" onclick="toggleWssStale()">Toggle WSS Stale</button>
+                <button class="btn-outline" style="flex: 1; border-color: var(--accent-red);" onclick="trigger403Overlay()">Trigger 403 Error</button>
+            </div>
+        </div>
+
+        <div class="info-card" id="sidebar-info">
+            <strong style="color: var(--accent-cyan);" id="info-title">Screen 2: Home Dashboard</strong><br>
+            <span id="info-desc">Giám sát tổng quan trạm LoRa Gateway, đếm đếm KPI 2x2 và danh sách sự cố khẩn cấp. Bấm trực tiếp vào các thẻ KPI để chuyển màn hình.</span><br><br>
+            <strong>RBAC active:</strong> <span style="color: var(--accent-green);" id="info-role">OPERATOR</span>
+        </div>
+    </div>
+
+    <!-- KHUNG ĐIỆN THOẠI MOCKUP -->
+    <div class="phone-wrapper">
+        <div class="phone-notch"></div>
+
+        <div class="phone-screen" id="phone-screen">
+
+            <!-- BANNER WSS STALE TOÀN CỤC -->
+            <div class="global-stale-banner" id="global-stale-banner" style="display: none;">
+                <span>⚠️ WSS Disconnected (Stale Data)</span>
+                <button style="background: var(--accent-orange); border: none; padding: 2px 6px; border-radius: 4px; font-weight: bold; cursor: pointer;" onclick="resyncRest()">Resync</button>
+            </div>
+
+            <!-- ========================================== -->
+            <!-- SCREEN 1: LOGIN / SESSION (PROVISIONAL)    -->
+            <!-- ========================================== -->
+            <div class="view-screen" id="screen-1">
+                <div style="text-align: center; margin-top: 30px;">
+                    <div style="font-size: 2.5rem;">📡</div>
+                    <strong style="font-size: 1rem; color: var(--accent-cyan);">LoRa Predictive Maintenance</strong>
+                    <div style="font-size: 0.65rem; color: var(--text-muted);">Industrial Sensor Monitoring</div>
+                </div>
+
+                <div class="card" style="margin-top: 10px;">
+                    <span class="badge badge-orange" style="align-self: flex-start;">PROVISIONAL / AUTH_D13_BLOCKED</span>
+                    <div style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 4px;">Host Server URL:</div>
+                    <input type="text" class="input-field" value="https://api.lormaint.io/v1">
+                    
+                    <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 4px;">Username / Email:</div>
+                    <input type="text" class="input-field" value="operator_lethanh">
+
+                    <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 4px;">Password:</div>
+                    <input type="password" class="input-field" value="••••••••••••">
+
+                    <button class="btn-primary" style="margin-top: 10px;" onclick="navigateToScreen(2)">
+                        🔑 Đăng Nhập (Sign-in)
+                    </button>
+                </div>
+
+                <div style="display: flex; gap: 6px;">
+                    <button class="btn-outline" style="flex: 1; font-size: 0.62rem;" onclick="alert('Mô phỏng 401 Unauthorized: Sai mật khẩu hoặc tài khoản không tồn tại')">Test 401</button>
+                    <button class="btn-outline" style="flex: 1; font-size: 0.62rem;" onclick="alert('Mô phỏng Session Expired: Phiên đăng nhập hết hạn, yêu cầu relogin')">Session Expired</button>
+                </div>
+            </div>
+
+            <!-- ========================================== -->
+            <!-- SCREEN 2: HOME DASHBOARD                   -->
+            <!-- ========================================== -->
+            <div class="view-screen active" id="screen-2">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <strong style="font-size: 0.85rem; color: var(--accent-cyan);">Factory Lò Hơi B</strong>
+                        <div style="font-size: 0.65rem; color: var(--text-muted);">Gateway SX1302 #01</div>
+                    </div>
+                    <span class="badge badge-green">WSS CONNECTED</span>
+                </div>
+
+                <!-- GATEWAY STATUS -->
+                <div class="card">
+                    <div style="display: flex; justify-content: space-between; font-size: 0.72rem;">
+                        <strong>📡 LoRa Gateway Status</strong>
+                        <span style="color: var(--accent-green);">RSSI: -98 dBm</span>
+                    </div>
+                    <div style="font-size: 0.65rem; color: var(--text-muted);">
+                        • Lần cuối thấy (last_seen): <strong>2 phút trước</strong> (Không ghi LIVE)<br>
+                        • SNR: 8.5 dB | Uplink packets: 14,209
+                    </div>
+                </div>
+
+                <!-- KPI GRID 2x2 -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                    <div class="card" style="cursor: pointer; border-color: var(--accent-cyan);" onclick="navigateToScreen(3)">
+                        <span style="font-size: 0.65rem; color: var(--text-muted);">TOTAL NODES</span>
+                        <strong style="font-size: 1.2rem; color: var(--accent-cyan);">12</strong>
+                        <span style="font-size: 0.6rem; color: var(--accent-cyan);">➔ Bấm xem danh sách</span>
+                    </div>
+                    <div class="card" style="cursor: pointer; border-color: var(--accent-green);" onclick="navigateToScreen(3)">
+                        <span style="font-size: 0.65rem; color: var(--text-muted);">HEALTHY</span>
+                        <strong style="font-size: 1.2rem; color: var(--accent-green);">8</strong>
+                        <span style="font-size: 0.6rem; color: var(--accent-green);">➔ Bấm lọc Active</span>
+                    </div>
+                    <div class="card" style="cursor: pointer; border-color: var(--accent-red);" onclick="navigateToScreen(5)">
+                        <span style="font-size: 0.65rem; color: var(--text-muted);">ALERTING</span>
+                        <strong style="font-size: 1.2rem; color: var(--accent-red);">2</strong>
+                        <span style="font-size: 0.6rem; color: var(--accent-red);">➔ Bấm xem Cảnh báo</span>
+                    </div>
+                    <div class="card" style="cursor: pointer; border-color: var(--accent-orange);" onclick="navigateToScreen(6)">
+                        <span style="font-size: 0.65rem; color: var(--text-muted);">PENDING</span>
+                        <strong style="font-size: 1.2rem; color: var(--accent-orange);">2</strong>
+                        <span style="font-size: 0.6rem; color: var(--accent-orange);">➔ Bấm Phê duyệt</span>
+                    </div>
+                </div>
+
+                <!-- RECENT ALERTS -->
+                <div style="display: flex; flex-direction: column; gap: 6px;">
+                    <span style="font-size: 0.72rem; font-weight: bold;">🚨 Cảnh Báo Mới Nhất (Direct to Screen 4)</span>
+                    <div class="card" style="border-left: 4px solid var(--accent-red); cursor: pointer;" onclick="navigateToScreen(4)">
+                        <div style="display: flex; justify-content: space-between;">
+                            <strong style="font-size: 0.72rem;">Node Motor #04</strong>
+                            <span style="font-size: 0.62rem; color: var(--text-muted);">10:42:15</span>
+                        </div>
+                        <div style="font-size: 0.68rem; color: var(--accent-red);">Rung RMS = 5.2 mm/s (Ngưỡng: 4.5 mm/s)</div>
+                        <span style="font-size: 0.6rem; color: var(--accent-cyan);">➔ Chạm 1-touch để soi đồ thị Screen 4</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ========================================== -->
+            <!-- SCREEN 3: NODE LIST                        -->
+            <!-- ========================================== -->
+            <div class="view-screen" id="screen-3">
+                <strong style="font-size: 0.85rem; color: var(--accent-cyan);">📡 Danh Sách Cảm Biến LoRa</strong>
+                <input type="text" class="input-field" placeholder="🔍 Tìm theo Tên Node hoặc DevEUI...">
+
+                <!-- FILTER CHIPS -->
+                <div style="display: flex; gap: 4px; overflow-x: auto; padding-bottom: 2px;">
+                    <span class="badge badge-blue">Tất cả (12)</span>
+                    <span class="badge badge-green">Healthy (8)</span>
+                    <span class="badge badge-red">Alerting (2)</span>
+                    <span class="badge badge-orange">Pending (2)</span>
+                </div>
+
+                <!-- NODE ITEM 1 -->
+                <div class="card" style="cursor: pointer;" onclick="navigateToScreen(4)">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <strong style="font-size: 0.75rem;">Node Motor #04</strong>
+                        <span class="badge badge-red">CRITICAL</span>
+                    </div>
+                    <div style="font-size: 0.65rem; color: var(--text-muted); font-family: monospace;">DevEUI: 70B3D57ED0004F8C</div>
+                    <div style="display: flex; justify-content: space-between; font-size: 0.7rem;">
+                        <span>Rung RMS: <strong>5.2 mm/s</strong></span>
+                        <span>Nhiệt độ: <strong>58.5 °C</strong></span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; font-size: 0.62rem; color: var(--text-muted);">
+                        <span>🔋 Pin: 45% | RSSI: -102dBm</span>
+                        <span>last_seen: 2 phút trước</span>
+                    </div>
+                </div>
+
+                <!-- NODE ITEM 2 -->
+                <div class="card" style="cursor: pointer;" onclick="navigateToScreen(4)">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <strong style="font-size: 0.75rem;">Node Boiler #01</strong>
+                        <span class="badge badge-green">HEALTHY</span>
+                    </div>
+                    <div style="font-size: 0.65rem; color: var(--text-muted); font-family: monospace;">DevEUI: 70B3D57ED0001A2B</div>
+                    <div style="display: flex; justify-content: space-between; font-size: 0.7rem;">
+                        <span>Rung RMS: <strong>1.8 mm/s</strong></span>
+                        <span>Nhiệt độ: <strong>62.0 °C</strong></span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; font-size: 0.62rem; color: var(--text-muted);">
+                        <span>🔋 Pin: 88% | RSSI: -88dBm</span>
+                        <span>last_seen: 5 phút trước</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ========================================== -->
+            <!-- SCREEN 4: NODE DETAIL & TELEMETRY CHART   -->
+            <!-- ========================================== -->
+            <div class="view-screen" id="screen-4">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <strong style="font-size: 0.85rem; color: var(--accent-cyan);">📈 Node Motor #04</strong>
+                    <span class="badge badge-red">CRITICAL</span>
+                </div>
+
+                <!-- SIGNAL CARD -->
+                <div class="card">
+                    <div style="font-size: 0.65rem; color: var(--text-muted);">
+                        • DevEUI: <strong style="font-family: monospace; color: var(--text-main);">70B3D57ED0004F8C</strong><br>
+                        • Gateway: SX1302 #01 | RSSI: -102 dBm | SNR: 8.5 dB<br>
+                        • Pin: 45% | Lần cuối thấy: <strong>2 phút trước</strong>
+                    </div>
+                </div>
+
+                <!-- METRICS GRID -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
+                    <div class="card">
+                        <span style="font-size: 0.62rem; color: var(--text-muted);">Vibration RMS</span>
+                        <strong style="font-size: 1.1rem; color: var(--accent-red);">5.2 mm/s</strong>
+                    </div>
+                    <div class="card">
+                        <span style="font-size: 0.62rem; color: var(--text-muted);">Temperature</span>
+                        <strong style="font-size: 1.1rem; color: var(--accent-green);">58.5 °C</strong>
+                    </div>
+                </div>
+
+                <!-- CHART SIMULATION -->
+                <div class="card">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-size: 0.7rem; font-weight: bold;">Lịch sử Rung động (Line Chart)</span>
+                        <div style="display: flex; gap: 2px;">
+                            <span class="badge badge-blue">1h</span>
+                            <span class="badge badge-orange">24h</span>
+                        </div>
+                    </div>
+                    <div style="height: 100px; background: #0d1117; border-radius: 6px; display: flex; align-items: flex-end; padding: 10px; gap: 8px;">
+                        <div style="height: 30%; width: 14%; background: var(--accent-cyan); border-radius: 2px;"></div>
+                        <div style="height: 35%; width: 14%; background: var(--accent-cyan); border-radius: 2px;"></div>
+                        <div style="height: 40%; width: 14%; background: var(--accent-cyan); border-radius: 2px;"></div>
+                        <div style="height: 60%; width: 14%; background: var(--accent-orange); border-radius: 2px;"></div>
+                        <div style="height: 90%; width: 14%; background: var(--accent-red); border-radius: 2px;"></div>
+                        <div style="height: 85%; width: 14%; background: var(--accent-red); border-radius: 2px;"></div>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; font-size: 0.6rem; color: var(--text-muted);">
+                        <span>14:00</span><span>14:15</span><span>14:30</span><span>14:45</span>
+                    </div>
+                </div>
+
+                <!-- ACTIONS -->
+                <div style="display: flex; gap: 6px; margin-top: 4px;">
+                    <button class="btn-primary" style="flex: 1;" onclick="navigateToScreen(7)">⚙️ Cấu Hình Downlink</button>
+                    <button class="btn-outline" style="flex: 1;" onclick="navigateToScreen(5)">🔔 Xem Alert Node</button>
+                </div>
+            </div>
+
+            <!-- ========================================== -->
+            <!-- SCREEN 5: ALERT LIST & ALERT DETAIL       -->
+            <!-- ========================================== -->
+            <div class="view-screen" id="screen-5">
+                <strong style="font-size: 0.85rem; color: var(--accent-red);">🔔 Quản Lý Cảnh Báo (Alerts)</strong>
+
+                <div style="display: flex; gap: 4px;">
+                    <span class="badge badge-red">Chưa ACK (2)</span>
+                    <span class="badge badge-green">Đã ACK (12)</span>
+                </div>
+
+                <!-- ALERT ITEM 1 -->
+                <div class="card" style="border-left: 4px solid var(--accent-red);">
+                    <div style="display: flex; justify-content: space-between;">
+                        <span class="badge badge-red">CRITICAL</span>
+                        <span style="font-size: 0.62rem; color: var(--text-muted);">10:42:15</span>
+                    </div>
+                    <strong style="font-size: 0.72rem;">Node Motor #04</strong>
+                    <div style="font-size: 0.68rem;">Rung RMS: <strong style="color: var(--accent-red);">5.2 mm/s</strong> (Ngưỡng: 4.5)</div>
+                    <div style="display: flex; gap: 6px; margin-top: 4px;">
+                        <button class="btn-primary" style="flex: 1; padding: 4px; font-size: 0.65rem;" onclick="openBottomSheet()">⚡ ACK Alert (DB)</button>
+                        <button class="btn-outline" style="flex: 1; padding: 4px; font-size: 0.65rem;" onclick="openBottomSheet()">⏱️ Timeline Detail</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ========================================== -->
+            <!-- SCREEN 6: DISCOVERY & NODE APPROVAL       -->
+            <!-- ========================================== -->
+            <div class="view-screen" id="screen-6">
+                <strong style="font-size: 0.85rem; color: var(--accent-orange);">📡 Discovery & Approval</strong>
+
+                <div class="card" style="border-color: var(--accent-orange);">
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="font-family: monospace; font-size: 0.72rem; color: var(--accent-cyan);">70B3D57ED00999FF</span>
+                        <span class="badge badge-orange">PENDING</span>
+                    </div>
+                    <div style="font-size: 0.65rem; color: var(--text-muted);">Gateway: SX1302 #01 | RSSI: -92 dBm</div>
+                </div>
+
+                <div class="card">
+                    <span style="font-size: 0.72rem; font-weight: bold; color: var(--accent-cyan);">📝 Form Cấu Hình Cấp Phát</span>
+                    <div style="font-size: 0.65rem; color: var(--text-muted);">Tên Thiết Bị:</div>
+                    <input type="text" class="input-field" id="disc-name" value="Vibration Sensor Pump #02">
+
+                    <div style="font-size: 0.65rem; color: var(--text-muted); margin-top: 4px;">Vị Trí Lắp Đặt:</div>
+                    <input type="text" class="input-field" value="Phân xưởng Lò hơi B - Bơm 2">
+
+                    <div style="display: flex; gap: 6px; margin-top: 8px;">
+                        <button class="btn-primary" id="btn-approve-node" style="flex: 1;" onclick="approveNode()">✔️ Approve & Provision</button>
+                        <button class="btn-outline" style="flex: 1; border-color: var(--accent-red); color: var(--accent-red);" onclick="alert('Đã từ chối Node')">✖️ Reject</button>
+                    </div>
+                </div>
+
+                <div class="card" id="prov-banner" style="display: none; background: rgba(210, 153, 34, 0.15); border-color: var(--accent-orange);">
+                    <span style="font-size: 0.68rem; color: var(--accent-orange);">⏳ Trạng thái: <strong>PENDING_PROVISIONING</strong> (Đang nạp Key qua Gateway...)</span>
+                </div>
+            </div>
+
+            <!-- ========================================== -->
+            <!-- SCREEN 7: NODE CONFIGURATION (DOWNLINK)   -->
+            <!-- ========================================== -->
+            <div class="view-screen" id="screen-7">
+                <strong style="font-size: 0.85rem; color: var(--accent-cyan);">⚙️ Downlink Configuration</strong>
+
+                <div class="card">
+                    <strong style="font-size: 0.72rem;">Node Motor #04</strong>
+                    <span style="font-size: 0.65rem; color: var(--text-muted); font-family: monospace;">70B3D57ED0004F8C</span>
+                </div>
+
+                <div class="card">
+                    <span style="font-size: 0.7rem; font-weight: bold;">⏱️ Chu Kỳ Báo Cáo:</span>
+                    <select class="select-field">
+                        <option>15 phút (Khuyến nghị)</option>
+                        <option>5 phút (Tốn pin)</option>
+                        <option>60 phút (Tiết kiệm)</option>
+                    </select>
+
+                    <span style="font-size: 0.7rem; font-weight: bold; margin-top: 6px;">🚨 Ngưỡng Rung RMS (mm/s):</span>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px;">
+                        <input type="number" class="input-field" id="cfg-warn" value="3.5" placeholder="Warning">
+                        <input type="number" class="input-field" id="cfg-crit" value="4.5" placeholder="Critical">
+                    </div>
+
+                    <button class="btn-primary" id="btn-save-cfg" style="margin-top: 8px;" onclick="sendDownlink()">⚡ Lưu & Gửi Downlink</button>
+                </div>
+
+                <div class="card" id="downlink-banner" style="display: none; background: rgba(210, 153, 34, 0.15); border-color: var(--accent-orange);">
+                    <span style="font-size: 0.68rem; color: var(--accent-orange);">⏳ Status: <strong>QUEUED_FOR_LORA_DOWNLINK</strong> (HTTP 202 Queued)</span>
+                </div>
+            </div>
+
+            <!-- ========================================== -->
+            <!-- SCREEN 8: CONNECTION & SYSTEM STATE        -->
+            <!-- ========================================== -->
+            <div class="view-screen" id="screen-8">
+                <strong style="font-size: 0.85rem; color: var(--accent-cyan);">⚡ System & Network State</strong>
+
+                <div class="card">
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="font-size: 0.7rem; font-weight: bold;">📡 Real-time WSS</span>
+                        <span class="badge badge-green" id="sys-wss-badge">CONNECTED</span>
+                    </div>
+                    <span style="font-size: 0.65rem; color: var(--text-muted);">Endpoint: wss://api.lormaint.io/v1</span>
+                    <button class="btn-outline" style="margin-top: 4px;" onclick="resyncRest()">🔄 Trigger Manual REST Resync</button>
+                </div>
+
+                <div class="card">
+                    <span style="font-size: 0.7rem; font-weight: bold;">💾 Local SSOT (Room DB)</span>
+                    <span style="font-size: 0.65rem; color: var(--text-muted);">Cache Synced: 1,240 records in local DB</span>
+                </div>
+
+                <div class="card">
+                    <span style="font-size: 0.7rem; font-weight: bold;">👤 Active Session RBAC</span>
+                    <span style="font-size: 0.65rem; color: var(--text-muted);">User: <strong>operator_lethanh</strong> (Role: <span style="color: var(--accent-green);" id="sys-role-text">OPERATOR</span>)</span>
+                </div>
+            </div>
+
+            <!-- BOTTOMSHEET OVERLAY CẢNH BÁO / TIMELINE -->
+            <div class="overlay-sheet" id="bottom-sheet">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <strong style="font-size: 0.8rem; color: var(--accent-cyan);">Chi Tiết Alert #ALT-8902</strong>
+                    <span style="cursor: pointer;" onclick="closeBottomSheet()">✕</span>
+                </div>
+                <div style="font-size: 0.68rem; color: var(--text-muted);">
+                    • Node Motor #04 | Rung RMS = 5.2 mm/s<br>
+                    • Timeline: Node Uplink (10:42:10) ➔ Gateway (10:42:12) ➔ Backend Alert DB (10:42:15)
+                </div>
+                <div style="background: rgba(210,153,34,0.1); border: 1px dashed var(--accent-orange); padding: 4px; border-radius: 4px; font-size: 0.62rem; color: var(--accent-orange);">
+                    ⚠️ Nút ACK chỉ update DB, KHÔNG gửi RF Downlink ACK.
+                </div>
+                <button class="btn-primary" onclick="alert('Đã ACK Alert trên Database!'); closeBottomSheet();">⚡ Confirm ACK (DB)</button>
+            </div>
+
+        </div>
+
+        <!-- BOTTOM NAVIGATION BAR (FIXED AT BOTTOM OF PHONE) -->
+        <div class="phone-bottom-nav">
+            <div class="nav-item active" id="bnav-2" onclick="navigateToScreen(2)">
+                <span>🏠</span>
+                <span>Home</span>
+            </div>
+            <div class="nav-item" id="bnav-3" onclick="navigateToScreen(3)">
+                <span>📡</span>
+                <span>Nodes</span>
+            </div>
+            <div class="nav-item" id="bnav-5" onclick="navigateToScreen(5)">
+                <span>🔔</span>
+                <span>Alerts</span>
+            </div>
+            <div class="nav-item" id="bnav-7" onclick="navigateToScreen(7)">
+                <span>⚙️</span>
+                <span>Config</span>
+            </div>
+            <div class="nav-item" id="bnav-8" onclick="navigateToScreen(8)">
+                <span>⚡</span>
+                <span>System</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentRole = 'operator';
+
+        const screenInfoMap = {
+            1: { title: "Screen 1: Login / Session (Provisional)", desc: "Auth D13 đang BLOCKED. Dựng khung layout dự kiến bao gồm Form Sign-in, thông báo 401 Unauthorized và Dialog Session Expired.", api: "POST /api/v1/auth/login" },
+            2: { title: "Screen 2: Home Dashboard", desc: "Giám sát trạm LoRa Gateway, đếm KPI 2x2 và danh sách sự cố khẩn cấp. Bấm trực tiếp vào các thẻ KPI để chuyển màn hình.", api: "GET /api/v1/dashboard/summary" },
+            3: { title: "Screen 3: Node List", desc: "Danh sách cảm biến LoRa. Ô tìm kiếm DevEUI/Name, bộ lọc trạng thái. Chạm vào card để xem chi tiết ở Screen 4.", api: "GET /api/v1/nodes" },
+            4: { title: "Screen 4: Node Detail & Telemetry Chart", desc: "Xem chi tiết tín hiệu LoRa (RSSI/SNR), chỉ số Rung/Nhiệt độ và đồ thị thời gian thực Vico Line Chart (1h/24h/7d).", api: "GET /api/v1/nodes/{id}/telemetry" },
+            5: { title: "Screen 5: Alert Management & Timeline", desc: "Quản lý sự cố vượt ngưỡng. Bấm ACK để cập nhật Database. Chú ý: Nút ACK chỉ update DB, KHÔNG gửi RF Downlink.", api: "POST /api/v1/alerts/{id}/ack" },
+            6: { title: "Screen 6: Discovery & Node Approval", desc: "Nơi duyệt LoRa Node mới tự xuất hiện (Join Request). Quy tắc Gate G0: Sau khi Approve, Node giữ ở PENDING_PROVISIONING.", api: "POST /api/v1/nodes/discovery/approve" },
+            7: { title: "Screen 7: Downlink Configuration", desc: "Điều chỉnh chu kỳ báo cáo và ngưỡng Cảnh báo (Warning/Critical). Bấm Lưu sẽ chuyển trạng thái QUEUED_FOR_LORA_DOWNLINK.", api: "PUT /api/v1/nodes/{id}/config" },
+            8: { title: "Screen 8: Connection & System State", desc: "Quản trị kết nối WSS, Room DB SSOT cache và phiên làm việc RBAC. Hỗ trợ kích hoạt REST Resync khi WSS phục hồi.", api: "wss://api.lormaint.io/v1/stream" }
+        };
+
+        function navigateToScreen(screenNum) {
+            // Hide all screens
+            document.querySelectorAll('.view-screen').forEach(s => s.classList.remove('active'));
+            document.querySelectorAll('.btn-screen').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+
+            // Show selected screen
+            document.getElementById('screen-' + screenNum).classList.add('active');
+            
+            const btnNav = document.getElementById('nav-scr-' + screenNum);
+            if (btnNav) btnNav.classList.add('active');
+
+            const bnav = document.getElementById('bnav-' + screenNum);
+            if (bnav) bnav.classList.add('active');
+
+            // Update Info Panel
+            const info = screenInfoMap[screenNum];
+            document.getElementById('info-title').innerText = info.title;
+            document.getElementById('info-desc').innerText = info.desc;
+
+            closeBottomSheet();
+        }
+
+        function setRole(role) {
+            currentRole = role;
+            document.querySelectorAll('.role-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById('role-' + role).classList.add('active');
+
+            document.getElementById('info-role').innerText = role.toUpperCase();
+            document.getElementById('sys-role-text').innerText = role.toUpperCase();
+
+            // Handle RBAC rules visually
+            const btnApprove = document.getElementById('btn-approve-node');
+            const btnSaveCfg = document.getElementById('btn-save-cfg');
+
+            if (role === 'viewer') {
+                if (btnApprove) btnApprove.disabled = true;
+                if (btnSaveCfg) btnSaveCfg.disabled = true;
+                document.getElementById('info-role').style.color = 'var(--accent-red)';
+            } else {
+                if (btnApprove) btnApprove.disabled = false;
+                if (btnSaveCfg) btnSaveCfg.disabled = false;
+                document.getElementById('info-role').style.color = 'var(--accent-green)';
+            }
+        }
+
+        function toggleWssStale() {
+            const banner = document.getElementById('global-stale-banner');
+            const badge = document.getElementById('sys-wss-badge');
+            if (banner.style.display === 'none') {
+                banner.style.display = 'flex';
+                badge.innerText = 'STALE';
+                badge.className = 'badge badge-orange';
+            } else {
+                banner.style.display = 'none';
+                badge.innerText = 'CONNECTED';
+                badge.className = 'badge badge-green';
+            }
+        }
+
+        function trigger403Overlay() {
+            alert('🔒 LỖI 403 PERMISSION DENIED:\nTài khoản vai trò Viewer không đủ quyền hạn thực hiện thao tác này! Vui lòng đăng nhập tài khoản Operator hoặc Admin.');
+        }
+
+        function approveNode() {
+            if (currentRole !== 'admin') {
+                trigger403Overlay();
+                return;
+            }
+            document.getElementById('prov-banner').style.display = 'flex';
+            alert('✅ ĐÃ DUYỆT NODE!\n\n⚠️ Quy tắc Gate G0: Trạng thái hiện tại giữ ở PENDING_PROVISIONING cho đến khi Backend nạp Key thành công.');
+        }
+
+        function sendDownlink() {
+            if (currentRole === 'viewer') {
+                trigger403Overlay();
+                return;
+            }
+            const warn = parseFloat(document.getElementById('cfg-warn').value);
+            const crit = parseFloat(document.getElementById('cfg-crit').value);
+
+            if (warn >= crit) {
+                alert('⚠️ LỖI VALIDATION:\nNgưỡng Warning Limit phải BÉ HƠN Critical Limit!');
+                return;
+            }
+
+            document.getElementById('downlink-banner').style.display = 'flex';
+            alert('✅ ĐÃ ĐẨY CẤU HÌNH VÀO HÀNG ĐỢI (HTTP 202)!\n\n⚠️ Quy tắc Gate G0: Trạng thái hiện tại: QUEUED_FOR_LORA_DOWNLINK.');
+        }
+
+        function resyncRest() {
+            alert('🔄 Đang kích hoạt REST Resync đồng bộ dữ liệu bù...');
+            setTimeout(() => {
+                document.getElementById('global-stale-banner').style.display = 'none';
+                document.getElementById('sys-wss-badge').innerText = 'CONNECTED';
+                document.getElementById('sys-wss-badge').className = 'badge badge-green';
+                alert('✅ Đồng bộ REST Resync hoàn tất! Trạng thái kết nối trở về WSS CONNECTED.');
+            }, 600);
+        }
+
+        function openBottomSheet() { document.getElementById('bottom-sheet').classList.add('active'); }
+        function closeBottomSheet() { document.getElementById('bottom-sheet').classList.remove('active'); }
+    </script>
+</body>
+</html>
