@@ -85,13 +85,10 @@
           "gateway_id": "gw01",
           "node_id": 1,
           "reading_id": "50",
-          "event_id": "node-01-event-00042",
+          "event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:42",
           "observed_at": "2026-10-20T08:00:00Z",
           "data": {
-            "ch1_raw": 2575,
-            "ch2_raw": 620,
-            "ch3_raw": 50,
-            "battery_mv": 3600
+            "temp_x10": 355
           }
         }
       }
@@ -128,10 +125,7 @@
           "event_id": "",
           "observed_at": "2026-10-20T08:00:00Z",
           "data": {
-            "ch1_raw": 2575,
-            "ch2_raw": 620,
-            "ch3_raw": 50,
-            "battery_mv": 3600
+            "temp_x10": 355
           }
         }
       }
@@ -149,13 +143,10 @@
           "gateway_id": "gw01",
           "node_id": 1,
           "reading_id": 9007199254740992,
-          "event_id": "node-01-event-00042",
+          "event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:42",
           "observed_at": "2026-10-20T08:00:00Z",
           "data": {
-            "ch1_raw": 2575,
-            "ch2_raw": 620,
-            "ch3_raw": 50,
-            "battery_mv": 3600
+            "temp_x10": 355
           }
         }
       }
@@ -328,6 +319,27 @@
           "state": "QUEUED",
           "state_revision": "1",
           "operator_token": "secret-example-not-real"
+        }
+      }
+    },
+    {
+      "id": "WS-TELEMETRY-LEGACY-DATA-INVALID",
+      "valid": false,
+      "message": {
+        "schema_version": "1.1-draft",
+        "event_id": "srv:0001",
+        "type": "TELEMETRY_UPDATE",
+        "emitted_at": "2026-10-20T08:00:01Z",
+        "cursor": "opaque:001",
+        "payload": {
+          "gateway_id": "gw01",
+          "node_id": 1,
+          "reading_id": "50",
+          "event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:42",
+          "observed_at": "2026-10-20T08:00:00Z",
+          "data": {
+            "ch1_raw": 355
+          }
         }
       }
     }
