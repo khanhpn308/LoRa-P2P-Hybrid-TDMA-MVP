@@ -26,8 +26,9 @@
 
 ## 3. Phân xử các cơ hội truyền (C08)
 
-- Một radio SX1276 bán song công: Beacon/downlink, cửa sổ Alert tranh chấp, DATA, ACK/retry, Join và guard **không được chồng lấn TX/RX trái phép**.
+- Một radio SX1276 bán song công: Beacon/downlink (Beacon gộp `ACK_BITMAP` Telemetry 2B theo CT-01-ACK-01), cửa sổ Alert tranh chấp, DATA, retry, Join và guard **không được chồng lấn TX/RX trái phép**. Không đặt `RF_ACK` Telemetry riêng sau mỗi DATA.
 - Alert ưu tiên sử dụng cửa sổ contention với bounded backoff/CAD khi phù hợp; retry chỉ tại những cơ hội dự phòng hợp lệ trong lịch Backend/User đã duyệt. Gateway không được tự giành DATA Slot của Node khác.
+- Beacon của Superframe `N+1` ACK Telemetry hợp lệ được Gateway persist trong Superframe `N`; tối đa một Telemetry uplink đang chờ ACK trên mỗi Node cho cơ chế này. Mất Beacon/bit ACK = 0 chỉ có nghĩa chưa được xác nhận; retry phải theo lịch đã phê duyệt. `PRIORITY_ALERT` không bị vô hiệu hóa bởi `Periodic OFF` hoặc Telemetry chờ ACK; cơ chế ACK Alert riêng còn OPEN G2.
 - Quản hàng đợi/airtime/retry hữu hạn, theo dõi fairness và các trường hợp mất cảnh báo. Gói đang phát không thể bị ngắt tùy tiện; kênh có thể có hidden terminal/collision.
 
 ## 4. Profile thử nghiệm, không phải baseline production
