@@ -1,6 +1,19 @@
 # Ma trận truy vết requirements, baseline R1 và remediation R2
 
-**Phạm vi Owner hiện hành:** [G0 C01–C09](../architecture/g0-owner-decisions.md). Đây là nguồn quyết định kiến trúc và chính sách MVP; 23 yêu cầu bên dưới vẫn giữ trạng thái review/verification riêng. Danh mục chức năng toàn MVP chưa được xác minh đầy đủ; không suy G0 PASS từ văn bản này.
+**Nguồn kiến trúc hiện hành:** [Kiến trúc hệ thống](../architecture/system-overview.md) (C01–C08 đã được Owner phê duyệt ngày 2026-10-30; C09 chốt mọi chức năng Owner yêu cầu thuộc MVP, Mesh tạm ngoài phạm vi). Các yêu cầu R1/R2 bên dưới giữ nguyên trạng thái phê duyệt kỹ thuật và kiểm chứng riêng; không tự xem `G0 PASS`.
+
+## Ràng buộc G0 áp dụng khi triển khai
+
+| Ràng buộc Owner | RTM / hợp đồng liên quan |
+|---|---|
+| C01/C02: 1–4 Gateway hình sao, mỗi Gateway kênh riêng BW 125 kHz, Node cố định Gateway/kênh | RF-001, MAC-001, MAC-005; RF profile G1 |
+| C03/C04: Backend lập lịch, User duyệt; Gateway không sửa phân bổ; chuyển lịch qua ACK/lease/cửa sổ an toàn | MAC-003/004, SYS-001/002; schedule contracts G2/G4 |
+| C05: Node tạo Event ID; Gateway ghi nhận RX; Backend durable dedup | DATA-001/002; RF/MQTT/DB contracts G2/G4 |
+| C06: Node ID 8-bit theo Gateway; `(gateway_id,node_id)` là định danh logic; Device UID 128-bit chưa duyệt | Radio MAC identity/DB contract G2/G4 |
+| C07: MVP có tạm ngừng, khôi phục, thu hồi, cấp lại quyền; ngoại tuyến chỉ giữ quyền còn hiệu lực, không tự gia hạn | SYS-001/002, SEC-001/002/003; G2/G3/G5 |
+| C08: cửa sổ Alert tranh chấp và retry dự phòng đã duyệt; Periodic OFF vẫn gửi Alert | ALERT-001, MAC-005/006/007; G1/G3 |
+| C09: mọi chức năng Owner yêu cầu thuộc MVP; Mesh tạm ngoài phạm vi | Danh mục chức năng/acceptance vẫn cần xác nhận đầy đủ |
+
 
 Status tài liệu: `DRAFT`, [Issue #60](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/60). Ưu tiên theo Issue: Correctness > Safety > Reliability > Maintainability > Performance.
 
