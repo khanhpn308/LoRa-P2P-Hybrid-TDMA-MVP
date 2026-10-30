@@ -1,30 +1,35 @@
-# Hợp đồng giao tiếp giữa các nhóm — LoRa P2P Hybrid TDMA MVP
+# Hợp đồng giao tiếp — LoRa P2P Hybrid TDMA MVP
 
-**Revision:** 1.1-draft · **Status:** PROPOSED / REQUIRES CROSS-TEAM REVIEW · **Ngày:** 2026-10-20.
+**G01–G10: `OWNER_APPROVED / LOCKED` (2026-10-30).** Đây là các ràng buộc bắt buộc cho tất cả contract và implementation; không được thay đổi nếu Owner chưa phê duyệt quyết định mới. **Schema/byte layout/timing/security parameters còn chưa được chốt không tự được xem là LOCKED hoặc VERIFIED.**
 
-Các tệp trong thư mục này định nghĩa giao diện để Firmware Node, Firmware Gateway, Backend Go, Web và Mobile phát triển độc lập. **Đây là thiết kế hợp đồng, không phải bằng chứng đã triển khai, đã nghiệm thu hay đạt an toàn RF.** Tham chiếu kiến trúc gốc: tài liệu `esp32_sx1762.md` người đề xuất cung cấp (mục 1, 3, 5–9, 11) và baseline tại `docs/architecture/system-overview.md`.
+## Ràng buộc đã khóa
 
-| Ranh giới/đầu mối | Nguồn chuẩn đề xuất | Chủ trì → Cùng duyệt | Issue |
-|---|---|---|---|
-| Node ↔ Gateway RF Custom MAC | [radio-mac/specification.md](radio-mac/specification.md) | Embedded Node + Gateway → RF/Security, Backend | [#12](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/12) |
-| Backend Planner → Gateway Executor → Node | [radio-mac/tdma-schedule.md](radio-mac/tdma-schedule.md) | Backend + Gateway → Node/RF | #12, #14 |
-| Gateway ↔ Mosquitto ↔ Backend Go | [mqtt/topics.md](mqtt/topics.md), [mqtt/schemas/](mqtt/schemas/) | Gateway + Backend/Infra → Security | [#14](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/14) |
-| Backend REST → Next.js/Kotlin Android | [api/openapi.yaml](api/openapi.yaml) | Backend → Web/Mobile | [#15](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/15) |
-| Backend WSS → Next.js/Kotlin Android | [api/websocket.md](api/websocket.md), [api/schemas/](api/schemas/) | Backend → Web/Mobile | #15 |
+| ID | Quy tắc bắt buộc |
+|---|---|
+| **G01** | MVP có **1–4 Gateway**, mạng **Star**, mỗi Gateway dùng kênh RF riêng, LoRa **BW 125 kHz**. |
+| **G02** | Node gắn cố định với một Gateway và một kênh; **không Mesh, roaming hoặc chuyển Gateway tự động**. |
+| **G03** | Định danh logic Node là **`(gateway_id, node_id)`**, với `node_id` **8-bit** theo phạm vi Gateway. |
+| **G04** | **Backend** tạo/quản lý phiên bản lịch TDMA; **User được phân quyền** phê duyệt. |
+| **G05** | **Gateway** thực thi và kiểm tra an toàn cục bộ; **không tự thay đổi Slot Assignment** đã được duyệt. |
+| **G06** | **Node tạo Event ID gốc**; Gateway nhận/chuyển tiếp; Backend lưu bền vững và chống trùng theo nguồn sự kiện. |
+| **G07** | MVP bắt buộc có **tạm ngừng, khôi phục, thu hồi và cấp lại quyền Node**. |
+| **G08** | **`Periodic OFF` không tắt** khả năng phát hiện và gửi cảnh báo hợp lệ. |
+| **G09** | Alert sử dụng **cửa sổ tranh chấp** và **cơ hội retry dự phòng** thuộc lịch đã được Backend/User phê duyệt. |
+| **G10** | Các giao tiếp phải có xác thực, phân quyền theo ngữ cảnh, xử lý lỗi và truy vết phù hợp; **CRC không thay thế xác thực mật mã**. |
 
-## Quy tắc hợp đồng
+Mọi chức năng Owner yêu cầu thuộc **MVP**; **Mesh tạm ngoài phạm vi**. Quyền Node khi Gateway mất Internet chỉ tiếp tục khi còn hiệu lực và chứng minh được, **không tự gia hạn** (C07). Chuyển lịch phải tuân chuẩn bị/ACK, Slot Lease và safe cutover (C04). Đây là phần của kiến trúc đã duyệt, không phải thông số RF được đo.
 
-1. Hợp đồng chỉ có hiệu lực khi chủ sở hữu phía gửi **và** phía nhận duyệt qua PR/ADR. Không suy diễn việc xuất hiện trong Git là đã được phê duyệt.
-2. Không dùng LoRaWAN/ChirpStack. Backend chỉ lập lịch; Gateway cục bộ điều khiển SX1276 bán song công và duy trì chế độ offline.
-3. Ba lớp version độc lập: RF `PROTO_VER` (chưa chốt byte layout), MQTT `schema_version`, REST `/api/v1` + OpenAPI và sự kiện WSS `schema_version`. Thay đổi phá vỡ tương thích yêu cầu ADR, bump version, vectors và review.
-4. `event_id` Telemetry/Alert do **Node tạo**, không đổi khi RF/MQTT retry; dedup nghiệp vụ theo `(gateway_id,node_id,event_id)`. Gateway-origin Status/ACK dùng event ID riêng. `SEQ_NUM` 8-bit không dùng làm khóa sự kiện.
-5. Các con số 10 s / 2 s / 400 ms / SF7 / 921.4 MHz / 1%–10% / trễ <3 s từ bản thiết kế là **đầu vào/giả thuyết đo kiểm**, không là SLA hay RF-compliance đã xác nhận.
-6. Chỉ những tệp `contracts/` được sửa trong bộ hồ sơ này; CI hiện tại chỉ kiểm tra cú pháp JSON. Xem [trình tự kiểm tra](verification.md) để chạy kiểm tra hành vi riêng.
+## Giao diện giữa các nhóm
 
-## Trạng thái
+| Ranh giới | Contract hiện có |
+|---|---|
+| Node ↔ Gateway | [Radio MAC](radio-mac/specification.md) |
+| Backend Planner ↔ Gateway Executor ↔ Node | [TDMA Schedule](radio-mac/tdma-schedule.md) |
+| Gateway ↔ Mosquitto ↔ Backend Go | [MQTT topics](mqtt/topics.md) và [JSON Schemas](mqtt/schemas/) |
+| Backend ↔ Web/Mobile | [REST OpenAPI](api/openapi.yaml), [WebSocket](api/websocket.md) |
 
-- **MQTT / REST / WebSocket**: đủ mức làm mock, tích hợp schema draft và review; chưa có producer/consumer thực tế PASS.
-- **Radio MAC v1**: *BLOCKED G2* đến khi chốt authenticated framing/nonce/key provisioning, tính airtime và có cross-language golden vectors; không dùng định dạng 8 byte + CRC16 như giao thức production.
-- Danh sách bất đồng/giả định cần xử lý tại [OPEN_DECISIONS.md](OPEN_DECISIONS.md).
+**Version:** RF `PROTO_VER`, MQTT `schema_version`, REST `/api/v1` và WSS `schema_version` độc lập; thay đổi phá vỡ tương thích phải cập nhật phiên bản, schema/fixtures, tests và review các phía liên quan. Không sử dụng LoRaWAN MAC/ChirpStack. Web/Mobile không truy cập trực tiếp MQTT hoặc PostgreSQL.
 
-**Bảo vệ phạm vi:** #12, #14, #15 đều cho phép sửa `contracts/`. Không tự thay đổi firmware, SQL migration, CI workflow hay tài liệu ngoài phạm vi Issue.
+**Chưa khóa định dạng thực thi:** RF frame/authentication/nonce/key lifecycle, Event ID wire encoding, thời gian Superframe/Slot/guard, quyền và thời hạn lease, tần số/công suất hợp quy, chi tiết cấp lại khóa, phương thức xác thực WebSocket. Các giá trị ví dụ `P-10S-15`, 921.4 MHz, tỷ lệ airtime và latency target **không được tự xem là thông số đã duyệt**. Đây là công việc thiết kế/kiểm thử còn lại; **không hạ trạng thái G01–G10**.
+
+**Trạng thái:** `G01–G10 LOCKED`; giao diện chi tiết vẫn ở phiên bản `1.1-draft` để tiếp tục chốt, **implementation/contract tests/RF/HIL NOT_VERIFIED**. Danh sách thông số chi tiết còn phải xử lý nằm trong [OPEN_DECISIONS.md](OPEN_DECISIONS.md).
