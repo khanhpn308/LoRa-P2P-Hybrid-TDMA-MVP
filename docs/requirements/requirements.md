@@ -1,5 +1,7 @@
 # Ma trận truy vết requirements, baseline R1 và remediation R2
 
+**Phạm vi Owner hiện hành:** [G0 C01–C09](../architecture/g0-owner-decisions.md). Đây là nguồn quyết định kiến trúc và chính sách MVP; 23 yêu cầu bên dưới vẫn giữ trạng thái review/verification riêng. Danh mục chức năng toàn MVP chưa được xác minh đầy đủ; không suy G0 PASS từ văn bản này.
+
 Status tài liệu: `DRAFT`, [Issue #60](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/60). Ưu tiên theo Issue: Correctness > Safety > Reliability > Maintainability > Performance.
 
 R2 theo [Issue #64](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/64), xử lý 12 REVISE trong [review #63](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/63#issuecomment-6395708147). Đây là remediation tài liệu, không là human technical sign-off; G0 vẫn `NOT_VERIFIED`.
