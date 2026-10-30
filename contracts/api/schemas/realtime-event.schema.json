@@ -90,7 +90,7 @@
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 128,
-                "description": "Node-origin opaque Event ID (C05), stable across retries/reboot; scope with (gateway_id,node_id), not Gateway reception epoch/seq. Encoding OPEN G2."
+                "description": "Gateway-origin persistent business Event ID; scoped to originating gateway, unchanged across RF retries, Gateway reboot and MQTT replay. Distinct from Backend WSS envelope ID."
               },
               "observed_at": {
                 "type": [
@@ -103,31 +103,14 @@
                 "type": "object",
                 "additionalProperties": false,
                 "required": [
-                  "ch1_raw",
-                  "ch2_raw",
-                  "ch3_raw",
-                  "battery_mv"
+                  "temp_x10"
                 ],
                 "properties": {
-                  "ch1_raw": {
+                  "temp_x10": {
                     "type": "integer",
                     "minimum": -32768,
-                    "maximum": 32767
-                  },
-                  "ch2_raw": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 65535
-                  },
-                  "ch3_raw": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 65535
-                  },
-                  "battery_mv": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 65535
+                    "maximum": 32767,
+                    "description": "Raw Celsius x10 from Node, e.g. 355 means 35.5 C."
                   }
                 }
               }
