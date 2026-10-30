@@ -1,5 +1,7 @@
 # Điểm cần chốt và sai khác giữa tài liệu thiết kế với baseline repo
 
+**Hướng kiến trúc C01–C08 đã được Owner phê duyệt; các mục bên dưới chỉ còn chặn việc đóng băng chi tiết G1/G2/G4, không được dùng để khôi phục giả định trước C01–C08.**
+
 **Quy tắc phân loại:** CONFIRMED = chủ đích kiến trúc trong ADR/baseline; CANDIDATE = đề xuất từ tài liệu đính kèm; BLOCKED = cần ADR hoặc bằng chứng G1/G2 trước khi đóng băng.
 
 | ID / nguồn mục | Vấn đề | Hợp đồng tạm thời / yêu cầu giải quyết | Trạng thái & người duyệt |
