@@ -1,11 +1,11 @@
 {
-  "revision": "1.0-draft",
+  "revision": "1.1-draft",
   "cases": [
     {
       "id": "WS-ALERT-VALID",
       "valid": true,
       "message": {
-        "schema_version": "1.0-draft",
+        "schema_version": "1.1-draft",
         "event_id": "srv:0001",
         "type": "ALERT_TRIGGERED",
         "emitted_at": "2026-10-20T08:00:01Z",
@@ -23,7 +23,7 @@
       "id": "WS-ALERT-MISSING-ID",
       "valid": false,
       "message": {
-        "schema_version": "1.0-draft",
+        "schema_version": "1.1-draft",
         "event_id": "",
         "type": "ALERT_TRIGGERED",
         "emitted_at": "2026-10-20T08:00:01Z",
@@ -41,7 +41,7 @@
       "id": "WS-ALERT-UNKNOWN-TYPE",
       "valid": false,
       "message": {
-        "schema_version": "1.0-draft",
+        "schema_version": "1.1-draft",
         "event_id": "srv:0001",
         "type": "BEEP",
         "emitted_at": "2026-10-20T08:00:01Z",
@@ -59,7 +59,7 @@
       "id": "WS-SCHEDULE-VALID",
       "valid": true,
       "message": {
-        "schema_version": "1.0-draft",
+        "schema_version": "1.1-draft",
         "event_id": "srv:0001",
         "type": "SCHEDULE_STATE_CHANGED",
         "emitted_at": "2026-10-20T08:00:01Z",
@@ -76,7 +76,7 @@
       "id": "WS-TELEMETRY-VALID",
       "valid": true,
       "message": {
-        "schema_version": "1.0-draft",
+        "schema_version": "1.1-draft",
         "event_id": "srv:0001",
         "type": "TELEMETRY_UPDATE",
         "emitted_at": "2026-10-20T08:00:01Z",
@@ -85,7 +85,7 @@
           "gateway_id": "gw01",
           "node_id": 1,
           "reading_id": "50",
-          "event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:42",
+          "event_id": "node-01-event-00042",
           "observed_at": "2026-10-20T08:00:00Z",
           "data": {
             "ch1_raw": 2575,
@@ -100,7 +100,7 @@
       "id": "WS-STATUS-VALID",
       "valid": true,
       "message": {
-        "schema_version": "1.0-draft",
+        "schema_version": "1.1-draft",
         "event_id": "srv:0001",
         "type": "GATEWAY_STATUS_CHANGED",
         "emitted_at": "2026-10-20T08:00:01Z",
@@ -116,7 +116,7 @@
       "id": "WS-TELEMETRY-BAD-SOURCE-EVENT-ID",
       "valid": false,
       "message": {
-        "schema_version": "1.0-draft",
+        "schema_version": "1.1-draft",
         "event_id": "srv:0001",
         "type": "TELEMETRY_UPDATE",
         "emitted_at": "2026-10-20T08:00:01Z",
@@ -125,7 +125,7 @@
           "gateway_id": "gw01",
           "node_id": 1,
           "reading_id": "50",
-          "event_id": "gw01:boot:42",
+          "event_id": "",
           "observed_at": "2026-10-20T08:00:00Z",
           "data": {
             "ch1_raw": 2575,
@@ -140,7 +140,7 @@
       "id": "WS-TELEMETRY-BAD-READING-ID",
       "valid": false,
       "message": {
-        "schema_version": "1.0-draft",
+        "schema_version": "1.1-draft",
         "event_id": "srv:0001",
         "type": "TELEMETRY_UPDATE",
         "emitted_at": "2026-10-20T08:00:01Z",
@@ -149,7 +149,7 @@
           "gateway_id": "gw01",
           "node_id": 1,
           "reading_id": 9007199254740992,
-          "event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:42",
+          "event_id": "node-01-event-00042",
           "observed_at": "2026-10-20T08:00:00Z",
           "data": {
             "ch1_raw": 2575,
@@ -164,7 +164,7 @@
       "id": "WS-SCHEDULE-ACTIVE-VALID",
       "valid": true,
       "message": {
-        "schema_version": "1.0-draft",
+        "schema_version": "1.1-draft",
         "event_id": "srv:0001",
         "type": "SCHEDULE_STATE_CHANGED",
         "emitted_at": "2026-10-20T08:00:01Z",
@@ -181,7 +181,7 @@
       "id": "WS-SCHEDULE-UNKNOWN-STATE",
       "valid": false,
       "message": {
-        "schema_version": "1.0-draft",
+        "schema_version": "1.1-draft",
         "event_id": "srv:0001",
         "type": "SCHEDULE_STATE_CHANGED",
         "emitted_at": "2026-10-20T08:00:01Z",
@@ -198,7 +198,7 @@
       "id": "WS-ALERT-NONUTC",
       "valid": false,
       "message": {
-        "schema_version": "1.0-draft",
+        "schema_version": "1.1-draft",
         "event_id": "srv:0001",
         "type": "ALERT_TRIGGERED",
         "emitted_at": "2026-10-20T15:00:01+07:00",
@@ -216,7 +216,7 @@
       "id": "WS-COMMAND-VALID",
       "valid": true,
       "message": {
-        "schema_version": "1.0-draft",
+        "schema_version": "1.1-draft",
         "event_id": "srv:cmd:0001",
         "type": "COMMAND_STATE_CHANGED",
         "emitted_at": "2026-10-20T08:01:01Z",
@@ -233,7 +233,7 @@
       "id": "WS-COMMAND-NODE-ACKED-VALID",
       "valid": true,
       "message": {
-        "schema_version": "1.0-draft",
+        "schema_version": "1.1-draft",
         "event_id": "srv:cmd:0001",
         "type": "COMMAND_STATE_CHANGED",
         "emitted_at": "2026-10-20T08:01:01Z",
@@ -250,7 +250,7 @@
       "id": "WS-COMMAND-MISSING-REVISION",
       "valid": false,
       "message": {
-        "schema_version": "1.0-draft",
+        "schema_version": "1.1-draft",
         "event_id": "srv:cmd:0001",
         "type": "COMMAND_STATE_CHANGED",
         "emitted_at": "2026-10-20T08:01:01Z",
@@ -266,7 +266,7 @@
       "id": "WS-COMMAND-INVALID-UUID",
       "valid": false,
       "message": {
-        "schema_version": "1.0-draft",
+        "schema_version": "1.1-draft",
         "event_id": "srv:cmd:0001",
         "type": "COMMAND_STATE_CHANGED",
         "emitted_at": "2026-10-20T08:01:01Z",
@@ -283,7 +283,7 @@
       "id": "WS-COMMAND-INVALID-STATE",
       "valid": false,
       "message": {
-        "schema_version": "1.0-draft",
+        "schema_version": "1.1-draft",
         "event_id": "srv:cmd:0001",
         "type": "COMMAND_STATE_CHANGED",
         "emitted_at": "2026-10-20T08:01:01Z",
@@ -300,7 +300,7 @@
       "id": "WS-COMMAND-INVALID-REVISION",
       "valid": false,
       "message": {
-        "schema_version": "1.0-draft",
+        "schema_version": "1.1-draft",
         "event_id": "srv:cmd:0001",
         "type": "COMMAND_STATE_CHANGED",
         "emitted_at": "2026-10-20T08:01:01Z",
@@ -317,7 +317,7 @@
       "id": "WS-COMMAND-EXTRA-FIELD",
       "valid": false,
       "message": {
-        "schema_version": "1.0-draft",
+        "schema_version": "1.1-draft",
         "event_id": "srv:cmd:0001",
         "type": "COMMAND_STATE_CHANGED",
         "emitted_at": "2026-10-20T08:01:01Z",
