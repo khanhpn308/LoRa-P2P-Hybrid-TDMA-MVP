@@ -1,5 +1,7 @@
 # Sổ quyết định kiến trúc
 
+**Các quyết định Owner mới nhất C01–C08 và chính sách C09:** [G0 — Owner Decisions](../architecture/g0-owner-decisions.md). Các ADR/R1 cũ chưa được tự động sửa trạng thái phê duyệt hoặc trạng thái kiểm thử.
+
 Register R1 theo [Issue #60](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/60). Design approval, cross-team review và verification độc lập; Git merge hoặc Closed Issue không tự tạo PASS. Nguồn: [AGENTS.md](../../AGENTS.md), [acceptance gates](../verification/acceptance-gates.md).
 
 | ADR | Quyết định / phạm vi | Approval được ghi nhận | Review còn chờ | Evidence / giới hạn |
