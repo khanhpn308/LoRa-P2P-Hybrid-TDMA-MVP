@@ -1,6 +1,6 @@
 {
   "revision": "1.1-draft",
-  "note": "Draft schema fixtures for Node-origin event IDs (telemetry/alert), Gateway-origin envelope IDs (other uplinks), Owner-approved activation windows and independent Gateway tracking. No RF byte layout/timing evidence.",
+  "note": "Owner revised 2026-10-30: Gateway creates stable Event ID; RF Telemetry only temp_x10; FRAME_COUNTER not Event ID; approved three-beat schedule countdown. Synthetic fixtures, no RF/HIL PASS.",
   "cases": [
     {
       "id": "T-VALID",
@@ -8,7 +8,7 @@
       "valid": true,
       "message": {
         "schema_version": "1.1-draft",
-        "event_id": "node-01-event-00042",
+        "event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:42",
         "gateway_id": "gw01",
         "gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
         "event_seq": "42",
@@ -18,17 +18,11 @@
         "buffered": false,
         "node_id": 1,
         "superframe_seq": 100,
-        "seq_num": 51,
         "schedule_version": 5,
         "data": {
-          "slot_id": 1,
-          "sensor_status_mask": 0,
-          "ch1_raw": 2575,
-          "ch2_raw": 620,
-          "ch3_raw": 50,
-          "battery_mv": 3600,
-          "node_duty_permille": 6
-        }
+          "temp_x10": 355
+        },
+        "frame_counter": 51
       }
     },
     {
@@ -46,26 +40,20 @@
         "buffered": false,
         "node_id": 1,
         "superframe_seq": 100,
-        "seq_num": 51,
         "schedule_version": 5,
         "data": {
-          "slot_id": 1,
-          "sensor_status_mask": 0,
-          "ch1_raw": 2575,
-          "ch2_raw": 620,
-          "ch3_raw": 50,
-          "battery_mv": 3600,
-          "node_duty_permille": 6
-        }
+          "temp_x10": 355
+        },
+        "frame_counter": 51
       }
     },
     {
-      "id": "T-SEQ-OVERFLOW",
+      "id": "T-FRAME-COUNTER-OVERFLOW",
       "schema": "telemetry",
       "valid": false,
       "message": {
         "schema_version": "1.1-draft",
-        "event_id": "node-01-event-00042",
+        "event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:42",
         "gateway_id": "gw01",
         "gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
         "event_seq": "42",
@@ -75,17 +63,11 @@
         "buffered": false,
         "node_id": 1,
         "superframe_seq": 100,
-        "seq_num": 256,
         "schedule_version": 5,
         "data": {
-          "slot_id": 1,
-          "sensor_status_mask": 0,
-          "ch1_raw": 2575,
-          "ch2_raw": 620,
-          "ch3_raw": 50,
-          "battery_mv": 3600,
-          "node_duty_permille": 6
-        }
+          "temp_x10": 355
+        },
+        "frame_counter": 4294967296
       }
     },
     {
@@ -94,7 +76,7 @@
       "valid": true,
       "message": {
         "schema_version": "1.1-draft",
-        "event_id": "node-01-event-00042",
+        "event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:42",
         "gateway_id": "gw01",
         "gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
         "event_seq": "42",
@@ -104,19 +86,12 @@
         "buffered": false,
         "node_id": 1,
         "superframe_seq": 100,
-        "seq_num": 51,
         "schedule_version": 5,
         "data": {
-          "slot_id": 1,
-          "sensor_status_mask": 0,
-          "ch1_raw": 2575,
-          "ch2_raw": 620,
-          "ch3_raw": 50,
-          "battery_mv": 3600,
-          "node_duty_permille": 6
+          "temp_x10": 355
         },
         "severity": "P0_EMERGENCY",
-        "radio_ack_sent": true
+        "frame_counter": 51
       }
     },
     {
@@ -125,7 +100,7 @@
       "valid": false,
       "message": {
         "schema_version": "1.1-draft",
-        "event_id": "node-01-event-00042",
+        "event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:42",
         "gateway_id": "gw01",
         "gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
         "event_seq": "42",
@@ -135,19 +110,12 @@
         "buffered": false,
         "node_id": 1,
         "superframe_seq": 100,
-        "seq_num": 51,
         "schedule_version": 5,
         "data": {
-          "slot_id": 1,
-          "sensor_status_mask": 0,
-          "ch1_raw": 2575,
-          "ch2_raw": 620,
-          "ch3_raw": 50,
-          "battery_mv": 3600,
-          "node_duty_permille": 6
+          "temp_x10": 355
         },
         "severity": "CRITICAL",
-        "radio_ack_sent": true
+        "frame_counter": 51
       }
     },
     {
@@ -585,46 +553,34 @@
         "buffered": false,
         "node_id": 1,
         "superframe_seq": 100,
-        "seq_num": 51,
         "schedule_version": 5,
         "data": {
-          "slot_id": 1,
-          "sensor_status_mask": 0,
-          "ch1_raw": 2575,
-          "ch2_raw": 620,
-          "ch3_raw": 50,
-          "battery_mv": 3600,
-          "node_duty_permille": 6
-        }
+          "temp_x10": 355
+        },
+        "frame_counter": 51
       }
     },
     {
-      "id": "T-REPLAY-SAME-NODE-EVENT",
+      "id": "T-REPLAY-SAME-GW-EVENT",
       "schema": "telemetry",
       "valid": true,
       "message": {
         "schema_version": "1.1-draft",
-        "event_id": "node-01-event-00042",
+        "event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:42",
         "gateway_id": "gw01",
-        "gateway_epoch": "7dd20eb1-f4dd-43cb-a4b9-3b094e53e013",
-        "event_seq": "99",
+        "gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+        "event_seq": "42",
         "observed_at": "2026-10-20T08:00:00Z",
         "observed_time_source": "gateway_utc",
         "radio_rx_monotonic_us": "123456789",
         "buffered": true,
         "node_id": 1,
         "superframe_seq": 100,
-        "seq_num": 51,
         "schedule_version": 5,
         "data": {
-          "slot_id": 1,
-          "sensor_status_mask": 0,
-          "ch1_raw": 2575,
-          "ch2_raw": 620,
-          "ch3_raw": 50,
-          "battery_mv": 3600,
-          "node_duty_permille": 6
-        }
+          "temp_x10": 355
+        },
+        "frame_counter": 51
       }
     },
     {
@@ -703,6 +659,65 @@
             "duration_ms": 400
           }
         ]
+      }
+    },
+    {
+      "id": "SCHEDULE-COUNTDOWN-NOT-THREE",
+      "schema": "schedule",
+      "valid": false,
+      "message": {
+        "schema_version": "1.1-draft",
+        "request_id": "3f3f88dc-80a5-4bc7-92c8-1dc97aa0797b",
+        "gateway_id": "gw01",
+        "schedule_id": "9",
+        "schedule_version": 6,
+        "created_at": "2026-10-20T08:00:00Z",
+        "expires_at": "2026-10-20T08:05:00Z",
+        "profile_id": "P-10S-15",
+        "superframe_ms": 10000,
+        "min_announce_superframes": 2,
+        "slots": [
+          {
+            "node_id": 1,
+            "slot_id": 1,
+            "offset_ms": 650,
+            "duration_ms": 400
+          },
+          {
+            "node_id": 2,
+            "slot_id": 2,
+            "offset_ms": 1050,
+            "duration_ms": 400
+          }
+        ],
+        "activation_window": {
+          "not_before": "2026-10-20T08:02:00Z",
+          "not_after": "2026-10-20T08:04:00Z"
+        }
+      }
+    },
+    {
+      "id": "T-EXTRA-LEGACY-CH1-INVALID",
+      "schema": "telemetry",
+      "valid": false,
+      "message": {
+        "schema_version": "1.1-draft",
+        "event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:42",
+        "gateway_id": "gw01",
+        "gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+        "event_seq": "42",
+        "observed_at": "2026-10-20T08:00:00Z",
+        "observed_time_source": "gateway_utc",
+        "radio_rx_monotonic_us": "123456789",
+        "buffered": false,
+        "node_id": 1,
+        "superframe_seq": 100,
+        "schedule_version": 5,
+        "data": {
+          "temp_x10": 355,
+          "ch1_raw": 200
+        },
+        "frame_counter": 51
       }
     }
   ]
