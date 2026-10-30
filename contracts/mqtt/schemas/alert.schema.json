@@ -92,7 +92,6 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "slot_id",
         "sensor_status_mask",
         "ch1_raw",
         "ch2_raw",
@@ -104,7 +103,7 @@
         "slot_id": {
           "type": "integer",
           "minimum": 1,
-          "description": "Slot ID in current approved Gateway schedule; no fixed 15-slot production limit. Priority Alert can use a priority opportunity instead of a periodic DATA Slot."
+          "description": "Optional DATA/retry slot ID if used; a priority contention window alert has no periodic DATA slot and must not invent one."
         },
         "sensor_status_mask": {
           "type": "integer",
