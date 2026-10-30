@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:loratdma:mqtt:schedule:v1-draft",
+  "$id": "urn:loratdma:mqtt:schedule:v1.1-draft",
   "title": "LoRa TDMA schedule (proposed contract)",
   "type": "object",
   "additionalProperties": false,
   "properties": {
     "schema_version": {
-      "const": "1.0-draft",
+      "const": "1.1-draft",
       "type": "string"
     },
     "request_id": {
