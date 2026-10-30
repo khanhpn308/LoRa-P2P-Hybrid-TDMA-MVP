@@ -87,15 +87,45 @@ class ApiContractTest(unittest.TestCase):
                 self.assertEqual(not errors, case["valid"],
                                  "; ".join(str(e.message) for e in errors[:3]))
 
+    def test_owner_radio_mac_contract_invariants(self):
+        mqtt = ROOT / "contracts" / "mqtt"
+        t = json.loads((mqtt / "schemas" / "telemetry.schema.json").read_text(encoding="utf-8"))
+        a = json.loads((mqtt / "schemas" / "alert.schema.json").read_text(encoding="utf-8"))
+        schedule = json.loads((mqtt / "schemas" / "schedule.schema.json").read_text(encoding="utf-8"))
+        for schema in (t, a):
+            Draft202012Validator.check_schema(schema)
+            self.assertIn("Gateway-origin", schema["properties"]["event_id"]["description"])
+            self.assertEqual(schema["properties"]["data"]["required"], ["temp_x10"])
+            self.assertEqual(set(schema["properties"]["data"]["properties"]), {"temp_x10"})
+            self.assertIn("frame_counter", schema["required"])
+            self.assertNotIn("seq_num", schema["properties"])
+            self.assertEqual(schema["properties"]["frame_counter"]["maximum"], 4294967295)
+        self.assertNotIn("radio_ack_sent", a["required"], "Alert ACK has not been decided")
+        self.assertEqual(schedule["properties"]["min_announce_superframes"]["const"], 3)
+        self.assertEqual(
+            self.openapi["components"]["schemas"]["GenerateScheduleRequest"]
+            ["properties"]["min_announce_superframes"]["enum"], [3]
+        )
+        book = json.loads((mqtt / "examples" / "cases.json").read_text(encoding="utf-8"))
+        for case in book["cases"]:
+            schema = json.loads(
+                (mqtt / "schemas" / (case["schema"] + ".schema.json")).read_text(encoding="utf-8")
+            )
+            validator = Draft202012Validator(schema, format_checker=FORMAT)
+            with self.subTest(mqtt_case=case["id"]):
+                errors = list(validator.iter_errors(case["message"]))
+                self.assertEqual(not errors, case["valid"],
+                                 "; ".join(e.message for e in errors[:3]))
+
     def test_identity_and_state_invariants_are_explicit(self):
         telemetry_branch = next(
             b for b in self.wss_schema["allOf"]
             if b["if"]["properties"]["type"].get("const") == "TELEMETRY_UPDATE"
         )
         source_id = telemetry_branch["then"]["properties"]["payload"]["properties"]["event_id"]
-        self.assertIn("Node-origin", source_id["description"])
+        self.assertIn("Gateway-origin", source_id["description"])
         self.assertNotIn("pattern", source_id)
-        self.assertIn("gateway_id", source_id["description"])
+        self.assertIn("Gateway", source_id["description"])
         self.assertIn("/api/v1/gateways/{gw_id}/nodes/{node_id}/telemetry", self.openapi["paths"])
         ticket_required = self.openapi["components"]["schemas"]["CommandTicket"]["required"]
         self.assertIn("gateway_id", ticket_required)
