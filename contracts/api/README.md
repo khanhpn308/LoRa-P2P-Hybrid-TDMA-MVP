@@ -7,7 +7,7 @@
 - [WSS examples](examples/realtime-cases.json), [REST examples](examples/rest-cases.json), [behavioral tests](../../tests/contract/test_api_contract.py) — synthetic conformance cases, not live client or RF evidence.
 - Server `x-roles` **and object-level authorization** required; 401/403 must be distinguished. HTTP 202 means accepted for processing, not Gateway/Node execution. `STAGED` is not `ACTIVE`.
 - D13 (JWT issuance/refresh, cookie/WS ticket auth, revocation) remains **BLOCKED_SECURITY/TBD**. Dev-only mocks are never credentials for production.
-- All 64-bit numeric IDs are decimal strings in JSON. Telemetry/Alert `event_id` originates at Node and is scoped by `(gateway_id,node_id)`; Gateway status/ACK messages keep Gateway-origin event IDs. WSS envelope ID is separate. RF timing/airtime/legal decisions remain independent `NOT_VERIFIED`.
+- All 64-bit numeric IDs are decimal strings in JSON. Telemetry/Alert `event_id` is generated and durably retained by Gateway; Gateway status/ACK also use Gateway-origin IDs. Backend dedup uses `(gateway_id,event_id)` with Node-origin validation; Node does not transmit Event ID. WSS envelope ID is separate. RF timing/airtime/legal decisions remain independent `NOT_VERIFIED`.
 - Breaking/extension changes require review of Backend, Web and Mobile use-cases, schema bump/compatibility assessment and test evidence **before** merge.
 
 Local validation (requires installed `jsonschema`, `PyYAML`, `openapi-spec-validator` as declared in `contracts/tests/requirements.txt`): `python3 -m unittest discover -s tests/contract -p 'test_*.py' -v`. CI's existing `ci-contracts.yml` is syntax-only; it does **not** run these tests.
