@@ -11,11 +11,13 @@
 | **G03** | Định danh logic Node là **`(gateway_id, node_id)`**, với `node_id` **8-bit** theo phạm vi Gateway. |
 | **G04** | **Backend** tạo/quản lý phiên bản lịch TDMA; **User được phân quyền** phê duyệt. |
 | **G05** | **Gateway** thực thi và kiểm tra an toàn cục bộ; **không tự thay đổi Slot Assignment** đã được duyệt. |
-| **G06** | **Node tạo Event ID gốc**; Gateway nhận/chuyển tiếp; Backend lưu bền vững và chống trùng theo nguồn sự kiện. |
+| **G06 (Owner revised, 2026-10-30)** | **Gateway tạo Event ID** khi lưu bền vững lần nhận uplink hợp lệ đầu tiên, Node không truyền Event ID qua RF. Gateway dedup theo Gateway/Node/security-session/FRAME_COUNTER, bảo toàn Event ID qua RF/MQTT retry và reboot; Backend dedup Gateway Event ID. Thay thế G06 cũ; PR #116 phải được đồng bộ riêng. |
 | **G07** | MVP bắt buộc có **tạm ngừng, khôi phục, thu hồi và cấp lại quyền Node**. |
 | **G08** | **`Periodic OFF` không tắt** khả năng phát hiện và gửi cảnh báo hợp lệ. |
 | **G09** | Alert sử dụng **cửa sổ tranh chấp** và **cơ hội retry dự phòng** thuộc lịch đã được Backend/User phê duyệt. |
 | **G10** | Các giao tiếp phải có xác thực, phân quyền theo ngữ cảnh, xử lý lỗi và truy vết phù hợp; **CRC không thay thế xác thực mật mã**. |
+
+**Quyết định Owner mới nhất:** RF Telemetry chỉ có `TEMP_X10` int16 (2B, nhiệt độ °C ×10); bỏ `PROVISION_INSTANCE`, `EVENT_COUNTER`, `SCHED_TOKEN`. Tách danh sách Uplink Node→Gateway và Downlink Gateway→Node. Chuyển lịch thông báo 3 nhịp `3 → 2 → 1` trước Superframe cutover, vẫn cần affected Node ACK, old Slot Lease safety và Owner activation window. Header 7B + payload 2B + MIC 8B = **17B candidate, không khóa wire/crypto**.
 
 ## Quyết định Radio MAC chi tiết đã khóa
 
