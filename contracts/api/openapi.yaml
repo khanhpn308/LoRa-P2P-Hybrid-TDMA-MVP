@@ -949,7 +949,6 @@ components:
             - "SUSPEND_NODE"
             - "RESUME_NODE"
             - "REVOKE_NODE"
-            - "SET_RELAY"
         params:
           type: "object"
           additionalProperties:
