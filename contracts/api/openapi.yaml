@@ -691,7 +691,7 @@ components:
         - "received_at"
         - "buffered"
         - "superframe_seq"
-        - "seq_num"
+        - "frame_counter"
         - "data"
       properties:
         reading_id:
@@ -708,6 +708,7 @@ components:
           type: "string"
           minLength: 1
           maxLength: 128
+          description: "Gateway-origin stable Event ID, created once on durable RF acceptance and retained across retry/reboot; distinct from WSS envelope event_id."
         observed_at:
           type: "string"
           format: "date-time"
@@ -721,50 +722,22 @@ components:
           type: "integer"
           minimum: 0
           maximum: 4294967295
-        seq_num:
+        frame_counter:
           type: "integer"
           minimum: 0
-          maximum: 255
+          maximum: 4294967295
+          description: "RF FRAME_COUNTER candidate uint32, not Event ID. Authenticated Node/security-session scoping is enforced at Gateway."
         data:
           type: "object"
           additionalProperties: false
           required:
-            - "slot_id"
-            - "sensor_status_mask"
-            - "ch1_raw"
-            - "ch2_raw"
-            - "ch3_raw"
-            - "battery_mv"
-            - "node_duty_permille"
+            - "temp_x10"
           properties:
-            slot_id:
-              type: "integer"
-              minimum: 1
-              maximum: 15
-            sensor_status_mask:
-              type: "integer"
-              minimum: 0
-              maximum: 255
-            ch1_raw:
+            temp_x10:
               type: "integer"
               minimum: -32768
               maximum: 32767
-            ch2_raw:
-              type: "integer"
-              minimum: 0
-              maximum: 65535
-            ch3_raw:
-              type: "integer"
-              minimum: 0
-              maximum: 65535
-            battery_mv:
-              type: "integer"
-              minimum: 0
-              maximum: 65535
-            node_duty_permille:
-              type: "integer"
-              minimum: 0
-              maximum: 1000
+              description: "Signed int16 temperature Celsius x10; 355 represents 35.5 C."
     Alert:
       type: "object"
       additionalProperties: false
