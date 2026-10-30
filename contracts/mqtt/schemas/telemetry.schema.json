@@ -96,7 +96,7 @@
         "slot_id": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 15
+          "description": "Slot ID in current approved Gateway schedule; no fixed 15-slot production limit. Priority Alert can use a priority opportunity instead of a periodic DATA Slot."
         },
         "sensor_status_mask": {
           "type": "integer",
