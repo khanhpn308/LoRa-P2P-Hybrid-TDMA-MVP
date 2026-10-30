@@ -2,11 +2,11 @@
 
 **Status: MONOREPO FOUNDATION / NOT PRODUCTION READY.**
 
-**Owner-approved G0 direction:** Multi-Gateway Star (1–4 ESP32 + SX1276 Gateways), four separate operating channels at LoRa BW 125 kHz, each Node fixed to its configured Gateway/channel; Mesh is out of current scope. Backend Go plans schedules approved by the User; Gateways validate and execute locally. Backhaul: Wi-Fi → Mosquitto MQTT 5/TLS → Go modular monolith → PostgreSQL. Web/Mobile are in MVP scope; detailed client technology and functions must follow approved specifications. See [G0 Owner Decisions](docs/architecture/g0-owner-decisions.md).
+**MVP architecture:** Multi-Gateway Star (1–4 ESP32 + SX1276 Gateways), separate operating channels at LoRa BW 125 kHz; Node fixed to one Gateway/channel, no Mesh. Backend Go prepares schedules for User approval; Gateways validate and execute TDMA locally. Wi-Fi/MQTT 5.0/TLS (Mosquitto) connects Gateways to Go Modular Monolith + PostgreSQL. Web/Mobile are part of MVP. Architecture and remaining verification gaps: [System overview](docs/architecture/system-overview.md).
 
 ## Repository map
 
-- [Approved G0 decisions](docs/architecture/g0-owner-decisions.md), [architecture](docs/architecture/system-overview.md), and [requirements](docs/requirements/requirements.md)
+- [Architecture](docs/architecture/system-overview.md) and [requirements](docs/requirements/requirements.md)
 - [Radio MAC](contracts/radio-mac/specification.md), [MQTT topics](contracts/mqtt/topics.md), [OpenAPI](contracts/api/openapi.yaml)
 - `firmware/gateway_master` and `firmware/sensor_node` — minimal ESP-IDF **scaffolds, not radio implementations**
 - `backend-go` — minimal Go scaffold; no MQTT/TDMA implementation yet
