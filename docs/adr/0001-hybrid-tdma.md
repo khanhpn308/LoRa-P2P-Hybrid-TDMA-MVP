@@ -18,15 +18,15 @@ Inference kỹ thuật R1: điều khiển từng slot qua Backend làm executor
 | Vai trò | Trách nhiệm và giới hạn | RTM / contract |
 |---|---|---|
 | Backend Planner | Tạo và version lịch, quản lý quyết định phê duyệt của User và khoảng kích hoạt, publish ID/version/expiry, reconcile actual report. Không tự suy ACTIVE từ PUBACK hoặc STAGE_ACK | SYS-001, MAC-003; MQTT semantics §4, [API semantics](../../contracts/api/contract-semantics.md) |
-| Gateway Executor | Validate identity/version/expiry, collision/half-duplex/airtime; persist shadow trước STAGE_ACK; Node chịu ảnh hưởng xác nhận chuẩn bị và lease khe cũ hết an toàn; switch tại boundary trong cửa sổ đã duyệt rồi report actual activation. Không tự đổi Slot Assignment | MAC-003/005/006; TDMA §2, MQTT semantics §4 |
+| Gateway Executor | Validate identity/version/expiry, collision/half-duplex/airtime; persist shadow trước STAGE_ACK; phát ba nhịp thông báo hoàn chỉnh 3→2→1; Node chịu ảnh hưởng xác nhận chuẩn bị và lease khe cũ hết an toàn; switch tại boundary trong cửa sổ đã duyệt rồi report actual activation. Không tự đổi Slot Assignment | MAC-003/005/006; TDMA §2, MQTT semantics §4 |
 | Node TDMA client | Xác thực Beacon/session/mapping, quyền truy cập còn hiệu lực và có thể xác minh. Thiếu lịch mới hoặc mất bảo đảm timing thì không phát slot cũ; Periodic OFF vẫn có Alert | MAC-002/004, SEC-001; TDMA §3 |
 | Radio owner / driver | Tuần tự hóa SPI/state; ISR không SPI/log/blocking; chuyển event sang task có giới hạn | FW-002/003/004; [embedded instructions](../../.github/instructions/embedded.instructions.md) |
 
-Quy mô hiện hành: Multi-Gateway Star 1–4 Gateway, mỗi Gateway kênh riêng BW 125 kHz và Node cố định một Gateway/kênh (C01/C02). Node ID 8-bit theo Gateway (C06); Node tạo mã sự kiện và Backend chống lưu trùng (C05). Cảnh báo ưu tiên dùng cửa sổ tranh chấp và cơ hội dự phòng thuộc lịch đã duyệt (C08); Gateway không tự tái cấp slot. Mesh ngoài phạm vi hiện tại; mọi chức năng Owner yêu cầu thuộc MVP (C09). Xem [kiến trúc](../architecture/system-overview.md). IDs tham chiếu [RTM](../requirements/requirements.md#rtm); các yêu cầu kỹ thuật chưa được duyệt vẫn PROPOSED. ADR không freeze wire layout, cipher, GPIO hoặc numeric RF/timing profile.
+Quy mô hiện hành: Multi-Gateway Star 1–4 Gateway, mỗi Gateway kênh riêng BW 125 kHz và Node cố định một Gateway/kênh (C01/C02). Node ID 8-bit theo Gateway (C06); Gateway tạo Event ID bền vững khi nhận RF mới, Backend chống lưu trùng Event ID do Gateway tạo (Owner G06 revision). Cảnh báo ưu tiên dùng cửa sổ tranh chấp và cơ hội dự phòng thuộc lịch đã duyệt (C08); Gateway không tự tái cấp slot. Mesh ngoài phạm vi hiện tại; mọi chức năng Owner yêu cầu thuộc MVP (C09). Xem [kiến trúc](../architecture/system-overview.md). IDs tham chiếu [RTM](../requirements/requirements.md#rtm); các yêu cầu kỹ thuật chưa được duyệt vẫn PROPOSED. ADR không freeze wire layout, cipher, GPIO hoặc numeric RF/timing profile.
 
 ## Control plane và data plane
 
-Control plane quản lý proposal, version, authorization, staging và activation report qua [MQTT contracts](../../contracts/mqtt/topics.md); Gateway giữ quyền quyết định thời điểm local execution. Data plane nhận RF data/alerts hợp lệ, áp dụng RF ACK policy, chuyển event vào bounded MQTT buffer; Backend validate/dedup/lưu PostgreSQL, cung cấp REST/WSS. Nguồn: Radio MAC §§1/3, MQTT topics §§2–4, API semantics. Phân chia này không thêm service hoặc protocol mới.
+Control plane quản lý proposal, version, authorization, staging và activation report qua [MQTT contracts](../../contracts/mqtt/topics.md); Gateway giữ quyền quyết định thời điểm local execution. Data plane nhận RF data/alerts hợp lệ, áp dụng Beacon ACK_BITMAP 2B cho Telemetry (không gửi ACK Telemetry riêng), lưu Event ID Gateway bền vững rồi chuyển event vào bounded MQTT buffer; Backend validate/dedup/lưu PostgreSQL, cung cấp REST/WSS. Nguồn: Radio MAC §§1/3, MQTT topics §§2–4, API semantics. Phân chia này không thêm service hoặc protocol mới.
 
 ## Các lựa chọn và trade-offs
 
@@ -57,7 +57,7 @@ Single-radio half-duplex buộc Beacon, downlink, PCSS, DATA, ACK/retry, JOIN v�
 
 - D01/D11: authenticated framing, nonce/replay/key lifecycle và epoch/version mapping; CRC không đủ, không production codec trước approval. Nguồn: Radio MAC §§2–3, [vector plan](../../contracts/radio-mac/test-vectors/README.md); SEC-001/003/004.
 - D02/D03/D04: RF/legal applicability, ToA, IRQ-to-task latency, clock drift và guard margin cần G1/G3 theo [Issue #11](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/11). Không chốt superframe/slot/guard/jitter.
-- D05/D07/D12: announcement horizon, restart/reconnect và bounded buffering cần review/HIL/integration. D08 giữ MQTT 5.0 OWNER_ACCEPTED theo [ADR-0002](0002-mqtt-5.md); version approval không thay contract review.
+- D05: Owner chốt ba nhịp announcement trọn Superframe 3→2→1; Node ACK/lease safety vẫn là điều kiện riêng. D07/D12: restart/reconnect và bounded buffering cần review/HIL/integration. D08 giữ MQTT 5.0 OWNER_ACCEPTED theo [ADR-0002](0002-mqtt-5.md); version approval không thay contract review.
 
 Canonical register: [OPEN_DECISIONS](../../contracts/OPEN_DECISIONS.md). Options/constraints/evidence handoff R1 trong [audit](../audits/firmware/ARCHITECTURE_DOCUMENTATION_AUDIT.md) chỉ dẫn về IDs sẵn có, không đóng decisions hoặc sửa contracts.
 
