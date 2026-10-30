@@ -68,7 +68,7 @@ Schedule `P-10S-15`, `superframe_ms=10000`, 400 ms slots and radio version mappi
 
 `command-ack.status` is one of `QUEUED | DISPATCHED | NODE_ACKED | REJECTED | EXPIRED | UNKNOWN`. Success/queueing states require `reason_code=NONE`; rejected/expired/unknown require a specific error, and EXPIRED uses `EXPIRED`. Draft error enum: `BAD_SCHEMA, BAD_AUTH, WRONG_GATEWAY, EXPIRED, STALE_COMMAND, DUPLICATE_CONFLICT, UNSUPPORTED_ACTION, BAD_PARAMS, AIRTIME_LIMIT, NODE_NACK, NODE_TIMEOUT, UNTRUSTED_CLOCK, INTERNAL_ERROR` (plus NONE). `NODE_ACKED` is **Node-level** acknowledgment, not Gateway MQTT PUBACK. No arbitrary string accepted as an error code.
 
-`SET_PERIODIC_MODE(false)` disables periodic telemetry but keeps Alert. `SUSPEND_NODE`, `RESUME_NODE`, `REVOKE_NODE` require authenticated Backend RBAC, Gateway durable enforcement and local authorization validity; no automatic offline renewal. Reprovision/credential reset is a separate security-approved procedure OPEN G2. `command.params` keys are only syntactically constrained; action-specific semantic safety must be reviewed (including unapproved `SET_RELAY`).
+`SET_PERIODIC_MODE(false)` disables periodic telemetry but keeps Alert. `SUSPEND_NODE`, `RESUME_NODE`, `REVOKE_NODE` require authenticated Backend RBAC, Gateway durable enforcement and local authorization validity; no automatic offline renewal. Reprovision/credential reset is a separate security-approved procedure OPEN G2. `command.params` keys are only syntactically constrained; action-specific semantic safety must be reviewed (physical actuator control is not approved under this command allowlist).
 
 ## 6. Review matrix for seven schemas (no test verdict asserted)
 
