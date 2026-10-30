@@ -52,8 +52,8 @@
     },
     "min_announce_superframes": {
       "type": "integer",
-      "description": "Number of complete announcement superframes (candidate min not evidence Node ACK). C04 requires affected Node prepare ACK and old slot lease safe termination before activation.",
-      "minimum": 1
+      "const": 3,
+      "description": "Owner-approved countdown: three COMPLETE announcement Superframes 3→2→1; must also collect affected Node prepare ACK, prove old slot lease safety and cut over within approved activation_window. If not safe, abort/delay via new approved plan, do not activate."
     },
     "slots": {
       "type": "array",
