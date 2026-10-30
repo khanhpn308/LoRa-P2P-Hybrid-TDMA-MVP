@@ -13,7 +13,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 128,
-      "description": "Node-origin opaque logical Event ID (C05), stable across RF retry, MQTT QoS1 replay and Node/Gateway reboot. Uniqueness and dedup key scoped by (gateway_id, node_id, event_id); exact binary encoding/persistence pending G2."
+      "description": "Gateway-origin stable Event ID assigned once on durable first acceptance of authenticated RF frame; retained through RF retransmit, reboot/offline queue and MQTT QoS1 replay. Gateway retains mapping from (gateway_id,node_id,security_session,frame_counter) to original ID; exact encoding pending G2/G4."
     },
     "gateway_id": {
       "type": "string",
@@ -22,12 +22,12 @@
     "gateway_epoch": {
       "type": "string",
       "format": "uuid",
-      "description": "Gateway reception tracking: boot epoch, not origin identity of a sensor event; can differ on re-reception/reboot. Never derive business event_id from it."
+      "description": "Originating Gateway boot epoch for this Event ID; preserve original value with persisted event across Gateway reboot/replay. A re-reception must not replace a previously durably assigned event ID."
     },
     "event_seq": {
       "type": "string",
       "pattern": "^(0|[1-9][0-9]{0,19})$",
-      "description": "Gateway reception tracking sequence scoped to gateway_epoch, not Node Event ID or business dedup key."
+      "description": "Gateway-assigned uint64 Event sequence in original gateway_epoch; stable for this logical event, never increment for duplicate RF reception or MQTT redelivery."
     },
     "observed_at": {
       "oneOf": [
@@ -57,7 +57,7 @@
     },
     "buffered": {
       "type": "boolean",
-      "description": "Offline/replay path; keep Node event_id unchanged, even when Gateway reconnects/reboots. May preserve original gateway reception metadata."
+      "description": "Offline spool/MQTT replay; retain the original Gateway event_id, gateway_epoch, event_seq and measurement. Repeated RF frames MUST map to same persisted Event ID."
     },
     "node_id": {
       "type": "integer",
@@ -69,11 +69,6 @@
       "type": "integer",
       "minimum": 0,
       "maximum": 4294967295
-    },
-    "seq_num": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 255
     },
     "schedule_version": {
       "type": "integer",
@@ -92,48 +87,14 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "sensor_status_mask",
-        "ch1_raw",
-        "ch2_raw",
-        "ch3_raw",
-        "battery_mv",
-        "node_duty_permille"
+        "temp_x10"
       ],
       "properties": {
-        "slot_id": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "Optional DATA/retry slot ID if used; a priority contention window alert has no periodic DATA slot and must not invent one."
-        },
-        "sensor_status_mask": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 255
-        },
-        "ch1_raw": {
+        "temp_x10": {
           "type": "integer",
           "minimum": -32768,
-          "maximum": 32767
-        },
-        "ch2_raw": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 65535
-        },
-        "ch3_raw": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 65535
-        },
-        "battery_mv": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 65535
-        },
-        "node_duty_permille": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 1000
+          "maximum": 32767,
+          "description": "Temperature Celsius multiplied by 10; raw signed 16-bit value, e.g. 35.5 C -> 355. Byte order/rounding/error sentinel OPEN G2."
         }
       }
     },
@@ -141,31 +102,28 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "channel",
-        "observed_raw",
-        "threshold_raw"
+        "observed_temp_x10",
+        "threshold_temp_x10"
       ],
       "properties": {
-        "channel": {
+        "observed_temp_x10": {
           "type": "integer",
-          "minimum": 1,
-          "maximum": 3
+          "minimum": -32768,
+          "maximum": 32767
         },
-        "observed_raw": {
+        "threshold_temp_x10": {
           "type": "integer",
-          "minimum": -2147483648,
-          "maximum": 2147483647
-        },
-        "threshold_raw": {
-          "type": "integer",
-          "minimum": -2147483648,
-          "maximum": 2147483647
+          "minimum": -32768,
+          "maximum": 32767
         }
       },
-      "description": "Optional until authenticated Radio MAC alert payload encodes the channel/threshold; never invent trigger values."
+      "description": "Optional derived trigger only if backed by authenticated temperature reading and versioned configured threshold; Alert RF payload and ACK semantics remain OPEN G2. Never fabricate missing threshold."
     },
-    "radio_ack_sent": {
-      "type": "boolean"
+    "frame_counter": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295,
+      "description": "Node RF FRAME_COUNTER candidate uint32, scoped with authenticated Node and security session; 4-byte wire width remains draft G2. Not Event ID."
     }
   },
   "required": [
@@ -180,13 +138,12 @@
     "buffered",
     "node_id",
     "superframe_seq",
-    "seq_num",
+    "frame_counter",
     "schedule_version",
     "severity",
-    "data",
-    "radio_ack_sent"
+    "data"
   ],
-  "description": "DRAFT contract aligned with G0 C05/C06: Node-origin event_id and Gateway reception metadata are different identities. No RF byte layout, crypto or event-ID format approved; semantic auth/dedup and implementation NOT_VERIFIED.",
+  "description": "DRAFT owner-updated: Gateway-origin Event ID; RF Node transmits TEMP_X10 only for Telemetry, does not transmit Event ID; Backend dedup Gateway event_id, detect payload conflict. Authentication, nonce and exact wire format NOT_VERIFIED.",
   "allOf": [
     {
       "if": {
