@@ -19,7 +19,8 @@
 | `ACTIVE` | Gateway đã xác nhận affected Node chuẩn bị, old slot lease kết thúc an toàn và chuyển tại đầu Superframe **trong activation window** | `ACTIVE_REPORT` |
 | `REJECTED/EXPIRED` | Không đủ auth/ACK/lease/timing/expiry/window hoặc lịch lỗi; không kích hoạt Shadow | `VERIFY_NACK`/Backend reconcile |
 
-- `STAGE_ACK` **không phải** Node prepare ACK hay bằng chứng kích hoạt. Ba Beacon/thông báo (nếu thử nghiệm) **không đủ thay** affected Node prepare ACK và old lease safety.
+- **Owner-decided countdown:** Gateway phát **3 nhịp thông báo lịch hoàn chỉnh 3 → 2 → 1** trong các Superframe trước mốc chuyển, không tính nhịp bắt đầu giữa Superframe. Chỉ cutover tại ranh giới Superframe trong activation window khi đã có affected Node prepare ACK và old Slot Lease an toàn. Thiếu ACK, clock tin cậy, quyền hoặc lease safety thì **không** cutover; phải báo Backend, không tự dời mốc hoặc đổi slot.
+- `STAGE_ACK` **không phải** Node prepare ACK hay bằng chứng kích hoạt. Ba Beacon/thông báo **không thay** affected Node prepare ACK và old lease safety.
 - Sau reboot, Active/Shadow riêng; không tự promote Shadow. Nếu không chứng minh continuity identity/version/lease/time thì suppress affected TX; không cấp khe cũ cho Node mới sớm.
 - Gateway lựa chọn mốc Superframe nội bộ trong khoảng đã duyệt, **không** chọn lại kế hoạch hoặc mở rộng khoảng. `expires_at` của đề xuất là deadline nhận/kích hoạt, **không phải** thời hạn của Active Schedule hay quyền thiết bị.
 - Cơ chế prepare ACK, lease expiry, trust clock, activation-report reconciliation và rollback đầy đủ còn **OPEN G2/G3/G4**.
