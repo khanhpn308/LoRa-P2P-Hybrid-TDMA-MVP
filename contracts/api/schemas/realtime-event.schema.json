@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:loratdma:api:realtime-event:v1-draft",
+  "$id": "urn:loratdma:api:realtime-event:v1.1-draft",
   "title": "Backend→clients WSS events — draft",
   "type": "object",
   "additionalProperties": false,
@@ -13,7 +13,7 @@
   ],
   "properties": {
     "schema_version": {
-      "const": "1.0-draft",
+      "const": "1.1-draft",
       "type": "string"
     },
     "event_id": {
@@ -90,8 +90,7 @@
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 128,
-                "pattern": "^[A-Za-z0-9_-]{1,32}:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}:(0|[1-9][0-9]{0,19})$",
-                "description": "MQTT v1 source event identity <gateway_id>:<gateway_epoch UUID>:<event_seq>. Backend validates same-gateway identity semantics."
+                "description": "Node-origin opaque Event ID (C05), stable across retries/reboot; scope with (gateway_id,node_id), not Gateway reception epoch/seq. Encoding OPEN G2."
               },
               "observed_at": {
                 "type": [
