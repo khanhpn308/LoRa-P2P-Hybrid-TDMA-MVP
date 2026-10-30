@@ -17,6 +17,11 @@
 | **G09** | Alert sử dụng **cửa sổ tranh chấp** và **cơ hội retry dự phòng** thuộc lịch đã được Backend/User phê duyệt. |
 | **G10** | Các giao tiếp phải có xác thực, phân quyền theo ngữ cảnh, xử lý lỗi và truy vết phù hợp; **CRC không thay thế xác thực mật mã**. |
 
+## Quyết định Radio MAC chi tiết đã khóa
+
+- **CT-01-ACK-01 — `OWNER_APPROVED / LOCKED` (2026-10-30):** ACK của Telemetry định kỳ được gộp vào Beacon Gateway → Node, **không phát `RF_ACK` riêng cho từng Telemetry**. Beacon mang **`ACK_BITMAP` 16-bit (2 byte) cho tối đa 15 Node**; vị trí bit được ánh xạ tới Node theo cấu hình đã provision, không cần gửi lại `NODE_ID` trong từng ACK. Bitmap trong Beacon của Superframe `N+1` biểu thị những uplink hợp lệ của Superframe `N` đã được **Gateway lưu bền vững**, không có nghĩa Backend đã commit. `0` = chưa được xác nhận, **không phải bằng chứng gói đã mất**. Node giữ bản tin và retry tại cơ hội được duyệt; Gateway chống trùng. Các điều kiện an toàn/giới hạn ở [Radio MAC](radio-mac/specification.md), §3.
+- **Chưa khóa qua CT-01-ACK-01:** format Beacon hoàn chỉnh, Beacon authentication/nonce, ACK cho `PRIORITY_ALERT`, nhiều uplink/Node trong một cửa sổ ACK, phép đo ToA và HIL. Không diễn giải quyết định ACK thành phê duyệt toàn bộ RF wire codec.
+
 Mọi chức năng Owner yêu cầu thuộc **MVP**; **Mesh tạm ngoài phạm vi**. Quyền Node khi Gateway mất Internet chỉ tiếp tục khi còn hiệu lực và chứng minh được, **không tự gia hạn** (C07). Chuyển lịch phải tuân chuẩn bị/ACK, Slot Lease và safe cutover (C04). Đây là phần của kiến trúc đã duyệt, không phải thông số RF được đo.
 
 ## Giao diện giữa các nhóm
