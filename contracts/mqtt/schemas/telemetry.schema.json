@@ -13,8 +13,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 128,
-      "pattern": "^[A-Za-z0-9_-]{1,32}:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}:(0|[1-9][0-9]{0,19})$",
-      "description": "MUST equal gateway_id + ':' + gateway_epoch + ':' + event_seq (semantic equality validated by consumers). Stable on QoS1 retransmission/replay."
+      "description": "Node-origin opaque logical Event ID (C05), stable across RF retry, MQTT QoS1 replay and Node/Gateway reboot. Uniqueness and dedup key scoped by (gateway_id, node_id, event_id); exact binary encoding/persistence pending G2."
     },
     "gateway_id": {
       "type": "string",
@@ -23,12 +22,12 @@
     "gateway_epoch": {
       "type": "string",
       "format": "uuid",
-      "description": "Unique boot epoch; regenerate on Gateway reboot, never on MQTT reconnect. Offline queued events retain original epoch."
+      "description": "Gateway reception tracking: boot epoch, not origin identity of a sensor event; can differ on re-reception/reboot. Never derive business event_id from it."
     },
     "event_seq": {
       "type": "string",
       "pattern": "^(0|[1-9][0-9]{0,19})$",
-      "description": "Decimal uint64 counter scoped to gateway_epoch; semantic integer <= 18446744073709551615 and no wrap/reuse."
+      "description": "Gateway reception tracking sequence scoped to gateway_epoch, not Node Event ID or business dedup key."
     },
     "observed_at": {
       "oneOf": [
@@ -58,12 +57,13 @@
     },
     "buffered": {
       "type": "boolean",
-      "description": "Indicates offline queue/replay path; QoS1 DUP flag is NOT a business dedup key. Event identity never changes after buffering."
+      "description": "Offline/replay path; keep Node event_id unchanged, even when Gateway reconnects/reboots. May preserve original gateway reception metadata."
     },
     "node_id": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 254
+      "maximum": 254,
+      "description": "Node ID in range 1..254, scoped to gateway_id (C06); authenticated source must match the provisioned mapping."
     },
     "superframe_seq": {
       "type": "integer",
@@ -148,7 +148,7 @@
     "schedule_version",
     "data"
   ],
-  "description": "DRAFT MQTT v1 payload; schema checks local shape, not topic authorization, replay, clock freshness, state transitions or MQTT properties. Cross-team review pending (Issue #14).",
+  "description": "DRAFT contract aligned with G0 C05/C06: Node-origin event_id and Gateway reception metadata are different identities. No RF byte layout, crypto or event-ID format approved; semantic auth/dedup and implementation NOT_VERIFIED.",
   "allOf": [
     {
       "if": {
