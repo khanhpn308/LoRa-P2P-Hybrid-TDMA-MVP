@@ -14,6 +14,24 @@ The following decisions supersede conflicting mock/simulator assumptions in the 
 
 **OPEN / NOT_VERIFIED**: exact timing, control packet layouts, schedule membership snapshot, legal RF, ToA, guard, security, implementation, simulation and HIL. These approvals are design principles, not production timing sign-off.
 
+## Compact MAC v1 lengths and airtime impact — Owner decision (2026-11-02)
+
+[ADR-0002](../../docs/adr/0002-radio-mac-security-v1.md) supersedes the earlier **41B** `UP_SCHED_READY` with **19B**, and **61B** `DOWN_AUTH_UPDATE` Recovery Grant with **48B**. Beacon base remains **28B Group HMAC**. All lengths are MAC payload only (no PHY overhead). No change to the Owner-approved 100%-READY, authenticated 3→2→1, ACTIVE Beacon, persistent OLD_TX_FENCE_SF and immutable Backend-planned schedule.
+
+**READY is transmitted by Node within its own old-schedule authorized DATA slot** (replaces Telemetry), never in free CTRL; Recovery Grant is Backend-authored, Gateway-forwarded in an explicitly approved DOWN CTRL opportunity. Do not invent an extra slot because the RF message is smaller.
+
+Theoretical SX1276 airtime (BW=125kHz, CR=4/5, preamble=8, explicit header, PHY CRC on, LDRO on SF11/SF12) **excluding guard, turnaround, contention**:
+
+| Frame | SF7 | SF8 | SF10 | SF12 |
+|---|---:|---:|---:|---:|
+| Beacon 28B | 66.82ms | 123.39ms | 411.65ms | 1646.59ms |
+| READY prior 41B | 87.30ms | 154.11ms | 534.53ms | 2138.11ms |
+| **READY locked 19B** | **51.46ms** | **102.91ms** | **329.73ms** | **1318.91ms** |
+| Recovery prior 61B | 112.90ms | 205.31ms | 698.37ms | 2793.47ms |
+| **Recovery locked 48B** | **97.54ms** | **174.59ms** | **575.49ms** | **2301.95ms** |
+
+**Warning:** mock P-10S-15 allocates 250ms Beacon and 400ms DATA, but it is not RF-verified: SF10 Beacon requires 411.65ms, SF10 Recovery needs 575.49ms, and SF10 READY leaves only ~70ms before a 400ms-slot end without accounting for guard/turnaround (may still violate actual usable TX budget). Larger SF profiles cannot assume these short windows. Apply ToA+guard+driver turnaround and preapproved PHY/schedule before enabling any radio TX. `G2/G3/HIL = NOT_VERIFIED`.
+
 ## 1. Mẫu superframe danh định
 
 - `superframe_ms = 10000`; 5 subframe × 2000ms; mỗi subframe có 250ms BCN/DL + 400ms PCSS + 3 data slot × 400ms + 150ms guard.
