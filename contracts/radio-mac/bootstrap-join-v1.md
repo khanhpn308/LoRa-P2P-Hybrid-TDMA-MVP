@@ -209,7 +209,7 @@ This is a **logical flow**, not a complete executable state machine. Status labe
 
 ## 6. Interface boundaries and upstream dependencies
 
-- **Node↔Gateway RF** uses frames above and separate authenticated Beacon/CTRL scheduling (Beacon auth still OPEN).
+- **Node↔Gateway RF** uses the Join frames above and separate authenticated Beacon/CTRL scheduling. **Beacon V1 algorithm/base layout is now Owner-selected Group HMAC-SHA256 with 16B tag, 28B total** ([RF-BEACON-AUTH-01](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116#issuecomment-6575398231)); **canonical Beacon HMAC transcript, key provisioning/rotation/replay, J06 trusted Gateway identity and G2 verification remain OPEN**. Group HMAC does not uniquely authenticate Gateway origin against a compromised member Node.
 - **Gateway↔Backend Join relay and Assignment/Accept dispatch MQTT**: **NOT YET SCHEMA-LOCKED**. Existing `downlink/command` (requires assigned Node ID) is NOT automatically valid for unjoined request. A versioned MQTT discovery/join contract and transactional Backend DB schema are required; do NOT invent topic or fields.
 - **Backend→Gateway Session Key**: `MQTT-SESSION-KEY-01`, `MQTT-KEY-WRAP-01`, `MQTT-KEY-ACK-01` design OWNER_APPROVED. Versioned **DRAFT** schemas live in [PR #123](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/123) (`contracts/mqtt/schemas/session-key-install.schema.json`, `session-key-ack.schema.json`), not yet integrated to main. Cross-repo/branch build must pin compatible versions.
 - **Node-ready schedule/lease/Join Completion** and secure independent Downlink ACK: OPEN, not made up in this contract. No DATA before actual approved schedule and Beacon sync.
