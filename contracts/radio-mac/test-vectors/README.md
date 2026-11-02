@@ -1,6 +1,6 @@
-# Radio MAC golden vector plan — BLOCKED G2
+# Radio MAC test vectors
 
-**Chưa có khung hex hợp lệ đã được duyệt.** Không tạo vectors byte-level giả trước khi quyết định AEAD/tag, key/nonce, field widths, endian và CRC; 8B legacy header không an toàn cho production.
+**AGENT: DRAFT REFERENCE ONLY · C↔Go NOT_VERIFIED · G2 NOT_VERIFIED.** Join [contract](../bootstrap-join-v1.md) · [gates](../bootstrap-join-gates.md). Structural fixtures contain fake zero tags; Python reference uses actual V1 `0x22/0x23`. Never transmit fixtures or claim Join authenticated.
 
 Sau khi G2 đóng băng, mỗi vector phải ghi `spec_revision`, `case_id`, `node/gw direction`, `key_id` (test key **không** phải production), `nonce`, `AAD`, `plaintext`, `wire_hex`, `expected_decoded`, `expected_result` và điều kiện reset/replay. Ít nhất:
 

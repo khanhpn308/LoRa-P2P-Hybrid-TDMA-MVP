@@ -1,7 +1,6 @@
 # Custom LoRa P2P Radio MAC — giao diện Node ↔ Gateway
 
-> **DESIGN → CONTRACT handoff (Issue #12, PR #116):** Bootstrap Join v1 Owner-locked field decisions are consolidated in [bootstrap-join-v1.md](bootstrap-join-v1.md) and tracked by [bootstrap-join-gates.md](bootstrap-join-gates.md). This file's legacy 8B header/CRC candidate **must not** be used as a production Join codec. `UP_JOIN_REQUEST:35B` remains a candidate; `M_ACCEPT` and MQTT Join relay/timing remain blockers. Consolidation is `DRAFT / IMPLEMENTATION_READY=NO / G2 NOT_VERIFIED`; no automatic upgrade of the rest of this Radio MAC specification.
-
+**LEGACY DRAFT · NOT JOIN IMPLEMENTATION SOURCE.** Agent: use [Bootstrap Join](bootstrap-join-v1.md) + [gates](bootstrap-join-gates.md). Header 8B/CRC16 below is obsolete for Join; Request 35B candidate and `M_ACCEPT` OPEN. No production Join/DATA.
 
 **Revision 0.1.0-draft · SECURITY / WIRE LAYOUT NOT FROZEN · Issue #12 · Gate G2: NOT_VERIFIED.**
 

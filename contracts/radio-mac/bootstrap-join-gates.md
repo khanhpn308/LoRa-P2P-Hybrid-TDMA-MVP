@@ -1,8 +1,46 @@
-# Bootstrap Join v1 — decision register, blockers, implementation gates
+# Bootstrap Join — Agent Gate Register
 
-**Status:** `DRAFT` for consolidation; ledger is not a new approval. Applies to [bootstrap-join-v1.md](bootstrap-join-v1.md). Owner-specific approvals recorded on [PR #116](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116), whose comments are more authoritative for each decision than obsolete draft notes. Implementation and C↔Go golden vectors remain `NOT_VERIFIED`.
+**DRAFT · END-TO-END CODE BLOCKED · G2/G3/G4=NOT_VERIFIED**
 
-## 1. Approved decision trace
+**Agent:** Check J01–J12. Do not infer approval from fixtures, comments or CI syntax. Only isolated already-specified code/tests are allowed. No Join/DATA TX enablement. [Contract](bootstrap-join-v1.md) · [Owner record](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116).
+
+## Blocking gates — resolve before end-to-end Join
+
+| Gate | Missing or disputed contract item | Responsibility | Blocked scope |
+|---|---|---|---|
+| **J01** | Owner explicitly approves or revises **entire** 35B `UP_JOIN_REQUEST` packet/invalid values; currently candidate while 0x22 and nonce/HMAC internals approved | Node / Backend / Owner | RF Join Request production codec |
+| **J02** | Byte-exact `M_ACCEPT` (domain, field order, relay/target binding), invalid inputs and matching `DOWN_JOIN_ACCEPT` HMAC vectors | Security / Node / Backend | Accept cryptographic implementation, Confirm end-to-end |
+| **J03** | MQTT Join discovery relay, assignment/accept dispatch, Confirm forwarding, durable message IDs, expiry and idempotency in canonical namespace | Backend / Gateway / Infra | End-to-end Join routing |
+| **J04** | Precise shared CTRL UL/DL allocation, Response Window delay/length, retry budget, queue pressure, half-duplex, timing and legal RF airtime | RF / Gateway / Node | Real on-air Join TX |
+| **J05** | Complete Node/Gateway/Backend state-transition matrix incl. expired assignment/rejoin race, reboot & rollback, resource admission, completion/activation ACK | Node / Gateway / Backend | Autonomously active Join |
+| **J06** | How Node obtains authenticated **`RELAY_GW_ID`** consistently with Backend when computing M_UP/M_DL, before trusting Beacon; cross-Gateway scan/relay mismatch | Security / RF / Node / Backend | Bootstrap origin/auth |
+| **J07** | K_JOIN factory provisioning, ESP32 protected key storage, high-water reservation algorithm and 16-bit exhaustion/rekey/rollback recovery | Security / Node / Backend | Safe counter/key lifecycle |
+| **J08** | Exact allowed RF channel list, PHY SyncWord, RF plan management, regulatory validation of deployed Vietnam band/power/module | RF owner / Compliance | Deployment/RF legality |
+| **J09** | Authenticated Node Join Completion, initial TDMA Schedule/Lease issuance, Beacon auth and sync, strict DATA gate | Gateway / Backend / Node | `ACTIVE` authorization |
+| **J10** | Cross-language C↔Go crypto golden vectors for new `VER_TYPE`, M_ACCEPT, M_CONFIRM, negative tamper/replay; independent conformance evidence | Security / QA / Node / Backend | G2 security contract approval |
+| **J11** | MQTT Key Install DRAFT PR #123 review/integration and encrypted wrap-key provisioning/rotation | Backend / Gateway / Infra | Gateway session key installation |
+| **J12** | Full G2 human review, G3 HIL RF timing/power/reboot evidence, G4 MQTT integration & failure injection | Security / RF / QA | Verified production |
+
+No Agent may substitute an **Assumption** for a gate, mark it OWNER_APPROVED, commit secrets, or merge based only on passing JSON tests. Pure bounded parser/unit test development using explicitly approved widths/formulas may proceed in isolation.
+
+## Implementation-ready acceptance
+
+| Criterion | Expected evidence |
+|---|---|
+| AC-J01 | Every frame has version, offsets, sizes, endian, purpose tag and explicit invalid/reserved-value behavior; Owner approved candidate changes |
+| AC-J02 | Exact byte-level HMAC/HKDF transcripts incl. M_ACCEPT and cross-version migration policy |
+| AC-J03 | Node / Gateway / Backend formal transition+timeout table with durable DB/NVS ownership |
+| AC-J04 | MQTT Join schemas versioned, producer/consumer reviewed, topic identity/auth/idempotent dispatch |
+| AC-J05 | Per-Node anti-replay high-water and CSPRNG/rekey/reboot rollback tests |
+| AC-J06 | 3-key session proof cannot be forged by Gateway; no key leakage |
+| AC-J07 | Independent C and Go same bytes/HMAC, positive/negative Golden Vectors with expected cryptographic results |
+| AC-J08 | Simulation/HIL proves SX1276 RX Response Window, guard/ToA and legal policy for selected hardware/environment |
+| AC-J09 | Zero DATA TX until authentic completed Join + Gateway key install + valid TDMA schedule/lease/sync |
+| AC-J10 | Cross-team security/Radio MAC owner review, ADR for nontrivial security choices, CI logs and PR evidence |
+
+**Current verdict:** AC-J01..AC-J10 **NOT FULLY SATISFIED**. Structural-only fixtures and static tests do **not** constitute Golden Vector interoperability or G2/HIL PASS. `main` retains its old legacy `0.1.0-draft` content until these changes are reviewed and merged.
+
+## Decision references (on demand)
 
 | ID | Scope of approval | Link / caution |
 |---|---|---|
@@ -23,39 +61,3 @@
 | `MQTT-SESSION-KEY/KEY-WRAP/KEY-ACK-01` | Authenticated, encrypted, durable Gateway key install/ACK | [decision](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116#issuecomment-6568895005); versioned Draft [PR #123](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/123) |
 
 **Important supersessions:** obsolete 4B Join Counter → **2B**; 30B Accept → **22B**; 21B Confirm → **19B**; previous `VER_TYPE` fixture bytes 0x21/0x22 → actual **0x22/0x23** for Join Request/Assignment; 8B legacy MAC Header+CRC16 is not this frame format. Legacy Beacon fixed-fields were revised to **11B** independently; do not treat Beacon full authentication as approved.
-
-## 2. Blocking decisions — cannot mark complete end-to-end Join IMPLEMENTATION_READY
-
-| Gate | Missing or disputed contract item | Responsibility | Blocked scope |
-|---|---|---|---|
-| **J01** | Owner explicitly approves or revises **entire** 35B `UP_JOIN_REQUEST` packet/invalid values; currently candidate while 0x22 and nonce/HMAC internals approved | Node / Backend / Owner | RF Join Request production codec |
-| **J02** | Byte-exact `M_ACCEPT` (domain, field order, relay/target binding), invalid inputs and matching `DOWN_JOIN_ACCEPT` HMAC vectors | Security / Node / Backend | Accept cryptographic implementation, Confirm end-to-end |
-| **J03** | MQTT Join discovery relay, assignment/accept dispatch, Confirm forwarding, durable message IDs, expiry and idempotency in canonical namespace | Backend / Gateway / Infra | End-to-end Join routing |
-| **J04** | Precise shared CTRL UL/DL allocation, Response Window delay/length, retry budget, queue pressure, half-duplex, timing and legal RF airtime | RF / Gateway / Node | Real on-air Join TX |
-| **J05** | Complete Node/Gateway/Backend state-transition matrix incl. expired assignment/rejoin race, reboot & rollback, resource admission, completion/activation ACK | Node / Gateway / Backend | Autonomously active Join |
-| **J06** | How Node obtains authenticated **`RELAY_GW_ID`** consistently with Backend when computing M_UP/M_DL, before trusting Beacon; cross-Gateway scan/relay mismatch | Security / RF / Node / Backend | Bootstrap origin/auth |
-| **J07** | K_JOIN factory provisioning, ESP32 protected key storage, high-water reservation algorithm and 16-bit exhaustion/rekey/rollback recovery | Security / Node / Backend | Safe counter/key lifecycle |
-| **J08** | Exact allowed RF channel list, PHY SyncWord, RF plan management, regulatory validation of deployed Vietnam band/power/module | RF owner / Compliance | Deployment/RF legality |
-| **J09** | Authenticated Node Join Completion, initial TDMA Schedule/Lease issuance, Beacon auth and sync, strict DATA gate | Gateway / Backend / Node | `ACTIVE` authorization |
-| **J10** | Cross-language C↔Go crypto golden vectors for new `VER_TYPE`, M_ACCEPT, M_CONFIRM, negative tamper/replay; independent conformance evidence | Security / QA / Node / Backend | G2 security contract approval |
-| **J11** | MQTT Key Install DRAFT PR #123 review/integration and encrypted wrap-key provisioning/rotation | Backend / Gateway / Infra | Gateway session key installation |
-| **J12** | Full G2 human review, G3 HIL RF timing/power/reboot evidence, G4 MQTT integration & failure injection | Security / RF / QA | Verified production |
-
-No Agent may substitute an **Assumption** for a gate, mark it OWNER_APPROVED, commit secrets, or merge based only on passing JSON tests. Pure bounded parser/unit test development using explicitly approved widths/formulas may proceed in isolation.
-
-## 3. Acceptance criteria for a subsequent ready-to-code revision
-
-| Criterion | Expected evidence |
-|---|---|
-| AC-J01 | Every frame has version, offsets, sizes, endian, purpose tag and explicit invalid/reserved-value behavior; Owner approved candidate changes |
-| AC-J02 | Exact byte-level HMAC/HKDF transcripts incl. M_ACCEPT and cross-version migration policy |
-| AC-J03 | Node / Gateway / Backend formal transition+timeout table with durable DB/NVS ownership |
-| AC-J04 | MQTT Join schemas versioned, producer/consumer reviewed, topic identity/auth/idempotent dispatch |
-| AC-J05 | Per-Node anti-replay high-water and CSPRNG/rekey/reboot rollback tests |
-| AC-J06 | 3-key session proof cannot be forged by Gateway; no key leakage |
-| AC-J07 | Independent C and Go same bytes/HMAC, positive/negative Golden Vectors with expected cryptographic results |
-| AC-J08 | Simulation/HIL proves SX1276 RX Response Window, guard/ToA and legal policy for selected hardware/environment |
-| AC-J09 | Zero DATA TX until authentic completed Join + Gateway key install + valid TDMA schedule/lease/sync |
-| AC-J10 | Cross-team security/Radio MAC owner review, ADR for nontrivial security choices, CI logs and PR evidence |
-
-**Current verdict:** AC-J01..AC-J10 **NOT FULLY SATISFIED**. Structural-only fixtures and static tests do **not** constitute Golden Vector interoperability or G2/HIL PASS. `main` retains its old legacy `0.1.0-draft` content until these changes are reviewed and merged.

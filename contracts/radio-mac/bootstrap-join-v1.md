@@ -1,18 +1,15 @@
-# Bootstrap Join v1 — Design-to-Contract consolidation
+# Bootstrap Join v1 — RF Contract
 
-> **Status: DESIGN CONSOLIDATED / CONTRACT DRAFT / IMPLEMENTATION_READY = NO / G2 NOT_VERIFIED.** Scope: only LoRa **P2P Custom MAC** Join/Assignment/Accept/Confirm, key derivation, and dependency on Gateway↔Backend key installation. **NOT LoRaWAN.** This document **transcribes Owner-locked decisions** from PR #116, not an independent new Owner approval, security review, or license to deploy on RF.
->
-> **Precedence:** [PR #116 Owner decisions](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116) for their specific approved scope → this consolidation → old [specification.md](specification.md) legacy 0.1.0-draft. Do not infer that the PR discussion supersedes all legacy contracts or that merged `main` already implements it. Explicitly unresolved fields/semantics below **MUST NOT be guessed by an Agent**. [Decision/gate register](bootstrap-join-gates.md).
+**DRAFT · IMPLEMENTATION_READY=NO · G2=NOT_VERIFIED**
 
-## 1. Terminology, source and scope
+**Agent rules**
+- Implement locked V1 fields/formulas only; `UP_JOIN_REQUEST:35B` remains **CANDIDATE**.
+- **BLOCK production Join/DATA:** `M_ACCEPT`, MQTT Join relay, CTRL timing, relay identity and activation remain OPEN.
+- No legacy 8B header/CRC16. No invented fields, deadlines, keys or ACK.
+- Allowed now: bounded codec/crypto helpers and isolated tests. See [blocking gates](bootstrap-join-gates.md).
+- Authority: [Owner decisions PR #116](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116) → this DRAFT → [legacy spec](specification.md). No LoRaWAN MAC.
 
-| Classification | Meaning |
-|---|---|
-| `OWNER_APPROVED_DESIGN` | Owner locked named fields, widths, rules or cryptographic formulas **only as recorded** |
-| `CANDIDATE` | Candidate discussed but **not** locked as an entire frame/codec |
-| `OPEN_G2` | Missing or incompatible details require explicit decision + Security/Radio/Backend review |
-| `NOT_VERIFIED` | No trustworthy cross-language/HIL/production security evidence |
-| `IMPLEMENTATION_READY` | Must have no remaining blocking gaps for the specific slice and a versioned reviewed contract |
+**Status:** `OWNER_APPROVED_DESIGN` = scoped approval; `CANDIDATE` = not locked; `OPEN_G2` = needs decision/review; `NOT_VERIFIED` = no evidence.
 
 The approved `VER_TYPE` is 1B: bits 7..5 = `PROTO_VER`, bits 4..0 = `PACKET_TYPE`, V1 `PROTO_VER=1`. Reject unknown/reserved `0x20`, `0x3F`, wrong direction and length. The old `MAGIC:0xA5 + 8B header + CRC16` in [specification.md](specification.md) is **legacy candidate**, NOT part of the current Bootstrap RF frame, and must not be prepended, treated as auth, or concatenated to these lengths. LoRa PHY Preamble/Header/CRC airtime is **separate**. Relevant Owner record: [RF-VER-TYPE-01](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116#issuecomment-6568296930).
 
