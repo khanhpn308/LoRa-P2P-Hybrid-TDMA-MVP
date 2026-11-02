@@ -14,9 +14,34 @@ This legacy `MAGIC:0xA5` + 8B header + CRC16 and type registry below are **histo
 | J02 | `DOWN_JOIN_ACCEPT` **22B**, internal `M_ACCEPT` **57B**, `AUTH_TAG=first16(HMAC-SHA256(K_JOIN_ASSIGN_DL,M_ACCEPT))` | [Owner J02](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/124#issuecomment-6570268130) |
 | RF-VER-TYPE-01 | `VER_TYPE` 1B; high 3 bits version, low 5 bits packet type; approved V1 type allocation | [Owner registry](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116#issuecomment-6568296930) |
 | RF-BEACON-GWID-01 | Beacon fixed candidate `VER_TYPE1 + GW_ID1 + SF_EPOCH4 + SCHED_VER2 + ACK_BITMAP2 + CTRL_FLAGS1 = 11B` (without auth/extension/PHY overhead); **not** whole-Beacon freeze | [Owner decision](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116#issuecomment-6562886560) |
+| RF-BEACON-AUTH-01 | **Selected Beacon profile: Group HMAC-SHA256/16B tag**; base frame **28B** = 11B core + 1B `BCN_KEY_ID` + 16B HMAC tag, NOT Ed25519 76B | [Owner selection](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116#issuecomment-6575398231) |
 | RF-ALERT-01 | `UP_ALERT` application payload exactly **3B**: `ALERT_REASON1 + TEMP_X10:int16 2`; endian/invalid codes and full RF frame remain OPEN | [Owner decision](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116#issuecomment-6560942726) |
 
-**Do not implement the legacy 14B Beacon or 12B Alert as approved on-air formats.** J06 authenticated Gateway identity, J07 Counter lifecycle and full G2/G3/HIL/interop remain OPEN; Owner approval alone never enables DATA/Join TX.
+**Do not implement the legacy 14B Beacon or 12B Alert as approved on-air formats. The 28B Group-HMAC Beacon above is the selected design, not the completed G2 security contract.** J06 authenticated Gateway identity, J07 Counter lifecycle and full G2/G3/HIL/interop remain OPEN; Owner approval alone never enables DATA/Join TX.
+
+### RF-BEACON-AUTH-01 — Lightweight Beacon profile (Owner-approved design; G2 NOT_VERIFIED)
+
+**Chosen base RF Beacon MAC frame: 28B total.** Byte offsets are zero-based within SX1276 MAC payload; PHY preamble/header/CRC airtime is separate. No legacy 8B MAC header/CRC16.
+
+| Offset | Field | Size | Rule / remaining decision |
+|---:|---|---:|---|
+| 0 | `VER_TYPE` | 1B | Exact `0x21`, GW→Node broadcast |
+| 1 | `GW_ID` | 1B | Existing Owner-approved width; reserved values/provisioned mapping still require review |
+| 2–5 | `SF_EPOCH` | 4B | Replay/sync counter; endian/reboot/holdover rules still require freeze |
+| 6–7 | `SCHED_VER` | 2B | Owner-approved width; wrap/version mapping OPEN |
+| 8–9 | `ACK_BITMAP` | 2B | Telemetry ACK only; not Join/Alert/Confirm |
+| 10 | `CTRL_FLAGS` | 1B | Exact flag assignment and extension presence still OPEN |
+| 11 | `BCN_KEY_ID` | 1B | Selector of a provisioned, versioned Group Beacon key; mapping/lifecycle OPEN |
+| 12–27 | `BCN_AUTH_TAG` | 16B | First 16 bytes of HMAC-SHA256 under the selected group key over a domain-separated canonical Beacon transcript; **transcript bytes not yet frozen** |
+| **Total** | | **28B** | **Owner-selected Group HMAC profile**; not G2/security/interop PASS |
+
+**Algorithm choice locked:** Group HMAC-SHA256 with a 16B tag; **Ed25519 64B signature / 76B Beacon is not the selected V1 base profile**. This freezes the selected algorithm and base field widths, **not** the currently OPEN cryptographic transcript/byte order, trusted Gateway identity (J06), distribution/protection/rotation/revocation of the newly proposed `K_BEACON_GROUP`, persistent replay state, or active schedule authorizations. `K_BEACON_GROUP` must not be implicitly derived from `K_JOIN` or substituted by session keys without separate approved KDF/key lifecycle review.
+
+**Security trade-off:** Any compromised Node holding the shared Beacon HMAC key can forge a tag-valid Beacon. A valid Group HMAC proves only **group-key possession**, not unique Gateway origin; it does not resolve J06. Unknown key selectors/bad tags/invalid length/replay must fail closed; compare tags in constant time and never grant TX solely because a Beacon tag validates.
+
+**JOIN_OPEN extension:** Existing 16B JOIN_OPEN extension is a **candidate**, not selected as part of the 28B base frame. Illustrative extended Beacon length **44B** (11B core + 16B extension + 1B key selector + 16B tag), only after versioned presence/placement, authenticated transcript and lifetime rules are separately approved. Default `JOIN_CLOSED`. Do not append unauthenticated extension bytes or change Beacon length based on guesswork.
+
+**Testing:** Complete ToA/guard budget across supported SF/BW/CR, single-SX1276 half-duplex scheduling, independent C↔Go golden vectors, human Security/RF review and regulatory/HIL evidence remain `NOT_VERIFIED`. Source: [Owner Beacon choice](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116#issuecomment-6575398231).
 
 ## 1. Phạm vi và trách nhiệm
 
