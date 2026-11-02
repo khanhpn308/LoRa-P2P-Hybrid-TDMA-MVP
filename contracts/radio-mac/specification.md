@@ -43,6 +43,66 @@ This legacy `MAGIC:0xA5` + 8B header + CRC16 and type registry below are **histo
 
 **Testing:** Complete ToA/guard budget across supported SF/BW/CR, single-SX1276 half-duplex scheduling, independent C↔Go golden vectors, human Security/RF review and regulatory/HIL evidence remain `NOT_VERIFIED`. Source: [Owner Beacon choice](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116#issuecomment-6575398231).
 
+## Radio MAC V1 compact frames — Owner-locked design (2026-11-02)
+
+**Source of design decision:** [ADR-0002](../../docs/adr/0002-radio-mac-security-v1.md); this section supersedes conflicting earlier candidate frame lengths in design documents. **G2 security, C↔Go interoperability, active TX and production approval remain NOT_VERIFIED.** The historical 8B legacy envelope in §2 and old 41B/61B draft diagrams are not the current V1 frame definitions.
+
+| Packet | Direction | MAC payload size | Usage |
+|---|---|---:|---|
+| `0x21 BEACON` (legacy registry alias `DOWN_BEACON_ACK`) | Gateway→broadcast | **28B** | Authenticated Superframe time/schedule + Telemetry ACK; 16B optional JOIN_OPEN extension separately OPEN |
+| `0x22 UP_JOIN_REQUEST` | Node→Gateway | **35B** | Start/retry Join; Node+Backend proof |
+| `0x23 DOWN_JOIN_ASSIGNMENT` | Gateway→Node | **23B** | Direct to target Gateway/RF profile |
+| `0x24 DOWN_JOIN_ACCEPT` | Gateway→Node | **22B** | Backend-authorized Join Accept |
+| `0x25 UP_JOIN_CONFIRM` | Node→Gateway→Backend | **19B** | Backend confirms Node possession |
+| `0x26 UP_TELEMETRY` | Node→Gateway | **17B** | Data slot temperature |
+| `0x27 UP_ALERT` | Node→Gateway | **18B** | Priority alert |
+| `0x28 UP_SCHED_READY` | Node→Gateway | **19B** | Durable Shadow/Fence READY proof; replaces prior 41B candidate |
+| `0x29 UP_CMD_RESULT` | Node→Gateway | **25B** | Command/Recovery result (base payload) |
+| `0x2A DOWN_SCHED_PREPARE` | Gateway→Node | **51B/43B/35B** | PREPARE / COUNTDOWN / ABORT |
+| `0x2B DOWN_COMMAND` | Gateway→Node | **33+N B, 0≤N≤16** | Authorized command and params |
+| `0x2C DOWN_AUTH_UPDATE` | Gateway→Node, originated by Backend | **48B** | Backend-authenticated Recovery Grant; replaces 61B candidate |
+
+### Shared Header for post-Join unicast (7B)
+
+`VER_TYPE:1B (offset 0) | NODE_ID:1B (offset 1) | KEY_ID:1B (offset 2) | FRAME_COUNTER:uint32 BE (offsets 3..6)`.
+
+Joined-unicast `M_RF = ASCII("LP2P/RF/V1/MAC") || DIR_U8 || GW_ID_U8 || RF_FRAME_WITHOUT_MIC` with `DIR_U8=0x01` for UP and `0x02` for DOWN. The trusted `GW_ID` is context (not an extra RF octet). For Telemetry/Alert/Result/**READY**, `MIC=first8(HMAC-SHA256(K_SESSION_UP/DL,M_RF))`; for Schedule and Command use 16B MIC. Transcript authorization, directional counter reset/rekey and independent vector verification remain G2 open.
+
+### `UP_SCHED_READY` (19B)
+
+| Offset | Bytes | Field | Rule |
+|---|---:|---|---|
+| 0..6 | 7 | shared Header | `VER_TYPE=0x28`; valid Node/active session; monotonic 4B counter |
+| 7..10 | 4 | `TXN_REF:uint32 BE` | maps to exactly one **immutable, authenticated** schedule transaction |
+| 11..18 | 8 | `MIC` | `first8(HMAC-SHA256(K_SESSION_UP,M_RF))` |
+| **Total** | **19** | | Old 41B with `SCHED_VER/SCHED_HASH/ACTIVATION_SF` is superseded |
+
+Node stores Shadow Schedule and `OLD_TX_FENCE_SF` **durably before** READY. Gateway binds `TXN_REF` and authenticated Node session to the correct schedule/hash/version/activation and required membership; no ready-by-guess. Node sends READY **in its currently authorized old-schedule DATA slot** (replacing Telemetry), not in free shared CTRL. All Nodes READY (100%), full authenticated `3→2→1` countdown and ACTIVE Beacon are still required. A short MIC does not demonstrate durability without correct Node implementation.
+
+### `DOWN_AUTH_UPDATE` — compact Backend Recovery Grant (48B)
+
+| Offset | Bytes | Field | Rule |
+|---|---:|---|---|
+| 0..6 | 7 | shared Header | `VER_TYPE=0x2C`, Backend-assigned counter, `KEY_ID` of bound session |
+| 7 | 1 | `AUTH_OP` | Recovery subtype; opcode registry review OPEN |
+| 8..11 | 4 | `AUTH_REF:uint32 BE` | unique Backend grant ID |
+| 12..15 | 4 | `FAILED_TXN_REF:uint32 BE` | failed switch transaction |
+| 16..19 | 4 | `SCHED_REF:uint32 BE` | authenticated immutable schedule reference |
+| 20..21 | 2 | `AUTH_REV:uint16 BE` | authorization revision; wrap handling OPEN |
+| 22..23 | 2 | `SLOT_BITMAP:uint16 BE` | allowed slots only; bit mapping/overflow policy OPEN |
+| 24..27 | 4 | `EFFECTIVE_SF:uint32 BE` | start boundary |
+| 28..31 | 4 | `EXPIRY_SF:uint32 BE` | expiry boundary |
+| 32..47 | 16 | `BACKEND_TAG` | `first16(HMAC-SHA256(K_BACKEND_AUTH, canonical Backend grant transcript))` |
+| **Total** | **48** | | Old 61B `SCHED_HASH8/SLOT_ID/GW_MIC` proposal superseded |
+
+**Backend-issued and authenticated:** `K_BACKEND_AUTH = HKDF-Expand(PRK, ASCII("LP2P/JOIN/V1/BACKEND-AUTH") || SESSION_CONTEXT,32)` is a proposed additional key held only by Node+Backend, not Gateway. The tag must bind all 32 prefix bytes + domain + session + destination Gateway. Gateway cannot modify fields, allocate Backend grant counters or forge authorized slot rights; forwards byte-identically in an approved control opportunity. Node validates proof, replay/revision, `SCHED_REF` full schedule binding, bitmap mapping, expiry, persisted TX fence and authorized boundary, then persists the grant **before** resuming only those slots. Unknown map, ambiguous schedule, expiry or invalid proof ⇒ deny.
+
+`K_BACKEND_AUTH` provisioning, exact transcript and session-counter namespaces require Security/RF review and C↔Go Golden Vectors. `SLOT_BITMAP` supports only the explicitly agreed slot mapping; no silent loss of out-of-range slots. A gateway holding `K_SESSION_DL` alone must not be capable of creating a valid `BACKEND_TAG`.
+
+### Beacon and RF budget
+
+Base `BEACON` stays **28B** = 11B fields + `BCN_KEY_ID:1B` + Group HMAC-SHA256 tag 16B. Its `ACK_BITMAP:2B` is Telemetry-only. The Group HMAC authenticates **group membership, not unique Gateway identity** (J06 remains open). Optional `JOIN_OPEN` 16B is not yet frozen on-air (illustrative total 44B). At SF10/BW125/CR4/5 with 8 preamble, explicit header and PHY CRC, theoretical ToA is **411.65ms** for Beacon 28B, **329.73ms** for READY 19B and **575.49ms** for Recovery 48B. These figures exclude guard, RX↔TX switching and local ISR jitter; 400ms DATA and 250ms BCN mock windows are not validated at SF10. See [TDMA timing](tdma-schedule.md) and ADR-0002.
+
 ## 1. Phạm vi và trách nhiệm
 
 - **Node**: thu Beacon, đồng bộ, chỉ TX trong slot được phân hoặc cửa sổ ưu tiên được phép, theo dõi ACK, backoff, giới hạn airtime cục bộ.
