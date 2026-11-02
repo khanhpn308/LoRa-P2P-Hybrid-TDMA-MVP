@@ -2,6 +2,18 @@
 
 **Nguồn:** kiến trúc đính kèm §5.1–5.3, §7.3–7.4 · #12, #14. **Giá trị thời gian chỉ là baseline để làm mock/simulator; G1/G2/G3 chưa PASS.**
 
+## Owner-approved TDMA and Recovery rules — design level only (2026-11-02)
+
+The following decisions supersede conflicting mock/simulator assumptions in the P-10S-15 baseline. They **do not** prove the selected schedule can fit one SX1276 RF airtime/guard budget.
+
+- **SS-01**: Gateway requires authenticated `UP_SCHED_READY` from **100% of its required Nodes** before cutover; every Node must durably persist Shadow Schedule and `OLD_TX_FENCE_SF=E` before READY. Missing any READY ⇒ **ABORT**. [Owner decision](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116#issuecomment-6542745470).
+- **SS-02**: Node requires all three authenticated announcements `3→2→1` bound to the same transaction and an authenticated ACTIVE Beacon; missing proof ⇒ **SUSPENDED/RESYNC**, no affected TX at/from E. [Owner decision](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116#issuecomment-6542745470).
+- **RF-SCHED-READY-02**: READY replaces Telemetry in the Node's **own valid old-schedule DATA slot**. No fabricated slot; lease, fence, guard and airtime are mandatory. [Owner decision](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116#issuecomment-6561024504).
+- **SF-RESYNC-01 / SF-RECOVERY-01–03**: Abnormal authenticated `SF_EPOCH` triggers safe RESYNC; unchanged Active Schedule may be restored after verified reboot; ambiguous interrupted cutover fails closed, with Backend-controlled authenticated Recovery Grant for affected rights. [Decision](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116#issuecomment-6559234872).
+- **SF-RECOVERY-04/05**: Backend plans and User approves a fixed Shared CTRL Window for Join/Recovery, logically after Beacon and before Alert/DATA, with nonoverlapping DL/UL. One SX1276 is half-duplex. **P-10S-15 has no verified spare CTRL capacity**; no silent schedule changes. Join defaults CLOSED. [Decision](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116#issuecomment-6559992609).
+
+**OPEN / NOT_VERIFIED**: exact timing, control packet layouts, schedule membership snapshot, legal RF, ToA, guard, security, implementation, simulation and HIL. These approvals are design principles, not production timing sign-off.
+
 ## 1. Mẫu superframe danh định
 
 - `superframe_ms = 10000`; 5 subframe × 2000ms; mỗi subframe có 250ms BCN/DL + 400ms PCSS + 3 data slot × 400ms + 150ms guard.
