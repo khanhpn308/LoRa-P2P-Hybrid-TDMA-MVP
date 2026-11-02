@@ -56,6 +56,8 @@ The 12B request nonce `JOIN_COUNTER[2] || JOIN_RANDOM[10]` is OWNER_APPROVED. Ne
 | 6–21 | `AUTH_TAG` | 16B | First 16B HMAC-SHA-256 under `K_JOIN_ASSIGN_DL`, **distinct M_ACCEPT transcript** |
 | **Total** | | **22B** | **No `BACKEND_RANDOM`** |
 
+**Review-only proposal:** [J01/J02 decision pack](bootstrap-join-j01-j02-proposal.md) defines a candidate 57B `M_ACCEPT` and test-only vectors; **NOT OWNER_APPROVED, still OPEN_G2**.
+
 **BLOCKER:** Owner approved a purpose-separated candidate domain `ASCII("LP2P/JOIN/V1/M-ACCEPT")`, authentication covering the first 6 transmitted bytes, `DEVICE_MAC`, full request nonce, relay/target context and RF plan, but **exact M_ACCEPT field order/byte-level transcript is NOT frozen**. Agent MUST NOT invent one and call it production. Preserve exact accepted 22B RF bytes in durable Backend Join transaction to compute Confirm. Source: [RF-JOIN-ACCEPT-01](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116#issuecomment-6568432331).
 
 ### 2.4 `UP_JOIN_CONFIRM` — **19B OWNER_APPROVED_DESIGN**

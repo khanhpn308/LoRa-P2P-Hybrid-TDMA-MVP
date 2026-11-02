@@ -2,6 +2,8 @@
 
 **DRAFT · END-TO-END CODE BLOCKED · G2/G3/G4=NOT_VERIFIED**
 
+**J01/J02 review pack:** [proposed 35B Request + 57B M_ACCEPT](bootstrap-join-j01-j02-proposal.md), [Python-only candidate vector](test-vectors/bootstrap-join-j02-proposed.json). **Not approved and does not close J01/J02/J06.**
+
 **Agent:** Check J01–J12. Do not infer approval from fixtures, comments or CI syntax. Only isolated already-specified code/tests are allowed. No Join/DATA TX enablement. [Contract](bootstrap-join-v1.md) · [Owner record](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116).
 
 ## Blocking gates — resolve before end-to-end Join

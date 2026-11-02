@@ -1,0 +1,71 @@
+{
+  "status": "PROPOSED_ONLY_OWNER_APPROVAL_REQUIRED_C_GO_NOT_VERIFIED",
+  "source": "bootstrap-join-j01-j02-proposal.md",
+  "test_only": "K_JOIN=00..1f synthetic; not a production credential or approved Join frame",
+  "input": {
+    "K_JOIN": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "DEVICE_MAC": "246f28123456",
+    "RELAY_GW_ID": "09",
+    "TARGET_GW_ID": "09",
+    "NODE_ID": "0e",
+    "KEY_ID": "01",
+    "JOIN_COUNTER_BE": "0124",
+    "JOIN_RANDOM": "b1c2d3e4f5061728394a",
+    "RF_PLAN_ID": "RF-VN920-V1"
+  },
+  "expected": {
+    "PRK": "feab8a3d9e13b72126f85f5066973279145885ddaa5cc3f3d02a6174400c0971",
+    "K_JOIN_REQ": "a2e2244ca7b1b54678be4b8383e153b6fe9b1605ea4356039ed93305e71b5c94",
+    "K_JOIN_ASSIGN_DL": "dcd27931f2fdcbbd7924fe5ec715dac8dd6729cd5849292ec328ccac5b98b2ac",
+    "M_UP": "4c5032502f4a4f494e2f56312f4d2d52455122246f281234560124b1c2d3e4f5061728394a0952462d564e3932302d5631",
+    "JOIN_PROOF": "3e24ab5a5cb21d02ae0e466c5223537f",
+    "UP_JOIN_REQUEST": "22246f281234560124b1c2d3e4f5061728394a3e24ab5a5cb21d02ae0e466c5223537f",
+    "ACCEPT_HEAD": "24b1c2090e01",
+    "M_ACCEPT": "4c5032502f4a4f494e2f56312f4d2d41434345505424b1c2090e01246f281234560124b1c2d3e4f5061728394a0952462d564e3932302d5631",
+    "DOWN_JOIN_ACCEPT": "24b1c2090e01e95ffa30eb4d28bdc4b87f6431996573",
+    "AUTH_TAG": "e95ffa30eb4d28bdc4b87f6431996573",
+    "SESSION_CONTEXT": "246f28123456090e010124b1c2d3e4f5061728394a52462d564e3932302d5631",
+    "K_SESSION_UP": "19550ab3e5b5ca6b5a974e79ae4a6b7e8f746ca0096a38aba662ec3f34db4301",
+    "K_SESSION_DL": "35259151f9607e10e853aac1e9109fd4fddc1922e64bdb3adf624ea859c0e28d",
+    "K_JOIN_CONFIRM": "126aff744f6dda8bf84dc6fc296118b83dd9229d65b8c990449efba64e03e573",
+    "M_CONFIRM": "4c5032502f4a4f494e2f56312f4d2d434f4e4649524d250e01246f28123456090e010124b1c2d3e4f5061728394a52462d564e3932302d563124b1c2090e01e95ffa30eb4d28bdc4b87f6431996573",
+    "UP_JOIN_CONFIRM": "250e0187abe25be4871832f42942fa3c77226b"
+  },
+  "negative_cases": [
+    {
+      "id": "BAD_LENGTH_ACCEPT",
+      "test": "truncate one byte of Accept",
+      "expected": "REJECT_BAD_LENGTH"
+    },
+    {
+      "id": "BAD_AUTH_TAG_ACCEPT",
+      "test": "flip one bit in Accept tag",
+      "expected": "REJECT_BAD_AUTH"
+    },
+    {
+      "id": "BAD_AUTH_HEADER_ACCEPT",
+      "test": "modify NODE_ID or KEY_ID",
+      "expected": "REJECT_BAD_AUTH"
+    },
+    {
+      "id": "WRONG_TARGET_RELAY",
+      "test": "compute/verify context with RELAY_GW_ID=07 while Accept TARGET_GW_ID=09",
+      "expected": "REJECT_WRONG_GATEWAY_OR_BAD_AUTH"
+    },
+    {
+      "id": "CONFIRM_TAMPER",
+      "test": "flip one bit of accepted authenticated 22B Accept in M_CONFIRM",
+      "expected": "REJECT_BAD_AUTH"
+    },
+    {
+      "id": "COUNTER_REPLAY",
+      "test": "Backend high-water already >= current counter for another transaction",
+      "expected": "REJECT_REPLAY_WITH_BACKEND_STATE"
+    },
+    {
+      "id": "COUNTER_REBOOT_ROLLBACK",
+      "test": "Node cannot prove durable counter monotonicity after reboot",
+      "expected": "DENY_TX"
+    }
+  ]
+}
