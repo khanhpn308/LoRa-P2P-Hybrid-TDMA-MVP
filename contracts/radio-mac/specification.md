@@ -1,8 +1,22 @@
 # Custom LoRa P2P Radio MAC — giao diện Node ↔ Gateway
 
-**LEGACY DRAFT · NOT JOIN IMPLEMENTATION SOURCE.** Agent: use [Bootstrap Join](bootstrap-join-v1.md) + [gates](bootstrap-join-gates.md). Header 8B/CRC16 below is obsolete for Join; Request 35B candidate and `M_ACCEPT` OPEN. No production Join/DATA.
+**LEGACY DRAFT · NOT JOIN IMPLEMENTATION SOURCE.** Agent: use [Bootstrap Join](bootstrap-join-v1.md) + [gates](bootstrap-join-gates.md). Header 8B/CRC16 below is obsolete for Join; J01 Request 35B and J02 M_ACCEPT 57B are OWNER_APPROVED_DESIGN. No production Join/DATA.
 
 **Revision 0.1.0-draft · SECURITY / WIRE LAYOUT NOT FROZEN · Issue #12 · Gate G2: NOT_VERIFIED.**
+
+## Approved design overlay (2026-11-02; G2 NOT_VERIFIED)
+
+This legacy `MAGIC:0xA5` + 8B header + CRC16 and type registry below are **historical, not current V1 Join RF framing**. For implementation use [bootstrap-join-v1.md](bootstrap-join-v1.md):
+
+| Decision | Approved design | Record |
+|---|---|---|
+| J01 | `UP_JOIN_REQUEST` **35B** = `0x22/DEVICE_MAC6/COUNTER2BE/RANDOM10/JOIN_PROOF16` | [Owner J01](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/124#issuecomment-6570037473) |
+| J02 | `DOWN_JOIN_ACCEPT` **22B**, internal `M_ACCEPT` **57B**, `AUTH_TAG=first16(HMAC-SHA256(K_JOIN_ASSIGN_DL,M_ACCEPT))` | [Owner J02](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/124#issuecomment-6570268130) |
+| RF-VER-TYPE-01 | `VER_TYPE` 1B; high 3 bits version, low 5 bits packet type; approved V1 type allocation | [Owner registry](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116#issuecomment-6568296930) |
+| RF-BEACON-GWID-01 | Beacon fixed candidate `VER_TYPE1 + GW_ID1 + SF_EPOCH4 + SCHED_VER2 + ACK_BITMAP2 + CTRL_FLAGS1 = 11B` (without auth/extension/PHY overhead); **not** whole-Beacon freeze | [Owner decision](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116#issuecomment-6562886560) |
+| RF-ALERT-01 | `UP_ALERT` application payload exactly **3B**: `ALERT_REASON1 + TEMP_X10:int16 2`; endian/invalid codes and full RF frame remain OPEN | [Owner decision](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116#issuecomment-6560942726) |
+
+**Do not implement the legacy 14B Beacon or 12B Alert as approved on-air formats.** J06 authenticated Gateway identity, J07 Counter lifecycle and full G2/G3/HIL/interop remain OPEN; Owner approval alone never enables DATA/Join TX.
 
 ## 1. Phạm vi và trách nhiệm
 
