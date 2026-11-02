@@ -2,16 +2,16 @@
 
 **DRAFT · END-TO-END CODE BLOCKED · G2/G3/G4=NOT_VERIFIED**
 
-**J01/J02 review pack:** [proposed 35B Request + 57B M_ACCEPT](bootstrap-join-j01-j02-proposal.md), [Python-only candidate vector](test-vectors/bootstrap-join-j02-proposed.json). **Not approved and does not close J01/J02/J06.**
+**OWNER APPROVED DESIGN:** [J01](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/124#issuecomment-6570037473) freezes `UP_JOIN_REQUEST:35B`; [J02](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/124#issuecomment-6570268130) freezes canonical `M_ACCEPT:57B` and 16B HMAC for `DOWN_JOIN_ACCEPT:22B`. These are scoped design approvals, **not production/interop/security PASS**. [Historical decision pack](bootstrap-join-j01-j02-proposal.md), [Python-only fixture](test-vectors/bootstrap-join-j02-proposed.json). **J06/J07/J10/G2 and end-to-end Join remain OPEN.**
 
 **Agent:** Check J01–J12. Do not infer approval from fixtures, comments or CI syntax. Only isolated already-specified code/tests are allowed. No Join/DATA TX enablement. [Contract](bootstrap-join-v1.md) · [Owner record](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116).
 
-## Blocking gates — resolve before end-to-end Join
+## Owner-approved design and remaining gates — before end-to-end Join
 
 | Gate | Missing or disputed contract item | Responsibility | Blocked scope |
 |---|---|---|---|
-| **J01** | Owner explicitly approves or revises **entire** 35B `UP_JOIN_REQUEST` packet/invalid values; currently candidate while 0x22 and nonce/HMAC internals approved | Node / Backend / Owner | RF Join Request production codec |
-| **J02** | Byte-exact `M_ACCEPT` (domain, field order, relay/target binding), invalid inputs and matching `DOWN_JOIN_ACCEPT` HMAC vectors | Security / Node / Backend | Accept cryptographic implementation, Confirm end-to-end |
+| **J01** | **OWNER_APPROVED_DESIGN** ([decision](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/124#issuecomment-6570037473)): exact 35B Request fields, offsets, mandatory validation; J06/J07 and independent G2 verification remain separate | Node / Backend / Security | Production RF Join TX still blocked by J06/J07/J10 and other gates |
+| **J02** | **OWNER_APPROVED_DESIGN** ([decision](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/124#issuecomment-6570268130)): 57B `M_ACCEPT` ordered transcript and first16 HMAC tag, validation/rejection invariants; J06 identity and J10/G2 vectors/security review still OPEN | Security / Node / Backend | Production Accept/Confirm end-to-end blocked by other gates |
 | **J03** | MQTT Join discovery relay, assignment/accept dispatch, Confirm forwarding, durable message IDs, expiry and idempotency in canonical namespace | Backend / Gateway / Infra | End-to-end Join routing |
 | **J04** | Precise shared CTRL UL/DL allocation, Response Window delay/length, retry budget, queue pressure, half-duplex, timing and legal RF airtime | RF / Gateway / Node | Real on-air Join TX |
 | **J05** | Complete Node/Gateway/Backend state-transition matrix incl. expired assignment/rejoin race, reboot & rollback, resource admission, completion/activation ACK | Node / Gateway / Backend | Autonomously active Join |
@@ -29,8 +29,8 @@ No Agent may substitute an **Assumption** for a gate, mark it OWNER_APPROVED, co
 
 | Criterion | Expected evidence |
 |---|---|
-| AC-J01 | Every frame has version, offsets, sizes, endian, purpose tag and explicit invalid/reserved-value behavior; Owner approved candidate changes |
-| AC-J02 | Exact byte-level HMAC/HKDF transcripts incl. M_ACCEPT and cross-version migration policy |
+| AC-J01 | J01 35B field layout and scoped validation **Owner design approved**; J07 reserved Counter values and J10/G2 cross-language conformance still NOT_VERIFIED |
+| AC-J02 | Canonical 57B `M_ACCEPT` and tag **Owner design approved**; J06 authenticated identity, compatibility/migration, C↔Go vectors and G2 review still NOT_VERIFIED |
 | AC-J03 | Node / Gateway / Backend formal transition+timeout table with durable DB/NVS ownership |
 | AC-J04 | MQTT Join schemas versioned, producer/consumer reviewed, topic identity/auth/idempotent dispatch |
 | AC-J05 | Per-Node anti-replay high-water and CSPRNG/rekey/reboot rollback tests |
