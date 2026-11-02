@@ -90,3 +90,11 @@ Schedule `P-10S-15`, `superframe_ms=10000`, 400 ms slots and radio version mappi
 2. Backend: can it enforce dedup payload conflict detection, actual activation correlation and out-of-order ACK handling?
 3. Infrastructure/Security: authenticate principal↔topic binding; test SUBACK downgrade, retained handling, LWT/session expiry and broker queue durability?
 4. All: confirm application error-code names, action-specific params/permissions and RF version mapping with #12; revise draft schemas before freezing v1.
+
+## 7. Session key install extension — Owner-approved architecture, draft codec
+
+**New MQTT interfaces:** `downlink/session-key-install` and `uplink/session-key-ack`, QoS1/Retain=false, under existing `iot/v1/gw/{gateway_id}`. Full versioned schema, canonical AAD/ACK byte encoding, state transitions and inter-field checks: [session-key-security.md](session-key-security.md#5-cross-field-and-environment-rules-must-enforce-outside-json-schema), particularly **SK-01…SK-15**.
+
+Specific invariants: trusted MQTT string Gateway principal must map to RF uint8 `target_gw_id`; no installation before authenticated Node `UP_JOIN_CONFIRM`; AES-256-GCM uses independently provisioned per-Gateway 32B wrapping key with nonce uniqueness across reboot; `install_id`/revision/expiry are durable and idempotent; no application ACK `INSTALLED` before protected inactive key-slot commit; authenticate ACK using separately derived 32B MAC key; old/revoked installs/ACKs fail closed; key installation cannot grant TDMA DATA rights. **FormatChecker/JSON Schema alone cannot verify any of these runtime/cryptographic properties.**
+
+Review: Gateway / Backend Go / Infra-Security / CODEOWNERS. G2 security audit, Golden Vectors, MQTT broker/G4 integration, Flash fault injection and RF/HIL remain **NOT_VERIFIED**.
