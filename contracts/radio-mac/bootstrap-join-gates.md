@@ -6,6 +6,12 @@
 
 **Agent:** Check J01–J12. Do not infer approval from fixtures, comments or CI syntax. Only isolated already-specified code/tests are allowed. No Join/DATA TX enablement. [Contract](bootstrap-join-v1.md) · [Owner record](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116).
 
+## Compact Radio MAC security lock — Owner design 2026-11-02
+
+[ADR-0002](../../docs/adr/0002-radio-mac-security-v1.md) records the user's approval: Beacon **28B Group HMAC**, post-Join **7B shared header** and 4B frame counter, `UP_SCHED_READY` **19B** (old 41B superseded), `DOWN_AUTH_UPDATE` **48B** Backend-granted recovery (old 61B superseded), and `M_RF` joined-unicast HMAC construction. The four approved Join frames and 100%-READY/3→2→1/ACTIVE Beacon/TX fence invariants are unchanged.
+
+**OPEN security gates after approval (no production TX):** J06 authenticated Node-visible Gateway identity versus compromised holder of group Beacon key; J07 persistent Join/session/grant counters and rekey; `K_BACKEND_AUTH` provisioning and exact domain-separated grant transcript; immutable `TXN_REF/SCHED_REF` state binding; bitmap slot-ID mapping; independent C↔Go golden vectors, ToA/guard timing and formal technical review. `OWNER_APPROVED_DESIGN != G2_PASS`.
+
 ## Owner-approved design and remaining gates — before end-to-end Join
 
 | Gate | Missing or disputed contract item | Responsibility | Blocked scope |
