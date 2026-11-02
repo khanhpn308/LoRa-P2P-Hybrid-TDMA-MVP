@@ -1,0 +1,213 @@
+{
+  "schema_version": "bootstrap-join-structural-v1-draft",
+  "contract_status": "DESIGN_CONSOLIDATED_NOT_IMPLEMENTATION_READY",
+  "note": "Byte layout/length tests only. Every sample uses all-zero 16B tag as intentionally unauthenticated placeholder. NEVER label vectors cryptographically valid, never use as real radio packets. 35B UP_JOIN_REQUEST is still a CANDIDATE.",
+  "type_codes": {
+    "UP_JOIN_REQUEST": "22",
+    "DOWN_JOIN_ASSIGNMENT": "23",
+    "DOWN_JOIN_ACCEPT": "24",
+    "UP_JOIN_CONFIRM": "25"
+  },
+  "frames": [
+    {
+      "name": "UP_JOIN_REQUEST",
+      "status": "CANDIDATE",
+      "type_byte": "22",
+      "size": 35,
+      "fields": [
+        [
+          "VER_TYPE",
+          0,
+          1
+        ],
+        [
+          "DEVICE_MAC",
+          1,
+          6
+        ],
+        [
+          "JOIN_COUNTER",
+          7,
+          2
+        ],
+        [
+          "JOIN_RANDOM",
+          9,
+          10
+        ],
+        [
+          "JOIN_PROOF",
+          19,
+          16
+        ]
+      ]
+    },
+    {
+      "name": "DOWN_JOIN_ASSIGNMENT",
+      "status": "OWNER_APPROVED_DESIGN",
+      "type_byte": "23",
+      "size": 23,
+      "fields": [
+        [
+          "VER_TYPE",
+          0,
+          1
+        ],
+        [
+          "REQUEST_REF",
+          1,
+          2
+        ],
+        [
+          "TARGET_GW_ID",
+          3,
+          1
+        ],
+        [
+          "FREQ_OFFSET_KHZ",
+          4,
+          2
+        ],
+        [
+          "PHY_PROFILE_ID",
+          6,
+          1
+        ],
+        [
+          "AUTH_TAG",
+          7,
+          16
+        ]
+      ]
+    },
+    {
+      "name": "DOWN_JOIN_ACCEPT",
+      "status": "OWNER_APPROVED_DESIGN",
+      "type_byte": "24",
+      "size": 22,
+      "fields": [
+        [
+          "VER_TYPE",
+          0,
+          1
+        ],
+        [
+          "REQUEST_REF",
+          1,
+          2
+        ],
+        [
+          "TARGET_GW_ID",
+          3,
+          1
+        ],
+        [
+          "NODE_ID",
+          4,
+          1
+        ],
+        [
+          "KEY_ID",
+          5,
+          1
+        ],
+        [
+          "AUTH_TAG",
+          6,
+          16
+        ]
+      ]
+    },
+    {
+      "name": "UP_JOIN_CONFIRM",
+      "status": "OWNER_APPROVED_DESIGN",
+      "type_byte": "25",
+      "size": 19,
+      "fields": [
+        [
+          "VER_TYPE",
+          0,
+          1
+        ],
+        [
+          "NODE_ID",
+          1,
+          1
+        ],
+        [
+          "KEY_ID",
+          2,
+          1
+        ],
+        [
+          "CONFIRM_TAG",
+          3,
+          16
+        ]
+      ]
+    }
+  ],
+  "fixture_values": {
+    "device_mac": "246f28123456",
+    "join_counter_be": "0123",
+    "join_random": "a1b2c3d4e5f60718293a",
+    "request_ref": "a1b2",
+    "target_gw_id": "09",
+    "node_id": "0e",
+    "key_id": "01",
+    "freq_offset_khz_be": "0578",
+    "phy_profile_id": "03",
+    "rf_plan_ascii_hex": "52462d564e3932302d5631",
+    "session_context_hex": "246f28123456090e010123a1b2c3d4e5f60718293a52462d564e3932302d5631"
+  },
+  "cases": [
+    {
+      "case_id": "REQ-SHAPE",
+      "frame": "UP_JOIN_REQUEST",
+      "wire_hex": "22246f281234560123a1b2c3d4e5f60718293a00000000000000000000000000000000",
+      "expected_static": "HEADER_OK_AUTH_UNVERIFIED"
+    },
+    {
+      "case_id": "ASN-SHAPE",
+      "frame": "DOWN_JOIN_ASSIGNMENT",
+      "wire_hex": "23a1b20905780300000000000000000000000000000000",
+      "expected_static": "HEADER_OK_AUTH_UNVERIFIED"
+    },
+    {
+      "case_id": "ACC-SHAPE",
+      "frame": "DOWN_JOIN_ACCEPT",
+      "wire_hex": "24a1b2090e0100000000000000000000000000000000",
+      "expected_static": "HEADER_OK_AUTH_UNVERIFIED"
+    },
+    {
+      "case_id": "CON-SHAPE",
+      "frame": "UP_JOIN_CONFIRM",
+      "wire_hex": "250e0100000000000000000000000000000000",
+      "expected_static": "HEADER_OK_AUTH_UNVERIFIED"
+    },
+    {
+      "case_id": "CON-TRUNCATED",
+      "frame": "UP_JOIN_CONFIRM",
+      "wire_hex": "250e01000000000000000000000000000000",
+      "expected_static": "REJECT_BAD_LENGTH"
+    },
+    {
+      "case_id": "CON-RESERVED-TYPE",
+      "frame": "UP_JOIN_CONFIRM",
+      "wire_hex": "200e0100000000000000000000000000000000",
+      "expected_static": "REJECT_RESERVED_TYPE"
+    },
+    {
+      "case_id": "CON-WRONG-VERSION",
+      "frame": "UP_JOIN_CONFIRM",
+      "wire_hex": "450e0100000000000000000000000000000000",
+      "expected_static": "REJECT_BAD_VERSION"
+    },
+    {
+      "case_id": "ASN-WRONG-DIRECTION-TYPE",
+      "frame": "DOWN_JOIN_ASSIGNMENT",
+      "wire_hex": "22a1b20905780300000000000000000000000000000000",
+      "expected_static": "REJECT_WRONG_TYPE"
+    }
+  ]
+}
