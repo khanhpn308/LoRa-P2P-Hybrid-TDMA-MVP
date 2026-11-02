@@ -1,12 +1,12 @@
-# Bootstrap Join J01/J02 — Agent decision pack
+# Bootstrap Join J01/J02 — Historical design decision pack
 
-**PROPOSED · OWNER_APPROVAL_REQUIRED · G2 NOT_VERIFIED**
+**HISTORICAL DECISION PACK · J01 OWNER_APPROVED_DESIGN · J02 OWNER_APPROVED_DESIGN · J06 OPEN · G2 NOT_VERIFIED**
 
-**Agent:** Do **not** treat J01/J02 as closed. Implement only isolated, test-only candidate codecs; no production RF Join TX, no merged contract, no security PASS. Resolve [J06 relay identity](bootstrap-join-gates.md) independently.
+**Agent:** Both decisions are Owner-approved: [J01](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/124#issuecomment-6570037473) and [J02](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/124#issuecomment-6570268130). **Canonical source of truth for coding:** [bootstrap-join-v1.md](bootstrap-join-v1.md), not this archived proposal filename. J06/J07/J10/G2 and production RF Join/DATA remain OPEN/NOT_VERIFIED.
 
-## J01 — `UP_JOIN_REQUEST` whole-frame freeze proposal
+## J01 — `UP_JOIN_REQUEST` 35B (Owner-approved design)
 
-**Proposal:** lock the existing **35-byte MAC frame** with **no extra 8B MIC/CRC**. Owners have locked the type code, nonce and derivation, **not the full frame or this new proposal**.
+**Approved:** [Owner J01 decision](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/124#issuecomment-6570037473) fixes the entire 35B RF MAC frame, including existing offsets/validation below. No legacy MAC header, extra CRC16/MIC; verification and J06/J07 remain separate.
 
 | MAC offset | Field | Bytes | Validation/encoding |
 |---:|---|---:|---|
@@ -23,9 +23,9 @@
 
 **Unresolved prerequisite J06:** `M_UP` requires `RELAY_GW_ID:1B` but Request does not transmit it. Node must obtain an *unambiguous* expected Gateway ID from provisioned channel/Gateway registry or another separately approved bootstrap mechanism. Backend must use authenticated Gateway principal mapped to same RF ID. Spoofed/disputed channel identity must reject, not silently omit the byte. This proposal **does not** approve the registry or imply untrusted Beacon is authenticated.
 
-## J02 — `M_ACCEPT` canonical bytes proposal
+## J02 — `M_ACCEPT` 57B (Owner-approved design)
 
-**Proposal:** Keep the Owner-locked **22-byte** `DOWN_JOIN_ACCEPT` frame and independently approved `K_JOIN_ASSIGN_DL`, define exactly how its 16B `AUTH_TAG` is computed.
+**Approved:** [Owner J02 decision](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/124#issuecomment-6570268130) freezes the byte-exact 57B transcript below and first16 HMAC-SHA256 tag for the existing 22B RF frame; no new on-air fields or G2 production sign-off.
 
 `DOWN_JOIN_ACCEPT[0..5]` = `0x24 || REQUEST_REF[2] || TARGET_GW_ID[1] || NODE_ID[1] || KEY_ID[1]`.
 
@@ -48,18 +48,18 @@ For **target Join Accept**, require `RELAY_GW_ID == TARGET_GW_ID` and bind the l
 
 **Cross-Gateway edge:** Device must issue a **new** Request at the target Gateway with a new durable Counter/Random. Never reuse original Discovery nonce as a target Join nonce. If target Gateway is not currently authenticated/mapped, accept stays blocked; the above `M_ACCEPT` is not sufficient to resolve J06.
 
-## Candidate deterministic Python test fixture — NOT owner approved
+## Deterministic Python fixture — TEST ONLY, C↔Go NOT_VERIFIED
 
 See [bootstrap-join-j02-proposed.json](test-vectors/bootstrap-join-j02-proposed.json) and [test_bootstrap_join_j02_proposed.py](../../tests/contract/test_bootstrap_join_j02_proposed.py). Values use public test-only `K_JOIN = 00..1f`, `DEVICE_MAC=24 6f 28 12 34 56`, **target Gateway=09**, `JOIN_COUNTER=01 24`, `JOIN_RANDOM=b1 c2 d3 e4 f5 06 17 28 39 4a`, `NODE_ID=0e`, `KEY_ID=01`. This is a **new target-Gateway Request**, not reuse of the earlier Discovery example with Counter 0x0123/relay 0x07.
 
-Expected lengths: `M_UP:49B`, `M_ACCEPT:57B`, `SESSION_CONTEXT:32B`, `M_CONFIRM:79B`. Expected frames: Request 35B, Accept 22B, Confirm 19B. After J01/J02 Owner approval and Security review, independently reproduce in C and Go; Python-only fixture **is not** interoperability PASS.
+Expected lengths: `M_UP:49B`, `M_ACCEPT:57B`, `SESSION_CONTEXT:32B`, `M_CONFIRM:79B`. Expected frames: Request 35B, Accept 22B, Confirm 19B. J01/J02 have Owner design approvals; independently reproduce in C and Go and complete Security review before G2/interop PASS. The Python-only fixture **is not** interoperability PASS.
 
-## Review decision needed
+## Decision status and remaining independent gates
 
 | ID | Suggested approval scope | Does this close the gate immediately? |
 |---|---|---|
-| J01 | Freeze 35B Request exact fields, widths and mandatory checks **subject to J06 and G2** | **NO** until Owner approval and complete security review |
-| J02 | Freeze 57B `M_ACCEPT` exact field order, tag and target-relay binding **subject to J06** | **NO** until Owner approval and G2 vectors |
+| J01 | **OWNER_APPROVED_DESIGN** on [PR #124](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/124#issuecomment-6570037473): 35B Request and scoped checks | Design YES; J06/J07/G2/production still OPEN |
+| J02 | **OWNER_APPROVED_DESIGN** on [PR #124](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/124#issuecomment-6570268130): 57B transcript and tag/validation | Design YES; J06/G2/C↔Go/production still OPEN |
 | J06 | Provisioned Node-visible relay ID ↔ Backend authenticated Gateway ID, including scan/reboot/spoofing | **NO**, independent blocking design |
 
-**Change control:** Any approval must name `J01` and `J02` explicitly; a PR review on a proposed test fixture does not silently make it the production crypto contract. [Owner decision history](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116), [current Join draft](bootstrap-join-v1.md).
+**Change control:** J01 and J02 were explicitly approved ([J01](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/124#issuecomment-6570037473), [J02](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/124#issuecomment-6570268130)). This document is kept for review history; [bootstrap-join-v1.md](bootstrap-join-v1.md) governs implementation. No production Join authorization, no J06/J07/G2 closure, no automatic merge. [Owner decision history](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116), [current Join draft](bootstrap-join-v1.md).
