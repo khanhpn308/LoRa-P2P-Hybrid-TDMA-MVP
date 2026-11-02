@@ -20,6 +20,14 @@ Yêu cầu C encoder ↔ Go decoder và Go encoder ↔ C decoder so sánh bytes 
 
 Nguồn quyết định/chặn: [specification.md](../specification.md), [OPEN_DECISIONS.md](../../OPEN_DECISIONS.md), [Issue #12](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/12).
 
+## Owner-locked compact post-Join frames — test coverage still needed
+
+[ADR-0002](../../../docs/adr/0002-radio-mac-security-v1.md) locks **`UP_SCHED_READY 19B`** (Header7/TXN_REF4/MIC8) and **`DOWN_AUTH_UPDATE 48B`** (Header7/AuthOp1/AuthRef4/FailedTxnRef4/SchedRef4/AuthRev2/SlotBitmap2/EffectiveSF4/ExpirySF4/BackendTag16) in place of the old **41B/61B** design proposals. Beacon 28B Group HMAC is retained. Changes to on-air packet layout require versioning / explicit codec compatibility tests; legacy fixtures must NOT be silently reinterpreted.
+
+**Mandatory cases beyond JSON syntax:** byte-offset and endian assertions; truncated/extra byte/wrong type; tampered READY MIC; READY with unknown/colliding `TXN_REF`; READY before durable Shadow/Fence; READY replay/reset, member not in target set; invalid group Beacon tag/replay/forged group member; Recovery Backend tag tamper, gateway-modified fields, wrong or rolled-back `SCHED_REF`, `AUTH_REV` wrap, bitmap out-of-range, expired grant, counter re-use, power loss before persist, and a Gateway holding `K_SESSION_DL` but not `K_BACKEND_AUTH` attempting to forge. Compare **C encoded → Go decoded** and **Go encoded → C decoded** against identical expected-result vectors.
+
+**Status:** `PENDING_IMPLEMENTATION / G2 NOT_VERIFIED`; no new Golden Vector claims or CI/HIL PASS recorded by this document update.
+
 ## Bootstrap Join structural fixtures — NOT Golden Vectors
 
 [bootstrap-join-v1.md](../bootstrap-join-v1.md) consolidates Owner-locked Join frame widths, offsets and crypto intent, and [bootstrap-join-gates.md](../bootstrap-join-gates.md) tracks unresolved decisions. [bootstrap-join-structural.json](bootstrap-join-structural.json) contains **synthetic structural-only** sample bytes and intentional **zero-filled 16B unauthenticated tags**, with expected results such as `HEADER_OK_AUTH_UNVERIFIED` or `REJECT_BAD_LENGTH`. The `UP_JOIN_REQUEST:35B` layout is **CANDIDATE**. Never broadcast these samples, use them as valid HMAC, or treat passing a structural unit test as `Golden Vector PASS`, `G2 PASS`, `RF/HIL PASS`, or `IMPLEMENTATION_READY`.
