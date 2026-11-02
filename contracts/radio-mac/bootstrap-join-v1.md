@@ -3,11 +3,11 @@
 **DRAFT · IMPLEMENTATION_READY=NO · G2=NOT_VERIFIED**
 
 **Agent rules**
-- Implement locked V1 fields/formulas only; `UP_JOIN_REQUEST:35B` remains **CANDIDATE**.
-- **BLOCK production Join/DATA:** `M_ACCEPT`, MQTT Join relay, CTRL timing, relay identity and activation remain OPEN.
+- Implement only locked V1 fields/formulas; `UP_JOIN_REQUEST:35B` and `M_ACCEPT:57B` are **OWNER_APPROVED_DESIGN (J01/J02)**, not G2 security or production approval.
+- **BLOCK production Join/DATA:** J01/J02 Owner design approvals do not resolve MQTT Join Relay (J03), CTRL timing (J04), Join state machine (J05), Gateway identity (J06), Counter/key lifecycle (J07), activation, or independent security/integration/HIL evidence.
 - No legacy 8B header/CRC16. No invented fields, deadlines, keys or ACK.
 - Allowed now: bounded codec/crypto helpers and isolated tests. See [blocking gates](bootstrap-join-gates.md).
-- Authority: [Owner decisions PR #116](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116) → this DRAFT → [legacy spec](specification.md). No LoRaWAN MAC.
+- Authority: [Owner decisions PR #116](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116), [J01](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/124#issuecomment-6570037473) and [J02](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/124#issuecomment-6570268130) → this DRAFT → [legacy spec](specification.md). No LoRaWAN MAC.
 
 **Status:** `OWNER_APPROVED_DESIGN` = scoped approval; `CANDIDATE` = not locked; `OPEN_G2` = needs decision/review; `NOT_VERIFIED` = no evidence.
 
@@ -17,7 +17,7 @@ The approved `VER_TYPE` is 1B: bits 7..5 = `PROTO_VER`, bits 4..0 = `PACKET_TYPE
 
 Every offset is zero-based **within the MAC payload passed to SX1276 FIFO**. Sizes below EXCLUDE LoRa PHY overhead; **no second 8B MIC/CRC is implicitly appended**.
 
-### 2.1 `UP_JOIN_REQUEST` — **35B CANDIDATE; full frame NOT OWNER-FROZEN**
+### 2.1 `UP_JOIN_REQUEST` — **35B OWNER_APPROVED_DESIGN (J01); G2 NOT_VERIFIED**
 
 | Offset | Field | Width | Value/rule |
 |---:|---|---:|---|
@@ -26,7 +26,9 @@ Every offset is zero-based **within the MAC payload passed to SX1276 FIFO**. Siz
 | 7–8 | `JOIN_COUNTER` | 2B | Unsigned, big-endian, durable monotonic |
 | 9–18 | `JOIN_RANDOM` | 10B | Fresh 80-bit CSPRNG bytes |
 | 19–34 | `JOIN_PROOF` | 16B | First 16B HMAC-SHA-256 under derived `K_JOIN_REQ` |
-| **Total** | | **35B** | Candidate structure; do NOT label entire uplink frame `OWNER_APPROVED` |
+| **Total** | | **35B** | Exact RF MAC frame Owner-approved; no extra legacy header/CRC16/MIC |
+
+**J01 Owner approval:** [Decision](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/124#issuecomment-6570037473) freezes exactly 35B, 0x22, field offsets, 49B `M_UP` HMAC proof and scoped validation. Reject bad length/version/direction, unauthorized device/RF window/context, stale or conflicting Counter/Random, invalid tag, wrap/rollback/uncertain persistence; constant-time tag check precedes Backend high-water update. Retries must be byte-identical within the same current authorized pending transaction and relay context. Internal rejection codes are not new on-air NACKs. **J06 Gateway identity, J07 reserved Counter codes (including 0x0000)/durability/rekey, J10/G2 C↔Go vectors and security review remain OPEN.**
 
 The 12B request nonce `JOIN_COUNTER[2] || JOIN_RANDOM[10]` is OWNER_APPROVED. New discovery request/channel or relay Gateway ⇒ fresh counter, random and proof. Retrying the *same* request with the *same relay context* may reuse exact RF bytes within authorized opportunity. Do not wrap counter in same key/replay domain. Sources: [RF-BOOT-NONCE-01](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116#issuecomment-6567306330), [RF-HMAC/REPLAY](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116#issuecomment-6568170563).
 
@@ -56,9 +58,30 @@ The 12B request nonce `JOIN_COUNTER[2] || JOIN_RANDOM[10]` is OWNER_APPROVED. Ne
 | 6–21 | `AUTH_TAG` | 16B | First 16B HMAC-SHA-256 under `K_JOIN_ASSIGN_DL`, **distinct M_ACCEPT transcript** |
 | **Total** | | **22B** | **No `BACKEND_RANDOM`** |
 
-**Review-only proposal:** [J01/J02 decision pack](bootstrap-join-j01-j02-proposal.md) defines a candidate 57B `M_ACCEPT` and test-only vectors; **NOT OWNER_APPROVED, still OPEN_G2**.
+**J02 OWNER_APPROVED_DESIGN:** [Decision](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/124#issuecomment-6570268130) freezes the exact **57B `M_ACCEPT` authentication transcript** and 16B truncated HMAC below; this is distinct from the already approved **22B RF `DOWN_JOIN_ACCEPT` frame**. The historical [J01/J02 decision pack](bootstrap-join-j01-j02-proposal.md) and Python fixture are not production interop evidence.
 
-**BLOCKER:** Owner approved a purpose-separated candidate domain `ASCII("LP2P/JOIN/V1/M-ACCEPT")`, authentication covering the first 6 transmitted bytes, `DEVICE_MAC`, full request nonce, relay/target context and RF plan, but **exact M_ACCEPT field order/byte-level transcript is NOT frozen**. Agent MUST NOT invent one and call it production. Preserve exact accepted 22B RF bytes in durable Backend Join transaction to compute Confirm. Source: [RF-JOIN-ACCEPT-01](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116#issuecomment-6568432331).
+| Order | Canonical `M_ACCEPT` component | Bytes |
+|---:|---|---:|
+| 1 | `ASCII("LP2P/JOIN/V1/M-ACCEPT")` (no NUL) | 21 |
+| 2 | `DOWN_JOIN_ACCEPT[0..5]` = `0x24 || REQUEST_REF[2] || TARGET_GW_ID[1] || NODE_ID[1] || KEY_ID[1]` | 6 |
+| 3 | `DEVICE_MAC[6]` | 6 |
+| 4 | `JOIN_COUNTER[2]` (uint16 big-endian) | 2 |
+| 5 | `JOIN_RANDOM[10]` (fresh CSPRNG) | 10 |
+| 6 | `RELAY_GW_ID[1]` (authenticated target receiving Gateway) | 1 |
+| 7 | `ASCII("RF-VN920-V1")` (no NUL) | 11 |
+| **Total** | **Internal HMAC transcript** | **57** |
+
+```text
+M_ACCEPT = ASCII("LP2P/JOIN/V1/M-ACCEPT")
+  || DOWN_JOIN_ACCEPT[0..5] || DEVICE_MAC[6]
+  || JOIN_COUNTER_BE[2] || JOIN_RANDOM[10]
+  || RELAY_GW_ID[1] || ASCII("RF-VN920-V1")
+AUTH_TAG = first16(HMAC-SHA256(K_JOIN_ASSIGN_DL, M_ACCEPT))
+```
+
+**J02 validation (approved design):** Node accepts only for the **latest authenticated pending target-Gateway Request** inside the authorized CTRL DL Response Window. For target Join Accept, require **`RELAY_GW_ID == TARGET_GW_ID`** with authenticated binding, still unresolved by **J06**. Switching Gateway requires a fresh Counter/Random/Request; Discovery nonce may not be reused. `REQUEST_REF` (first 2 bytes of pending `JOIN_RANDOM`) is a filter, never authentication. Reject ambiguous/stale requests, invalid/unauthorized Node or KEY IDs, expired/revoked assignment, mismatched gateway/RF plan/window, replay, or bad tag. Verify the 16B tag using constant-time comparison **before** deriving session keys, persisting Node-accepted state or sending Confirm. Backend durably stores and Node retains the **byte-exact 22B Accept** for `M_CONFIRM:79B`. No `BACKEND_RANDOM`, additional nonce, padding, second MIC or legacy CRC16/header. `M_ACCEPT` and `M_DL` tags are domain-separated. **Accept alone does not authorize DATA TX.**
+
+**Evidence boundaries:** J02 Owner design approved; **J06/J07/J10/G2 and cross-language C↔Go vectors remain OPEN/NOT_VERIFIED**. The full Join still has `IMPLEMENTATION_READY=NO`.
 
 ### 2.4 `UP_JOIN_CONFIRM` — **19B OWNER_APPROVED_DESIGN**
 
@@ -110,7 +133,7 @@ ASSIGN_AUTH_TAG = first16(HMAC-SHA256(K_JOIN_ASSIGN_DL, M_DL))
 
 **Critical context invariant:** Neither frame carries `RELAY_GW_ID` on-air. Node and Backend must agree on authenticated current relay identity; whether discovery Beacon gives Node enough trustworthy context is an **OPEN_G2 threat-model/security integration gate** (GATE-J06). The HMAC binding does not by itself make an unauthenticated Beacon trustworthy.
 
-`M_ACCEPT`: **UNRESOLVED_CANONICAL_TRANSCRIPT**, see §2.3. Do not treat its 22B frame size as an approved tag-byte implementation.
+`M_ACCEPT`: **57B OWNER_APPROVED_DESIGN** in §2.3; canonical bytes and first16 HMAC are fixed. **J06/G2 C↔Go verification remains OPEN/NOT_VERIFIED.**
 
 `SESSION_CONTEXT` **exact 32B**:
 
@@ -193,10 +216,10 @@ This is a **logical flow**, not a complete executable state machine. Status labe
 
 ## 7. Test and agent implementation boundary
 
-See [bootstrap-join-gates.md](bootstrap-join-gates.md), [bootstrap-join-structural.json](test-vectors/bootstrap-join-structural.json), and [partial Python KDF/HMAC reference](test-vectors/bootstrap-join-python-reference.json) using corrected V1 code points. Structural fixtures **cannot produce valid HMACs without all locked canonical transcripts**, and are explicitly **NOT cryptographic Golden Vectors**.
+See [bootstrap-join-gates.md](bootstrap-join-gates.md), [bootstrap-join-structural.json](test-vectors/bootstrap-join-structural.json), and [partial Python KDF/HMAC reference](test-vectors/bootstrap-join-python-reference.json) using corrected V1 code points. Structural/Python-only fixtures are **NOT independent C↔Go cryptographic Golden Vectors**. J02 is now locked at design level, but positive/negative cross-language vectors and G2 security review remain `NOT_VERIFIED`.
 
-**Agents MAY** develop pure serializers/deserializers, length/version/offset guards, 32B Session Context construction, RFC5869 HKDF and HMAC building blocks and tests for already defined `M_UP`, `M_DL`, `M_CONFIRM`, using independently checked vectors with correct codes 0x22/0x23/0x25. Any provisional code must remain isolated behind `DRAFT` boundaries.
+**Agents MAY** develop pure serializers/deserializers, length/version/offset guards, 32B Session Context construction, RFC5869 HKDF and HMAC building blocks and isolated tests for approved `M_UP`, `M_DL`, `M_ACCEPT`, `M_CONFIRM` with V1 codes 0x22/0x23/0x24/0x25. Any provisional code must remain isolated behind `DRAFT` boundaries.
 
-**Agents MUST NOT**: silently finalize `UP_JOIN_REQUEST` candidate, `M_ACCEPT` transcript, Gateway/Node states, MQTT Join topics, timing/expiry/retries, RF channels/SyncWord/power, or enable production Join/DATA TX; they must raise gaps and request review. Security and timing-affecting implementation requires human technical review, integration/HIL and G2 evidence.
+**Agents MUST NOT**: silently finalize unresolved Gateway/Node state transitions, MQTT Join topics, timing/expiry/retries, Gateway identity binding, Counter/key lifecycle, RF channels/SyncWord/power, or enable production Join/DATA TX; they must raise gaps and request review. Security and timing-affecting implementation requires human technical review, integration/HIL and G2 evidence.
 
 **Release verdict:** `IMPLEMENTATION_READY = NO` for end-to-end Join; `G2_SECURITY = NOT_VERIFIED`; `RF_HIL = NOT_VERIFIED`; `MQTT_JOIN_CONTRACT = OPEN`. Owner decision approval in PR comments is distinct from contract/CI/security gate approval.
