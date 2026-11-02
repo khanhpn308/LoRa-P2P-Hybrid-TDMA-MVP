@@ -194,7 +194,7 @@ This is a **logical flow**, not a complete executable state machine. Status labe
 
 ## 7. Test and agent implementation boundary
 
-See [bootstrap-join-gates.md](bootstrap-join-gates.md) and [bootstrap-join-structural.json](test-vectors/bootstrap-join-structural.json). Structural fixtures **cannot produce valid HMACs without all locked canonical transcripts**, and are explicitly **NOT cryptographic Golden Vectors**.
+See [bootstrap-join-gates.md](bootstrap-join-gates.md), [bootstrap-join-structural.json](test-vectors/bootstrap-join-structural.json), and [partial Python KDF/HMAC reference](test-vectors/bootstrap-join-python-reference.json) using corrected V1 code points. Structural fixtures **cannot produce valid HMACs without all locked canonical transcripts**, and are explicitly **NOT cryptographic Golden Vectors**.
 
 **Agents MAY** develop pure serializers/deserializers, length/version/offset guards, 32B Session Context construction, RFC5869 HKDF and HMAC building blocks and tests for already defined `M_UP`, `M_DL`, `M_CONFIRM`, using independently checked vectors with correct codes 0x22/0x23/0x25. Any provisional code must remain isolated behind `DRAFT` boundaries.
 
