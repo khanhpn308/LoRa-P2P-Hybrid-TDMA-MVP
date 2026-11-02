@@ -214,6 +214,10 @@ This is a **logical flow**, not a complete executable state machine. Status labe
 - **Backend→Gateway Session Key**: `MQTT-SESSION-KEY-01`, `MQTT-KEY-WRAP-01`, `MQTT-KEY-ACK-01` design OWNER_APPROVED. Versioned **DRAFT** schemas live in [PR #123](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/123) (`contracts/mqtt/schemas/session-key-install.schema.json`, `session-key-ack.schema.json`), not yet integrated to main. Cross-repo/branch build must pin compatible versions.
 - **Node-ready schedule/lease/Join Completion** and secure independent Downlink ACK: OPEN, not made up in this contract. No DATA before actual approved schedule and Beacon sync.
 
+### Security dependency — compact Radio MAC V1 after Join
+
+[ADR-0002](../../docs/adr/0002-radio-mac-security-v1.md) documents the Owner-approved compact post-Join `UP_SCHED_READY:19B` and Backend-origin `DOWN_AUTH_UPDATE:48B` Recovery Grant. These frames **do not change** the Join layouts or three existing `K_SESSION_UP`, `K_SESSION_DL`, `K_JOIN_CONFIRM` keys. The proposed **additional** `K_BACKEND_AUTH` key is purpose-separated and known only to Node+Backend, **not** Gateway; its full security transcript and provisioning require review. J06/J07 and activated DATA authorization remain OPEN. The Owner decision is **not** a blanket G2/HIL approval.
+
 ## 7. Test and agent implementation boundary
 
 See [bootstrap-join-gates.md](bootstrap-join-gates.md), [bootstrap-join-structural.json](test-vectors/bootstrap-join-structural.json), and [partial Python KDF/HMAC reference](test-vectors/bootstrap-join-python-reference.json) using corrected V1 code points. Structural/Python-only fixtures are **NOT independent C↔Go cryptographic Golden Vectors**. J02 is now locked at design level, but positive/negative cross-language vectors and G2 security review remain `NOT_VERIFIED`.
