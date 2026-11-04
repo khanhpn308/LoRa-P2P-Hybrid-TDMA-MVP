@@ -31,8 +31,9 @@ MAX_RULES = 128
 MAX_CODE_BYTES = 2_000_000
 RULE_ID = re.compile(r"[A-Z]+-[0-9]{3}")
 BASELINE = {
-    "C": {*(f"GOV-{n:03}" for n in range(1, 11)), "C-001", "MEM-001", "MEM-002",
-          "ERR-001", "RTOS-003", "SEC-001", "SEC-004", "QA-001", "QA-002", "QA-003", "QA-008"},
+    "C": {*(f"GOV-{n:03}" for n in range(1, 11)), "C-001",
+          *(f"MEM-{n:03}" for n in range(1, 9)), *(f"ERR-{n:03}" for n in range(1, 8)),
+          *(f"QA-{n:03}" for n in range(1, 9)), "RTOS-003", "SEC-001", "SEC-004"},
     "GO": {"GB-001", "GB-002", "GGS-001", "GGS-006", "GO-001", "SE-002",
            "SE-003", "SE-004", "SE-007", "SE-009", "QG-001", "QG-002", "QG-005",
            "QG-007", "QG-008", "AI-001", "AI-002", "AI-008", "AI-009",
@@ -50,7 +51,7 @@ PATH_GROUPS = {
            "alert": ("CT", "MQ", "DB", "RT", "SE", "TS")},
 }
 OPERATIONS = {
-    "C": ((r"(?i)\b(?:isr|iram[ _]+attr|esp[ _]+timer|freertos|xqueue|xtask|task|callback|spi|dma)\w*", ("RTOS", "MEM")),
+    "C": ((r"(?i)\b(?:isr|irq|interrupt|iram[ _]+attr|esp[ _]+timer|freertos|(?:x|v|ux|ul)?(?:task|queue|semaphore)|mutex|callback|spi|dma)\w*", ("RTOS", "MEM")),
           (r"(?i)\b(?:sx1276|lora|radio|airtime)\w*", ("RAD",)),
           (r"(?i)\b(?:aes|nonce|replay|crypto|mic|payload|decode|parse|frame|packet|buffer|memcpy)\w*", ("SEC",)),
           (r"(?i)\b(?:tdma|superframe|guard|schedule)\w*", ("TDMA",))),

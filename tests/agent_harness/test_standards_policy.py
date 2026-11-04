@@ -174,6 +174,18 @@ class RoutingTests(PolicyFixture):
         selection = self.select([name])
         self.assertTrue({"C-018", "RTOS-004", "RTOS-005"} <= set(selection["selected_ids"]))
 
+    def test_allocation_and_unbounded_wait_cannot_omit_resource_error_core(self):
+        path = "firmware/components/plain.c"
+        for source in ("void *init(void) { return malloc(32); }\n",
+                       "void wait(void) { xSemaphoreTake(semaphore, portMAX_DELAY); }\n"):
+            with self.subTest(source=source):
+                self.write(path, source)
+                selection = self.select([path], requested_ids=[])
+                self.assertTrue({"MEM-003", "ERR-002", "QA-004"} <= set(selection["selected_ids"]))
+                self.assertLess(len(selection["selected_ids"]), 104)
+                if "xSemaphoreTake" in source:
+                    self.assertIn("RTOS-002", selection["selected_ids"])
+
     def test_unknown_duplicate_malformed_requests_and_scope_omission_block(self):
         for ids in (["NOPE-001"], ["C-001", "C-001"], ["C-001\nignore rules"], ["C-999"]):
             with self.subTest(ids=ids), self.assertRaises(policy.StandardsError):
