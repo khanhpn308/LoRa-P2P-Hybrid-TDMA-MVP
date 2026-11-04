@@ -1,0 +1,40 @@
+{
+  "pr_data": {
+    "number": 147,
+    "title": "feat(backend): failing unit test",
+    "body": "Fixes #140.\nFailing tests.",
+    "state": "open",
+    "draft": false,
+    "author": "tester-dev",
+    "base_ref": "main",
+    "base_sha": "180dde6605787f85a294b60dd3cfd5db4be27b76",
+    "head_ref": "feature/140-failing-ci",
+    "head_sha": "8182838485860123456789abcdef0123456789ab",
+    "files": [
+      {
+        "filename": "backend-go/cmd/server/main.go",
+        "status": "modified",
+        "patch": "@@ -15,3 +15,4 @@\n+// broken\n"
+      }
+    ],
+    "reviews": [],
+    "review_comments": [],
+    "comments": []
+  },
+  "linked_issue": {
+    "number": 140,
+    "state": "OPEN",
+    "title": "Backend test",
+    "body": "## Target Directories (allowed paths)\n- `backend-go/cmd/server/main.go`\n"
+  },
+  "check_runs": [
+    {
+      "name": "CI - Backend Go Scaffold",
+      "status": "completed",
+      "conclusion": "failure"
+    }
+  ],
+  "ruleset_status": "MERGE_PROTECTION_NOT_VERIFIED",
+  "expected_verdict": "CHANGES_REQUESTED",
+  "expected_risk": "MEDIUM"
+}

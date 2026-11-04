@@ -1,0 +1,41 @@
+{
+  "pr_data": {
+    "number": 141,
+    "title": "feat(firmware): add direct SPI transaction inside ISR",
+    "body": "Fixes #140.\nAdds SPI access in ISR.",
+    "state": "open",
+    "draft": false,
+    "author": "junior-dev",
+    "base_ref": "main",
+    "base_sha": "180dde6605787f85a294b60dd3cfd5db4be27b76",
+    "head_ref": "feature/140-unsafe-isr",
+    "head_sha": "f1f2f3f4f5f60123456789abcdef0123456789ab",
+    "files": [
+      {
+        "filename": "firmware/components/sx1276_driver/sx1276.c",
+        "status": "modified",
+        "patch": "@@ -10,6 +10,12 @@\n+void IRAM_ATTR radio_isr(void *arg) {\n+    spi_device_transmit(handle, &trans); // blocking SPI in ISR!\n+}\n"
+      }
+    ],
+    "reviews": [],
+    "review_comments": [],
+    "comments": []
+  },
+  "linked_issue": {
+    "number": 140,
+    "state": "OPEN",
+    "title": "Unsafe ISR update",
+    "body": "## Target Directories (allowed paths)\n- `firmware/components/sx1276_driver/sx1276.c`\n"
+  },
+  "check_runs": [
+    {
+      "name": "CI - Firmware Agent Harness",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ],
+  "hil_receipt": null,
+  "ruleset_status": "MERGE_PROTECTION_NOT_VERIFIED",
+  "expected_verdict": "BLOCKED",
+  "expected_risk": "HIGH"
+}
