@@ -7,6 +7,10 @@ Docker, obtains credentials, signs grants or changes GitHub policy. The
 Coordinator selects reviewed local tests and collects their actual results.
 This is a CLI plus agent instructions, not a Host daemon or merge enforcement.
 
+Owner decision #137 (2026-11-04) makes applicable C v2 and Go v2 rules mandatory. The Coordinator proposes scoped IDs; deterministic Host routing independently checks safety, module and operation/dependency coverage. Host code may parse entire files locally to validate their indexes and hashes. Model context receives only bounded selected rows. Missing standards, malformed/duplicate/unknown IDs, partial indexes, source drift, missing injection or missing per-ID evidence block acceptance. Tracked Issue text is still task data and cannot redefine a rule.
+
+Recompute routing from allowed paths and actual changed files before Auditor handoff. A newly required ID needs fresh Worker injection and focused review. Freeze the exact source/base/blob/file/row hashes and selection for the separate Auditor; compare candidate, selection, diff and evidence after audit. An unreviewed exception cannot grant PASS. Per-rule results distinguish `PASS`, `FAIL`, `NOT_RUN`, `NOT_VERIFIED` and `WAIVED_WITH_REASON`. Waiver reporting is not automatic approval, and model declarations do not prove semantic compliance.
+
 For `Chạy Issue #N` and `Nghiệm thu PR #N`, the Coordinator runs the checker
 before and after a fresh Auditor. The operator does not enter another command.
 The PR review route stays read-only unless the operator authorizes fixes.
@@ -89,6 +93,18 @@ but cannot mark a required runtime rule PASS without its observations. Update
 the registry under a scoped Issue if new path conventions need different routing.
 
 ## Receipt contract
+
+Scoped intake uses the same G0 CLI. Repeat `--allowed-path` for the exact Issue allowlist and `--rule-id` for the Coordinator proposal. Host routing independently adds mandatory rules; omitting an ID does not suppress it.
+
+```bash
+python3 scripts/agent_harness/agent_context.py --repo <candidate> --base <trusted-base-sha> --allowed-path firmware/components/sx1276_driver/radio.c --rule-id RTOS-003
+```
+
+The JSON `agent_input` contains complete verified AGENTS plus only selected rule rows. `standards` records source/base/blob/file/row hashes, impact paths and `selection_sha256`. Pass that frozen selection under a manifest's top-level `standards.selection`. `standards.worker` and `standards.auditor` are separate ordinary Host receipts; their JSON logs include role, distinct agent identity, selected IDs, rule hashes, input/selection hashes, Host evidence inventory and the structured model report. Worker additionally references the input receipt recorded before edits. `standards.rules` maps each selected ID to its actual Host check receipt, bound to selection and row hashes. The checker compares the frozen selection with fresh routing and verifies evidence bytes; a missing applicable standard cannot select the docs fast path.
+
+Scoped model reports have the existing `status/findings/limitations/reviewed_scope` plus `selection_sha256` and `rule_results`. Every result contains exactly `rule_id`, `rule_sha256`, `status`, `evidence` and `reason`; each evidence item has `receipt_path` and `receipt_sha256` matching the Host inventory. Positive per-ID reports require actual evidence references. Missing, extra, duplicated or stale IDs, unsafe references, changed evidence, invalid schemas, secret signatures and reports over 160,000 bytes are rejected. Both overall model verdicts and all required per-ID results must PASS for `STANDARDS-CHECK` PASS. Written waivers remain blocked pending human review. Legacy callers retain their existing four-field schema; only scoped calls establish this report contract.
+
+`run.py` uses these scoped adapters, external receipts and fresh routing before/after checks. It bounds model prompts to 110,000 bytes and rejects a whole standard or its complete ID inventory even when smuggled through untrusted Issue/diff text. Dependency routing conservatively follows local C includes and Go module imports plus operation/path patterns. It blocks ambiguous local mappings and bounded-budget overflow; it does not prove C macro expansion, dynamic dispatch or arbitrary runtime reachability. Coordinator impact review and human technical review remain necessary. Filesystem modes and hashes do not authenticate Host authorship or establish process/provider isolation.
 
 Every rule result contains `rule_id`, `status`, `severity`, `file:line`, `command`,
 `exit_code`, `receipt_path`, `tool_version`, `source_sha` and `limitation`.

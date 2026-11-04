@@ -1,60 +1,23 @@
----
-document_id: GO-BE-AGENT-STANDARD
-version: 2.0.0-DRAFT
-status: PROPOSED
-approval: NOT_APPROVED
-enforcement: REVIEW_PROPOSAL_ONLY
-issue: 70
-applies_to: backend-go/**
-baseline_main: da566695a92bd54ee9226141c2340cfe6e67b399
-go_toolchain: "1.27.3"
-audience: AI_CODING_WORKER_AND_AUDITOR
----
+| Group | Rule IDs |
+|---|---|
+| GGS | GGS-001..014 |
+| GB | GB-001..010 |
+| AR | AR-001..008 |
+| GO | GO-001..014 |
+| CT | CT-001..009 |
+| MQ | MQ-001..012 |
+| SC | SC-001..008 |
+| DB | DB-001..010 |
+| RT | RT-001..011 |
+| OB | OB-001..012 |
+| SE | SE-001..009 |
+| TS | TS-001..011 |
+| QG | QG-001..008 |
+| AI | AI-001..012 |
 
-# Go Backend Engineering Standard v2.0.0-DRAFT — Agent-First Rulebook
+Rule fields: `ID | scope | directive | verification | failure action | source`. `v1#Lnn` expands to [immutable v1](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/blob/da566695a92bd54ee9226141c2340cfe6e67b399/docs/development/backend-go/GO_BACKEND_ENGINEERING_STANDARD_V1.0.md#Lnn). `CARRIED`, `REVISED`, `VARIANT` preserve source disposition, not technical sign-off.
 
-> **DOCUMENT STATUS: PROPOSED / NOT_APPROVED.** The 134 migrated v1 rules and 14 additional Google-style operational rules below are **review proposals**, not unconditionally mandatory production rules. This document is not a replacement for approved ADRs, actual versioned contracts, the repository's Issue-scoping instructions or Go language semantics. `MUST` and `SHOULD` inside a proposed directive define its intended future strength *if approved*, not a claim of approval.
-
-## 0. Mandatory agent lookup and execution algorithm
-
-**Agent must consult this DRAFT for Go tasks because `AGENTS.md` requires reading it; this does not activate unapproved proposals.** For Codex/AGY: read `AGENTS.md` → Issue/AC/allowed paths → actual source and approved ADRs/contracts → this file's metadata and relevant rule groups. Copilot-specific `.github/*instructions*` remain optional compatibility references, not mandatory context. Never rely on an old AI message as authority.
-
-**Selective context routing (load §0 first, then only selected §2.x, plus §3/§4):**
-- `backend-go/cmd/server/**` → §2.1 GB, §2.2 AR, §2.3 GO, §2.8 RT, §2.9 OB, §2.10 SE, §2.12 QG, §2.13 AI, §1 GGS; check composition-root wiring.
-- `backend-go/internal/api/**` → §2.4 CT, §2.3 GO, §2.8 RT, §2.10 SE, §2.11 TS, §2.12 QG, §2.13 AI, §1 GGS.
-- `backend-go/internal/mqtt/**` → §2.5 MQ, §2.4 CT, §2.7 DB, §2.8 RT, §2.10 SE, §2.11 TS, §2.13 AI.
-- `backend-go/internal/scheduler/**` → §2.6 SC, §2.5 MQ (MQ-009), §2.7 DB (DB-004), §2.8 RT, §2.11 TS.
-- `backend-go/internal/storage/**` and `backend-go/migrations/**` → §2.7 DB, §2.4 CT, §2.10 SE, §2.8 RT, §2.11 TS, §2.13 AI.
-- `backend-go/internal/telemetry/**` / `alert/**` → §2.4 CT, §2.5 MQ, §2.7 DB, §2.8 RT, §2.10 SE, §2.11 TS.
-- If actual paths differ, inspect repository; never create speculative packages. Filter rule IDs before reading whole files.
-
-**Copy-ready selective rule extraction (MQTT example; requires `rg`; read §0, §3 and §4 separately):**
-
-```bash
-rg -n '^\| (Rule ID|---|GGS-|MQ-|CT-|DB-|RT-|SE-|TS-|AI-)' docs/development/backend-go/GO_BACKEND_ENGINEERING_STANDARD_V2.md
-```
-
-**CodeGraph STATIC preflight:** MUST use `codegraph_explore` when exposed by MCP to inspect Go callers/callees, `backend-go/cmd/server/main.go` composition-root wiring (`AI-001`, `AR-002`), dependency direction (`AR-004`), reusable models/helpers (`AI-005`). The source graph does not prove runtime behavior, contracts, migrations or test PASS. If unavailable, report `NOT_RUN: codegraph_explore`; use bounded `rg` and scoped source inspection without claiming graph verification. Discovered callers outside Issue scope are READ-ONLY; edit requires owner authorization.
-
-**Authority/approval precedence:** Safety, explicit owner-approved Requirements/ADR/versioned contract status and Issue scope take precedence over agent proposals. For Go style itself, Google [Guide](https://google.github.io/styleguide/go/guide) is canonical + normative; [Decisions](https://google.github.io/styleguide/go/decisions) normative but subordinate to Guide; [Best Practices](https://google.github.io/styleguide/go/best-practices) advice, neither normative nor canonical. These three describe readability/style, not MQTT/RF/legal/security design. Repository engineering priority remains `Correctness > Safety > Reliability > Maintainability > Performance`; Google's code-readability priorities `Clarity > Simplicity > Concision > Maintainability > Consistency` are a different dimension, not an override of safety or contracts.
-
-**State machine — deterministic execution constraints:**
-
-| State | Entry check | Allowed action | STOP condition |
-|---|---|---|---|
-| PRECHECK | Issue + AC + exact allowed paths; correct branch and clean tree | Inspect current source, `go.mod`, toolchain, contract and authorities | Main/dirty tree, missing Issue/scope, untrusted config |
-| DECIDE | Identify Rule IDs, source approval and blocked dependencies | Design smallest correct vertical slice, error paths and tests | Need to invent contract, credential, ACK policy, schedule transition or unapproved dep |
-| IMPLEMENT | PRECHECK + DECIDE clear | Modify only Issue paths; minimal exact Go code | Extra file/test/migration outside Issue allowance |
-| VERIFY | Modification complete | Actual formatting/build/unit/integration/security checks when available | Failed/missing mandatory checks cannot be called PASS |
-| HANDOFF | Diff reviewed and evidence manifest prepared | Branch commit + Draft PR if authorized | No auto-merge, reviewer impersonation or self-approval |
-
-**STOP_AND_REPORT format:** `BLOCKED_RULE_IDS`, `CONFLICTING_SOURCES`, `REQUIRED_DECISION`, `DECISION_OWNER`, `ALLOWED_FILES`, `PROPOSED_TESTS`. A workflow STOP from `AGENTS.md`/approved governance is enforceable now; speculative DRAFT rules remain consultative.
-
-**Six-field rule schema:** `Rule ID | Scope | Directive | Verify | Failure Action | Source`. `VERIFY` declares intended evidence class, *not* PASS. `FIX` means a scoped fix is possible, `EXPLAIN` means accepted tradeoff only with approval, `STOP_*` means seek missing source/scope/contract decision. For all v1-transposed rules, `PROPOSED` status remains global. v1 text continues to exist at immutable main commit, and each row contains its original line locator; review the source when an abbreviated directive is ambiguous.
-
-## 1. Google Go Style — authoritative classification and actionable proposals
-
-The Google sources were inspected on 2026-10-25. External guidance is **not** being misrepresented as local owner approval. Core Guide is canonical/normative; Decisions is normative/subordinate; Best Practices is advisory. Sections should be rechecked at implementation time for version evolution. The project does not adopt Google's internal presubmit/review automation merely by linking its style guide.
+## 1. GGS — Google Go style
 
 | Rule ID | Scope | Directive | Verify | Failure Action | Source |
 |---|---|---|---|---|---|
@@ -75,13 +38,7 @@ The Google sources were inspected on 2026-10-25. External guidance is **not** be
 
 **Conflict examples:** (a) `GetThing` naming is not an unconditional ban when an HTTP GET or expensive fetch genuinely explains behavior; (b) `%w` is not mandatory for every error boundary; (c) all forms of `context.Background()` are not forbidden—process entrypoints/test signatures have legitimate exceptions; (d) Google recommends small interfaces but does not mandate one interface for each struct; (e) importing Google Best Practices does not imply a new lint rule or a guaranteed automated PASS.
 
-## 2. Migrated v1 technical rules — exactly 134 IDs
-
-**Migration algorithm:** retain original stable rule ID, use one concise source-derived directive or explicit reviewed rewrite, add issue-applicability/evidence/action and line-precise origin. `CARRIED_INTENT_FROM_V1` means intent carried, not owner approval; `REVISED_FROM_V1` means proposed rewording resolving identified scope/conflict, pending technical review. When a v1 rule includes longer examples, linked v1 text remains the detailed provenance; this table is the agent action surface. **No v1 rules discarded or silently renumbered.**
-
-> **Immutable v1 Provenance Base (`v1`):** https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/blob/da566695a92bd54ee9226141c2340cfe6e67b399/docs/development/backend-go/GO_BACKEND_ENGINEERING_STANDARD_V1.0.md
->
-> A `v1#L32` locator expands to `https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/blob/da566695a92bd54ee9226141c2340cfe6e67b399/docs/development/backend-go/GO_BACKEND_ENGINEERING_STANDARD_V1.0.md#L32`. `CARRIED` means `CARRIED_INTENT_FROM_V1`; `REVISED` means `REVISED_FROM_V1`; `VARIANT` means `REVIEWED_VARIANT`. All 134 line locators and approval states are retained.
+## 2. Technical rule groups
 
 ### 2.1 GB — General Backend Principles (GB-001..010)
 
@@ -295,7 +252,7 @@ The Google sources were inspected on 2026-10-25. External guidance is **not** be
 | API/WSS auth | D13 in `contracts/OPEN_DECISIONS.md` is still BLOCKED | No production token/credential lifecycle selection; preserve server-side RBAC |
 | D01/D11 | Custom Radio MAC crypto and version/nonce rules BLOCKED | Backend code must not silently invent wire codec or represent RF CRC as authentication |
 
-**Data and architecture invariant:** Backend Go is Modular Monolith + PostgreSQL + Mosquitto MQTT5; Gateway ESP32 SX1276 is local TDMA executor; no LoRaWAN stack, ChirpStack, Redis/InfluxDB/Kafka/microservices/extra ORM unless approved in a separate scope. `backend-go/go.mod` and root `.go-version` on baseline declare `1.27.3`; actual runtime/tool availability, module compatibility and build PASS require evidence. DRAFT rules do not approve arbitrary Go dependencies.
+**Data and architecture invariant:** Backend Go is Modular Monolith + PostgreSQL + Mosquitto MQTT5; Gateway ESP32 SX1276 is local TDMA executor; no LoRaWAN stack, ChirpStack, Redis/InfluxDB/Kafka/microservices/extra ORM unless approved in a separate scope. `backend-go/go.mod` and root `.go-version` on baseline declare `1.27.3`; actual runtime/tool availability, module compatibility and build PASS require evidence. This standard does not approve arbitrary Go dependencies.
 
 ## 4. Agent verification/evidence contract (for every implementation Issue)
 
@@ -303,7 +260,7 @@ The Google sources were inspected on 2026-10-25. External guidance is **not** be
 
 **After coding report:** `TASK_ID`, `ISSUE_URL`, `BASE_SHA`, `HEAD_SHA`, `BRANCH`, `CHANGED_PATHS`, `SCOPE_CHECK`, `RULE_IDS_CONSULTED`, `RULE_IDS_APPLIED`, `CONFLICTS_OR_EXCEPTIONS`, `BLOCKED_DECISIONS`, `TOOLCHAIN_VERSION`, `TEST_COMMANDS`, `TESTS_RUN`, `NOT_RUN`, `KNOWN_LIMITATIONS`, `EVIDENCE_STATUS`, `EVIDENCE_URLS`, `REVIEWERS_REQUIRED`, `PR_URL`, `FINAL_STATUS`.
 
-Proposed minimum deterministic checks (only with authorized environment, exact version and actual output):
+Minimum deterministic checks (only with authorized environment, exact version and actual output):
 
 ```bash
 git remote -v
@@ -327,12 +284,4 @@ Use approved pinned `golangci-lint` and `govulncheck` only if configured/availab
 ## 5. Adversarial AI Agent Conformance scenarios — DESIGN_ONLY / NOT_EXECUTED
 
 Adversarial AI Agent conformance scenarios (BE-CASE-01..16) are maintained in [agent-conformance-scenarios.md](../../verification/agent-conformance-scenarios.md) for Harness/Evaluator grading (`DESIGN_ONLY / NOT_EXECUTED`). AI Workers must not load that file during normal implementation tasks.
-
-## 6. Provenance, status, limitations, approval
-
-- Historical v1 preserved **unchanged**: [Go Backend Standard v1 at immutable commit](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/blob/da566695a92bd54ee9226141c2340cfe6e67b399/docs/development/backend-go/GO_BACKEND_ENGINEERING_STANDARD_V1.0.md) — 134 unique IDs in 13 groups, 460 lines. The old file has stale `Issue #39 pending merge` wording; Issue #39 currently CLOSED and the file exists on `main`. Preserve it for provenance instead of silently editing source history.
-- Google sources checked: [Guide](https://google.github.io/styleguide/go/guide) (normative+canonical), [Decisions](https://google.github.io/styleguide/go/decisions) (normative subordinate), [Best Practices](https://google.github.io/styleguide/go/best-practices) (advisory).
-- No numerical latency/RF guard/SLA is approved or measured here. No new production MQTT state transition, Paho API assumption, Go dependency, SQL migration or test result is authorized by this DRAFT.
-- **Activation requires separately recorded human approval** by Go Backend/MQTT, Gateway consumer/producer, Security/QA, API clients and Project Owner; review all REVISED_FROM_V1 rows, Google authority classification, and contract conflicts. `AGENTS.md` may require **reading this document**, but no agent may elevate unapproved `MUST` directives into approved policy.
-- Deliverable acceptance here is documentation completeness, correct source attribution and auditable scope—not production conformance or approval.
 

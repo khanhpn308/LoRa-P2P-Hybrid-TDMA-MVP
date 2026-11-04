@@ -4,6 +4,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import copy
 import unittest
 from unittest.mock import patch
 
@@ -13,6 +14,71 @@ from adapters import antigravity, codex
 FILES = {"firmware/components/sx1276_driver/sx1276.c"}
 REPORT = {"status": "PASS", "findings": [], "limitations": [],
           "reviewed_scope": sorted(FILES)}
+
+
+class ScopedWorkerTests(unittest.TestCase):
+    def setUp(self):
+        self.rules = [{"rule_id": "MEM-001", "rule_sha256": "a" * 64}]
+        self.selection = "b" * 64
+        self.report = dict(REPORT, status="INCONCLUSIVE", selection_sha256=self.selection,
+                           rule_results=[{"rule_id": "MEM-001", "rule_sha256": "a" * 64,
+                                          "status": "NOT_RUN", "evidence": [],
+                                          "reason": "Host verification has not run yet."}])
+
+    def invoke(self, payload, stderr=""):
+        def provider(args, **kwargs):
+            output = pathlib.Path(args[args.index("--output-last-message") + 1])
+            if payload is not None:
+                output.write_text(payload)
+            self.assertIn("--output-schema", args)
+            self.assertEqual(kwargs["input"], "scoped task")
+            return subprocess.CompletedProcess(args, 0, "", stderr)
+        with tempfile.TemporaryDirectory() as directory, patch(
+                "adapters.codex.subprocess.run", side_effect=provider):
+            return codex.invoke("scoped task", pathlib.Path(directory), 120,
+                                self.rules, self.selection, {})
+
+    def test_structured_worker_report_preserved(self):
+        result = self.invoke(json.dumps(self.report))
+        self.assertEqual(result["report"], self.report)
+
+    def test_missing_malformed_duplicate_stale_and_secret_reports_fail_closed(self):
+        malformed = [None, "plain prose", "{" * 2000,
+                     json.dumps(REPORT), json.dumps(dict(self.report, rule_results=[])),
+                     json.dumps(dict(self.report, selection_sha256="c" * 64)),
+                     '{"status":"PASS","status":"FAIL"}',
+                     "x" * 160001]
+        report = copy.deepcopy(self.report)
+        report["rule_results"][0]["reason"] = "ghp_" + "A" * 30
+        malformed.append(json.dumps(report))
+        for payload in malformed:
+            with self.subTest(size=len(payload or "")), self.assertRaises(codex.WorkerError):
+                self.invoke(payload)
+
+    def test_provider_secret_output_is_rejected_without_echo(self):
+        secret = "ghp_" + "A" * 30
+        with self.assertRaises(codex.WorkerError) as error:
+            self.invoke(json.dumps(self.report), secret)
+        self.assertNotIn(secret, str(error.exception))
+
+    def test_soft_permission_denial_blocks_successful_worker_report(self):
+        with self.assertRaises(codex.WorkerError):
+            self.invoke(json.dumps(self.report), "approval required: run_command")
+
+    def test_empty_rule_set_still_requires_scoped_report(self):
+        self.rules = []
+        self.report["rule_results"] = []
+        self.assertEqual(self.invoke(json.dumps(self.report))["report"], self.report)
+
+    def test_partial_scope_cannot_select_legacy_worker(self):
+        with self.assertRaises(codex.WorkerError):
+            codex.invoke("scoped task", pathlib.Path('/tmp'), 30, selection_sha256=self.selection)
+
+    def test_real_provider_stream_is_bounded_before_decoding(self):
+        with tempfile.TemporaryDirectory() as directory, self.assertRaises(antigravity.AuditError):
+            antigravity.run_bounded(
+                [sys.executable, "-c", "print('x' * 160001)"],
+                cwd=pathlib.Path(directory), timeout=10)
 
 
 class AdapterTests(unittest.TestCase):
@@ -48,7 +114,7 @@ class AdapterTests(unittest.TestCase):
                 return_value=subprocess.CompletedProcess([], 0, "edited", "")) as mocked:
             codex.invoke("write C", pathlib.Path(directory), 120)
             args = mocked.call_args.args[0]
-            self.assertEqual(args[:2], ["codex", "exec"])
+            self.assertEqual(args[:4], ["codex", "--ask-for-approval", "never", "exec"])
             self.assertIn("workspace-write", args)
             self.assertIn("never", args)
             self.assertEqual(mocked.call_args.kwargs["input"], "write C")

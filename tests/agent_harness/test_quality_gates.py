@@ -199,6 +199,11 @@ class GitTests(unittest.TestCase):
         for name in gates.VALIDATORS:
             self.assertEqual(self.rule(name)["status"], "NOT_RUN")
 
+    def test_standards_policy_documents_require_tooling_and_security(self):
+        for name in ("docs/development/firmware/C_CODING_STANDARD_V2.md",
+                     "docs/development/backend-go/GO_BACKEND_ENGINEERING_STANDARD_V2.md"):
+            self.assertEqual(gates.route([name]), {"all", "tooling", "security"})
+
     def test_harness_control_paths_require_tooling_and_security(self):
         controls = (
             "AGENTS.md", "firmware/AGENTS.md", ".github/copilot-instructions.md",
