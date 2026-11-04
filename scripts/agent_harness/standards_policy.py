@@ -308,6 +308,8 @@ def select_rules(repo: Path, allowed_paths=(), changed_paths=None, requested_ids
                         groups.add("ARCH")
                 elif path.endswith((".go", "/")):
                     groups.update(("GB", "GGS", "GO", "QG", "AI"))
+                    if path.endswith("_test.go"):
+                        selected.add("TS-001")
                 elif PurePosixPath(path).name in ("go.mod", "go.sum"):
                     groups.update(("GB", "AR", "QG", "AI"))
                     selected.add("SE-008")
