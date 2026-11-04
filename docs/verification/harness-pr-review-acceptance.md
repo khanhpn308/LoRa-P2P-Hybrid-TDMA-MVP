@@ -96,18 +96,18 @@ This report documents the verification and acceptance evidence for the read-only
 python3 -m unittest discover -s tests/agent_harness -v
 ```
 **Receipt:**
-- Total tests executed: **272**
+- Total tests executed: **271**
 - Status: **ALL PASS (OK)**
-- Elapsed time: **16.562s**
+- Elapsed time: **18.737s**
 
 ### 4.2 PR Review Unit & Fixture Tests
 ```bash
 python3 tests/agent_harness/test_pr_review.py -v
 ```
 **Receipt:**
-- Total tests executed: **30**
+- Total tests executed: **29**
 - Status: **ALL PASS (OK)**
-- Elapsed time: **0.231s**
+- Elapsed time: **0.168s**
 
 ### 4.3 Monorepo Static Structure Verification
 ```bash
