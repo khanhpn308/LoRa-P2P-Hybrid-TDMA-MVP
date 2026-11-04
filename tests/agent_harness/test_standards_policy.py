@@ -155,12 +155,26 @@ class RoutingTests(PolicyFixture):
     def test_generic_go_source_and_dependency_rules_cannot_be_omitted(self):
         for path, required in (
                 ("backend-go/internal/plain/plain.go", {"GGS-002", "GB-007", "GO-008", "QG-003", "AI-003"}),
-                ("backend-go/go.mod", {"GB-007", "AR-004", "QG-001", "AI-003"})):
+                ("backend-go/go.mod", {"GB-007", "AR-004", "QG-001", "AI-003", "SE-008"}),
+                ("backend-go/go.sum", {"GB-007", "AR-004", "QG-001", "AI-003", "SE-008"})):
             with self.subTest(path=path):
                 selection = self.select([path], requested_ids=[])
                 self.assertTrue(required <= set(selection["selected_ids"]))
                 self.assertLess(len(selection["selected_ids"]), 148)
                 self.assertEqual(set(selection["standards"]), {"GO"})
+
+    def test_dependency_only_diff_requires_security_without_coordinator_ids(self):
+        for name, text in (
+                ("backend-go/go.mod", "module example.org/project\n\ngo 1.27.3\nrequire example.org/dependency v1.0.0\n"),
+                ("backend-go/go.sum", "example.org/dependency v1.0.0 h1:syntheticfixture\n")):
+            with self.subTest(path=name):
+                self.write(name, text)
+                selection = self.select([name], requested_ids=[])
+                self.assertIn("SE-008", selection["selected_ids"])
+                self.assertEqual(selection["changed_paths"], [name])
+                self.assertEqual(set(selection["standards"]), {"GO"})
+                self.commit()
+                self.base = git(self.root, "rev-parse", "HEAD")
 
     def test_go_filename_does_not_imply_a_goroutine_operation(self):
         name = "backend-go/internal/plain/plain.go"

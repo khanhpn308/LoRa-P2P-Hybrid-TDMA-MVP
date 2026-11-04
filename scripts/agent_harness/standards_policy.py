@@ -308,8 +308,9 @@ def select_rules(repo: Path, allowed_paths=(), changed_paths=None, requested_ids
                         groups.add("ARCH")
                 elif path.endswith((".go", "/")):
                     groups.update(("GB", "GGS", "GO", "QG", "AI"))
-                elif PurePosixPath(path).name == "go.mod":
+                elif PurePosixPath(path).name in ("go.mod", "go.sum"):
                     groups.update(("GB", "AR", "QG", "AI"))
+                    selected.add("SE-008")
                 elif path == ".go-version":
                     groups.add("QG")
                 for token, applicable in PATH_GROUPS[component].items():
