@@ -29,6 +29,10 @@ try:
     )
     from .scope import parse_allowed_paths
     from .standards_policy import select_rules, StandardsError
+    try:
+        from .adapters import antigravity
+    except ImportError:
+        antigravity = None
 except ImportError:
     from agent_context import load_context, ContextGateError
     from pr_review_policy import (
@@ -39,6 +43,10 @@ except ImportError:
     )
     from scope import parse_allowed_paths
     from standards_policy import select_rules, StandardsError
+    try:
+        from adapters import antigravity
+    except ImportError:
+        antigravity = None
 
 DEFAULT_REPO = "khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP"
 COMMENT_HEADER_SIGNATURE = "# 🛡️ Harness PR Review Report"
@@ -89,9 +97,10 @@ def fetch_pr_data_github(repo: str, pr_number: int) -> dict[str, Any]:
         "head_ref": raw_pr.get("head", {}).get("ref", ""),
         "head_sha": raw_pr.get("head", {}).get("sha", ""),
         "merge_commit_sha": raw_pr.get("merge_commit_sha"),
+        "is_live": True,
     }
 
-    # 2. Files with pagination
+    # 2. Files with pagination and fail-closed checks
     code, out, err = _run_cmd([
         "gh", "api", f"repos/{repo}/pulls/{pr_number}/files", "--paginate",
     ])
@@ -104,9 +113,12 @@ def fetch_pr_data_github(repo: str, pr_number: int) -> dict[str, Any]:
         filename = f.get("filename")
         if not filename:
             raise PRReviewError("PR contains file with missing filename")
+        status = f.get("status", "modified")
+        if status not in ("added", "modified", "removed", "renamed"):
+            raise PRReviewError(f"Unsupported git file status '{status}' for {filename}")
         parsed_files.append({
             "filename": filename,
-            "status": f.get("status", "modified"),
+            "status": status,
             "patch": f.get("patch", ""),
             "additions": f.get("additions", 0),
             "deletions": f.get("deletions", 0),
@@ -159,7 +171,6 @@ def fetch_check_runs_github(repo: str, head_sha: str) -> list[dict[str, Any]]:
 
 def fetch_ruleset_status_github(repo: str, base_ref: str) -> str:
     """Check rulesets / branch protection visibility."""
-    # Check rulesets
     code, out, _ = _run_cmd(["gh", "api", f"repos/{repo}/rulesets"])
     if code == 0:
         try:
@@ -169,7 +180,6 @@ def fetch_ruleset_status_github(repo: str, base_ref: str) -> str:
         except Exception:
             pass
 
-    # Check branch protection endpoint
     code, out, _ = _run_cmd(["gh", "api", f"repos/{repo}/branches/{base_ref}/protection"])
     if code == 0:
         return "BRANCH_PROTECTION_ENFORCED"
@@ -184,6 +194,16 @@ def fetch_latest_head_sha(repo: str, pr_number: int) -> str:
     ])
     if code != 0 or not out.strip():
         raise PRReviewError(f"Could not re-verify HEAD SHA for PR #{pr_number}: {err.strip()}")
+    return out.strip()
+
+
+def fetch_latest_base_sha(repo: str, pr_number: int) -> str:
+    """Fetch current base SHA directly from GitHub to detect base branch drift."""
+    code, out, err = _run_cmd([
+        "gh", "api", f"repos/{repo}/pulls/{pr_number}", "--jq", ".base.sha",
+    ])
+    if code != 0 or not out.strip():
+        raise PRReviewError(f"Could not re-verify BASE SHA for PR #{pr_number}: {err.strip()}")
     return out.strip()
 
 
@@ -234,6 +254,55 @@ def compute_diff_hashes(files: list[dict[str, Any]]) -> tuple[dict[str, str], st
     return file_hashes, hasher.hexdigest()
 
 
+def validate_and_load_auditor_report(
+    report_path: Path,
+    pr_data: dict[str, Any],
+    rule_selection: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Validate external Auditor report against schema and exact changed paths."""
+    if not report_path.is_file():
+        raise PRReviewError(f"Auditor report path not found: {report_path}")
+
+    raw_text = report_path.read_text(encoding="utf-8")
+    try:
+        report = json.loads(raw_text)
+    except Exception as exc:
+        raise PRReviewError(f"Auditor report is not valid JSON: {exc}") from exc
+
+    required_paths = {f.get("filename", "") for f in pr_data.get("files", [])}
+
+    if antigravity:
+        try:
+            # Check schema using antigravity adapter
+            required_rules = rule_selection.get("rules", []) if rule_selection else None
+            sel_sha = rule_selection.get("selection_sha256") if rule_selection else None
+            return antigravity.check_report(
+                report,
+                required_paths=required_paths,
+                required_rules=required_rules,
+                selection_sha256=sel_sha,
+            )
+        except Exception as exc:
+            # Return report with failure finding
+            return {
+                "status": "FAIL",
+                "findings": [
+                    {
+                        "severity": "CRITICAL",
+                        "file": "audit",
+                        "line": 1,
+                        "rule": "AUDIT-SCHEMA",
+                        "explanation": f"Auditor report validation failed: {exc}",
+                        "fix": "Re-run independent Auditor with matching scope.",
+                    }
+                ],
+                "limitations": [f"Audit validation error: {exc}"],
+                "reviewed_scope": list(required_paths),
+            }
+
+    return report
+
+
 def render_markdown_report(
     evaluation: dict[str, Any],
     pr_data: dict[str, Any],
@@ -275,10 +344,12 @@ def render_markdown_report(
         "| Dimension | Status | Notes |",
         "| :--- | :--- | :--- |",
         f"| `AUTO_CHECK_PASS` | **{'PASS' if dims.get('AUTO_CHECK_PASS') else 'FAIL'}** | Automated gates (PR-01, 03, 05, 06, 07) |",
-        f"| `AI_REVIEW_PASS` | **{dims.get('AI_REVIEW_PASS')}** | Model Auditor verification |",
+        f"| `SECRET_SCAN_PASS` | **{dims.get('SECRET_SCAN_PASS')}** | Static diff credential & secret pattern scan |",
+        f"| `SECURITY_REVIEW_PASS` | **{dims.get('SECURITY_REVIEW_PASS')}** | Independent security & cryptographic specialist review |",
+        f"| `AI_REVIEW_PASS` | **{dims.get('AI_REVIEW_PASS')}** | Fresh read-only model Auditor verification |",
         f"| `HUMAN_APPROVED` | **{dims.get('HUMAN_APPROVED')}** | Required human approvals: {rec.get('required_approvals')} |",
         f"| `HIL_RF_PASS` | **{dims.get('HIL_RF_PASS')}** | Hardware-in-the-Loop RF test evidence |",
-        f"| `SECURITY_REVIEW_PASS` | **{dims.get('SECURITY_REVIEW_PASS')}** | Secret scan & credentials validation |",
+        f"| `MERGE_ENFORCEMENT_ACTIVE` | **{dims.get('MERGE_ENFORCEMENT_ACTIVE')}** | GitHub branch protection / ruleset enforcement |",
         "",
         "#### 2. Gate Verification Details (PR-01 through PR-08)",
         "",
@@ -306,7 +377,8 @@ def render_markdown_report(
         "#### 4. Policy Recommendation & Human Merge Boundary",
         "",
         f"> [!IMPORTANT]",
-        f"> **Non-auto-merge policy:** This Harness is read-only and **never merges PRs automatically**.",
+        f"> **Non-auto-merge policy:** This Harness is strictly read-only and **never merges PRs automatically**.",
+        f"> `READY_FOR_HUMAN_REVIEW` indicates that automated gates passed and the PR is ready for human peer review.",
         f"> Human sign-off requirements for this PR ({risk} risk): **>= {rec.get('required_approvals')} specialist approval(s)**.",
         "> Reviewers cannot self-approve their own PRs.",
         "",
@@ -317,9 +389,23 @@ def render_markdown_report(
     return "\n".join(lines)
 
 
-def publish_pr_comment(repo: str, pr_number: int, report_md: str) -> None:
-    """Publish or update review comment idempotently on GitHub PR."""
-    # Check for existing comment
+def publish_pr_comment(
+    repo: str,
+    pr_number: int,
+    report_md: str,
+    expected_head: str,
+    expected_base: str,
+) -> None:
+    """Publish or update review comment idempotently on GitHub PR with TOCTOU check."""
+    # Re-verify latest head and base SHA before posting
+    current_head = fetch_latest_head_sha(repo, pr_number)
+    current_base = fetch_latest_base_sha(repo, pr_number)
+    if current_head != expected_head or current_base != expected_base:
+        raise PRReviewError(
+            f"Cannot publish review comment: PR base or head SHA changed (TOCTOU race detected! "
+            f"expected {expected_head[:8]}/{expected_base[:8]}, current {current_head[:8]}/{current_base[:8]})"
+        )
+
     code, out, _ = _run_cmd([
         "gh", "api", f"repos/{repo}/issues/{pr_number}/comments",
     ])
@@ -335,7 +421,6 @@ def publish_pr_comment(repo: str, pr_number: int, report_md: str) -> None:
             pass
 
     if existing_id:
-        # Update existing
         code, _, err = _run_cmd([
             "gh", "api", "-X", "PATCH", f"repos/{repo}/issues/comments/{existing_id}",
             "-f", f"body={report_md}",
@@ -343,7 +428,6 @@ def publish_pr_comment(repo: str, pr_number: int, report_md: str) -> None:
         if code != 0:
             raise PRReviewError(f"Failed to update existing review comment: {err.strip()}")
     else:
-        # Create new
         code, _, err = _run_cmd([
             "gh", "api", "-X", "POST", f"repos/{repo}/issues/{pr_number}/comments",
             "-f", f"body={report_md}",
@@ -358,7 +442,7 @@ def run_pr_review(args: argparse.Namespace) -> int:
 
     # 1. Mandatory Host G0 context check
     try:
-        agent_context = load_context(candidate_repo)
+        load_context(candidate_repo)
     except ContextGateError as exc:
         print(f"🔴 G0 Context Gate BLOCKED: {exc}", file=sys.stderr)
         return 2
@@ -380,6 +464,10 @@ def run_pr_review(args: argparse.Namespace) -> int:
         ruleset_status = fixture_data.get("ruleset_status", "MERGE_PROTECTION_NOT_VERIFIED")
         head_sha_at_start = pr_data.get("head_sha", "")
         head_sha_at_end = fixture_data.get("head_sha_at_end", head_sha_at_start)
+        base_sha_at_start = pr_data.get("base_sha", "")
+        base_sha_at_end = fixture_data.get("base_sha_at_end", base_sha_at_start)
+        fixture_rule_selection = fixture_data.get("rule_selection")
+        fixture_auditor_report = fixture_data.get("auditor_report")
     else:
         if not pr_number:
             print("🔴 Either --pr <PR_NUMBER> or --fixture <PATH> is required.", file=sys.stderr)
@@ -391,6 +479,7 @@ def run_pr_review(args: argparse.Namespace) -> int:
             return 2
 
         head_sha_at_start = pr_data.get("head_sha", "")
+        base_sha_at_start = pr_data.get("base_sha", "")
 
         # Find linked issue
         issue_num = extract_linked_issue_number(pr_data)
@@ -400,9 +489,12 @@ def run_pr_review(args: argparse.Namespace) -> int:
         check_runs = fetch_check_runs_github(repo_name, head_sha_at_start)
         ruleset_status = fetch_ruleset_status_github(repo_name, pr_data.get("base_ref", "main"))
         hil_receipt = None
+        fixture_rule_selection = None
+        fixture_auditor_report = None
 
         # Pre/post freshness re-query to detect race
         head_sha_at_end = fetch_latest_head_sha(repo_name, pr_number)
+        base_sha_at_end = fetch_latest_base_sha(repo_name, pr_number)
 
     # 3. Parse allowed paths from linked issue if available
     allowed_paths: list[str] | None = None
@@ -412,35 +504,64 @@ def run_pr_review(args: argparse.Namespace) -> int:
         except ValueError:
             allowed_paths = None
 
-    # 4. Deterministic Rule-ID selection
-    rule_selection = None
+    # 4. Deterministic Rule-ID selection (R-01: Fail-closed on errors, no fake injection!)
     changed_files = [f.get("filename", "") for f in pr_data.get("files", [])]
-    try:
-        rule_selection = select_rules(
-            candidate_repo,
-            allowed_paths=allowed_paths or changed_files,
-            changed_paths=None,
-            base=pr_data.get("base_sha", "HEAD"),
-        )
-    except Exception:
-        # Fallback or synthetic selection if in fixture / offline mode
-        rule_selection = {
-            "standards": ["C"] if any(f.startswith("firmware/") for f in changed_files) else (
-                ["GO"] if any(f.startswith("backend-go/") for f in changed_files) else []
-            ),
-            "rules": ["GOV-001", "C-001"] if any(f.startswith("firmware/") for f in changed_files) else ["GGS-001"],
-            "rule_count": 2,
-        }
+    has_c = any(f.startswith("firmware/") and (f.endswith(".c") or f.endswith(".h")) for f in changed_files)
+    has_go = any(f.startswith("backend-go/") and f.endswith(".go") for f in changed_files)
 
-    # 5. Diff hashes and snapshot
+    if args.fixture:
+        if fixture_rule_selection:
+            rule_selection = fixture_rule_selection
+            rule_selection.setdefault("source", "fixture")
+        else:
+            standards = ["C"] if has_c else (["GO"] if has_go else ["DOCS"])
+            rule_selection = {
+                "source": "fixture",
+                "standards": standards,
+                "rules": ["C-001"] if has_c else (["GGS-001"] if has_go else []),
+                "selected_ids": ["C-001"] if has_c else (["GGS-001"] if has_go else []),
+                "rule_count": 1 if (has_c or has_go) else 0,
+            }
+    else:
+        try:
+            rule_selection = select_rules(
+                candidate_repo,
+                allowed_paths=allowed_paths or changed_files,
+                changed_paths=None,
+                base=pr_data.get("base_sha", "HEAD"),
+            )
+            rule_selection["source"] = "verified_host"
+        except Exception as exc:
+            rule_selection = {
+                "status": "BLOCKED",
+                "error": f"Deterministic Rule-ID selection failed: {exc}",
+                "source": "verified_host",
+                "selected_ids": [],
+                "rules": [],
+            }
+
+    # 5. Auditor Report Intake (R-02)
+    auditor_report = None
+    if getattr(args, "auditor_report", None):
+        auditor_report_path = Path(args.auditor_report).resolve()
+        auditor_report = validate_and_load_auditor_report(auditor_report_path, pr_data, rule_selection)
+    elif fixture_auditor_report:
+        auditor_report = fixture_auditor_report
+
+    # 6. Diff hashes and snapshot (R-05: Schema 1.0, bound base/head/diff/rules)
     file_hashes, overall_diff_hash = compute_diff_hashes(pr_data.get("files", []))
     snapshot = {
+        "schema_version": "1.0",
         "pr_number": pr_data.get("number"),
         "repo": repo_name,
-        "base_sha": pr_data.get("base_sha"),
+        "base_ref": pr_data.get("base_ref"),
+        "base_sha": base_sha_at_start,
+        "head_ref": pr_data.get("head_ref"),
         "head_sha": head_sha_at_start,
+        "merge_commit_sha": pr_data.get("merge_commit_sha"),
         "diff_sha256": overall_diff_hash,
         "file_diff_hashes": file_hashes,
+        "rule_selection_sha256": rule_selection.get("selection_sha256") if rule_selection else None,
         "ruleset_visibility": ruleset_status,
         "timestamp_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
         "host_tools": {
@@ -450,12 +571,11 @@ def run_pr_review(args: argparse.Namespace) -> int:
         },
     }
 
-    # 6. Read CODEOWNERS
+    # 7. Read CODEOWNERS
     codeowners_path = candidate_repo / ".github" / "CODEOWNERS"
     codeowners_content = codeowners_path.read_text(encoding="utf-8") if codeowners_path.exists() else ""
 
-    # 7. Evaluate Policy
-    auditor_report = None
+    # 8. Evaluate Policy
     evaluation = evaluate_pr_policy(
         pr_data=pr_data,
         linked_issue=linked_issue,
@@ -468,9 +588,11 @@ def run_pr_review(args: argparse.Namespace) -> int:
         head_sha_at_start=head_sha_at_start,
         head_sha_at_end=head_sha_at_end,
         ruleset_status=ruleset_status,
+        base_sha_at_start=base_sha_at_start,
+        base_sha_at_end=base_sha_at_end,
     )
 
-    # 8. Render report
+    # 9. Render report
     report_md = render_markdown_report(evaluation, pr_data, snapshot)
 
     # Print / save
@@ -489,9 +611,15 @@ def run_pr_review(args: argparse.Namespace) -> int:
 
     print(report_md)
 
-    # 9. Publish comment if explicitly authorized by operator
+    # 10. Publish comment if explicitly authorized by operator
     if getattr(args, "publish_comment", False) and not args.fixture:
-        publish_pr_comment(repo_name, pr_data["number"], report_md)
+        publish_pr_comment(
+            repo_name,
+            pr_data["number"],
+            report_md,
+            expected_head=head_sha_at_start,
+            expected_base=base_sha_at_start,
+        )
         print("\n✅ Review report comment published to PR.")
 
     verdict = evaluation["verdict"]
@@ -510,6 +638,7 @@ def main() -> int:
     parser.add_argument("--repo", default=DEFAULT_REPO, help=f"GitHub repository (default: {DEFAULT_REPO})")
     parser.add_argument("--candidate-repo", default=".", help="Local repository path for G0 and CODEOWNERS checks")
     parser.add_argument("--fixture", help="Path to synthetic PR fixture JSON (for offline validation)")
+    parser.add_argument("--auditor-report", help="Path to external Auditor report JSON")
     parser.add_argument("--output-json", help="Path to write structured JSON evaluation output")
     parser.add_argument("--output-md", help="Path to write Markdown review report")
     parser.add_argument("--publish-comment", action="store_true", help="Publish or update comment on GitHub PR (requires operator authorization)")

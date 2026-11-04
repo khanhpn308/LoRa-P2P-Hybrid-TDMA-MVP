@@ -96,18 +96,18 @@ This report documents the verification and acceptance evidence for the read-only
 python3 -m unittest discover -s tests/agent_harness -v
 ```
 **Receipt:**
-- Total tests executed: **271**
+- Total tests executed: **292**
 - Status: **ALL PASS (OK)**
-- Elapsed time: **18.737s**
+- Failures: **0**, Errors: **0**
 
 ### 4.2 PR Review Unit & Fixture Tests
 ```bash
 python3 tests/agent_harness/test_pr_review.py -v
 ```
 **Receipt:**
-- Total tests executed: **29**
+- Total tests executed: **50**
 - Status: **ALL PASS (OK)**
-- Elapsed time: **0.168s**
+- Failures: **0**, Errors: **0**
 
 ### 4.3 Monorepo Static Structure Verification
 ```bash
@@ -120,3 +120,38 @@ python3 scripts/verify_structure.py
 python3 scripts/agent_harness/agent_context.py --repo .
 ```
 **Receipt:** `HOST_CONTEXT_LOADED`, SHA256 matches tracked `AGENTS.md`.
+
+---
+
+## 5. Issue #144 Remediation Verification & CI Triage Report
+
+### 5.1 R-01: P0 Fail-Open Rule-ID Fallback Elimination
+- **Fix:** Removed the catch-all `except Exception` in `pr_review.py` that injected synthetic `GOV-001, C-001` or `GGS-001` into `rule_selection`.
+- **Fail-Closed Behavior:** Any router exception in live PR review now yields `status: BLOCKED` with non-zero exit (`exit 2`), preventing false `PR-03 PASS`.
+- **Schema & Applicability:** `eval_pr03_rule_id` verifies exact `#137` schema (`selected_ids`, `selection_sha256`, `standards_set`).
+- **Test-Rule Enforcement:** Added mandatory check requiring `TS-001` when `backend-go/**/*_test.go` files are touched.
+- **Source Binding:** Validates that `rule_selection["source_sha"]` matches the PR `head_sha`.
+
+### 5.2 R-02: P1 Real Independent Auditor and Per-ID Evidence
+- **Auditor Handoff:** Added `--auditor-report` CLI interface with schema validation via `adapters.antigravity.check_report`.
+- **Author Self-Audit Veto:** Verified that if `auditor_id == author`, the audit is rejected with `AI_REVIEW_PASS = FAIL` and `BLOCKED`.
+- **Leak Defense:** Verified that model transcripts containing leaked credentials or private keys fail closed.
+- **Coverage Enforcement:** Verified that missing evaluated rules in `rule_results` block acceptance.
+- **Truthful Claim:** `AI_REVIEW_PASS = NOT_VERIFIED` when no auditor report is provided; model testimony is never fabricated.
+
+### 5.3 R-03: P1 Security Review vs Secret Scan Separation
+- **Static vs Specialist Separation:** `SECRET_SCAN_PASS` (static diff regex scan) is strictly decoupled from `SECURITY_REVIEW_PASS` (human specialist cryptographic/security audit). A regex pass alone leaves `SECURITY_REVIEW_PASS = NOT_VERIFIED` for security-sensitive paths.
+- **Explicit Non-Merge Boundary:** The evaluation dictionary strictly outputs `"ready_to_merge": false`. `READY_FOR_HUMAN_REVIEW` only indicates readiness to commence human review.
+
+### 5.4 R-04: P1 GitHub CI Failure Triage and Independent Reproducer
+- **GitHub Runner Failure Mechanism:**
+  - Verified run: `workflow 41889095369` on PR #142 HEAD (`4369d81f3050b3dfe1094a316aa135a1e973efd4`).
+  - Observed symptom: 26 failures, 37 errors in `harness-unit` reporting `AssertionError: 2 != 0 : {"status": "BLOCKED", "reason": "Configured Git filters require trusted disposable checkout"}`.
+  - Root Cause Diagnosis: `standards_policy.py` line 81 queries `git config --name-only --get-regexp '^filter\..*\.(clean|process)$'`. On GitHub Actions `ubuntu-latest` runners, system-level git-lfs configuration exists in `/etc/gitconfig` (`filter.lfs.clean`, `filter.lfs.process`), triggering the Host guard.
+  - Baseline Inheritance: Ran workflow on baseline `feature/137-standards-routing` (`4b2afc0287915d6cb34b36962c7bfdd6eddfe75a`, run ID `41877696325`), confirming identical inherited failure mechanism.
+  - Scope Compliance: Per Issue #144 instructions, `standards_policy.py` and GitHub Actions workflows were kept strictly read-only; router improvements are isolated to Issue #143.
+
+### 5.5 R-05: P1 Immutable Snapshot & Dual TOCTOU Protection
+- **Dual SHA Race Check:** `eval_pr08_merge_integrity` verifies that neither `head_sha` nor `base_sha` drifts during review.
+- **Snapshot Schema 1.0:** The snapshot binds `schema_version`, `pr_number`, `repo`, `base_ref`, `base_sha`, `head_ref`, `head_sha`, `diff_sha256`, `file_diff_hashes`, `rule_selection_sha256`, and `ruleset_visibility`.
+- **Comment Guard:** `publish_pr_comment` re-validates both HEAD and BASE before publishing. Missing patch diffs or unsupported git file statuses fail closed.

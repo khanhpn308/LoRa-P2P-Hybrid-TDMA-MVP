@@ -39,10 +39,13 @@ python3 scripts/agent_harness/pr_review.py --fixture tests/agent_harness/fixture
 3. **`PR-03 RULE-ID`**:
    - Selective Rule-ID routing via `#137` Standards Router.
    - Firmware C changes load C Coding Standard v2; Backend changes load Go Standard v2; Docs load minimal docs rules. Never loads full unselected standard.
+   - Fail-closed: Router errors or malformed receipts result in `BLOCKED/NOT_VERIFIED`, never fake fallback rules.
+   - Mandatory rules: Any changes touching `backend-go/**/*_test.go` must include `TS-001`.
+   - Binding: Rule selection source commit must match the PR HEAD SHA.
 
 4. **`PR-04 CORRECTNESS`**:
    - Checks for git conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`), truncated patches, or corrupted diffs.
-   - Evaluates unresolved high-severity findings from model Auditor if present.
+   - Evaluates unresolved high-severity findings from fresh read-only Auditor; requires full per-ID coverage.
 
 5. **`PR-05 SECURITY`**:
    - Automated secret scanning across all diff patches for credentials, tokens, and private keys.
@@ -58,7 +61,7 @@ python3 scripts/agent_harness/pr_review.py --fixture tests/agent_harness/fixture
    - Explicitly marked `NOT_APPLICABLE` for docs and backend changes.
 
 8. **`PR-08 MERGE-INTEGRITY`**:
-   - Pre- and post-review HEAD SHA check: any commit push during review fails closed with `STALE_REVIEW/BLOCKED` (TOCTOU protection).
+   - Pre- and post-review HEAD and BASE SHA check: any commit push or base rebase during review fails closed with `STALE_REVIEW/BLOCKED` (TOCTOU protection).
    - Unresolved review comment threads or outstanding `CHANGES_REQUESTED` block readiness.
    - Branch protection and rulesets visibility recorded (`MERGE_PROTECTION_NOT_VERIFIED` if unconfigured).
 
@@ -73,14 +76,16 @@ python3 scripts/agent_harness/pr_review.py --fixture tests/agent_harness/fixture
 ## 5. Host Verdicts & Independent Dimensions
 
 The Policy Evaluator emits exactly ONE of:
-- **`READY_FOR_HUMAN_REVIEW`**: All automated checks passed; ready for human sign-off.
+- **`READY_FOR_HUMAN_REVIEW`**: All automated checks passed; ready for human peer review. Crucially, `ready_to_merge` remains `false`.
 - **`CHANGES_REQUESTED`**: CI test failures, open review threads, or auditor defect findings.
 - **`BLOCKED`**: Hard blockers (scope violation, secrets, prompt injection, TOCTOU SHA race, missing HIL, unapproved contract changes).
 - **`NOT_VERIFIED`**: Missing check-run receipts, checks in progress, or auditor unverified.
 
 Independent evidence dimensions preserved in report:
 - `AUTO_CHECK_PASS`: Boolean status of PR-01, 03, 05, 06, 07.
-- `AI_REVIEW_PASS`: `PASS`, `FAIL`, or `NOT_VERIFIED`.
+- `SECRET_SCAN_PASS`: `PASS` or `FAIL` (basic diff pattern scan).
+- `SECURITY_REVIEW_PASS`: `PASS`, `NOT_APPLICABLE`, or `NOT_VERIFIED` (independent specialist sign-off; never inferred from regex scan alone).
+- `AI_REVIEW_PASS`: `PASS`, `FAIL`, or `NOT_VERIFIED` (fresh read-only Auditor; author self-audits are rejected).
 - `HUMAN_APPROVED`: `APPROVED` or `PENDING` based on valid approvals.
 - `HIL_RF_PASS`: `PASS`, `FAIL`, `NOT_APPLICABLE`, or `NOT_RUN`.
-- `SECURITY_REVIEW_PASS`: `PASS` or `FAIL`.
+- `MERGE_ENFORCEMENT_ACTIVE`: `ENFORCED` or `NOT_VERIFIED`.
