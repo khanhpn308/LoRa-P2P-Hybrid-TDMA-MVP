@@ -39,7 +39,7 @@ def invoke(prompt: str, worktree: Path, timeout: int, required_rules=None,
                 except ImportError:
                     from quality_gates import safe_read
                 raw = safe_read(root, "report.json")
-                antigravity._safe_report_bytes(raw)
+                antigravity._safe_report_bytes(raw, structured=True)
                 report = json.loads(raw, object_pairs_hook=antigravity._reject_duplicate_object_keys,
                                     parse_constant=antigravity._reject_invalid_constant)
                 if not isinstance(report, dict) or not isinstance(report.get("reviewed_scope"), list):

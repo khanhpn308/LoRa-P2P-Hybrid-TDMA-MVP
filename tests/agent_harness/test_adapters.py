@@ -61,6 +61,13 @@ class ScopedWorkerTests(unittest.TestCase):
             self.invoke(json.dumps(self.report), secret)
         self.assertNotIn(secret, str(error.exception))
 
+    def test_scanner_source_literal_is_not_a_private_key_transcript(self):
+        transcript = 'Source line: if b"PRIVATE KEY-----" in raw: reject()\n'
+        self.assertEqual(self.invoke(json.dumps(self.report), transcript)["report"], self.report)
+        pem = "-----BEGIN " + "PRIVATE KEY-----\nsynthetic material\n"
+        with self.assertRaises(codex.WorkerError):
+            self.invoke(json.dumps(self.report), pem)
+
     def test_soft_permission_denial_blocks_successful_worker_report(self):
         with self.assertRaises(codex.WorkerError):
             self.invoke(json.dumps(self.report), "approval required: run_command")

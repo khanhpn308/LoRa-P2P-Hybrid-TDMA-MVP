@@ -82,7 +82,7 @@
     },
     "rule_results": {
       "type": "array",
-      "maxItems": 96,
+      "maxItems": 128,
       "items": {
         "type": "object",
         "additionalProperties": false,

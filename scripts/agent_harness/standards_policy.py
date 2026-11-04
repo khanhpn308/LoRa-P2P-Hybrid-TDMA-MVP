@@ -27,7 +27,7 @@ GROUPS = {
 }
 MAX_STANDARD_BYTES = 120_000
 MAX_PROMPT_BYTES = 48_000
-MAX_RULES = 96
+MAX_RULES = 128
 MAX_CODE_BYTES = 2_000_000
 RULE_ID = re.compile(r"[A-Z]+-[0-9]{3}")
 BASELINE = {
@@ -50,14 +50,14 @@ PATH_GROUPS = {
            "alert": ("CT", "MQ", "DB", "RT", "SE", "TS")},
 }
 OPERATIONS = {
-    "C": ((r"(?i)\b(?:isr|iram_attr|esp_timer|freertos|xqueue|xtask|spi|dma)\w*", ("RTOS", "MEM")),
+    "C": ((r"(?i)\b(?:isr|iram[ _]+attr|esp[ _]+timer|freertos|xqueue|xtask|task|callback|spi|dma)\w*", ("RTOS", "MEM")),
           (r"(?i)\b(?:sx1276|lora|radio|airtime)\w*", ("RAD",)),
           (r"(?i)\b(?:aes|nonce|replay|crypto|mic|payload|decode|parse|frame|packet|buffer|memcpy)\w*", ("SEC",)),
           (r"(?i)\b(?:tdma|superframe|guard|schedule)\w*", ("TDMA",))),
     "GO": ((r"(?i)\b(?:sql|postgres|pgx|transaction|database|db|query|prepare)\w*", ("DB",)),
            (r"(?i)\b(?:mqtt|puback|mosquitto)\w*", ("MQ", "CT")),
            (r"(?i)\b(?:tls|auth|credential|crypto|rbac)\w*", ("SE",)),
-           (r"\b(?:goroutine|go\s+\w+|chan|sync|context)\b", ("RT",)),
+           (r"\b(?:goroutine|go[ \t]+\w+|chan|sync|context)\b", ("RT",)),
            (r"(?i)\b(?:json|http|websocket|decode|validate)\w*", ("CT", "SE"))),
 }
 
@@ -295,6 +295,22 @@ def select_rules(repo: Path, allowed_paths=(), changed_paths=None, requested_ids
             for path in impact:
                 if _component(path) != component:
                     continue
+                if component == "C":
+                    if path.endswith((".c", ".h", "/")):
+                        selected.update(f"C-{n:03}" for n in (1, 2, 7, 8, 9, 10, 11, 12, 13, 14, 19, 20))
+                    if path.endswith((".c", "/")):
+                        selected.update(("C-003", "C-015"))
+                    if path.endswith((".h", "/")):
+                        selected.update(("C-004", "C-005", "C-012"))
+                    if PurePosixPath(path).name == "CMakeLists.txt" or path.endswith(".cmake"):
+                        selected.add("C-006")
+                        groups.add("ARCH")
+                elif path.endswith((".go", "/")):
+                    groups.update(("GB", "GGS", "GO", "QG", "AI"))
+                elif PurePosixPath(path).name == "go.mod":
+                    groups.update(("GB", "AR", "QG", "AI"))
+                elif path == ".go-version":
+                    groups.add("QG")
                 for token, applicable in PATH_GROUPS[component].items():
                     if token in path:
                         groups.update(applicable)
@@ -307,6 +323,8 @@ def select_rules(repo: Path, allowed_paths=(), changed_paths=None, requested_ids
                 selected.update(("MQ-009", "DB-004"))
             if component == "GO" and "MQ" in groups:
                 selected.update(("DB-002", "DB-004"))
+            if component == "C" and "RTOS" in groups:
+                selected.update(("C-016", "C-017", "C-018"))
             for group in groups:
                 selected.update(r for r in rows if r.startswith(group + "-"))
             if sum(r in rows for r in selected) == len(rows):

@@ -96,6 +96,8 @@ the registry under a scoped Issue if new path conventions need different routing
 
 Scoped intake uses the same G0 CLI. Repeat `--allowed-path` for the exact Issue allowlist and `--rule-id` for the Coordinator proposal. Host routing independently adds mandatory rules; omitting an ID does not suppress it.
 
+General C source/header rules, component CMake rules and Go source/style/dependency groups are selected from actual suffixes and task paths, even when the Coordinator proposes no IDs. The union is capped at 128 rules and 48,000 selected-input bytes; exceeding a cap requires narrower scope rather than dropping mandatory rules. Entire component standards remain forbidden.
+
 ```bash
 python3 scripts/agent_harness/agent_context.py --repo <candidate> --base <trusted-base-sha> --allowed-path firmware/components/sx1276_driver/radio.c --rule-id RTOS-003
 ```

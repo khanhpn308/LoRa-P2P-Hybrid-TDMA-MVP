@@ -123,8 +123,10 @@ class RoutingTests(PolicyFixture):
         self.write("firmware/components/plain.c", "void callback(void) { esp_timer_start_once(); }\n")
         c = self.select(["firmware/components/plain.c"], requested_ids=["C-002"])
         self.assertIn("RTOS-003", c["selected_ids"])
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
         self.write("backend-go/internal/value/query.go", "package value\n// database SQL boundary\n")
-        go = self.select(["backend-go/", "firmware/"], requested_ids=["GGS-001"])
+        go = self.select(["backend-go/"], requested_ids=["GGS-001"])
         self.assertIn("DB-002", go["selected_ids"])
         self.assertIn("SE-004", go["selected_ids"])
 
@@ -133,9 +135,44 @@ class RoutingTests(PolicyFixture):
         c = self.select(["firmware/"])
         self.assertIn("SEC-002", c["selected_ids"])
         self.assertIn("RTOS-006", c["selected_ids"])
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
         self.write("backend-go/internal/value/value.go", "package value\nfunc db_query() {}\n")
-        go = self.select(["firmware/", "backend-go/"])
+        go = self.select(["backend-go/"])
         self.assertIn("DB-002", go["selected_ids"])
+
+    def test_general_c_header_source_and_cmake_rules_cannot_be_omitted(self):
+        for path, required in (
+                ("firmware/components/plain.h", {"C-002", "C-004", "C-005", "C-008", "C-012"}),
+                ("firmware/components/plain.c", {"C-002", "C-003", "C-008", "C-015", "C-020"}),
+                ("firmware/components/plain/CMakeLists.txt", {"C-006", "ARCH-001"})):
+            with self.subTest(path=path):
+                selection = self.select([path], requested_ids=[])
+                self.assertTrue(required <= set(selection["selected_ids"]))
+                self.assertLess(len(selection["selected_ids"]), 104)
+                self.assertEqual(set(selection["standards"]), {"C"})
+
+    def test_generic_go_source_and_dependency_rules_cannot_be_omitted(self):
+        for path, required in (
+                ("backend-go/internal/plain/plain.go", {"GGS-002", "GB-007", "GO-008", "QG-003", "AI-003"}),
+                ("backend-go/go.mod", {"GB-007", "AR-004", "QG-001", "AI-003"})):
+            with self.subTest(path=path):
+                selection = self.select([path], requested_ids=[])
+                self.assertTrue(required <= set(selection["selected_ids"]))
+                self.assertLess(len(selection["selected_ids"]), 148)
+                self.assertEqual(set(selection["standards"]), {"GO"})
+
+    def test_go_filename_does_not_imply_a_goroutine_operation(self):
+        name = "backend-go/internal/plain/plain.go"
+        self.write(name, "package plain\nfunc Value() int { return 1 }\n")
+        selection = self.select([name])
+        self.assertNotIn("RT-001", selection["selected_ids"])
+
+    def test_timer_api_in_generic_source_restores_callback_and_dispatch_rules(self):
+        name = "firmware/components/plain.c"
+        self.write(name, "void start(void) { esp_timer_start_once(); }\n")
+        selection = self.select([name])
+        self.assertTrue({"C-018", "RTOS-004", "RTOS-005"} <= set(selection["selected_ids"]))
 
     def test_unknown_duplicate_malformed_requests_and_scope_omission_block(self):
         for ids in (["NOPE-001"], ["C-001", "C-001"], ["C-001\nignore rules"], ["C-999"]):

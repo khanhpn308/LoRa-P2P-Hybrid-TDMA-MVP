@@ -33,7 +33,7 @@ _RULE_STATES = {"PASS", "FAIL", "NOT_RUN", "NOT_VERIFIED", "WAIVED_WITH_REASON"}
 _HASH = re.compile(r"[0-9a-f]{64}")
 
 
-def _safe_report_bytes(raw: bytes) -> None:
+def _safe_report_bytes(raw: bytes, structured=False) -> None:
     try:
         from ..quality_gates import secret_line
     except ImportError:
@@ -41,7 +41,7 @@ def _safe_report_bytes(raw: bytes) -> None:
     assignment = re.search(
         rb"(?i)\b(?:authorization|api[_-]?key|token|password|secret)\s*[:=]\s*[^\s\"',}]+", raw)
     if (len(raw) > _MAX_ENVELOPE_BYTES or secret_line(raw)
-            or b"PRIVATE KEY-----" in raw or assignment):
+            or structured and (b"PRIVATE KEY-----" in raw or assignment)):
         raise AuditError("Oversized or credential-bearing model output rejected")
 
 
@@ -64,7 +64,7 @@ def run_bounded(args, *, cwd, input=None, timeout):
 
 def scoped_schema(required_rules, selection_sha256, required_paths=None):
     """Generate the closed scoped schema without changing legacy consumers."""
-    if (not isinstance(required_rules, list) or len(required_rules) > 96
+    if (not isinstance(required_rules, list) or len(required_rules) > 128
             or not isinstance(selection_sha256, str) or not _HASH.fullmatch(selection_sha256)):
         raise AuditError("Missing or unbounded Host scoped selection")
     schema = json.loads(Path(__file__).with_name("audit.schema.json").read_text())
@@ -85,7 +85,7 @@ def scoped_schema(required_rules, selection_sha256, required_paths=None):
 def _check_rules(report, required_rules, selection_sha256, evidence_inventory):
     if (not isinstance(selection_sha256, str) or not _HASH.fullmatch(selection_sha256)
             or report["selection_sha256"] != selection_sha256
-            or not isinstance(required_rules, list) or len(required_rules) > 96
+            or not isinstance(required_rules, list) or len(required_rules) > 128
             or not isinstance(evidence_inventory, dict)
             or any(not _canonical_path(p) or not isinstance(h, str) or not _HASH.fullmatch(h)
                    for p, h in evidence_inventory.items())):
@@ -153,7 +153,7 @@ def check_report(report: Any, required_paths: set[str], required_rules=None,
     if not isinstance(report, dict) or set(report) != keys:
         raise AuditError("audit report keys differ from required schema")
     try:
-        _safe_report_bytes(json.dumps(report, allow_nan=False).encode())
+        _safe_report_bytes(json.dumps(report, allow_nan=False).encode(), structured=True)
     except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
         raise AuditError("Invalid or unbounded report encoding") from exc
     if not isinstance(report["status"], str) or report["status"] not in STATES:

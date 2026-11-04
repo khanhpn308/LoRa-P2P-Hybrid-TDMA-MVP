@@ -257,7 +257,7 @@ class StrictAuditContractTests(unittest.TestCase):
         definitions = schema.pop("$defs")
         self.assertEqual(set(definitions), {"selection_sha256", "rule_results"})
         result = definitions["rule_results"]
-        self.assertEqual(result["maxItems"], 96)
+        self.assertEqual(result["maxItems"], 128)
         self.assertFalse(result["items"]["additionalProperties"])
         self.assertEqual(set(result["items"]["required"]),
                          {"rule_id", "rule_sha256", "status", "evidence", "reason"})
