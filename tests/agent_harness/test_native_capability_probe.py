@@ -29,7 +29,7 @@ class NativeCapabilityProbeTests(unittest.TestCase):
         agy_cfg.parent.mkdir(parents=True, exist_ok=True)
         agy_cfg.write_text(json.dumps({
             "model": "Gemini 3.8 Flash (High)",
-            "agentMode": "accept-edits",
+            "agentMode": "auto",
             "toolPermission": "always-proceed",
             "trustedWorkspaces": [str(self.repo.resolve())],
         }), encoding="utf-8")
@@ -51,6 +51,38 @@ class NativeCapabilityProbeTests(unittest.TestCase):
             self.assertEqual(res["clients"]["codex"]["status"], "CONFIGURED")
             self.assertFalse(res["model_runtime_verified"])
             self.assertEqual(res["auditor_status"], "AUDIT_NOT_VERIFIED")
+
+    def test_probe_accept_edits_requires_migration_to_auto(self):
+        agy_cfg = self.home / ".gemini/antigravity-cli/settings.json"
+        agy_cfg.parent.mkdir(parents=True, exist_ok=True)
+        agy_cfg.write_text(json.dumps({
+            "model": "Gemini 3.8 Flash (High)",
+            "agentMode": "accept-edits",
+            "toolPermission": "always-proceed",
+            "trustedWorkspaces": [str(self.repo.resolve())],
+        }), encoding="utf-8")
+
+        with patch.object(probe.shutil, "which", return_value="/usr/bin/agy"):
+            res = probe.inspect_agy(self.home, self.repo)
+            self.assertEqual(res["status"], "PARTIAL")
+            self.assertFalse(res["agent_mode_ok"])
+            self.assertTrue(any("requires 'auto'" in b for b in res["blockers"]))
+
+    def test_probe_unsupported_agy_version(self):
+        agy_cfg = self.home / ".gemini/antigravity-cli/settings.json"
+        agy_cfg.parent.mkdir(parents=True, exist_ok=True)
+        agy_cfg.write_text(json.dumps({
+            "model": "Gemini 3.8 Flash (High)",
+            "agentMode": "auto",
+            "toolPermission": "always-proceed",
+            "trustedWorkspaces": [str(self.repo.resolve())],
+        }), encoding="utf-8")
+
+        with patch.object(probe.shutil, "which", return_value="/usr/bin/agy"), \
+             patch.object(probe, "run_cmd", return_value=(0, "1.4.0", "")):
+            res = probe.inspect_agy(self.home, self.repo)
+            self.assertEqual(res["status"], "PARTIAL")
+            self.assertTrue(any("below minimum supported 1.5.0" in b for b in res["blockers"]))
 
     def test_negative_missing_clis_reports_unsupported_runtime(self):
         with patch.object(probe.shutil, "which", side_effect=lambda x: "/usr/bin/git" if x in ("git", "python3") else None), \
@@ -84,7 +116,7 @@ class NativeCapabilityProbeTests(unittest.TestCase):
         agy_cfg.parent.mkdir(parents=True, exist_ok=True)
         agy_cfg.write_text(json.dumps({
             "model": "Gemini 3.8 Flash (High)",
-            "agentMode": "accept-edits",
+            "agentMode": "auto",
             "toolPermission": "always-proceed",
             "trustedWorkspaces": [str(self.repo.resolve())],
             "permissions": {"allow": ["command(ls)", "command(cat)"]},

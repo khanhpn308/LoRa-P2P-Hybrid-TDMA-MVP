@@ -54,6 +54,7 @@ class NativeSetupTests(unittest.TestCase):
             self.assertTrue(plan["agy"]["installed"])
             self.assertEqual(len(plan["codex"]["actions"]), 1)
             self.assertGreaterEqual(len(plan["agy"]["actions"]), 1)
+            self.assertIn("Set agentMode to 'auto'", plan["agy"]["actions"])
             self.assertEqual(plan["total_actions"], len(plan["codex"]["actions"]) + len(plan["agy"]["actions"]))
 
     def test_plan_idempotent_when_already_configured(self):
@@ -65,7 +66,7 @@ class NativeSetupTests(unittest.TestCase):
         agy_cfg = setup.agy_config_path(self.home)
         agy_cfg.parent.mkdir(parents=True, exist_ok=True)
         agy_cfg.write_text(json.dumps({
-            "agentMode": "accept-edits",
+            "agentMode": "auto",
             "toolPermission": "always-proceed",
             "trustedWorkspaces": [str(self.repo.resolve())],
         }), encoding="utf-8")
@@ -74,6 +75,22 @@ class NativeSetupTests(unittest.TestCase):
             plan = setup.generate_plan(self.home, self.repo)
             self.assertEqual(plan["status"], "READY")
             self.assertEqual(plan["total_actions"], 0)
+
+    def test_plan_accept_edits_existing_config_plans_migration_to_auto(self):
+        # Config currently has accept-edits; setup plan must propose migration to auto
+        agy_cfg = setup.agy_config_path(self.home)
+        agy_cfg.parent.mkdir(parents=True, exist_ok=True)
+        agy_cfg.write_text(json.dumps({
+            "agentMode": "accept-edits",
+            "toolPermission": "always-proceed",
+            "trustedWorkspaces": [str(self.repo.resolve())],
+        }), encoding="utf-8")
+
+        with patch.object(setup.shutil, "which", side_effect=lambda x: f"/usr/bin/{x}" if x == "agy" else None):
+            plan = setup.generate_plan(self.home, self.repo)
+            self.assertEqual(plan["status"], "CHANGES_REQUIRED")
+            self.assertEqual(plan["total_actions"], 1)
+            self.assertIn("Set agentMode to 'auto'", plan["agy"]["actions"])
 
     def test_apply_codex_atomic_write_and_0600_backup(self):
         codex_cfg = setup.codex_config_path(self.home)
@@ -97,6 +114,7 @@ class NativeSetupTests(unittest.TestCase):
         agy_cfg = setup.agy_config_path(self.home)
         agy_cfg.parent.mkdir(parents=True, exist_ok=True)
         initial_data = {
+            "agentMode": "accept-edits",
             "model": "Gemini 3.8 Flash (High)",
             "unrelatedSetting": True,
             "trustedWorkspaces": ["/other/workspace"],
@@ -116,8 +134,62 @@ class NativeSetupTests(unittest.TestCase):
             self.assertIn("/other/workspace", updated["trustedWorkspaces"])
             self.assertIn(str(self.repo.resolve()), updated["trustedWorkspaces"])
             self.assertEqual(updated["toolPermission"], "always-proceed")
-            self.assertEqual(updated["agentMode"], "accept-edits")
+            self.assertEqual(updated["agentMode"], "auto")
             self.assertEqual(agy_cfg.stat().st_mode & 0o777, 0o600)
+
+    def test_apply_agy_idempotent_when_already_auto(self):
+        agy_cfg = setup.agy_config_path(self.home)
+        agy_cfg.parent.mkdir(parents=True, exist_ok=True)
+        initial_data = {
+            "agentMode": "auto",
+            "toolPermission": "always-proceed",
+            "trustedWorkspaces": [str(self.repo.resolve())],
+        }
+        agy_cfg.write_text(json.dumps(initial_data, indent=2), encoding="utf-8")
+        agy_cfg.chmod(0o600)
+
+        with patch.object(setup.shutil, "which", side_effect=lambda x: "/usr/bin/agy" if x == "agy" else None):
+            bak = setup.apply_agy(self.home, self.repo)
+            self.assertIsNone(bak)
+            # Verify no backup files created
+            baks = list(agy_cfg.parent.glob("*.bak"))
+            self.assertEqual(len(baks), 0)
+
+    def test_apply_agy_new_config_creates_auto(self):
+        agy_cfg = setup.agy_config_path(self.home)
+        with patch.object(setup.shutil, "which", side_effect=lambda x: "/usr/bin/agy" if x == "agy" else None):
+            bak = setup.apply_agy(self.home, self.repo)
+            self.assertIsNone(bak)  # no prior file to backup
+            self.assertTrue(agy_cfg.is_file())
+            data = json.loads(agy_cfg.read_text(encoding="utf-8"))
+            self.assertEqual(data["agentMode"], "auto")
+            self.assertEqual(data["toolPermission"], "always-proceed")
+            self.assertIn(str(self.repo.resolve()), data["trustedWorkspaces"])
+
+    def test_unsupported_platform_blocked(self):
+        with patch.object(setup.shutil, "which", side_effect=lambda x: "/usr/bin/agy" if x == "agy" else None), \
+             patch("sys.platform", "darwin"):
+            plan = setup.generate_plan(self.home, self.repo)
+            self.assertEqual(plan["status"], "BLOCKED_UNSUPPORTED_RUNTIME")
+            self.assertIn("Unsupported platform", plan["message"])
+
+    def test_unsupported_agy_version_blocked(self):
+        with patch.object(setup.shutil, "which", side_effect=lambda x: "/usr/bin/agy" if x == "agy" else None), \
+             patch.object(setup, "check_agy_support", return_value=(False, "1.4.0", "AGY version 1.4.0 is below minimum supported 1.5.0")):
+            plan = setup.generate_plan(self.home, self.repo)
+            self.assertEqual(plan["status"], "BLOCKED_UNSUPPORTED_RUNTIME")
+            self.assertIn("below minimum supported 1.5.0", plan["message"])
+
+    def test_corrupted_agy_account_blocked(self):
+        gemini_dir = self.home / ".gemini"
+        gemini_dir.mkdir(parents=True)
+        accts_file = gemini_dir / "google_accounts.json"
+        accts_file.write_text("{bad json", encoding="utf-8")
+
+        with patch.object(setup.shutil, "which", side_effect=lambda x: "/usr/bin/agy" if x == "agy" else None):
+            plan = setup.generate_plan(self.home, self.repo)
+            self.assertEqual(plan["status"], "BLOCKED_UNSUPPORTED_RUNTIME")
+            self.assertIn("Failed to parse AGY account file", plan["message"])
 
     def test_apply_rollback_on_failure(self):
         agy_cfg = setup.agy_config_path(self.home)
@@ -157,7 +229,11 @@ class NativeSetupTests(unittest.TestCase):
              patch("sys.stdin.readline", return_value="CONFIGURE NATIVE\n"):
             code = setup.main(["--apply", "--repo", str(self.repo), "--home", str(self.home)])
             self.assertEqual(code, 0)
-            self.assertTrue(setup.agy_config_path(self.home).exists())
+            cfg_path = setup.agy_config_path(self.home)
+            self.assertTrue(cfg_path.exists())
+            data = json.loads(cfg_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["agentMode"], "auto")
+            self.assertEqual(data["toolPermission"], "always-proceed")
 
     def test_cli_interactive_apply_cancelled(self):
         with patch.object(setup.shutil, "which", return_value="/usr/bin/agy"), \
