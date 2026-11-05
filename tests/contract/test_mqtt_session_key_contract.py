@@ -179,6 +179,60 @@ class SessionKeySchemaContractTest(unittest.TestCase):
             self.assertTrue(len(errors) > 0 or (bad == "18446744073709551616" and int(bad) > 2**64 - 1),
                             f"Expected error for bad revision {bad}")
 
+    def test_doc_consistency_v2_key_confirm_length(self):
+        """Regression test for P1: V2 UP_JOIN_KEY_CONFIRM must be 31B, not 33B."""
+        sec_text = (MQTT / "session-key-security.md").read_text(encoding="utf-8")
+        rules_text = (MQTT / "semantic-rules.md").read_text(encoding="utf-8")
+        topics_text = (MQTT / "topics.md").read_text(encoding="utf-8")
+
+        self.assertIn("UP_JOIN_KEY_CONFIRM:31B", sec_text)
+        self.assertIn("UP_JOIN_KEY_CONFIRM:31B", rules_text)
+        self.assertIn("UP_JOIN_KEY_CONFIRM:31B", topics_text)
+
+        # Ensure no accidental stale references to 33B remain in any markdown file in contracts/mqtt
+        for md_path in MQTT.glob("*.md"):
+            content = md_path.read_text(encoding="utf-8")
+            self.assertNotIn("33B", content, f"Found stale '33B' reference in {md_path.name}")
+
+    def test_not_before_and_clock_boundary_guards(self):
+        """Regression test for P2: SK-04 not_before pre-staging vs active eligibility guard."""
+        # 1. Early staging fixture is valid for install shape and static metadata
+        early_case = next(c for c in self.fixtures if c["id"] == "SKI-EARLY-STAGE-VALID")
+        self.assertEqual(static_semantics(early_case), "ACCEPT_SHAPE_AND_STATIC_METADATA_ONLY")
+
+        # 2. Invalid time windows (not_before >= expires_at, deadline > expires_at) must be rejected
+        for bad_id in ("SKI-NOT-BEFORE-AFTER-EXPIRES", "SKI-NOT-BEFORE-EQUAL-EXPIRES", "SKI-EXPIRED-DEADLINE"):
+            case = next(c for c in self.fixtures if c["id"] == bad_id)
+            self.assertEqual(static_semantics(case), "REJECT_INVALID_TIME_WINDOW")
+
+        # 3. Guard logic model: simulate Gateway activation eligibility check
+        def evaluate_key_eligibility(current_utc: datetime, not_before_utc: datetime, expires_at_utc: datetime, clock_trusted: bool) -> str:
+            if not clock_trusted:
+                return "FAIL_CLOSED_UNTRUSTED_CLOCK"
+            if current_utc < not_before_utc:
+                return "INELIGIBLE_NOT_YET_VALID"  # Staged as INSTALLED_INACTIVE only; NO RF DATA TX
+            if current_utc >= expires_at_utc:
+                return "INELIGIBLE_EXPIRED"
+            return "ELIGIBLE_FOR_ACTIVE_DATA"
+
+        t_now = datetime.fromisoformat("2026-11-05T00:30:00+00:00")
+        t_nb = datetime.fromisoformat("2026-11-05T01:00:00+00:00")
+        t_exp = datetime.fromisoformat("2026-11-06T01:00:00+00:00")
+
+        # Early pre-stage: now < not_before => cannot activate DATA
+        self.assertEqual(evaluate_key_eligibility(t_now, t_nb, t_exp, clock_trusted=True), "INELIGIBLE_NOT_YET_VALID")
+
+        # Inside validity window: not_before <= now < expires_at => eligible for active DATA
+        t_active = datetime.fromisoformat("2026-11-05T02:00:00+00:00")
+        self.assertEqual(evaluate_key_eligibility(t_active, t_nb, t_exp, clock_trusted=True), "ELIGIBLE_FOR_ACTIVE_DATA")
+
+        # Expired: now >= expires_at => cannot activate DATA
+        t_expired = datetime.fromisoformat("2026-11-06T02:00:00+00:00")
+        self.assertEqual(evaluate_key_eligibility(t_expired, t_nb, t_exp, clock_trusted=True), "INELIGIBLE_EXPIRED")
+
+        # Untrusted clock => fail closed
+        self.assertEqual(evaluate_key_eligibility(t_active, t_nb, t_exp, clock_trusted=False), "FAIL_CLOSED_UNTRUSTED_CLOCK")
+
 
 if __name__ == "__main__":
     unittest.main()
