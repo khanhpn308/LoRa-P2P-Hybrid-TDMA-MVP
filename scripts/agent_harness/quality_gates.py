@@ -64,13 +64,12 @@ def digest(data):
 
 
 def git_command(repo, *args):
-    command = ["git", "--no-optional-locks", "-c", "core.fsmonitor=false", "-C", str(repo)]
+    command = ["git", "--no-optional-locks", "-c", "core.fsmonitor=false",
+               "-c", "filter.lfs.clean=", "-c", "filter.lfs.process=", "-c", "filter.lfs.smudge=",
+               "-C", str(repo)]
     if args and args[0] == "diff":
-        configured = subprocess.run(
-            [*command, "config", "--name-only", "--get-regexp", r"^filter\..*\.(clean|process)$"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
-        if configured.returncode not in (0, 1) or configured.stdout:
-            raise ValueError("Configured Git conversion filters require trusted disposable checkout")
+        standards_policy.check_git_filters(repo, exc_class=ValueError,
+                                          err_msg="Configured Git conversion filters require trusted disposable checkout")
     return [*command, *args]
 
 
@@ -462,7 +461,9 @@ def evaluate(repo, base, manifest=None, evidence_root=None):
         document = json.loads(manifest_bytes, object_pairs_hook=reject_duplicates)
         entries = document["checks"]
         standards_payload = document.get("standards")
-        if not isinstance(entries, dict) or set(entries) - set(REGISTRY):
+        if (not isinstance(entries, dict)
+                or set(entries) - set(REGISTRY)
+                or any(not isinstance(v, dict) for v in entries.values() if v is not None)):
             raise ValueError("Unknown rule or invalid checks object")
     selection, rule_results, standard_status, standard_reason = standards_check(
         repo, source["base_sha"], source, standards_payload, evidence_root)
