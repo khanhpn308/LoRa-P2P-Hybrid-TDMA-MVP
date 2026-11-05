@@ -64,13 +64,12 @@ def digest(data):
 
 
 def git_command(repo, *args):
-    command = ["git", "--no-optional-locks", "-c", "core.fsmonitor=false", "-C", str(repo)]
+    command = ["git", "--no-optional-locks", "-c", "core.fsmonitor=false",
+               "-c", "filter.lfs.clean=", "-c", "filter.lfs.process=", "-c", "filter.lfs.smudge=",
+               "-C", str(repo)]
     if args and args[0] == "diff":
-        configured = subprocess.run(
-            [*command, "config", "--name-only", "--get-regexp", r"^filter\..*\.(clean|process)$"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
-        if configured.returncode not in (0, 1) or configured.stdout:
-            raise ValueError("Configured Git conversion filters require trusted disposable checkout")
+        standards_policy.check_git_filters(repo, exc_class=ValueError,
+                                          err_msg="Configured Git conversion filters require trusted disposable checkout")
     return [*command, *args]
 
 

@@ -9,7 +9,9 @@ import io
 import shutil
 import importlib.util
 import json
+import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -279,6 +281,96 @@ class RoutingTests(PolicyFixture):
         with self.assertRaises(policy.StandardsError):
             self.select(["firmware/value.c"])
         self.assertFalse(marker.exists())
+
+    def test_trusted_system_git_lfs_filter_is_accepted(self):
+        with tempfile.TemporaryDirectory() as sys_td:
+            sys_cfg = Path(sys_td) / "system.gitconfig"
+            sys_cfg.write_text(
+                '[filter "lfs"]\n'
+                '\tclean = git-lfs clean -- %f\n'
+                '\tprocess = git-lfs filter-process\n'
+                '\tsmudge = git-lfs smudge -- %f\n'
+            )
+            with patch.dict(os.environ, {"GIT_CONFIG_SYSTEM": str(sys_cfg)}):
+                selection = self.select(["firmware/components/sx1276_driver/radio.c"])
+                self.assertIn("C", selection["standards"])
+                self.assertIn("RTOS-003", selection["selected_ids"])
+
+                command = [sys.executable, str(ROOT / "scripts/agent_harness/agent_context.py"),
+                           "--repo", str(self.root), "--base", self.base,
+                           "--allowed-path", "firmware/components/sx1276_driver/radio.c"]
+                done = subprocess.run(command, capture_output=True, text=True, timeout=30,
+                                      env={**os.environ, "GIT_CONFIG_SYSTEM": str(sys_cfg)})
+                self.assertEqual(done.returncode, 0, done.stdout)
+
+    def test_local_malicious_filter_clean_and_process_blocked_with_no_execution(self):
+        for key in ("filter.evil.clean", "filter.evil.process"):
+            with self.subTest(key=key):
+                marker = self.root / f"executed_{key.replace('.', '_')}"
+                git(self.root, "config", "--local", key, "touch " + str(marker))
+                with self.assertRaises(policy.StandardsError):
+                    self.select(["firmware/value.c"])
+                self.assertFalse(marker.exists())
+                git(self.root, "config", "--local", "--unset", key)
+
+    def test_global_and_include_git_filters_are_blocked(self):
+        with tempfile.TemporaryDirectory() as outside:
+            marker = Path(outside) / "executed"
+            home_dir = Path(outside) / "home"
+            home_dir.mkdir()
+            (home_dir / ".gitconfig").write_text(f'[filter "evil"]\n\tclean = touch {marker}\n')
+            with patch.dict(os.environ, {"HOME": str(home_dir)}):
+                with self.assertRaises(policy.StandardsError):
+                    self.select(["firmware/value.c"])
+                self.assertFalse(marker.exists())
+
+            inc_cfg = Path(outside) / "include.gitconfig"
+            inc_cfg.write_text(f'[filter "inc"]\n\tprocess = touch {marker}\n')
+            git(self.root, "config", "include.path", str(inc_cfg))
+            with self.assertRaises(policy.StandardsError):
+                self.select(["firmware/value.c"])
+            self.assertFalse(marker.exists())
+            git(self.root, "config", "--unset", "include.path")
+
+    def test_config_origin_spoofing_and_indirection_blocked(self):
+        with tempfile.TemporaryDirectory() as outside:
+            marker = Path(outside) / "executed"
+            sys_cfg = Path(outside) / "tampered.gitconfig"
+            sys_cfg.write_text(f'[filter "lfs"]\n\tclean = "git-lfs clean -- %f; touch {marker}"\n')
+            with patch.dict(os.environ, {"GIT_CONFIG_SYSTEM": str(sys_cfg)}):
+                with self.assertRaises(policy.StandardsError):
+                    self.select(["firmware/value.c"])
+                self.assertFalse(marker.exists())
+
+            real_cfg = Path(outside) / "real.gitconfig"
+            real_cfg.write_text('[filter "lfs"]\n\tclean = git-lfs clean -- %f\n')
+            sym_cfg = Path(outside) / "sym.gitconfig"
+            sym_cfg.symlink_to(real_cfg)
+            with patch.dict(os.environ, {"GIT_CONFIG_SYSTEM": str(sym_cfg)}):
+                with self.assertRaises(policy.StandardsError):
+                    self.select(["firmware/value.c"])
+
+            inside_cfg = self.root / "inside.gitconfig"
+            inside_cfg.write_text('[filter "lfs"]\n\tclean = git-lfs clean -- %f\n')
+            with patch.dict(os.environ, {"GIT_CONFIG_SYSTEM": str(inside_cfg)}):
+                with self.assertRaises(policy.StandardsError):
+                    self.select(["firmware/value.c"])
+
+    def test_gitattributes_filter_assignment_blocked(self):
+        attr_file = self.write(".gitattributes", "*.c filter=lfs\n")
+        with self.assertRaises(policy.StandardsError):
+            self.select(["firmware/value.c"])
+        attr_file.unlink()
+
+        sub_attr = self.write("firmware/.gitattributes", "value.c filter=evil\n")
+        with self.assertRaises(policy.StandardsError):
+            self.select(["firmware/value.c"])
+        sub_attr.unlink()
+
+        benign = self.write(".gitattributes", "*.c text eol=lf\n*.png binary\n# filter comment\n")
+        selection = self.select([".gitattributes", "firmware/components/sx1276_driver/radio.c"])
+        self.assertIn("RTOS-003", selection["selected_ids"])
+        benign.unlink()
 
     def test_context_cli_injects_only_verified_selected_rows(self):
         command = [sys.executable, str(ROOT / "scripts/agent_harness/agent_context.py"),
