@@ -96,7 +96,7 @@ This report documents the verification and acceptance evidence for the read-only
 python3 -m unittest discover -s tests/agent_harness -v
 ```
 **Receipt:**
-- Total tests executed: **344**
+- Total tests executed: **356**
 - Status: **ALL PASS (OK)**
 - Failures: **0**, Errors: **0**
 
@@ -105,7 +105,7 @@ python3 -m unittest discover -s tests/agent_harness -v
 python3 tests/agent_harness/test_pr_review.py -v
 ```
 **Receipt:**
-- Total tests executed: **58**
+- Total tests executed: **70**
 - Status: **ALL PASS (OK)**
 - Failures: **0**, Errors: **0**
 
@@ -299,3 +299,53 @@ python3 scripts/agent_harness/pr_review.py \
    - Repository rulesets or branch protection must be configured in GitHub repository settings by an administrator to enforce required status checks before merging to target branch `fix/144-pr-review-fail-closed` or `main`.
 3. **Non-Auto-Merge Policy (`ready_to_merge = false`):**
    - In accordance with project governance, the PR Review Harness strictly outputs `ready_to_merge = false` and never executes GitHub merge actions automatically. Human merge execution is mandatory.
+
+---
+
+## 7. PR #155 AI Review Findings Remediation Report (F-01 and F-02)
+
+### 7.1 Finding F-01 — P1: Missing/Failed Auditor Final-Verdict Blocker
+- **Finding Summary:** `AI_REVIEW_PASS` was not evaluated when determining the final verdict in `pr_review_policy.py:evaluate_pr_policy()`. A PR with green static gates could incorrectly report `READY_FOR_HUMAN_REVIEW` even if the independent Auditor had not executed (`auditor_report=None`) or returned `status=FAIL` without P0/P1 findings.
+- **Root Cause:** Final verdict computation in lines 763–775 checked only gate status blockers and `all_blockers`, omitting the `AI_REVIEW_PASS` dimension. `eval_pr04_correctness()` only added blockers for conflict markers, unsupported status, and high-severity (P0/P1) findings.
+- **Remediation Implemented:**
+  1. `eval_pr04_correctness()` updated:
+     - When `auditor_report is None`: marks status as `NOT_VERIFIED` with summary indicating missing auditor verification.
+     - When `auditor_report` is invalid schema (missing required fields, non-dict): fails closed as `BLOCKED`.
+     - When `auditor_report` has `status=FAIL` without P0/P1 findings: records issue as `CHANGES_REQUESTED`.
+     - When `auditor_report` has `auditor_id == author`: marks status as `BLOCKED` (self-review rejected).
+     - When `auditor_report` leaks credentials/private keys: marks status as `BLOCKED`.
+  2. `evaluate_pr_policy()` final verdict calculation strictly enforces:
+     - `ai_review_pass == "PASS"` is mandatory before emitting `READY_FOR_HUMAN_REVIEW`.
+     - Missing auditor report emits `NOT_VERIFIED` (CLI exit code `1`).
+     - Failed auditor without P0/P1 findings emits `CHANGES_REQUESTED` (CLI exit code `1`).
+     - Failed auditor with P0/P1, schema violation, leaked secrets, or self-audit emits `BLOCKED` (CLI exit code `2`).
+  3. `pr_clean_docs.json` fixture updated to include a valid schema-compliant `auditor_report` payload, and fixture evaluator passes `auditor_report` explicitly.
+- **Verification Evidence:**
+  - `test_auditor_report_none_results_in_not_verified`: asserts `AI_REVIEW_PASS = NOT_VERIFIED` and `verdict = NOT_VERIFIED`.
+  - `test_auditor_fail_without_p0_p1_yields_changes_requested`: asserts `CHANGES_REQUESTED`.
+  - `test_auditor_fail_empty_findings_yields_changes_requested`: asserts `CHANGES_REQUESTED`.
+  - `test_auditor_schema_invalid_yields_blocked`: asserts `BLOCKED`.
+  - `test_cli_auditor_none_yields_exit_one_and_not_verified`: verifies CLI returns code `1` and `NOT VERIFIED`.
+  - `test_cli_auditor_fail_without_p0_p1_yields_exit_one_and_changes_requested`: verifies CLI returns code `1` and `CHANGES REQUESTED`.
+  - `test_cli_auditor_schema_failure_yields_exit_two_and_blocked`: verifies CLI returns code `2` and `BLOCKED`.
+
+### 7.2 Finding F-02 — P2: Human Approval Deduplication and Specialist Eligibility
+- **Finding Summary:** In `pr_review_policy.py`, `valid_approvals` was computed by counting raw `APPROVED` review events from GitHub without deduplicating by GitHub user or checking specialist/CODEOWNERS eligibility. Two historical `APPROVED` events from the same user could prematurely satisfy a policy requiring two independent specialist reviewers.
+- **Root Cause:** `valid_approvals = [r.get("user", ...)... for r in pr_data.get("reviews", []) if r.get("state") == "APPROVED"]` treated every review event as an independent reviewer, ignored subsequent revoking reviews (`CHANGES_REQUESTED` or `DISMISSED`), did not filter bot accounts, and did not check `.github/CODEOWNERS` or specialist roles.
+- **Remediation Implemented:**
+  1. `get_effective_user_reviews()` implemented:
+     - Chronologically processes reviews per distinct GitHub user (case-insensitive, normalized).
+     - Resolves the latest effective state (`APPROVED`, `CHANGES_REQUESTED`, `DISMISSED`, `COMMENTED`).
+     - A subsequent `CHANGES_REQUESTED` or `DISMISSED` revokes a previous `APPROVED` state.
+     - Strictly excludes the PR author (`author != reviewer`) and automated bot accounts (`[bot]`, `type=Bot`, `is_bot=True`, `github-actions`, `dependabot`, etc.).
+  2. `is_eligible_reviewer()` implemented:
+     - Enforces that an approving reviewer must be a recognized specialist lead (`security-lead`, `architect-lead`, `rf-lead`, `firmware-lead`), carry an explicit specialist role tag (`role in ("specialist", "security_specialist", "rf_specialist", "firmware_specialist", "architecture_specialist", "codeowner")` or `is_specialist=True`), or be an assigned Code Owner in `.github/CODEOWNERS` for at least one of the modified paths.
+     - Non-specialist / outsider approvals do not increment `valid_approvals`.
+  3. `eval_pr02_architecture_contract()`, `eval_pr07_rf_hil()`, and `eval_pr08_merge_integrity()` updated to use `get_effective_user_reviews()`.
+- **Verification Evidence:**
+  - `test_duplicate_approvals_from_same_user_deduplicated`: verifies that 2 APPROVED reviews from 1 user count as 1 approval; on HIGH risk PR requiring 2 approvals, `HUMAN_APPROVED` remains `PENDING`.
+  - `test_revoked_approval_superseded_by_changes_requested`: verifies that approval followed by changes requested revokes approval and triggers `CHANGES_REQUESTED`.
+  - `test_author_self_approval_excluded_from_human_approved`: verifies that author self-approval is rejected from `HUMAN_APPROVED` and blocked by `PR-01`.
+  - `test_non_specialist_non_owner_approval_rejected`: verifies that outsider approval without CODEOWNERS or specialist credentials leaves `HUMAN_APPROVED = PENDING`.
+  - `test_bot_review_excluded_from_human_approved`: verifies that bot accounts are excluded from human approvals.
+  - `test_high_risk_two_distinct_eligible_specialists_approved`: verifies that 2 distinct eligible specialist reviewers satisfy `HUMAN_APPROVED = APPROVED`.

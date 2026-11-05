@@ -325,8 +325,13 @@ class PRReviewPolicyUnitTests(unittest.TestCase):
     # --- Issue #144 R-02: Independent Auditor and Per-ID Evidence Tests ---
 
     def test_auditor_report_none_results_in_not_verified(self):
-        """R-02: When auditor_report is None, AI_REVIEW_PASS is strictly NOT_VERIFIED."""
-        pr_data = {"files": [{"filename": "docs/test.md"}], "reviews": [], "author": "dev"}
+        """R-02 / F-01: When auditor_report is None, AI_REVIEW_PASS and verdict are strictly NOT_VERIFIED."""
+        pr_data = {
+            "head_ref": "docs/test-branch",
+            "files": [{"filename": "docs/test.md", "status": "modified", "patch": "+test"}],
+            "reviews": [],
+            "author": "dev",
+        }
         eval_res = policy.evaluate_pr_policy(
             pr_data=pr_data,
             linked_issue={"number": 1, "state": "OPEN"},
@@ -340,6 +345,7 @@ class PRReviewPolicyUnitTests(unittest.TestCase):
             head_sha_at_end="1" * 40,
         )
         self.assertEqual(eval_res["dimensions"]["AI_REVIEW_PASS"], "NOT_VERIFIED")
+        self.assertEqual(eval_res["verdict"], policy.HostVerdict.NOT_VERIFIED.value)
 
     def test_auditor_self_audit_rejected(self):
         """R-02: Self-auditing by the PR author is rejected with AI_REVIEW_PASS=FAIL and BLOCKED."""
@@ -370,7 +376,12 @@ class PRReviewPolicyUnitTests(unittest.TestCase):
     def test_auditor_leaked_secret_rejected(self):
         """R-02: An Auditor report containing credentials/private keys fails closed."""
         fake_token = "ghp_" + "a" * 30
-        pr_data = {"files": [{"filename": "docs/test.md"}], "reviews": [], "author": "dev"}
+        pr_data = {
+            "head_ref": "docs/test-branch",
+            "files": [{"filename": "docs/test.md", "status": "modified", "patch": "+test"}],
+            "reviews": [],
+            "author": "dev",
+        }
         auditor_report = {
             "status": "PASS",
             "auditor_id": "fresh-auditor",
@@ -510,13 +521,20 @@ class PRReviewPolicyUnitTests(unittest.TestCase):
             "reviews": [{"user": {"login": "reviewer"}, "state": "APPROVED"}],
             "author": "dev",
         }
+        auditor_report = {
+            "status": "PASS",
+            "auditor_id": "independent-auditor",
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["docs/readme.md"],
+        }
         eval_res = policy.evaluate_pr_policy(
             pr_data=pr_data,
             linked_issue={"number": 5, "state": "OPEN"},
             allowed_paths=["docs/readme.md"],
-            codeowners_content="* @dev",
+            codeowners_content="* @reviewer",
             rule_selection={"standards": ["DOCS"], "rules": []},
-            auditor_report=None,
+            auditor_report=auditor_report,
             check_runs=[{"name": "ci", "status": "completed", "conclusion": "success"}],
             hil_receipt=None,
             head_sha_at_start="5" * 40,
@@ -524,6 +542,296 @@ class PRReviewPolicyUnitTests(unittest.TestCase):
         )
         self.assertEqual(eval_res["verdict"], policy.HostVerdict.READY_FOR_HUMAN_REVIEW.value)
         self.assertFalse(eval_res["ready_to_merge"])
+        self.assertEqual(eval_res["dimensions"]["AI_REVIEW_PASS"], "PASS")
+        self.assertEqual(eval_res["dimensions"]["HUMAN_APPROVED"], "APPROVED")
+
+    # --- Findings F-01 & F-02 Negative Unit Tests ---
+
+    def test_auditor_fail_without_p0_p1_yields_changes_requested(self):
+        """F-01: Auditor report with status=FAIL and no P0/P1 findings reports CHANGES_REQUESTED."""
+        pr_data = {
+            "head_ref": "docs/test-branch",
+            "files": [{"filename": "docs/test.md", "status": "modified", "patch": "+line"}],
+            "reviews": [{"user": {"login": "reviewer"}, "state": "APPROVED"}],
+            "author": "dev",
+        }
+        auditor_report = {
+            "status": "FAIL",
+            "auditor_id": "fresh-auditor",
+            "findings": [{
+                "severity": "P2",
+                "file": "docs/test.md",
+                "line": 1,
+                "rule": "DOCS-001",
+                "explanation": "Minor style issue",
+            }],
+            "limitations": [],
+            "reviewed_scope": ["docs/test.md"],
+        }
+        eval_res = policy.evaluate_pr_policy(
+            pr_data=pr_data,
+            linked_issue={"number": 1, "state": "OPEN"},
+            allowed_paths=["docs/test.md"],
+            codeowners_content="* @reviewer",
+            rule_selection={"standards": ["DOCS"], "rules": []},
+            auditor_report=auditor_report,
+            check_runs=[{"name": "test", "status": "completed", "conclusion": "success"}],
+            hil_receipt=None,
+            head_sha_at_start="1" * 40,
+            head_sha_at_end="1" * 40,
+        )
+        self.assertEqual(eval_res["dimensions"]["AI_REVIEW_PASS"], "FAIL")
+        self.assertEqual(eval_res["verdict"], policy.HostVerdict.CHANGES_REQUESTED.value)
+
+    def test_auditor_fail_empty_findings_yields_changes_requested(self):
+        """F-01: Auditor report with status=FAIL and empty findings reports CHANGES_REQUESTED."""
+        pr_data = {
+            "head_ref": "docs/test-branch",
+            "files": [{"filename": "docs/test.md", "status": "modified", "patch": "+line"}],
+            "reviews": [{"user": {"login": "reviewer"}, "state": "APPROVED"}],
+            "author": "dev",
+        }
+        auditor_report = {
+            "status": "FAIL",
+            "auditor_id": "fresh-auditor",
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["docs/test.md"],
+        }
+        eval_res = policy.evaluate_pr_policy(
+            pr_data=pr_data,
+            linked_issue={"number": 1, "state": "OPEN"},
+            allowed_paths=["docs/test.md"],
+            codeowners_content="* @reviewer",
+            rule_selection={"standards": ["DOCS"], "rules": []},
+            auditor_report=auditor_report,
+            check_runs=[{"name": "test", "status": "completed", "conclusion": "success"}],
+            hil_receipt=None,
+            head_sha_at_start="1" * 40,
+            head_sha_at_end="1" * 40,
+        )
+        self.assertEqual(eval_res["dimensions"]["AI_REVIEW_PASS"], "FAIL")
+        self.assertEqual(eval_res["verdict"], policy.HostVerdict.CHANGES_REQUESTED.value)
+
+    def test_auditor_schema_invalid_yields_blocked(self):
+        """F-01: Auditor report with invalid schema (missing status) fails closed with BLOCKED."""
+        pr_data = {
+            "head_ref": "docs/test-branch",
+            "files": [{"filename": "docs/test.md", "status": "modified", "patch": "+line"}],
+            "reviews": [{"user": {"login": "reviewer"}, "state": "APPROVED"}],
+            "author": "dev",
+        }
+        auditor_report = {
+            "auditor_id": "fresh-auditor",
+            # missing status, findings, limitations
+        }
+        eval_res = policy.evaluate_pr_policy(
+            pr_data=pr_data,
+            linked_issue={"number": 1, "state": "OPEN"},
+            allowed_paths=["docs/test.md"],
+            codeowners_content="* @reviewer",
+            rule_selection={"standards": ["DOCS"], "rules": []},
+            auditor_report=auditor_report,
+            check_runs=[{"name": "test", "status": "completed", "conclusion": "success"}],
+            hil_receipt=None,
+            head_sha_at_start="1" * 40,
+            head_sha_at_end="1" * 40,
+        )
+        self.assertEqual(eval_res["dimensions"]["AI_REVIEW_PASS"], "FAIL")
+        self.assertEqual(eval_res["verdict"], policy.HostVerdict.BLOCKED.value)
+        self.assertTrue(any("Auditor report schema invalid" in b for b in eval_res["blockers"]))
+
+    def test_duplicate_approvals_from_same_user_deduplicated(self):
+        """F-02: Multiple APPROVED reviews from the same user count as only 1 approval."""
+        pr_data = {
+            "head_ref": "feature/test",
+            "files": [{"filename": "scripts/agent_harness/pr_review.py", "status": "modified", "patch": "+x"}],
+            "reviews": [
+                {"user": {"login": "specialist-1"}, "state": "APPROVED", "role": "specialist"},
+                {"user": {"login": "specialist-1"}, "state": "APPROVED", "role": "specialist"},
+            ],
+            "author": "dev",
+        }
+        auditor_report = {
+            "status": "PASS",
+            "auditor_id": "fresh-auditor",
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["scripts/agent_harness/pr_review.py"],
+        }
+        eval_res = policy.evaluate_pr_policy(
+            pr_data=pr_data,
+            linked_issue={"number": 1, "state": "OPEN"},
+            allowed_paths=["scripts/agent_harness/pr_review.py"],
+            codeowners_content="scripts/ @specialist-1 @specialist-2",
+            rule_selection={"standards": ["DOCS"], "rules": []},
+            auditor_report=auditor_report,
+            check_runs=[{"name": "test", "status": "completed", "conclusion": "success"}],
+            hil_receipt=None,
+            head_sha_at_start="1" * 40,
+            head_sha_at_end="1" * 40,
+        )
+        self.assertEqual(eval_res["risk_level"], policy.RiskLevel.HIGH.value)
+        self.assertEqual(eval_res["policy_recommendation"]["required_approvals"], 2)
+        self.assertEqual(eval_res["dimensions"]["HUMAN_APPROVED"], "PENDING")
+
+    def test_revoked_approval_superseded_by_changes_requested(self):
+        """F-02: User approving then requesting changes revokes approval and sets CHANGES_REQUESTED."""
+        pr_data = {
+            "head_ref": "docs/test-branch",
+            "files": [{"filename": "docs/test.md", "status": "modified", "patch": "+line"}],
+            "reviews": [
+                {"user": {"login": "reviewer"}, "state": "APPROVED"},
+                {"user": {"login": "reviewer"}, "state": "CHANGES_REQUESTED"},
+            ],
+            "author": "dev",
+        }
+        auditor_report = {
+            "status": "PASS",
+            "auditor_id": "fresh-auditor",
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["docs/test.md"],
+        }
+        eval_res = policy.evaluate_pr_policy(
+            pr_data=pr_data,
+            linked_issue={"number": 1, "state": "OPEN"},
+            allowed_paths=["docs/test.md"],
+            codeowners_content="* @reviewer",
+            rule_selection={"standards": ["DOCS"], "rules": []},
+            auditor_report=auditor_report,
+            check_runs=[{"name": "test", "status": "completed", "conclusion": "success"}],
+            hil_receipt=None,
+            head_sha_at_start="1" * 40,
+            head_sha_at_end="1" * 40,
+        )
+        self.assertEqual(eval_res["dimensions"]["HUMAN_APPROVED"], "PENDING")
+        self.assertEqual(eval_res["verdict"], policy.HostVerdict.CHANGES_REQUESTED.value)
+
+    def test_author_self_approval_excluded_from_human_approved(self):
+        """F-02: Author cannot approve own PR; excluded from HUMAN_APPROVED and blocks in PR-01."""
+        pr_data = {
+            "head_ref": "docs/test-branch",
+            "files": [{"filename": "docs/test.md", "status": "modified", "patch": "+line"}],
+            "reviews": [{"user": {"login": "dev"}, "state": "APPROVED"}],
+            "author": "dev",
+        }
+        auditor_report = {
+            "status": "PASS",
+            "auditor_id": "fresh-auditor",
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["docs/test.md"],
+        }
+        eval_res = policy.evaluate_pr_policy(
+            pr_data=pr_data,
+            linked_issue={"number": 1, "state": "OPEN"},
+            allowed_paths=["docs/test.md"],
+            codeowners_content="* @dev",
+            rule_selection={"standards": ["DOCS"], "rules": []},
+            auditor_report=auditor_report,
+            check_runs=[{"name": "test", "status": "completed", "conclusion": "success"}],
+            hil_receipt=None,
+            head_sha_at_start="1" * 40,
+            head_sha_at_end="1" * 40,
+        )
+        self.assertEqual(eval_res["dimensions"]["HUMAN_APPROVED"], "PENDING")
+        self.assertEqual(eval_res["verdict"], policy.HostVerdict.BLOCKED.value)
+        self.assertTrue(any("Self-approval detected" in b for b in eval_res["blockers"]))
+
+    def test_non_specialist_non_owner_approval_rejected(self):
+        """F-02: Approvals from users outside CODEOWNERS with no specialist role are not eligible."""
+        pr_data = {
+            "head_ref": "docs/test-branch",
+            "files": [{"filename": "docs/test.md", "status": "modified", "patch": "+line"}],
+            "reviews": [{"user": {"login": "unauthorized-outsider"}, "state": "APPROVED"}],
+            "author": "dev",
+        }
+        auditor_report = {
+            "status": "PASS",
+            "auditor_id": "fresh-auditor",
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["docs/test.md"],
+        }
+        eval_res = policy.evaluate_pr_policy(
+            pr_data=pr_data,
+            linked_issue={"number": 1, "state": "OPEN"},
+            allowed_paths=["docs/test.md"],
+            codeowners_content="* @real-owner",
+            rule_selection={"standards": ["DOCS"], "rules": []},
+            auditor_report=auditor_report,
+            check_runs=[{"name": "test", "status": "completed", "conclusion": "success"}],
+            hil_receipt=None,
+            head_sha_at_start="1" * 40,
+            head_sha_at_end="1" * 40,
+        )
+        self.assertEqual(eval_res["dimensions"]["HUMAN_APPROVED"], "PENDING")
+
+    def test_bot_review_excluded_from_human_approved(self):
+        """F-02: Bot accounts (e.g. [bot], type=Bot) are strictly excluded from human approvals."""
+        pr_data = {
+            "head_ref": "docs/test-branch",
+            "files": [{"filename": "docs/test.md", "status": "modified", "patch": "+line"}],
+            "reviews": [
+                {"user": {"login": "github-actions[bot]", "type": "Bot"}, "state": "APPROVED"},
+                {"user": {"login": "dependabot[bot]"}, "state": "APPROVED"},
+            ],
+            "author": "dev",
+        }
+        auditor_report = {
+            "status": "PASS",
+            "auditor_id": "fresh-auditor",
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["docs/test.md"],
+        }
+        eval_res = policy.evaluate_pr_policy(
+            pr_data=pr_data,
+            linked_issue={"number": 1, "state": "OPEN"},
+            allowed_paths=["docs/test.md"],
+            codeowners_content="* @dev",
+            rule_selection={"standards": ["DOCS"], "rules": []},
+            auditor_report=auditor_report,
+            check_runs=[{"name": "test", "status": "completed", "conclusion": "success"}],
+            hil_receipt=None,
+            head_sha_at_start="1" * 40,
+            head_sha_at_end="1" * 40,
+        )
+        self.assertEqual(eval_res["dimensions"]["HUMAN_APPROVED"], "PENDING")
+
+    def test_high_risk_two_distinct_eligible_specialists_approved(self):
+        """F-02: HIGH risk PR with 2 distinct eligible specialist approvals achieves HUMAN_APPROVED=APPROVED."""
+        pr_data = {
+            "head_ref": "feature/test-harness",
+            "files": [{"filename": "scripts/agent_harness/pr_review.py", "status": "modified", "patch": "+code"}],
+            "reviews": [
+                {"user": {"login": "security-lead"}, "state": "APPROVED", "role": "security_specialist"},
+                {"user": {"login": "specialist-eng"}, "state": "APPROVED", "role": "specialist"},
+            ],
+            "author": "dev",
+        }
+        auditor_report = {
+            "status": "PASS",
+            "auditor_id": "fresh-auditor",
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["scripts/agent_harness/pr_review.py"],
+        }
+        eval_res = policy.evaluate_pr_policy(
+            pr_data=pr_data,
+            linked_issue={"number": 1, "state": "OPEN"},
+            allowed_paths=["scripts/agent_harness/pr_review.py"],
+            codeowners_content="scripts/ @dev @specialist-eng",
+            rule_selection={"standards": ["DOCS"], "rules": []},
+            auditor_report=auditor_report,
+            check_runs=[{"name": "test", "status": "completed", "conclusion": "success"}],
+            hil_receipt=None,
+            head_sha_at_start="1" * 40,
+            head_sha_at_end="1" * 40,
+        )
+        self.assertEqual(eval_res["risk_level"], policy.RiskLevel.HIGH.value)
+        self.assertEqual(eval_res["dimensions"]["HUMAN_APPROVED"], "APPROVED")
 
     # --- Issue #144 R-05: TOCTOU and Snapshot Tests ---
 
@@ -596,7 +904,7 @@ class PRReviewFixtureTests(unittest.TestCase):
             allowed_paths=allowed_paths,
             codeowners_content=codeowners_content,
             rule_selection=rule_selection,
-            auditor_report=None,
+            auditor_report=data.get("auditor_report"),
             check_runs=check_runs,
             hil_receipt=hil_receipt,
             head_sha_at_start=head_sha_at_start,
@@ -733,6 +1041,78 @@ class PRReviewCLITests(unittest.TestCase):
 
             eval_data = json.loads(out_json.read_text(encoding="utf-8"))["evaluation"]
             self.assertEqual(eval_data["dimensions"]["AI_REVIEW_PASS"], "FAIL")
+
+    def test_cli_auditor_none_yields_exit_one_and_not_verified(self):
+        """F-01: Running PR review CLI with no auditor report yields exit code 1 and NOT VERIFIED."""
+        fixture_path = HARNESS_DIR.parent.parent / "tests" / "agent_harness" / "fixtures" / "pr_review" / "pr_clean_docs.json"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            no_audit_fixture = Path(tmpdir) / "no_audit.json"
+            data = json.loads(fixture_path.read_text(encoding="utf-8"))
+            data.pop("auditor_report", None)
+            no_audit_fixture.write_text(json.dumps(data), encoding="utf-8")
+            cmd = [
+                sys.executable,
+                str(HARNESS_DIR / "pr_review.py"),
+                "--fixture", str(no_audit_fixture),
+                "--candidate-repo", str(HARNESS_DIR.parent.parent),
+            ]
+            code, out, _ = pr_review._run_cmd(cmd)
+            self.assertEqual(code, 1)
+            self.assertIn("NOT VERIFIED", out)
+
+    def test_cli_auditor_fail_without_p0_p1_yields_exit_one_and_changes_requested(self):
+        """F-01: Running PR review CLI with failed auditor (MEDIUM finding only) yields exit code 1 and CHANGES REQUESTED."""
+        fixture_path = HARNESS_DIR.parent.parent / "tests" / "agent_harness" / "fixtures" / "pr_review" / "pr_clean_docs.json"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            auditor_file = Path(tmpdir) / "auditor_fail.json"
+            auditor_file.write_text(json.dumps({
+                "status": "FAIL",
+                "auditor_id": "fresh-auditor",
+                "findings": [{
+                    "severity": "MEDIUM",
+                    "file": "docs/development/harness-context.md",
+                    "line": 1,
+                    "rule": "DOCS-001",
+                    "explanation": "Minor style suggestion",
+                    "fix": "Format heading according to style guide.",
+                }],
+                "limitations": [],
+                "reviewed_scope": ["docs/development/harness-context.md"],
+            }), encoding="utf-8")
+            cmd = [
+                sys.executable,
+                str(HARNESS_DIR / "pr_review.py"),
+                "--fixture", str(fixture_path),
+                "--candidate-repo", str(HARNESS_DIR.parent.parent),
+                "--auditor-report", str(auditor_file),
+            ]
+            code, out, _ = pr_review._run_cmd(cmd)
+            self.assertEqual(code, 1)
+            self.assertIn("CHANGES REQUESTED", out)
+
+    def test_cli_auditor_schema_failure_yields_exit_two_and_blocked(self):
+        """F-01: Running PR review CLI with auditor report failing schema validation yields exit code 2 and BLOCKED."""
+        fixture_path = HARNESS_DIR.parent.parent / "tests" / "agent_harness" / "fixtures" / "pr_review" / "pr_clean_docs.json"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            auditor_file = Path(tmpdir) / "auditor_bad_scope.json"
+            # Scope mismatch fails validation in validate_and_load_auditor_report
+            auditor_file.write_text(json.dumps({
+                "status": "PASS",
+                "auditor_id": "fresh-auditor",
+                "findings": [],
+                "limitations": [],
+                "reviewed_scope": ["docs/unrelated.md"],
+            }), encoding="utf-8")
+            cmd = [
+                sys.executable,
+                str(HARNESS_DIR / "pr_review.py"),
+                "--fixture", str(fixture_path),
+                "--candidate-repo", str(HARNESS_DIR.parent.parent),
+                "--auditor-report", str(auditor_file),
+            ]
+            code, out, _ = pr_review._run_cmd(cmd)
+            self.assertEqual(code, 2)
+            self.assertIn("BLOCKED", out)
 
 
 class AuditorReportIntakeUnitTests(unittest.TestCase):

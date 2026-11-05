@@ -95,6 +95,101 @@ def is_security_sensitive_path(path: str) -> bool:
     return False
 
 
+def is_bot_user(login: str, review: dict[str, Any] | None = None) -> bool:
+    """Check if a reviewer identity is an automated bot."""
+    norm = login.strip().lstrip("@").lower()
+    if norm.endswith("[bot]") or norm.endswith("-bot") or norm.startswith("bot-"):
+        return True
+    if norm in ("github-actions", "dependabot", "codecov", "renovate"):
+        return True
+    if review:
+        if review.get("is_bot") is True:
+            return True
+        user_obj = review.get("user")
+        if isinstance(user_obj, dict) and user_obj.get("type", "").lower() == "bot":
+            return True
+    return False
+
+
+def get_effective_user_reviews(
+    reviews: list[dict[str, Any]],
+    author: str,
+) -> dict[str, dict[str, Any]]:
+    """Determine the latest effective review state per distinct non-bot, non-author GitHub user.
+
+    Reviews in GitHub API are chronologically ordered.
+    A user's later review state supersedes their earlier state:
+    - 'APPROVED' grants approval.
+    - 'CHANGES_REQUESTED' revokes approval and requests changes.
+    - 'DISMISSED' dismisses prior approval or changes requested.
+    - 'COMMENTED' preserves any existing APPROVED or CHANGES_REQUESTED state.
+    """
+    author_norm = author.strip().lstrip("@").lower()
+    effective: dict[str, dict[str, Any]] = {}
+
+    for r in reviews:
+        user_raw = (r.get("user", {}).get("login") if isinstance(r.get("user"), dict) else None) or r.get("author", "")
+        if not user_raw:
+            continue
+        user_norm = str(user_raw).strip().lstrip("@").lower()
+        if not user_norm:
+            continue
+        if user_norm == author_norm:
+            continue
+        if is_bot_user(user_norm, r):
+            continue
+
+        state = r.get("state", "").upper()
+        if state in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
+            effective[user_norm] = r
+        elif state == "COMMENTED":
+            if user_norm not in effective:
+                effective[user_norm] = r
+
+    return effective
+
+
+def is_eligible_reviewer(
+    user: str,
+    review: dict[str, Any],
+    changed_files: Iterable[str],
+    codeowners_rules: list[CodeOwnerRule] | None = None,
+    risk: RiskLevel | None = None,
+) -> bool:
+    """Enforce reviewer eligibility and required specialist/CODEOWNERS conditions.
+
+    A reviewer is eligible if:
+    1. They are a recognized specialist/lead ('security-lead', 'architect-lead', 'rf-lead', 'firmware-lead').
+    2. The review specifies a specialist role ('specialist', 'security_specialist', 'rf_specialist',
+       'firmware_specialist', 'architecture_specialist', 'codeowner', 'maintainer') or is_specialist is True.
+    3. They are an assigned Code Owner for at least one of the changed files in CODEOWNERS.
+    """
+    user_norm = user.strip().lstrip("@").lower()
+    if not user_norm:
+        return False
+
+    # 1. Recognized specialist accounts
+    if user_norm in ("security-lead", "architect-lead", "rf-lead", "firmware-lead"):
+        return True
+
+    # 2. Specialist role tag in review
+    if review.get("is_specialist") is True:
+        return True
+    role = str(review.get("role", "")).lower()
+    if role in ("specialist", "security_specialist", "rf_specialist", "firmware_specialist", "architecture_specialist", "codeowner", "maintainer"):
+        return True
+
+    # 3. CODEOWNERS match
+    if codeowners_rules:
+        files = list(changed_files)
+        for f in files:
+            owners = match_codeowners(codeowners_rules, f)
+            if any(o.strip().lstrip("@").lower() == user_norm for o in owners):
+                return True
+
+    return False
+
+
 class CodeOwnerRule:
     """Represents a single rule in CODEOWNERS."""
 
@@ -248,6 +343,7 @@ def eval_pr01_governance(
 def eval_pr02_architecture_contract(
     changed_files: Iterable[str],
     pr_data: dict[str, Any],
+    codeowners_rules: list[CodeOwnerRule] | None = None,
 ) -> dict[str, Any]:
     """PR-02 ARCHITECTURE/CONTRACT: Approved ADR, versioned contracts/ compatibility."""
     files = list(changed_files)
@@ -265,16 +361,18 @@ def eval_pr02_architecture_contract(
         }
 
     # If contracts are touched, human specialist sign-off is mandatory
-    reviews = pr_data.get("reviews", [])
     author = pr_data.get("author", "")
-    approved_reviewers = [
-        r.get("user", {}).get("login") or r.get("author", "")
-        for r in reviews
-        if r.get("state", "").upper() == "APPROVED" and (r.get("user", {}).get("login") or r.get("author", "")) != author
-    ]
+    effective_reviews = get_effective_user_reviews(pr_data.get("reviews", []), author)
+    contract_approved = False
+    if contract_paths:
+        for u, r in effective_reviews.items():
+            if r.get("state", "").upper() == "APPROVED":
+                if is_eligible_reviewer(u, r, contract_paths, codeowners_rules, RiskLevel.HIGH):
+                    contract_approved = True
+                    break
 
     blockers: list[str] = []
-    if contract_paths and not approved_reviewers:
+    if contract_paths and not contract_approved:
         blockers.append(f"Versioned interface contracts modified ({len(contract_paths)} files); requires human specialist sign-off before merge.")
 
     status = GateStatus.BLOCKED if blockers else GateStatus.PASS
@@ -423,6 +521,7 @@ def eval_pr04_correctness(
 ) -> dict[str, Any]:
     """PR-04 CORRECTNESS: Behavior, conflict markers, patch completeness, and auditor findings."""
     blockers: list[str] = []
+    changes_requested: list[str] = []
     files = pr_data.get("files", [])
 
     for f in files:
@@ -442,19 +541,42 @@ def eval_pr04_correctness(
         if status in ("added", "modified") and "patch" not in f and not f.get("is_binary"):
             blockers.append(f"Missing patch diff for {filename}.")
 
-    # Evaluate Auditor report if present
-    if auditor_report:
+    # Evaluate Auditor report
+    if auditor_report is None:
+        status = GateStatus.BLOCKED if blockers else GateStatus.NOT_VERIFIED
+        summary = "; ".join(blockers) if blockers else "Independent Auditor report absent; verification pending."
+        return {"gate": "PR-04 CORRECTNESS", "status": status.value, "summary": summary, "blockers": blockers}
+
+    if not isinstance(auditor_report, dict):
+        blockers.append("Auditor report schema invalid: expected JSON object.")
+    else:
+        # Check author self-audit
+        author = pr_data.get("author", "")
+        auditor_id = auditor_report.get("auditor_id")
+        if auditor_id and str(auditor_id).strip().lstrip("@").lower() == author.strip().lstrip("@").lower():
+            blockers.append(f"Auditor self-review rejected: author '@{author}' cannot act as independent Auditor.")
+
+        # Check secret leaks in auditor report
+        report_str = json.dumps(auditor_report)
+        if PRIVATE_KEY_REGEX.search(report_str) or TOKEN_REGEX.search(report_str):
+            blockers.append("Credential or private key detected in auditor report output.")
+
         report_status = auditor_report.get("status", "")
         findings = auditor_report.get("findings", [])
         limitations = auditor_report.get("limitations", [])
 
-        if report_status == "PASS" and (findings or limitations):
+        if not report_status or not isinstance(findings, list) or not isinstance(limitations, list):
+            blockers.append("Auditor report schema invalid: missing required fields (status, findings, limitations).")
+        elif report_status == "PASS" and (findings or limitations):
             blockers.append("Auditor report status PASS cannot carry findings or limitations.")
+        else:
+            p0_p1 = [find for find in findings if isinstance(find, dict) and find.get("severity") in ("P0", "P1", "CRITICAL", "HIGH")]
+            if p0_p1:
+                desc = ", ".join(f"{item.get('rule', item.get('rule_id', 'BUG'))}: {item.get('explanation', item.get('detail', ''))[:80]}" for item in p0_p1[:3])
+                blockers.append(f"Auditor reported {len(p0_p1)} unresolved high-severity finding(s): {desc}")
 
-        p0_p1 = [find for find in findings if find.get("severity") in ("P0", "P1", "CRITICAL", "HIGH")]
-        if p0_p1:
-            desc = ", ".join(f"{item.get('rule', item.get('rule_id', 'BUG'))}: {item.get('explanation', item.get('detail', ''))[:80]}" for item in p0_p1[:3])
-            blockers.append(f"Auditor reported {len(p0_p1)} unresolved high-severity finding(s): {desc}")
+            if report_status == "FAIL" and not p0_p1:
+                changes_requested.append(f"Auditor reported status FAIL ({len(findings)} finding(s)).")
 
         # Check per-rule coverage if rule results are present
         if rule_selection and "rule_results" in auditor_report:
@@ -470,8 +592,15 @@ def eval_pr04_correctness(
             if missing:
                 blockers.append(f"Auditor report missing per-rule results for Rule IDs: {', '.join(sorted(missing)[:5])}.")
 
-    status = GateStatus.BLOCKED if blockers else GateStatus.PASS
-    summary = "; ".join(blockers) if blockers else "No git conflict markers; diff structure valid; correctness checks pass."
+    all_issues = blockers + changes_requested
+    if blockers:
+        status = GateStatus.BLOCKED
+    elif changes_requested:
+        status = GateStatus.CHANGES_REQUESTED
+    else:
+        status = GateStatus.PASS
+
+    summary = "; ".join(all_issues) if all_issues else "No git conflict markers; diff structure valid; correctness checks pass."
     return {"gate": "PR-04 CORRECTNESS", "status": status.value, "summary": summary, "blockers": blockers}
 
 
@@ -551,13 +680,14 @@ def eval_pr06_testing(
 
     status = GateStatus.FAIL if failures else (GateStatus.BLOCKED if blockers else GateStatus.PASS)
     summary = "; ".join(blockers) if blockers else f"All {len(passed)} CI check-runs succeeded ({', '.join(passed[:4])})."
-    return {"gate": "PR-06 TESTING", "status": status.value, "summary": summary, "blockers": blockers}
+    return {"gate": "PR-06 TESTING", "status": status.value, "summary": summary, "blockers": [] if status == GateStatus.FAIL else blockers}
 
 
 def eval_pr07_rf_hil(
     changed_files: Iterable[str],
     pr_data: dict[str, Any],
     hil_receipt: dict[str, Any] | None = None,
+    codeowners_rules: list[CodeOwnerRule] | None = None,
 ) -> dict[str, Any]:
     """PR-07 RF/HIL: Distinction between computed ToA and measured HIL; explicit N/A for non-RF."""
     files = list(changed_files)
@@ -580,11 +710,16 @@ def eval_pr07_rf_hil(
         blockers.append("Hardware-in-the-Loop (HIL) test receipt absent; RF timing/duty-cycle must be empirically verified.")
 
     # Check human RF owner approval
-    reviews = pr_data.get("reviews", [])
     author = pr_data.get("author", "")
+    effective_reviews = get_effective_user_reviews(pr_data.get("reviews", []), author)
     rf_approved = any(
-        r.get("state", "").upper() == "APPROVED" and (r.get("user", {}).get("login") or r.get("author", "")) != author
-        for r in reviews
+        r.get("state", "").upper() == "APPROVED" and (
+            (codeowners_rules and any(o.strip().lstrip("@").lower() == u for f in rf_firmware_files for o in match_codeowners(codeowners_rules, f)))
+            or r.get("role") in ("rf_specialist", "firmware_specialist", "embedded_specialist", "specialist")
+            or r.get("is_specialist") is True
+            or u in ("phuocan847-hub", "quaan12", "rf-lead", "firmware-lead")
+        )
+        for u, r in effective_reviews.items()
     )
     if not rf_approved:
         blockers.append("Human Embedded/RF specialist sign-off required for firmware/radio modifications.")
@@ -621,11 +756,10 @@ def eval_pr08_merge_integrity(
         )
 
     # 3. Check for unresolved review threads or outstanding CHANGES_REQUESTED
-    reviews = pr_data.get("reviews", [])
-    for r in reviews:
+    effective_reviews = get_effective_user_reviews(pr_data.get("reviews", []), pr_data.get("author", ""))
+    for u, r in effective_reviews.items():
         if r.get("state", "").upper() == "CHANGES_REQUESTED":
-            reviewer = r.get("user", {}).get("login") or r.get("author", "reviewer")
-            changes_requested.append(f"Outstanding CHANGES_REQUESTED review by @{reviewer}.")
+            changes_requested.append(f"Outstanding CHANGES_REQUESTED review by @{u}.")
 
     review_comments = pr_data.get("review_comments", [])
     unresolved_threads = [rc for rc in review_comments if rc.get("unresolved", False)]
@@ -648,7 +782,8 @@ def eval_pr08_merge_integrity(
         "gate": "PR-08 MERGE-INTEGRITY",
         "status": status.value,
         "summary": summary,
-        "blockers": all_issues,
+        "blockers": blockers,
+        "changes_requested": changes_requested,
         "ruleset_visibility": protection_note,
     }
 
@@ -683,12 +818,12 @@ def evaluate_pr_policy(
 
     # Evaluate all 8 gates
     g1 = eval_pr01_governance(pr_data, linked_issue, allowed_paths, codeowners_rules)
-    g2 = eval_pr02_architecture_contract(changed_files, pr_data)
+    g2 = eval_pr02_architecture_contract(changed_files, pr_data, codeowners_rules)
     g3 = eval_pr03_rule_id(rule_selection, changed_files, pr_data)
     g4 = eval_pr04_correctness(pr_data, auditor_report, rule_selection)
     g5 = eval_pr05_security(pr_data)
     g6 = eval_pr06_testing(check_runs)
-    g7 = eval_pr07_rf_hil(changed_files, pr_data, hil_receipt)
+    g7 = eval_pr07_rf_hil(changed_files, pr_data, hil_receipt, codeowners_rules)
     g8 = eval_pr08_merge_integrity(
         pr_data, head_sha_at_start, head_sha_at_end, ruleset_status,
         base_sha_at_start, base_sha_at_end
@@ -701,27 +836,27 @@ def evaluate_pr_policy(
     auto_check_pass = (
         g1["status"] == GateStatus.PASS.value and
         g3["status"] in (GateStatus.PASS.value, GateStatus.NOT_APPLICABLE.value) and
+        g4["status"] == GateStatus.PASS.value and
         g5["status"] == GateStatus.PASS.value and
         g6["status"] == GateStatus.PASS.value and
-        g7["status"] in (GateStatus.PASS.value, GateStatus.NOT_APPLICABLE.value)
+        g7["status"] in (GateStatus.PASS.value, GateStatus.NOT_APPLICABLE.value) and
+        g8["status"] == GateStatus.PASS.value
     )
 
     # R-03: Separate SECRET_SCAN_PASS from SECURITY_REVIEW_PASS
     secret_scan_pass = "PASS" if g5["status"] == GateStatus.PASS.value else "FAIL"
 
     # Evaluate SECURITY_REVIEW_PASS
+    effective_reviews = get_effective_user_reviews(pr_data.get("reviews", []), author)
     security_touched = any(is_security_sensitive_path(f) for f in changed_files)
     if not security_touched:
         security_review_pass = "NOT_APPLICABLE"
     else:
         # Check for independent security specialist sign-off or specialist receipt
-        reviews = pr_data.get("reviews", [])
         security_approved = False
-        for r in reviews:
-            rev_name = r.get("user", {}).get("login") or r.get("author", "")
-            rev_state = r.get("state", "").upper()
-            if rev_state == "APPROVED" and rev_name != author:
-                if rev_name in ("@security-lead", "security-lead", "architect-lead") or r.get("role") == "security_specialist":
+        for u, r in effective_reviews.items():
+            if r.get("state", "").upper() == "APPROVED":
+                if u in ("security-lead", "architect-lead") or r.get("role") == "security_specialist" or r.get("is_specialist") is True:
                     security_approved = True
 
         if pr_data.get("security_receipt") and pr_data["security_receipt"].get("status") == "PASS":
@@ -734,43 +869,60 @@ def evaluate_pr_policy(
             if any(f.startswith("contracts/") or "crypto" in f.lower() for f in changed_files):
                 all_blockers.append("Independent security review receipt or specialist sign-off absent for security-sensitive paths.")
 
-    # R-02: Auditor evaluation
+    # R-02 / F-01: Auditor evaluation
     ai_review_pass = "NOT_VERIFIED"
     if auditor_report:
-        # Check author self-audit
-        auditor_id = auditor_report.get("auditor_id")
-        if auditor_id and auditor_id == author:
-            all_blockers.append(f"Auditor self-review rejected: author '@{author}' cannot act as independent Auditor.")
+        if not isinstance(auditor_report, dict) or not auditor_report.get("status"):
+            all_blockers.append("Auditor report schema invalid: missing status field.")
             ai_review_pass = "FAIL"
         else:
-            # Check secret leaks in auditor report
-            report_str = json.dumps(auditor_report)
-            if PRIVATE_KEY_REGEX.search(report_str) or TOKEN_REGEX.search(report_str):
-                all_blockers.append("Credential or private key detected in auditor report output.")
+            # Check author self-audit
+            auditor_id = auditor_report.get("auditor_id")
+            if auditor_id and str(auditor_id).strip().lstrip("@").lower() == author.strip().lstrip("@").lower():
+                all_blockers.append(f"Auditor self-review rejected: author '@{author}' cannot act as independent Auditor.")
                 ai_review_pass = "FAIL"
             else:
-                ai_review_pass = "PASS" if auditor_report.get("status") == "PASS" else "FAIL"
+                # Check secret leaks in auditor report
+                report_str = json.dumps(auditor_report)
+                if PRIVATE_KEY_REGEX.search(report_str) or TOKEN_REGEX.search(report_str):
+                    all_blockers.append("Credential or private key detected in auditor report output.")
+                    ai_review_pass = "FAIL"
+                else:
+                    if auditor_report.get("status") == "PASS" and not (auditor_report.get("findings") or auditor_report.get("limitations")):
+                        ai_review_pass = "PASS"
+                    else:
+                        ai_review_pass = "FAIL"
 
-    # Human approval status
+    # Human approval status (F-02: deduplicated, non-author, non-bot, eligible specialists/owners)
     valid_approvals = [
-        r.get("user", {}).get("login") or r.get("author", "")
-        for r in pr_data.get("reviews", [])
-        if r.get("state", "").upper() == "APPROVED" and (r.get("user", {}).get("login") or r.get("author", "")) != author
+        u for u, r in effective_reviews.items()
+        if r.get("state", "").upper() == "APPROVED" and is_eligible_reviewer(u, r, changed_files, codeowners_rules, risk)
     ]
     human_approved = "APPROVED" if len(valid_approvals) >= policy_rec["required_approvals"] else "PENDING"
     hil_rf_pass = g7["status"]
 
-    # Compute Final Verdict
+    # Compute Final Verdict (F-01: fail closed on missing/failed auditor)
     if head_sha_at_start != head_sha_at_end or (base_sha_at_start and base_sha_at_end and base_sha_at_start != base_sha_at_end):
         verdict = HostVerdict.BLOCKED
-    elif any(g["status"] == GateStatus.BLOCKED.value for g in (g1, g2, g3, g4, g5, g7, g8)):
+    elif any(g["status"] == GateStatus.BLOCKED.value for g in gates):
         verdict = HostVerdict.BLOCKED
-    elif g6["status"] == GateStatus.FAIL.value or g8["status"] == GateStatus.CHANGES_REQUESTED.value or any(r.get("state", "").upper() == "CHANGES_REQUESTED" for r in pr_data.get("reviews", [])):
-        verdict = HostVerdict.CHANGES_REQUESTED
-    elif any(g["status"] == GateStatus.NOT_VERIFIED.value for g in (g1, g3, g6)):
-        verdict = HostVerdict.NOT_VERIFIED
     elif all_blockers:
         verdict = HostVerdict.BLOCKED
+    elif (
+        g4["status"] in (GateStatus.FAIL.value, GateStatus.CHANGES_REQUESTED.value)
+        or g6["status"] == GateStatus.FAIL.value
+        or g8["status"] == GateStatus.CHANGES_REQUESTED.value
+        or any(r.get("state", "").upper() == "CHANGES_REQUESTED" for r in effective_reviews.values())
+        or ai_review_pass == "FAIL"
+    ):
+        verdict = HostVerdict.CHANGES_REQUESTED
+    elif (
+        any(g["status"] == GateStatus.NOT_VERIFIED.value for g in (g1, g3, g4, g6))
+        or ai_review_pass == "NOT_VERIFIED"
+    ):
+        verdict = HostVerdict.NOT_VERIFIED
+    elif ai_review_pass != "PASS":
+        verdict = HostVerdict.NOT_VERIFIED
     else:
         verdict = HostVerdict.READY_FOR_HUMAN_REVIEW
 

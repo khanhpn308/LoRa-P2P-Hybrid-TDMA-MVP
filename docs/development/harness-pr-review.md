@@ -98,10 +98,10 @@ The Policy Evaluator emits exactly ONE of:
 - **`NOT_VERIFIED`**: Missing check-run receipts, checks in progress, or auditor unverified.
 
 Independent evidence dimensions preserved in report:
-- `AUTO_CHECK_PASS`: Boolean status of PR-01, 03, 05, 06, 07.
+- `AUTO_CHECK_PASS`: Boolean status of PR-01, 03, 04, 05, 06, 07, 08.
 - `SECRET_SCAN_PASS`: `PASS` or `FAIL` (basic diff pattern scan).
 - `SECURITY_REVIEW_PASS`: `PASS`, `NOT_APPLICABLE`, or `NOT_VERIFIED` (independent specialist sign-off; never inferred from regex scan alone).
-- `AI_REVIEW_PASS`: `PASS`, `FAIL`, or `NOT_VERIFIED` (fresh read-only Auditor; author self-audits are rejected).
-- `HUMAN_APPROVED`: `APPROVED` or `PENDING` based on valid approvals.
+- `AI_REVIEW_PASS`: `PASS`, `FAIL`, or `NOT_VERIFIED` (fresh read-only Auditor; author self-audits are rejected; `PASS` required for `READY_FOR_HUMAN_REVIEW`; missing report emits `NOT_VERIFIED`; failed auditor emits `CHANGES_REQUESTED` or `BLOCKED`).
+- `HUMAN_APPROVED`: `APPROVED` or `PENDING` (evaluates latest effective review per distinct user, deduplicating multiple reviews, excluding author self-approvals and bot accounts, and enforcing specialist/CODEOWNERS eligibility for modified paths).
 - `HIL_RF_PASS`: `PASS`, `FAIL`, `NOT_APPLICABLE`, or `NOT_RUN`.
 - `MERGE_ENFORCEMENT_ACTIVE`: `ENFORCED` or `NOT_VERIFIED`.
