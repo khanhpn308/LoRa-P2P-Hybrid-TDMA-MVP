@@ -6,7 +6,7 @@ This report documents the verification and acceptance evidence for the read-only
 
 - **Command:** `Nghiệm thu PR #N` (CLI: `python3 scripts/agent_harness/pr_review.py --pr <N>`)
 - **Authority & Governance:** Mandatory Host G0 context enforced before review; read-only operation; strict non-auto-merge policy; human specialist approvals required.
-- **Dependencies:** Based on `#137` / PR `#138` baseline (`4b2afc0287915d6cb34b36962c7bfdd6eddfe75a`).
+- **Dependencies:** Synchronized with `main` at `3e8690187bb73c3503167112c9b59a4cf8c47b43` (following PR `#138` merge on 2026-11-05). PR `#142` base updated to `main`.
 - **Target Deliverables:**
   - `scripts/agent_harness/pr_review.py` (Deterministic PR data collector & snapshot builder)
   - `scripts/agent_harness/pr_review_policy.py` (Gates PR-01 to PR-08 evaluator & CODEOWNERS matching)
@@ -75,17 +75,22 @@ This report documents the verification and acceptance evidence for the read-only
 - **Active Blockers:**
   - `🛑 PR HEAD SHA race detected! Started review at 61626364, but HEAD is now deadbeef. Review is STALE.`
 
-### 3.6 Real GitHub PR Review Trace (PR #138) -> `CHANGES_REQUESTED`
-- **Live PR:** `https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/138`
+### 3.6 Real GitHub PR Review Trace (PR #138) -> `READY_FOR_HUMAN_REVIEW`
+- **Live PR:** `https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/138` (Status: `MERGED` into `main`)
 - **Invocation:** `python3 scripts/agent_harness/pr_review.py --pr 138`
-- **Exit Code:** `1`
-- **Verdict:** `🟠 CHANGES REQUESTED`
+- **Exit Code:** `0`
+- **Verdict:** `🟢 READY FOR HUMAN REVIEW`
 - **Findings:**
   - PR-01 Governance: `PASS` (Linked to OPEN Issue #137, all 19 files within declared scope)
-  - PR-05 Security: `PASS` (No leaked tokens or private keys)
-  - PR-06 Testing: `FAIL` (CI check-run `harness-unit` completed with `failure`)
+  - PR-02 Architecture/Contract: `N/A`
+  - PR-03 Rule-ID: `PASS` (Scoped standards DOCS; 2 rules bounded and verified)
+  - PR-04 Correctness: `PASS` (No conflict markers; diff structure valid)
+  - PR-05 Security: `PASS` (Secret scan clean; untrusted text sanitized)
+  - PR-06 Testing: `PASS` (All 9 CI check-runs succeeded)
+  - PR-07 RF/HIL: `N/A` (No RF/MAC firmware touched)
+  - PR-08 Merge-Integrity: `PASS` (HEAD SHA immutable ea3f7df3; ruleset recorded)
   - Risk Classification: `HIGH` (Touches `scripts/agent_harness/**`)
-  - Proposed policy: `>= 2 specialist approvals required before merge`
+  - Policy: `>= 2 specialist approvals required before merge` (Human merge boundary strictly observed)
 
 ---
 
@@ -96,9 +101,10 @@ This report documents the verification and acceptance evidence for the read-only
 python3 -m unittest discover -s tests/agent_harness -v
 ```
 **Receipt:**
-- Total tests executed: **292**
+- Total tests executed: **300**
 - Status: **ALL PASS (OK)**
 - Failures: **0**, Errors: **0**
+- Elapsed time: **29.336s**
 
 ### 4.2 PR Review Unit & Fixture Tests
 ```bash

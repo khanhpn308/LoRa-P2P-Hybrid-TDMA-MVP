@@ -1,6 +1,7 @@
 """Synthetic regressions, disposable Git repositories, no keys or Docker required."""
 import copy
 import json
+import os
 from pathlib import Path
 import subprocess
 import shlex
@@ -342,6 +343,46 @@ class GitTests(unittest.TestCase):
                 self.assertFalse(marker.exists())
                 self.git("config", "--unset", key)
 
+    def test_trusted_system_git_lfs_does_not_block_evaluation(self):
+        with tempfile.TemporaryDirectory() as outside:
+            sys_cfg = Path(outside) / "system.gitconfig"
+            sys_cfg.write_text(
+                '[filter "lfs"]\n'
+                '\tclean = git-lfs clean -- %f\n'
+                '\tprocess = git-lfs filter-process\n'
+                '\tsmudge = git-lfs smudge -- %f\n'
+            )
+            with patch.dict(os.environ, {"GIT_CONFIG_SYSTEM": str(sys_cfg)}):
+                self.write("docs/development/notes.md", "Documentation update with system LFS present\n")
+                report = self.scan()
+                self.assertEqual(report["risks"], ["all"])
+                self.assertEqual(report["auto_check"], "AUTO_CHECK_PASS")
+
+                cmd = [sys.executable, gates.__file__, "--repo", str(self.root), "--base", self.base]
+                done = subprocess.run(cmd, capture_output=True, text=True, timeout=30,
+                                      env={**os.environ, "GIT_CONFIG_SYSTEM": str(sys_cfg)})
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+
+    def test_system_filter_config_inside_worktree_is_blocked_with_value_error(self):
+        inside_cfg = self.root / "system.gitconfig"
+        inside_cfg.write_text(
+            '[filter "lfs"]\n'
+            '\tclean = git-lfs clean -- %f\n'
+            '\tprocess = git-lfs filter-process\n'
+            '\tsmudge = git-lfs smudge -- %f\n'
+        )
+        with patch.dict(os.environ, {"GIT_CONFIG_SYSTEM": str(inside_cfg)}):
+            with self.assertRaises(ValueError):
+                gates.git_command(self.root, "diff", "HEAD")
+            self.write("docs/development/notes.md", "Documentation update with inside config\n")
+            with self.assertRaises(ValueError):
+                self.scan()
+            cmd = [sys.executable, gates.__file__, "--repo", str(self.root), "--base", self.base]
+            done = subprocess.run(cmd, capture_output=True, text=True, timeout=30,
+                                  env={**os.environ, "GIT_CONFIG_SYSTEM": str(inside_cfg)})
+            self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
+            self.assertEqual(json.loads(done.stdout)["status"], "NOT_VERIFIED")
+
     def test_hidden_index_flags_block_routing_bypass(self):
         self.write("deploy/compose.yaml", "baseline\n")
         self.git("add", ".")
@@ -357,12 +398,12 @@ class GitTests(unittest.TestCase):
     def test_cli_deep_json_returns_machine_readable_blocked_result(self):
         with tempfile.TemporaryDirectory() as outside:
             manifest = Path(outside) / "manifest.json"
-            manifest.write_text('{"checks":{"NET-LOOPBACK":' + '[' * 10000 + '0' + ']' * 10000 + '}}')
+            manifest.write_text('{"checks":{"NET-LOOPBACK":' + '[' * 30000 + '0' + ']' * 30000 + '}}')
             result = subprocess.run(
                 [sys.executable, gates.__file__, "--repo", str(self.root), "--base", self.base,
                  "--evidence-dir", outside, "--manifest", "manifest.json"],
                 capture_output=True, text=True, timeout=30)
-            self.assertEqual(result.returncode, 2)
+            self.assertEqual(result.returncode, 2, f"Expected rc=2, got rc={result.returncode}. stdout: {result.stdout}, stderr: {result.stderr}")
             self.assertEqual(json.loads(result.stdout)["status"], "NOT_VERIFIED")
             self.assertNotIn("Traceback", result.stderr)
 
