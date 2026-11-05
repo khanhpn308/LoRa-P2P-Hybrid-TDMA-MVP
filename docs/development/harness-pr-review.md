@@ -12,11 +12,17 @@ The **`Nghiệm thu PR #N`** command triggers an automated, deterministic, and s
 # 1. Enforce mandatory Host G0 context on tracked AGENTS.md
 python3 scripts/agent_harness/agent_context.py --repo .
 
-# 2. Run read-only PR review against GitHub PR #N
-python3 scripts/agent_harness/pr_review.py --pr <PR_NUMBER>
+# 2. Export frozen Auditor context and evidence bundle (for native invoke_subagent)
+python3 scripts/agent_harness/pr_review.py --pr <PR_NUMBER> --export-auditor-context /tmp/harness-evidence-pr-<N>/auditor_context.json --evidence-dir /tmp/harness-evidence-pr-<N>
 
-# 3. (Optional) Publish review report to PR comment (requires operator authorization)
-python3 scripts/agent_harness/pr_review.py --pr <PR_NUMBER> --publish-comment
+# 3. Autonomous review with fresh native Auditor (spawns agy sandbox)
+python3 scripts/agent_harness/pr_review.py --pr <PR_NUMBER> --auto-audit --evidence-dir /tmp/harness-evidence-pr-<N>
+
+# 4. Review with pre-generated Auditor report
+python3 scripts/agent_harness/pr_review.py --pr <PR_NUMBER> --auditor-report /tmp/harness-evidence-pr-<N>/auditor_report.json --evidence-dir /tmp/harness-evidence-pr-<N>
+
+# 5. (Optional) Publish review report to PR comment (requires explicit operator authorization)
+python3 scripts/agent_harness/pr_review.py --pr <PR_NUMBER> --auditor-report /tmp/harness-evidence-pr-<N>/auditor_report.json --publish-comment
 ```
 
 For offline or synthetic validation without GitHub API access:
@@ -45,10 +51,14 @@ python3 scripts/agent_harness/pr_review.py --fixture tests/agent_harness/fixture
 
 4. **`PR-04 CORRECTNESS`**:
    - Checks for git conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`), truncated patches, or corrupted diffs.
+   - **Full-diff batching & zero silent truncation**: Prompts never silently truncate diffs. Diffs exceeding batch thresholds (`MAX_BATCH_DIFF_BYTES = 60_000`) are partitioned into file/hunk batches with batch index, batch diff SHA-256, overall diff SHA-256, and 100% hunk preservation (`extract_diff_hunks`).
+   - **Mandatory 100% path & batch coverage**: The union of reviewed paths across batches must exactly match all changed files, and all expected batches must be accounted for; any omission fails closed with `AUDIT-COVERAGE-MISMATCH`.
+   - **Cryptographic snapshot binding & anti-fabrication defense**: Auditor reports are bound to frozen PR metadata (`base_sha`, `head_sha`, `diff_sha256`, and per-rule `diff.patch` receipt hash). Absent or malformed fields, mismatched commit hashes, or fabricated wrapper envelopes (conflicting outer vs inner snapshot metadata) fail closed with `AUDIT-SNAPSHOT-MISMATCH`.
    - Evaluates unresolved high-severity findings from fresh read-only Auditor; requires full per-ID coverage.
 
 5. **`PR-05 SECURITY`**:
    - Automated secret scanning across all diff patches for credentials, tokens, and private keys.
+   - Specialist security review boundary strictly exempts synthetic test fixtures (`/fixtures/`) while enforcing review for real security test code and cryptographic contracts.
    - Prompt-injection defense: PR body, title, and comments are treated strictly as untrusted data, never instructions.
 
 6. **`PR-06 TESTING`**:
@@ -61,7 +71,7 @@ python3 scripts/agent_harness/pr_review.py --fixture tests/agent_harness/fixture
    - Explicitly marked `NOT_APPLICABLE` for docs and backend changes.
 
 8. **`PR-08 MERGE-INTEGRITY`**:
-   - Pre- and post-review HEAD and BASE SHA check: any commit push or base rebase during review fails closed with `STALE_REVIEW/BLOCKED` (TOCTOU protection).
+   - Pre- and post-review HEAD and BASE SHA check: re-queried immediately before policy evaluation and comment publishing; any commit push or base rebase during review or model audit fails closed with `STALE_REVIEW/BLOCKED` (dual TOCTOU race protection).
    - Unresolved review comment threads or outstanding `CHANGES_REQUESTED` block readiness.
    - Branch protection and rulesets visibility recorded (`MERGE_PROTECTION_NOT_VERIFIED` if unconfigured).
 

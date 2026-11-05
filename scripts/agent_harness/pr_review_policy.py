@@ -83,9 +83,17 @@ KNOWN_RULE_PREFIXES = frozenset({
 })
 
 
+def is_synthetic_fixture_path(path: str) -> bool:
+    """Check if a path is a synthetic test fixture rather than actual code or contract."""
+    norm = path.strip("/").lower()
+    return "/fixtures/" in norm or norm.startswith("tests/agent_harness/fixtures/") or norm.startswith("tests/fixtures/")
+
+
 def is_security_sensitive_path(path: str) -> bool:
     """Check if a path touches security, cryptographic, TLS, or auth boundaries."""
     norm = path.strip("/").lower()
+    if is_synthetic_fixture_path(norm):
+        return False
     if norm.startswith("contracts/"):
         return True
     if any(k in norm for k in ("crypto", "tls", "auth", "secret", "token", "credential", "rbac")):
@@ -420,8 +428,9 @@ def eval_pr04_correctness(
     pr_data: dict[str, Any],
     auditor_report: dict[str, Any] | None,
     rule_selection: dict[str, Any] | None = None,
+    expected_diff_sha256: str | None = None,
 ) -> dict[str, Any]:
-    """PR-04 CORRECTNESS: Behavior, conflict markers, patch completeness, and auditor findings."""
+    """PR-04 CORRECTNESS: Behavior, conflict markers, patch completeness, snapshot binding, and auditor findings."""
     blockers: list[str] = []
     files = pr_data.get("files", [])
 
@@ -455,6 +464,58 @@ def eval_pr04_correctness(
         if p0_p1:
             desc = ", ".join(f"{item.get('rule', item.get('rule_id', 'BUG'))}: {item.get('explanation', item.get('detail', ''))[:80]}" for item in p0_p1[:3])
             blockers.append(f"Auditor reported {len(p0_p1)} unresolved high-severity finding(s): {desc}")
+
+        # Check snapshot binding (mandatory frozen base/head/diff)
+        rep_base = auditor_report.get("base_sha")
+        expected_base = pr_data.get("base_sha")
+        if expected_base:
+            if not rep_base:
+                blockers.append("Auditor report missing mandatory base_sha snapshot binding.")
+            elif rep_base != expected_base:
+                blockers.append(f"Auditor report base_sha ({rep_base[:8]}) does not match PR base_sha ({expected_base[:8]}).")
+
+        rep_head = auditor_report.get("head_sha")
+        expected_head = pr_data.get("head_sha")
+        if expected_head:
+            if not rep_head:
+                blockers.append("Auditor report missing mandatory head_sha snapshot binding.")
+            elif rep_head != expected_head:
+                blockers.append(f"Auditor report head_sha ({rep_head[:8]}) does not match PR head_sha ({expected_head[:8]}).")
+
+        rep_diff = auditor_report.get("diff_sha256")
+        if expected_diff_sha256:
+            valid_diffs = (
+                set(expected_diff_sha256)
+                if isinstance(expected_diff_sha256, (set, list, tuple))
+                else {expected_diff_sha256}
+            )
+            if not rep_diff:
+                blockers.append("Auditor report missing mandatory diff_sha256 snapshot binding.")
+            elif rep_diff not in valid_diffs:
+                blockers.append("Auditor report diff_sha256 does not match PR diff snapshot.")
+
+        # Check diff.patch receipt hash in rule results
+        if expected_diff_sha256:
+            valid_diffs = (
+                set(expected_diff_sha256)
+                if isinstance(expected_diff_sha256, (set, list, tuple))
+                else {expected_diff_sha256}
+            )
+            for item in auditor_report.get("rule_results", []):
+                if isinstance(item, dict):
+                    for ref in item.get("evidence", []):
+                        if isinstance(ref, dict) and ref.get("receipt_path") == "diff.patch":
+                            if ref.get("receipt_sha256") not in valid_diffs:
+                                blockers.append("Auditor rule evidence diff.patch hash does not match PR diff snapshot.")
+                                break
+
+        # Check coverage
+        required_paths = {f.get("filename", "") for f in files}
+        reviewed_scope = set(auditor_report.get("reviewed_scope", []))
+        if required_paths and reviewed_scope != required_paths:
+            missing = required_paths - reviewed_scope
+            extra = reviewed_scope - required_paths
+            blockers.append(f"Auditor report reviewed_scope does not match changed files (missing: {sorted(missing)[:3]}, extra: {sorted(extra)[:3]}).")
 
         # Check per-rule coverage if rule results are present
         if rule_selection and "rule_results" in auditor_report:
@@ -667,6 +728,7 @@ def evaluate_pr_policy(
     ruleset_status: str | None = None,
     base_sha_at_start: str | None = None,
     base_sha_at_end: str | None = None,
+    expected_diff_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Synthesize complete policy evaluation and determine Host verdict.
 
@@ -685,7 +747,7 @@ def evaluate_pr_policy(
     g1 = eval_pr01_governance(pr_data, linked_issue, allowed_paths, codeowners_rules)
     g2 = eval_pr02_architecture_contract(changed_files, pr_data)
     g3 = eval_pr03_rule_id(rule_selection, changed_files, pr_data)
-    g4 = eval_pr04_correctness(pr_data, auditor_report, rule_selection)
+    g4 = eval_pr04_correctness(pr_data, auditor_report, rule_selection, expected_diff_sha256=expected_diff_sha256)
     g5 = eval_pr05_security(pr_data)
     g6 = eval_pr06_testing(check_runs)
     g7 = eval_pr07_rf_hil(changed_files, pr_data, hil_receipt)
@@ -731,7 +793,7 @@ def evaluate_pr_policy(
             security_review_pass = "PASS"
         else:
             security_review_pass = "NOT_VERIFIED"
-            if any(f.startswith("contracts/") or "crypto" in f.lower() for f in changed_files):
+            if any((f.startswith("contracts/") or "crypto" in f.lower()) and not is_synthetic_fixture_path(f) for f in changed_files):
                 all_blockers.append("Independent security review receipt or specialist sign-off absent for security-sensitive paths.")
 
     # R-02: Auditor evaluation

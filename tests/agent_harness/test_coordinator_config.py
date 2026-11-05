@@ -81,6 +81,14 @@ class HarnessCoordinatorConfigTests(unittest.TestCase):
         self.assertIn("scripts/agent_harness/pr_review.py", content)
         self.assertIn("READY_FOR_HUMAN_REVIEW", content)
 
+    def test_pr_review_auditor_sequencing_instructions(self):
+        content = self.coordinator_path.read_text(encoding="utf-8")
+        self.assertIn("--export-auditor-context", content)
+        self.assertIn("Fresh-Independent-Auditor", content)
+        self.assertIn("--auditor-report", content)
+        self.assertIn("--evidence-dir", content)
+        self.assertIn("invoke_subagent", content)
+
 
 if __name__ == "__main__":
     unittest.main()
