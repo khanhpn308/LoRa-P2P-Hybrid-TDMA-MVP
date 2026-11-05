@@ -8,8 +8,8 @@ The Semtech SX1276 transceiver silicon contains known hardware exceptions that r
 
 > [!WARNING]
 > **Errata Verification Boundaries:**
-> 1. Where an erratum requirement is explicitly written in the Datasheet text (e.g., `AutomaticIFOn`), it is classified as **`PDF_VERIFIED`**.
-> 2. Where the Datasheet merely annotates *"See errata note"* and register workaround values are derived from secondary driver code (such as Semtech `LoRaMac-node`), the workaround values are classified as **`ERRATA_REVIEW_NOT_VERIFIED`** until verified against the physical standalone document `SX1276_77_8_ErrataNote_1.1_STD.pdf`.
+> 1. `AutomaticIFOn` behavior follows Semtech Datasheet Rev. 7 and must be handled in the active profile.
+> 2. Do not enable 500 kHz and spurious-IF workarounds in the active BW125 profile. Their numeric values are derived from secondary driver examples and require direct review of the standalone Semtech Errata Note before use.
 > 3. **Bandwidth Isolation Rule:** Workarounds specific to 500 kHz bandwidth **MUST NOT** be applied to the project's 125 kHz active profile.
 
 ---
@@ -21,7 +21,7 @@ The Semtech SX1276 transceiver silicon contains known hardware exceptions that r
 - **Datasheet Text:** *"Should be set to 0x0 after each reset (POR or manual). See errata note for more information."*
 - **Reset Default:** Hardware resets bit 7 to `0x1`.
 - **Applicability to MVP Profile (125 kHz):** **MANDATORY.**
-- **Verification Status:** **`PDF_VERIFIED`**.
+
 
 ### Erratum 1 Mechanism and Problem Description
 When `AutomaticIFOn = 1`, the internal receiver demodulator dynamically shifts intermediate frequency (IF) settings during signal acquisition. Under narrow and medium bandwidths (including 125 kHz), this dynamic adjustment causes frequency-tracking loop instability, premature preamble drops, and reduced link sensitivity.
@@ -49,14 +49,14 @@ sx1276_write(REG_DETECT_OPTIMIZE, detect_opt);
 - **Datasheet Annotation:** *"Optimization for 500 kHz bandwidth. See errata note."*
 - **Applicability to MVP Profile (125 kHz):** **NOT APPLICABLE (Do not apply).**
 - **Verification Status:**
-  - Register presence and annotation: `PDF_VERIFIED`.
-  - Specific workaround hex values: **`ERRATA_REVIEW_NOT_VERIFIED`**.
+  - Register presence/annotation: documented in the Semtech datasheet.
+  - Workaround hex values: not authorized for the active BW125 profile; validate against standalone errata before use.
 
 ### Erratum 2 Mechanism and Problem Description
 At 500 kHz bandwidth, internal analog filter gain peaking degrades the receiver noise figure and reduces sensitivity by several dB unless non-default calibration values are injected.
 
 ### Workaround Values (For 500 kHz reference only)
-In driver stacks operating at $BW = 500\text{ kHz}$ (values classified as **`ERRATA_REVIEW_NOT_VERIFIED`** pending inspection of standalone errata note):
+In driver stacks operating at $BW = 500\text{ kHz}$ (reference-only values requiring standalone errata review before use):
 - Write `0x02` to `RegHighBWOptimize1` (`0x36`).
 - Write `0x64` (for High-Band $F_{RF} > 525\text{ MHz}$) or `0x7F` (for Low-Band $F_{RF} < 525\text{ MHz}$) to `RegHighBWOptimize2` (`0x3A`).
 - When returning to $BW \le 250\text{ kHz}$ (such as the active MVP 125 kHz profile), restore the verified datasheet reset default values: **`0x20`** for `RegHighBWOptimize1` (`0x36`) and **`0x20`** for `RegHighBWOptimize2` (`0x3A`). Legacy driver snippets mentioning `0x03` for `0x36` contradict the datasheet Table 41 reset default (`0x20`) and must not be used.
@@ -74,7 +74,7 @@ In driver stacks operating at $BW = 500\text{ kHz}$ (values classified as **`ERR
 - **Datasheet Citation:** Datasheet Table 41 (PDF pages 114–115).
 - **Datasheet Annotation:** *"See errata note."*
 - **Applicability to MVP Profile (125 kHz):** Deferred / Default retained.
-- **Verification Status:** **`ERRATA_REVIEW_NOT_VERIFIED`**.
+
 
 ### Erratum 3 Mechanism and Problem Description
 Under certain narrow bandwidths ($BW < 500\text{ kHz}$), internal synthesizer mixing harmonics can fold into the receiver baseband, creating false preamble detection triggers (spurious packet reception).
@@ -86,8 +86,8 @@ Semtech reference implementations (`LoRaMac-node`) optionally adjust `IfFreq1` a
 
 ## 5. Summary of Errata Workarounds for Driver Implementers
 
-| Erratum | Target Registers | Action in Active 125 kHz MVP Driver | Action in 500 kHz Mode | Status |
-|---|---|---|---|---|
-| **`AutomaticIFOn`** | `0x31[7]` | **MUST CLEAR TO 0** after every reset | **MUST CLEAR TO 0** after every reset | PDF_VERIFIED |
-| **500 kHz Optimization** | `0x36`, `0x3A` | **RETAIN DEFAULT (`0x20`)** | Write `0x02` to 0x36, `0x64`/`0x7F` to 0x3A | ERRATA_REVIEW_NOT_VERIFIED |
-| **Spurious IF Shift** | `0x2F`, `0x30` | **RETAIN DEFAULT (`0x20`, `0x00`)** | Retain default | ERRATA_REVIEW_NOT_VERIFIED |
+| Erratum | Target Registers | Action in Active 125 kHz MVP Driver | Action in 500 kHz Mode |
+|---|---|---|---|
+| **`AutomaticIFOn`** | `0x31[7]` | **MUST CLEAR TO 0** after every reset | **MUST CLEAR TO 0** after every reset |
+| **500 kHz Optimization** | `0x36`, `0x3A` | **RETAIN DEFAULT (`0x20`)** | Write `0x02` to 0x36, `0x64`/`0x7F` to 0x3A |
+| **Spurious IF Shift** | `0x2F`, `0x30` | **RETAIN DEFAULT (`0x20`, `0x00`)** | Retain default |

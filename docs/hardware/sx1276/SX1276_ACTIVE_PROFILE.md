@@ -4,27 +4,27 @@ Source: Project Owner Approved PHY Specification & Semtech SX1276 Datasheet Rev.
 
 ## 1. Approved PHY Parameters Summary
 
-This document specifies the authoritative physical layer configuration for the **MVP V1 Custom LoRa P2P** network. Every field marked `PROJECT_APPROVED` represents an engineering baseline approved by the Project Owner.
+This document specifies the authoritative physical layer configuration for the **MVP V1 Custom LoRa P2P** network. The values below define the project PHY baseline; entries marked `TBD` remain unresolved and must not be hardcoded.
 
-| Parameter | Approved Value | Silicon Mapping / Setting | Verification Status |
-|---|---|---|---|
-| **Transceiver** | Semtech SX1276 | LoRa Mode (`LongRangeMode = 1` in `RegOpMode`) | PDF_VERIFIED |
-| **Network Architecture** | Custom LoRa P2P | Event-only Static TDMA (Gateway-controlled) | PROJECT_APPROVED |
-| **PHY Profile Name** | `PHY_PROFILE_MVP_V1` | Firmware profile identifier | PROJECT_APPROVED |
-| **RF Operating Band** | 920.0–923.0 MHz | High-Frequency (HF) port ($> 525\text{ MHz}$) | PROJECT_APPROVED |
-| **Channel Plan** | VN920 V1 (11 channels) | Spacing: 250 kHz (920.250–922.750 MHz) | PROJECT_APPROVED |
-| **Active Channel** | **TBD** (Runtime assigned) | Selected via Backend PostgreSQL authorization | PROJECT_APPROVED |
-| **Spreading Factor** | **SF7** | `SpreadingFactor = 0b0111` in `RegModemConfig2` | PDF_VERIFIED |
-| **Bandwidth (BW)** | **125,000 Hz** (125 kHz) | `Bw = 0b0111` in `RegModemConfig1` | PDF_VERIFIED |
-| **Coding Rate (CR)** | **4/5** ($CR=1$) | `CodingRate = 0b001` in `RegModemConfig1` | PDF_VERIFIED |
-| **Payload CRC** | **ON** | `RxPayloadCrcOn = 1` in `RegModemConfig2` | PDF_VERIFIED |
-| **Header Mode** | **Explicit Header** | `ImplicitHeaderModeOn = 0` in `RegModemConfig1` | PDF_VERIFIED |
-| **LoRa Sync Word** | **`0x12`** | `SyncWord = 0x12` in `RegSyncWord` (`0x39`) | PDF_VERIFIED |
-| **Low Data Rate Optimize** | **OFF** ($DE = 0$) | `LowDataRateOptimize = 0` in `RegModemConfig3` | PDF_VERIFIED |
-| **Frequency Hopping** | **DISABLED** | `FreqHoppingPeriod = 0x00` in `RegHopPeriod` | PDF_VERIFIED |
-| **Preamble Length** | **TBD** | Standard calculation assumes 8 symbols | NOT_VERIFIED |
-| **TX Output Power** | **TBD** | Subject to link-budget & battery life freeze | NOT_VERIFIED |
-| **PA Path** | **TBD** (`RFO` vs `PA_BOOST`) | Dependent on board RF matching circuitry | NOT_VERIFIED |
+| Parameter | Value | Silicon Mapping / Setting |
+|---|---|---|
+| **Transceiver** | Semtech SX1276 | LoRa Mode (`LongRangeMode = 1` in `RegOpMode`) |
+| **Network Architecture** | Custom LoRa P2P | Event-only Static TDMA (Gateway-controlled) |
+| **PHY Profile Name** | `PHY_PROFILE_MVP_V1` | Firmware profile identifier |
+| **RF Operating Band** | 920.0–923.0 MHz | High-Frequency (HF) port ($> 525\text{ MHz}$) |
+| **Channel Plan** | VN920 V1 (11 channels) | Spacing: 250 kHz (920.250–922.750 MHz) |
+| **Active Channel** | **TBD** (Runtime assigned) | Selected via Backend PostgreSQL authorization |
+| **Spreading Factor** | **SF7** | `SpreadingFactor = 0b0111` in `RegModemConfig2` |
+| **Bandwidth (BW)** | **125,000 Hz** (125 kHz) | `Bw = 0b0111` in `RegModemConfig1` |
+| **Coding Rate (CR)** | **4/5** ($CR=1$) | `CodingRate = 0b001` in `RegModemConfig1` |
+| **Payload CRC** | **ON** | `RxPayloadCrcOn = 1` in `RegModemConfig2` |
+| **Header Mode** | **Explicit Header** | `ImplicitHeaderModeOn = 0` in `RegModemConfig1` |
+| **LoRa Sync Word** | **`0x12`** | `SyncWord = 0x12` in `RegSyncWord` (`0x39`) |
+| **Low Data Rate Optimize** | **OFF** ($DE = 0$) | `LowDataRateOptimize = 0` in `RegModemConfig3` |
+| **Frequency Hopping** | **DISABLED** | `FreqHoppingPeriod = 0x00` in `RegHopPeriod` |
+| **Preamble Length** | **TBD** | Standard calculation assumes 8 symbols |
+| **TX Output Power** | **TBD** | Subject to link-budget & battery life freeze |
+| **PA Path** | **TBD** (`RFO` vs `PA_BOOST`) | Dependent on board RF matching circuitry |
 
 > [!CAUTION]
 > **No Guessing of TBD Fields:**

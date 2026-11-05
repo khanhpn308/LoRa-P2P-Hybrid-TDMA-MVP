@@ -371,13 +371,13 @@ class TestTechnicalCorrectionsRegression(unittest.TestCase):
         )
 
     def test_ERR_01_bw500_workaround_not_pdf_verified(self):
-        """ERR-01: Workaround values (0x02, 0x64, 0x7F) for BW500 must NOT be marked PDF_VERIFIED."""
+        """ERR-01: BW500 workaround must be explicitly excluded from the active BW125 profile."""
         errata_file = os.path.join(CANDIDATE_ROOT, "reference/SX1276_ERRATA.md")
         with open(errata_file, "r", encoding="utf-8") as f:
             content = f.read()
 
-        # In section 3 / table, specific workaround values must be ERRATA_REVIEW_NOT_VERIFIED
-        self.assertIn("ERRATA_REVIEW_NOT_VERIFIED", content)
+        # Prevent inadvertent application of secondary BW500 register writes.
+        self.assertIn("Do not enable 500 kHz", content)
 
     def test_ERR_02_active_bw125_does_not_initialize_bw500_workaround(self):
         """ERR-02: Active BW125 profile must not apply 500 kHz workaround values."""

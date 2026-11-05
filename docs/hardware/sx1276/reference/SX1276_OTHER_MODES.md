@@ -52,12 +52,12 @@ Operating at SF6 achieves the fastest LoRa chirps (64 chips/symbol) but imposes 
 
 The following vectors provide independent theoretical validation of the ToA equation across non-MVP operating modes:
 
-| Vector ID | Profile Details | $T_s$ | $N_{preamble}$ | $T_{preamble}$ | Numerator / Denom | Ceil | $N_{payload}$ | $T_{payload}$ | Total ToA ($T_{packet}$) | Verification Status |
-|---|---|---|---|---|---|---|---|---|---|---|
-| **V1 (Mid-SF)** | SF10, BW125k, CR 4/5, PL 32, IH 0, CRC 1, DE 0 | 8.192 ms | 8 | 100.352 ms | 260 / 40 | 7 | 43 | 352.256 ms | **452.608 ms** | PDF_VERIFIED |
-| **V2 (High-SF LDRO)**| SF12, BW125k, CR 4/8, PL 64, IH 0, CRC 1, DE 1 | 32.768 ms | 8 | 401.408 ms | 508 / 40 | 13 | 112 | 3670.016 ms | **4071.424 ms** | PDF_VERIFIED |
-| **V3 (Wideband Imp)** | SF8, BW500k, CR 4/6, PL 10, IH 1, CRC 0, DE 0 | 0.512 ms | 12 | 8.320 ms | 56 / 32 | 2 | 20 | 10.240 ms | **18.560 ms** | PDF_VERIFIED |
-| **V4 (Boundary SF11)**| SF11, BW125k, CR 4/5, PL 20, IH 0, CRC 1, DE 1 | 16.384 ms | 8 | 200.704 ms | 160 / 36 | 5 | 33 | 540.672 ms | **741.376 ms** | PDF_VERIFIED |
+| Vector ID | Profile Details | $T_s$ | $N_{preamble}$ | $T_{preamble}$ | Numerator / Denom | Ceil | $N_{payload}$ | $T_{payload}$ | Total ToA ($T_{packet}$) |
+|---|---|---|---|---|---|---|---|---|---|
+| **V1 (Mid-SF)** | SF10, BW125k, CR 4/5, PL 32, IH 0, CRC 1, DE 0 | 8.192 ms | 8 | 100.352 ms | 260 / 40 | 7 | 43 | 352.256 ms | **452.608 ms** |
+| **V2 (High-SF LDRO)**| SF12, BW125k, CR 4/8, PL 64, IH 0, CRC 1, DE 1 | 32.768 ms | 8 | 401.408 ms | 508 / 40 | 13 | 112 | 3670.016 ms | **4071.424 ms** |
+| **V3 (Wideband Imp)** | SF8, BW500k, CR 4/6, PL 10, IH 1, CRC 0, DE 0 | 0.512 ms | 12 | 8.320 ms | 56 / 32 | 2 | 20 | 10.240 ms | **18.560 ms** |
+| **V4 (Boundary SF11)**| SF11, BW125k, CR 4/5, PL 20, IH 0, CRC 1, DE 1 | 16.384 ms | 8 | 200.704 ms | 160 / 36 | 5 | 33 | 540.672 ms | **741.376 ms** |
 
 ---
 

@@ -1,8 +1,8 @@
-# SX1276 Agent Reference — Candidate Package
+# SX1276 Agent Reference
 
 ## 1. Overview and Engineering Scope
 
-This candidate documentation package provides a verified, streamlined, and context-optimized technical reference for developing the **SX1276 LoRa transceiver driver** on an **ESP32-WROOM-32E** microcontroller using **ESP-IDF v6.1** and **FreeRTOS / C**.
+This project reference provides a streamlined, context-optimized technical guide for developing the **SX1276 LoRa transceiver driver** on an **ESP32-WROOM-32E** microcontroller using **ESP-IDF v6.1** and **FreeRTOS / C**.
 
 It is tailored for AI coding assistants (Gemini / Codex) and embedded software engineers implementing **Issue #10 (SX1276 Driver Foundation)** within a **Custom LoRa P2P, Event-Only Static TDMA MAC** architecture.
 
@@ -16,8 +16,8 @@ It is tailored for AI coding assistants (Gemini / Codex) and embedded software e
 ## 2. Document Navigation and Context Hierarchy
 
 ```text
-SX1276_Agent_Reference_Candidate/
-├── README.md                      <-- [HOT 1] Master index, context rules, hardware & TBD status
+docs/hardware/sx1276/
+├── README.md                      <-- [HOT 1] Master index, context rules, hardware and configuration boundaries
 ├── SX1276_ACTIVE_PROFILE.md       <-- [HOT 2] Approved PHY profile (SF7/BW125k), 11-channel plan, MVP registers
 ├── SX1276_DRIVER_OPERATIONS.md    <-- [HOT 3] SPI, reset, TX/RX sequences, FIFO, IRQ/DIO0, ToA, recovery
 ├── SX1276_REGISTER_REFERENCE.md   <-- [HOT 4] Lean register reference strictly for MVP firmware
@@ -51,21 +51,21 @@ SX1276_Agent_Reference_Candidate/
 
 The approved hardware design connects the SX1276 transceiver to the ESP32-WROOM-32E host as follows:
 
-| SX1276 Signal | ESP32 GPIO | Direction | Bus / Role | Status |
-|---|---|---|---|---|
-| `SCK` | **GPIO5** | ESP32 $\to$ SX1276 | SPI Clock ($F_{SCK} \le 10\text{ MHz}$, SPI Mode 0) | PROJECT_APPROVED |
-| `MISO` | **GPIO19** | SX1276 $\to$ ESP32 | SPI Master-In Slave-Out | PROJECT_APPROVED |
-| `MOSI` | **GPIO27** | ESP32 $\to$ SX1276 | SPI Master-Out Slave-In | PROJECT_APPROVED |
-| `NSS` (`CS`) | **GPIO18** | ESP32 $\to$ SX1276 | Active-Low SPI Chip Select | PROJECT_APPROVED |
-| `RESET` (`NRESET`)| **GPIO23** | ESP32 $\to$ SX1276 | Active-Low Reset (Open-Drain, $\ge 100\text{ }\mu\text{s}$ low pulse) | PROJECT_APPROVED |
-| `DIO0` | **GPIO26** | SX1276 $\to$ ESP32 | Multi-purpose interrupt (`TxDone`, `RxDone`, `CadDone`) | PROJECT_APPROVED |
-| `DIO1`–`DIO5` | **NOT_CONNECTED**| — | Unrouted on PCB HW-001 | OWNER_CONFIRMED |
+| SX1276 Signal | ESP32 GPIO | Direction | Bus / Role |
+|---|---|---|---|
+| `SCK` | **GPIO5** | ESP32 $\to$ SX1276 | SPI Clock ($F_{SCK} \le 10\text{ MHz}$, SPI Mode 0) |
+| `MISO` | **GPIO19** | SX1276 $\to$ ESP32 | SPI Master-In Slave-Out |
+| `MOSI` | **GPIO27** | ESP32 $\to$ SX1276 | SPI Master-Out Slave-In |
+| `NSS` (`CS`) | **GPIO18** | ESP32 $\to$ SX1276 | Active-Low SPI Chip Select |
+| `RESET` (`NRESET`)| **GPIO23** | ESP32 $\to$ SX1276 | Active-Low Reset (Open-Drain, $\ge 100\text{ }\mu\text{s}$ low pulse) |
+| `DIO0` | **GPIO26** | SX1276 $\to$ ESP32 | Multi-purpose interrupt (`TxDone`, `RxDone`, `CadDone`) |
+| `DIO1`–`DIO5` | **NOT_CONNECTED**| — | Unrouted on PCB HW-001 |
 
 ### Hardware Boundary Warnings
 1. **DIO1 is NOT connected:** `RxTimeout` cannot generate a physical hardware interrupt on the ESP32. Receiver timeout must be detected by polling `RegIrqFlags` (`0x12`, bit 7) or by arming a host FreeRTOS software timer.
 2. **GPIO5 Strapping Pin Caution:** GPIO5 is an ESP32 strapping pin sampled during reset (SDIO slave timing). The driver and board circuitry must ensure that SCK idles LOW and does not force an invalid strapping state during chip reset.
 3. **Button Wake-Up GPIO:** The external wake-up button is handled entirely by the ESP32 RTC controller and is **not connected to the SX1276**.
-4. **Deep-Sleep Power Domain (`NOT_VERIFIED`):** It is unverified whether the SX1276 $V_{DD}$ rail remains powered during ESP32 Deep-sleep. Therefore, the driver must perform a complete hardware reset and register reconfiguration upon every ESP32 wake-up.
+4. **Deep-Sleep Power Domain:** It is unverified whether the SX1276 $V_{DD}$ rail remains powered during ESP32 Deep-sleep. Therefore, the driver must perform a complete hardware reset and register reconfiguration upon every ESP32 wake-up.
 5. **No Autonomous Button Transmissions:** Under the project's Static TDMA architecture, nodes never transmit spontaneously upon wake-up; transmissions occur strictly within gateway-assigned TDMA slots.
 
 ---
@@ -93,17 +93,8 @@ The following parameters are intentionally marked **`TBD`** and must not be fabr
 
 ---
 
-## 6. Source Authority and Verification Taxonomy
+## 6. Technical Sources and Boundaries
 
-- **Authoritative Source:** Semtech SX1276/77/78/79 Datasheet Rev. 7 (May 2020), Semtech Corporation.
-- **Verification Classifications:**
-  - `PDF_VERIFIED`: Directly checked against the Semtech Rev. 7 PDF.
-  - `PROJECT_APPROVED`: Project-level design choice approved by the Project Owner.
-  - `PROJECT_PROPOSED`: Driver software state machine, supervision, or buffer architecture proposed to safely control the transceiver without conflating with silicon hardware facts.
-  - `NOT_VERIFIED`: Unconfirmed manufacturer behavior or unmeasured hardware parameter.
-  - `ERRATA_REVIEW_NOT_VERIFIED`: Errata workaround derived from driver reference code, pending physical inspection of the standalone errata document.
-  - `CONFLICT`: Documentation discrepancy requiring engineering resolution.
-
-> [!CAUTION]
-> **Regulatory and RF Verification Limit:**
-> The Channel Plan VN920 V1 is an approved project design choice. It is **not** a certificate of Vietnamese statutory compliance, and this documentation does **not** assert RF emissions or HIL pass.
+- Manufacturer register and radio behavior: Semtech SX1276/77/78/79 Datasheet Rev. 7 (May 2020); see [`reference/SX1276_SOURCE_TRACEABILITY.md`](reference/SX1276_SOURCE_TRACEABILITY.md) for section/page references.
+- Implement the active settings and operations in the Hot files. Consult `reference/` only for a specific non-MVP mode or erratum. Do not apply BW500 workarounds to the active BW125 profile.
+- Do not substitute example values for `TBD` fields. An approved reference is not proof of PCB behavior, RF emissions compliance, or measured TDMA timing.
