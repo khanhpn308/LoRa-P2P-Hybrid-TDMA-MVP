@@ -22,6 +22,7 @@ if str(HARNESS_DIR) not in sys.path:
 
 import pr_review
 import pr_review_policy as policy
+import standards_policy
 
 
 class PRReviewPolicyUnitTests(unittest.TestCase):
@@ -248,6 +249,61 @@ class PRReviewPolicyUnitTests(unittest.TestCase):
         res = policy.eval_pr03_rule_id(rule_selection, ["firmware/main.c"])
         self.assertEqual(res["status"], policy.GateStatus.BLOCKED.value)
         self.assertIn("bogus Rule ID detected", res["summary"])
+
+    def test_pr03_regression_issue_172_err_rules_pass(self):
+        """Issue #172: ERR-* and other C prefixes pass PR-03 evaluation."""
+        rule_selection = {
+            "standards": ["C"],
+            "rules": ["C-001", "ERR-001", "ERR-002", "ERR-003"],
+            "source": "verified_host",
+            "selection_sha256": "a" * 64,
+        }
+        res = policy.eval_pr03_rule_id(rule_selection, ["firmware/main.c"])
+        self.assertEqual(res["status"], policy.GateStatus.PASS.value)
+        self.assertNotIn("bogus Rule ID detected", res["summary"])
+
+    def test_pr03_all_valid_c_and_go_prefixes_pass(self):
+        """Issue #172: All rule group prefixes from standards_policy pass PR-03 evaluation."""
+        # 1. All C standard group prefixes
+        for prefix in standards_policy.GROUPS["C"]:
+            rule_id = f"{prefix}-001"
+            rule_selection = {
+                "standards": ["C"],
+                "rules": ["C-001", rule_id],
+                "source": "verified_host",
+                "selection_sha256": "c" * 64,
+            }
+            res = policy.eval_pr03_rule_id(rule_selection, ["firmware/main.c"])
+            self.assertEqual(
+                res["status"],
+                policy.GateStatus.PASS.value,
+                f"Prefix {prefix} unexpectedly blocked: {res['summary']}",
+            )
+            self.assertNotIn("bogus Rule ID detected", res["summary"])
+
+        # 2. All Go standard group prefixes
+        for prefix in standards_policy.GROUPS["GO"]:
+            rule_id = f"{prefix}-001"
+            rule_selection = {
+                "standards": ["GO"],
+                "rules": [rule_id],
+                "source": "verified_host",
+                "selection_sha256": "d" * 64,
+            }
+            res = policy.eval_pr03_rule_id(rule_selection, ["backend-go/cmd/server/main.go"])
+            self.assertEqual(
+                res["status"],
+                policy.GateStatus.PASS.value,
+                f"Prefix {prefix} unexpectedly blocked: {res['summary']}",
+            )
+            self.assertNotIn("bogus Rule ID detected", res["summary"])
+
+    def test_known_rule_prefixes_synchronized_with_standards_policy(self):
+        """Issue #172: KNOWN_RULE_PREFIXES contains every group prefix from standards_policy.GROUPS."""
+        expected_c = set(standards_policy.GROUPS["C"].keys())
+        expected_go = set(standards_policy.GROUPS["GO"].keys())
+        all_expected = expected_c | expected_go
+        self.assertTrue(all_expected.issubset(policy.KNOWN_RULE_PREFIXES))
 
     def test_pr03_missing_ts001_on_go_test_file_blocks(self):
         """R-01: PR-03 blocks if Go test file is modified but mandatory TS-001 rule is omitted."""
