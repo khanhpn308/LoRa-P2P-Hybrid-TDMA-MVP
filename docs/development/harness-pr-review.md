@@ -12,11 +12,17 @@ The **`Nghiệm thu PR #N`** command triggers an automated, deterministic, and s
 # 1. Enforce mandatory Host G0 context on tracked AGENTS.md
 python3 scripts/agent_harness/agent_context.py --repo .
 
-# 2. Run read-only PR review against GitHub PR #N
-python3 scripts/agent_harness/pr_review.py --pr <PR_NUMBER>
+# 2. Export frozen Auditor context and evidence bundle (for native invoke_subagent)
+python3 scripts/agent_harness/pr_review.py --pr <PR_NUMBER> --export-auditor-context /tmp/harness-evidence-pr-<N>/auditor_context.json --evidence-dir /tmp/harness-evidence-pr-<N>
 
-# 3. (Optional) Publish review report to PR comment (requires operator authorization)
-python3 scripts/agent_harness/pr_review.py --pr <PR_NUMBER> --publish-comment
+# 3. Autonomous review with fresh native Auditor (spawns agy sandbox)
+python3 scripts/agent_harness/pr_review.py --pr <PR_NUMBER> --auto-audit --evidence-dir /tmp/harness-evidence-pr-<N>
+
+# 4. Review with pre-generated Auditor report
+python3 scripts/agent_harness/pr_review.py --pr <PR_NUMBER> --auditor-report /tmp/harness-evidence-pr-<N>/auditor_report.json --evidence-dir /tmp/harness-evidence-pr-<N>
+
+# 5. (Optional) Publish review report to PR comment (requires explicit operator authorization)
+python3 scripts/agent_harness/pr_review.py --pr <PR_NUMBER> --auditor-report /tmp/harness-evidence-pr-<N>/auditor_report.json --publish-comment
 ```
 
 For offline or synthetic validation without GitHub API access:

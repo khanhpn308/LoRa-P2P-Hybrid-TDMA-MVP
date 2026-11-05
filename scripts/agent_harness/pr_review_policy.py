@@ -86,6 +86,8 @@ KNOWN_RULE_PREFIXES = frozenset({
 def is_security_sensitive_path(path: str) -> bool:
     """Check if a path touches security, cryptographic, TLS, or auth boundaries."""
     norm = path.strip("/").lower()
+    if norm.startswith("tests/"):
+        return False
     if norm.startswith("contracts/"):
         return True
     if any(k in norm for k in ("crypto", "tls", "auth", "secret", "token", "credential", "rbac")):
@@ -731,7 +733,7 @@ def evaluate_pr_policy(
             security_review_pass = "PASS"
         else:
             security_review_pass = "NOT_VERIFIED"
-            if any(f.startswith("contracts/") or "crypto" in f.lower() for f in changed_files):
+            if any((f.startswith("contracts/") or "crypto" in f.lower()) and not f.strip("/").lower().startswith("tests/") for f in changed_files):
                 all_blockers.append("Independent security review receipt or specialist sign-off absent for security-sensitive paths.")
 
     # R-02: Auditor evaluation

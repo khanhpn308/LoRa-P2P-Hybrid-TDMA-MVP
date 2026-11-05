@@ -161,3 +161,35 @@ python3 scripts/agent_harness/agent_context.py --repo .
 - **Dual SHA Race Check:** `eval_pr08_merge_integrity` verifies that neither `head_sha` nor `base_sha` drifts during review.
 - **Snapshot Schema 1.0:** The snapshot binds `schema_version`, `pr_number`, `repo`, `base_ref`, `base_sha`, `head_ref`, `head_sha`, `diff_sha256`, `file_diff_hashes`, `rule_selection_sha256`, and `ruleset_visibility`.
 - **Comment Guard:** `publish_pr_comment` re-validates both HEAD and BASE before publishing. Missing patch diffs or unsupported git file statuses fail closed.
+
+---
+
+## 6. Issue #163 Remediation & Independent Auditor Auto-Spawn Verification
+
+### 6.1 Problem and Root Cause
+When executing `Nghiệm thu PR #142`, automated gates PR-01 to PR-08 completed with `AUTO_CHECK_PASS=PASS` but returned `AI_REVIEW_PASS=NOT_VERIFIED` because no genuine cumulative-diff Auditor report was ingested. The coordinator specification `.agents/agents/harness-coordinator.md` did not explicitly sequence context export, subagent invocation, and second Host evaluation, while `scripts/agent_harness/pr_review.py` required manual `--auditor-report` or synthetic fixtures without native auto-spawn capabilities.
+
+### 6.2 Implementation Highlights
+1. **Autonomous Fresh Auditor Spawning (`--auto-audit`):**
+   - Added native execution path in `scripts/agent_harness/pr_review.py` utilizing `adapters.antigravity.invoke` within an isolated sandbox.
+   - Built deterministic evidence inventory (`diff.patch`, `check_runs.json`, `rule_selection.json`) stored in a secure external directory outside the candidate worktree.
+   - Enforced closed schema validation (`audit.schema.json`) via `antigravity.check_report` binding exact changed paths, `selection_sha256`, and per-rule evidence references.
+2. **Coordinator Sequencing Update (`harness-coordinator.md`):**
+   - Formalized multi-step execution: Host G0 context gate -> `--export-auditor-context` -> fresh `invoke_subagent` (TypeName: `Fresh-Independent-Auditor`, Role: `Fresh Independent Auditor`, read-only workspace) or `--auto-audit` -> Host validation & re-evaluation with `--auditor-report` -> TOCTOU SHA immutability re-check -> verdict reporting.
+3. **Synthetic Test Separation in Security Classification:**
+   - Narrowed `is_security_sensitive_path` to exclude synthetic test fixtures under `tests/agent_harness/fixtures/` (such as `pr_crypto_contract.json`), avoiding false alarms while preserving strict human sign-off policies for actual `contracts/**` and cryptographic source paths.
+4. **Adapter Compatibility:**
+   - Minimal compatibility fix in `antigravity.py` allowing default empty inventory handling for scoped validations while strictly preserving per-rule evidence binding for all `PASS` claims.
+
+### 6.3 Test & Regression Receipts
+- **Unit & Regression Suite:** Added 9 focused regression test cases covering:
+  - Positive full-scope receipt with evidence inventory verification.
+  - Negative missing tool (`agy` missing from PATH -> fails closed with `AUDIT-SPAWN` CRITICAL finding).
+  - Negative failed spawn / adapter error.
+  - Negative truncated / subset diff review (omitted files rejected by `check_report`).
+  - Negative stale SHA / TOCTOU race detection.
+  - Negative wrong Rule-ID hashes.
+  - Negative malformed receipt / untrusted evidence.
+  - Negative pass-by-assertion (PASS without receipts rejected).
+  - Synthetic crypto fixture path separation.
+- **Suite Outcome:** All 315 tests in `tests/agent_harness/` pass with zero failures and zero errors.

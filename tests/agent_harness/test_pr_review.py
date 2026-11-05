@@ -647,6 +647,250 @@ class PRReviewFixtureTests(unittest.TestCase):
         self.assertEqual(res["verdict"], policy.HostVerdict.BLOCKED.value)
 
 
+class AutoSpawnAuditorRegressionTests(unittest.TestCase):
+    """Regression tests for Issue #163: auto-spawn Auditor, schema, scope, and evidence binding."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.evidence_dir = Path(self.tmpdir.name)
+        self.codeowners = "* @default-owner\n"
+        self.rule_sha = "a" * 64
+        self.sel_sha = "b" * 64
+        self.receipt_sha = "c" * 64
+        self.rule_selection = {
+            "source": "verified_host",
+            "standards": ["C"],
+            "rules": [{"rule_id": "C-001", "rule_sha256": self.rule_sha, "title": "Memory safety"}],
+            "selected_ids": ["C-001"],
+            "selection_sha256": self.sel_sha,
+            "rule_count": 1,
+        }
+        self.pr_data = {
+            "number": 100,
+            "title": "Test PR",
+            "author": "author-user",
+            "base_ref": "main",
+            "base_sha": "1" * 40,
+            "head_ref": "feature/100-test",
+            "head_sha": "2" * 40,
+            "files": [{"filename": "firmware/main.c", "status": "modified", "patch": "+void foo(void) {}"}],
+            "reviews": [],
+        }
+        self.evidence_inventory = {
+            "diff.patch": self.receipt_sha,
+            "check_runs.json": "d" * 64,
+            "rule_selection.json": self.sel_sha,
+        }
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+
+    def test_auto_audit_missing_tool_fails_closed(self):
+        """Missing 'agy' tool fails closed with AUDIT-SPAWN CRITICAL finding."""
+        with patch("shutil.which", return_value=None):
+            with self.assertRaises(pr_review.PRReviewError) as ctx:
+                pr_review.run_auto_audit(
+                    pr_data=self.pr_data,
+                    rule_selection=self.rule_selection,
+                    evidence_inventory=self.evidence_inventory,
+                    cumulative_diff="diff --git a/firmware/main.c b/firmware/main.c",
+                    evidence_dir=self.evidence_dir,
+                )
+            self.assertIn("not found in PATH", str(ctx.exception))
+
+    def test_auto_audit_failed_spawn_fails_closed(self):
+        """Failed spawn or adapter error in CLI results in CRITICAL AUDIT-SPAWN finding and AI_REVIEW_PASS=FAIL."""
+        args = pr_review.argparse.Namespace(
+            candidate_repo=str(HARNESS_DIR.parent.parent),
+            pr=100,
+            repo="khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP",
+            fixture=None,
+            auditor_report=None,
+            auto_audit=True,
+            evidence_dir=str(self.evidence_dir),
+            export_auditor_context=None,
+            output_json=None,
+            output_md=None,
+            publish_comment=False,
+        )
+        with patch.object(pr_review, "fetch_pr_data_github", return_value=self.pr_data), \
+             patch.object(pr_review, "fetch_check_runs_github", return_value=[]), \
+             patch.object(pr_review, "fetch_ruleset_status_github", return_value="BRANCH_PROTECTION_ENFORCED"), \
+             patch.object(pr_review, "fetch_latest_head_sha", return_value="2" * 40), \
+             patch.object(pr_review, "fetch_latest_base_sha", return_value="1" * 40), \
+             patch.object(pr_review, "select_rules", return_value=self.rule_selection), \
+             patch.object(pr_review, "run_auto_audit", side_effect=RuntimeError("Subprocess spawn denied")):
+            code = pr_review.run_pr_review(args)
+            self.assertEqual(code, 2)
+
+    def test_auto_audit_truncated_subset_diff_rejected(self):
+        """Auditor report reviewing a subset of files is rejected by check_report."""
+        report = {
+            "status": "PASS",
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": [],  # Subset: omitted firmware/main.c!
+            "selection_sha256": self.sel_sha,
+            "rule_results": [{
+                "rule_id": "C-001",
+                "rule_sha256": self.rule_sha,
+                "status": "PASS",
+                "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": self.receipt_sha}],
+                "reason": "Safe bounds checked.",
+            }],
+        }
+        report_path = self.evidence_dir / "auditor_report.json"
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        res = pr_review.validate_and_load_auditor_report(
+            report_path, self.pr_data, self.rule_selection, self.evidence_inventory
+        )
+        self.assertEqual(res["status"], "FAIL")
+        self.assertIn("AUDIT-SCHEMA", res["findings"][0]["rule"])
+        self.assertIn("exact changed path set", res["findings"][0]["explanation"])
+
+    def test_auto_audit_wrong_rule_id_hashes_rejected(self):
+        """Auditor report with mismatched rule_sha256 is rejected by check_report."""
+        wrong_rule_sha = "f" * 64
+        report = {
+            "status": "PASS",
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["firmware/main.c"],
+            "selection_sha256": self.sel_sha,
+            "rule_results": [{
+                "rule_id": "C-001",
+                "rule_sha256": wrong_rule_sha,
+                "status": "PASS",
+                "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": self.receipt_sha}],
+                "reason": "Safe bounds checked.",
+            }],
+        }
+        report_path = self.evidence_dir / "auditor_report.json"
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        res = pr_review.validate_and_load_auditor_report(
+            report_path, self.pr_data, self.rule_selection, self.evidence_inventory
+        )
+        self.assertEqual(res["status"], "FAIL")
+        self.assertIn("AUDIT-SCHEMA", res["findings"][0]["rule"])
+
+    def test_auto_audit_malformed_receipt_or_untrusted_evidence_rejected(self):
+        """Auditor report referencing non-existent receipt or wrong hash is rejected."""
+        wrong_receipt_sha = "0" * 64
+        report = {
+            "status": "PASS",
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["firmware/main.c"],
+            "selection_sha256": self.sel_sha,
+            "rule_results": [{
+                "rule_id": "C-001",
+                "rule_sha256": self.rule_sha,
+                "status": "PASS",
+                "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": wrong_receipt_sha}],
+                "reason": "Safe bounds checked.",
+            }],
+        }
+        report_path = self.evidence_dir / "auditor_report.json"
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        res = pr_review.validate_and_load_auditor_report(
+            report_path, self.pr_data, self.rule_selection, self.evidence_inventory
+        )
+        self.assertEqual(res["status"], "FAIL")
+        self.assertIn("AUDIT-SCHEMA", res["findings"][0]["rule"])
+
+    def test_auto_audit_pass_by_assertion_rejected(self):
+        """Per-rule PASS without Host-inventoried evidence references is rejected."""
+        report = {
+            "status": "PASS",
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["firmware/main.c"],
+            "selection_sha256": self.sel_sha,
+            "rule_results": [{
+                "rule_id": "C-001",
+                "rule_sha256": self.rule_sha,
+                "status": "PASS",
+                "evidence": [],  # Empty evidence! Pass-by-assertion
+                "reason": "I assert this passed without evidence.",
+            }],
+        }
+        report_path = self.evidence_dir / "auditor_report.json"
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        res = pr_review.validate_and_load_auditor_report(
+            report_path, self.pr_data, self.rule_selection, self.evidence_inventory
+        )
+        self.assertEqual(res["status"], "FAIL")
+        self.assertIn("AUDIT-SCHEMA", res["findings"][0]["rule"])
+        self.assertIn("requires Host-inventoried evidence", res["findings"][0]["explanation"])
+
+    def test_auto_audit_positive_full_scope_receipt(self):
+        """Valid positive auditor report passes check_report and achieves AI_REVIEW_PASS=PASS."""
+        report = {
+            "status": "PASS",
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["firmware/main.c"],
+            "selection_sha256": self.sel_sha,
+            "rule_results": [{
+                "rule_id": "C-001",
+                "rule_sha256": self.rule_sha,
+                "status": "PASS",
+                "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": self.receipt_sha}],
+                "reason": "Inspected cumulative diff patch confirms memory bounds and safe pointer usage.",
+            }],
+        }
+        report_path = self.evidence_dir / "auditor_report.json"
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        res = pr_review.validate_and_load_auditor_report(
+            report_path, self.pr_data, self.rule_selection, self.evidence_inventory
+        )
+        self.assertEqual(res["status"], "PASS")
+
+        eval_res = policy.evaluate_pr_policy(
+            pr_data=self.pr_data,
+            linked_issue={"number": 100, "state": "OPEN"},
+            allowed_paths=["firmware/main.c"],
+            codeowners_content=self.codeowners,
+            rule_selection=self.rule_selection,
+            auditor_report=res,
+            check_runs=[{"name": "unit-test", "status": "completed", "conclusion": "success"}],
+            hil_receipt={"status": "PASS"},
+            head_sha_at_start="2" * 40,
+            head_sha_at_end="2" * 40,
+            base_sha_at_start="1" * 40,
+            base_sha_at_end="1" * 40,
+        )
+        self.assertEqual(eval_res["dimensions"]["AI_REVIEW_PASS"], "PASS")
+        self.assertEqual(eval_res["gates"][3]["status"], "PASS")
+
+    def test_export_auditor_context_command(self):
+        """CLI flag --export-auditor-context writes frozen context and prompt without executing PR content."""
+        fixture_path = HARNESS_DIR.parent.parent / "tests" / "agent_harness" / "fixtures" / "pr_review" / "pr_clean_docs.json"
+        export_file = self.evidence_dir / "auditor_context.json"
+        cmd = [
+            sys.executable,
+            str(HARNESS_DIR / "pr_review.py"),
+            "--fixture", str(fixture_path),
+            "--candidate-repo", str(HARNESS_DIR.parent.parent),
+            "--evidence-dir", str(self.evidence_dir),
+            "--export-auditor-context", str(export_file),
+        ]
+        code, out, _ = pr_review._run_cmd(cmd)
+        self.assertEqual(code, 0)
+        self.assertTrue(export_file.is_file())
+        data = json.loads(export_file.read_text(encoding="utf-8"))
+        self.assertIn("diff_sha256", data)
+        self.assertIn("required_paths", data)
+        self.assertIn("evidence_inventory", data)
+        self.assertIn("auditor_prompt", data)
+        self.assertTrue((self.evidence_dir / "auditor_prompt.txt").is_file())
+
+    def test_crypto_fixture_path_separation(self):
+        """pr_crypto_contract.json is recognized as a synthetic test fixture, not a cryptographic contract."""
+        self.assertFalse(policy.is_security_sensitive_path("tests/agent_harness/fixtures/pr_review/pr_crypto_contract.json"))
+        self.assertTrue(policy.is_security_sensitive_path("contracts/crypto/aes_session.md"))
+
+
 class PRReviewCLITests(unittest.TestCase):
     """End-to-end CLI execution tests."""
 

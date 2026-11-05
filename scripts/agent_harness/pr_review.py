@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from typing import Any
 
 # Local harness imports
@@ -254,12 +255,191 @@ def compute_diff_hashes(files: list[dict[str, Any]]) -> tuple[dict[str, str], st
     return file_hashes, hasher.hexdigest()
 
 
+def fetch_pr_cumulative_diff(repo: str, pr_number: int | None, files: list[dict[str, Any]]) -> str:
+    """Fetch exact cumulative git diff via GitHub CLI or assemble from file patches."""
+    if pr_number and shutil.which("gh"):
+        code, out, _ = _run_cmd([
+            "gh", "api", f"repos/{repo}/pulls/{pr_number}", "-H", "Accept: application/vnd.github.v3.diff",
+        ])
+        if code == 0 and out.strip():
+            return out
+    chunks: list[str] = []
+    for f in sorted(files, key=lambda x: x.get("filename", "")):
+        fname = f.get("filename", "")
+        patch = f.get("patch", "")
+        if patch:
+            chunks.append(f"diff --git a/{fname} b/{fname}\n--- a/{fname}\n+++ b/{fname}\n{patch}")
+    return "\n".join(chunks)
+
+
+def build_evidence_inventory(
+    evidence_dir: Path | None,
+    pr_data: dict[str, Any],
+    cumulative_diff: str,
+    check_runs: list[dict[str, Any]] | None,
+    rule_selection: dict[str, Any] | None,
+) -> dict[str, str]:
+    """Construct deterministic inventory mapping canonical receipt paths to SHA256 hashes."""
+    inventory: dict[str, str] = {}
+
+    diff_bytes = cumulative_diff.encode("utf-8")
+    diff_hash = hashlib.sha256(diff_bytes).hexdigest()
+    inventory["diff.patch"] = diff_hash
+
+    check_runs_bytes = json.dumps(check_runs or [], sort_keys=True, indent=2).encode("utf-8")
+    inventory["check_runs.json"] = hashlib.sha256(check_runs_bytes).hexdigest()
+
+    if rule_selection:
+        sel_sha = rule_selection.get("selection_sha256")
+        if sel_sha:
+            inventory["rule_selection.json"] = sel_sha
+        else:
+            sel_bytes = json.dumps(rule_selection, sort_keys=True, indent=2).encode("utf-8")
+            inventory["rule_selection.json"] = hashlib.sha256(sel_bytes).hexdigest()
+
+    if evidence_dir:
+        evidence_dir.mkdir(parents=True, exist_ok=True)
+        (evidence_dir / "diff.patch").write_bytes(diff_bytes)
+        (evidence_dir / "check_runs.json").write_bytes(check_runs_bytes)
+        if rule_selection:
+            (evidence_dir / "rule_selection.json").write_text(
+                json.dumps(rule_selection, indent=2, sort_keys=True), encoding="utf-8"
+            )
+        for p in sorted(evidence_dir.iterdir()):
+            if p.is_file() and p.name not in (
+                "evidence_inventory.json",
+                "auditor_prompt.txt",
+                "auditor_input.json",
+                "auditor_report.json",
+                "auditor_context.json",
+            ):
+                h = hashlib.sha256(p.read_bytes()).hexdigest()
+                inventory[p.name] = h
+
+        (evidence_dir / "evidence_inventory.json").write_text(
+            json.dumps(inventory, indent=2, sort_keys=True), encoding="utf-8"
+        )
+
+    return inventory
+
+
+def build_auditor_prompt(
+    pr_data: dict[str, Any],
+    rule_selection: dict[str, Any] | None,
+    evidence_inventory: dict[str, str],
+    cumulative_diff: str,
+) -> str:
+    """Build bounded prompt instructing fresh independent Auditor."""
+    required_paths = sorted({f.get("filename", "") for f in pr_data.get("files", [])})
+    rules = rule_selection.get("rules", []) if rule_selection else []
+    sel_sha = rule_selection.get("selection_sha256", "") if rule_selection else ""
+
+    rules_lines: list[str] = []
+    for r in rules:
+        if isinstance(r, dict):
+            rules_lines.append(
+                f"- Rule {r.get('rule_id')}: sha256={r.get('rule_sha256')} - {r.get('title', r.get('description', ''))}"
+            )
+        else:
+            rules_lines.append(f"- Rule {r}")
+
+    evidence_lines = [f"- {p}: sha256={h}" for p, h in sorted(evidence_inventory.items())]
+
+    prompt = f"""You are a fresh, independent, read-only code and compliance Auditor.
+Your audit is strictly read-only: do NOT make edits or self-approve.
+You must review the full cumulative diff across all changed files and evaluate compliance against applicable Host-selected Rule IDs.
+
+PR Number: #{pr_data.get('number')}
+PR Title: {pr_data.get('title')}
+PR Author: @{pr_data.get('author')}
+Base SHA: {pr_data.get('base_sha')}
+Head SHA: {pr_data.get('head_sha')}
+
+Mandatory Reviewed Scope ({len(required_paths)} files):
+{json.dumps(required_paths, indent=2)}
+
+Host Selection SHA256:
+{sel_sha}
+
+Applicable Scoped Rule IDs ({len(rules)} rules):
+{chr(10).join(rules_lines) if rules_lines else "(No code standards rules required for docs/non-code changes)"}
+
+Host Evidence Inventory:
+{chr(10).join(evidence_lines)}
+
+Cumulative PR Diff:
+```diff
+{cumulative_diff[:50000]}
+```
+
+Instructions:
+1. Output ONLY a valid JSON object matching the required audit schema.
+2. Root keys must be: "status", "findings", "limitations", "reviewed_scope", and when rules are selected: "selection_sha256", "rule_results".
+3. "reviewed_scope" MUST be the exact list of {len(required_paths)} changed files above.
+4. "selection_sha256" MUST be exactly "{sel_sha}".
+5. In "rule_results", you must evaluate each applicable Rule ID:
+   - "rule_id": string
+   - "rule_sha256": string (must match Host hash)
+   - "status": "PASS" | "FAIL" | "NOT_RUN" | "NOT_VERIFIED" | "WAIVED_WITH_REASON"
+   - "evidence": [{{"receipt_path": "<from evidence inventory>", "receipt_sha256": "<matching sha256>"}}]
+   - "reason": detailed explanation
+6. If all rules and correctness checks pass with zero defects:
+   - "status" = "PASS"
+   - "findings" = []
+   - "limitations" = []
+"""
+    return prompt
+
+
+def run_auto_audit(
+    pr_data: dict[str, Any],
+    rule_selection: dict[str, Any] | None,
+    evidence_inventory: dict[str, str],
+    cumulative_diff: str,
+    evidence_dir: Path,
+    timeout: int = 300,
+) -> dict[str, Any]:
+    """Spawn fresh independent Auditor in sandbox using antigravity adapter."""
+    if not antigravity:
+        raise PRReviewError("antigravity adapter not available; cannot spawn Auditor")
+
+    if not shutil.which("agy"):
+        raise PRReviewError("Auditor binary 'agy' not found in PATH; cannot spawn independent Auditor")
+
+    required_paths = {f.get("filename", "") for f in pr_data.get("files", [])}
+    has_rules = bool(rule_selection and rule_selection.get("rules") and rule_selection.get("selection_sha256"))
+    required_rules = rule_selection.get("rules") if has_rules else None
+    sel_sha = rule_selection.get("selection_sha256") if has_rules else None
+
+    prompt = build_auditor_prompt(pr_data, rule_selection, evidence_inventory, cumulative_diff)
+    schema_path = Path(__file__).resolve().parent / "adapters" / "audit.schema.json"
+
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    (evidence_dir / "auditor_prompt.txt").write_text(prompt, encoding="utf-8")
+
+    report = antigravity.invoke(
+        prompt=prompt,
+        snapshot=evidence_dir,
+        schema=schema_path,
+        timeout=timeout,
+        required_paths=required_paths,
+        required_rules=required_rules,
+        selection_sha256=sel_sha,
+        evidence_inventory=evidence_inventory,
+    )
+
+    report_file = evidence_dir / "auditor_report.json"
+    report_file.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+    return report
+
+
 def validate_and_load_auditor_report(
     report_path: Path,
     pr_data: dict[str, Any],
     rule_selection: dict[str, Any] | None,
+    evidence_inventory: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Validate external Auditor report against schema and exact changed paths."""
+    """Validate external Auditor report against schema, evidence inventory, and exact changed paths."""
     if not report_path.is_file():
         raise PRReviewError(f"Auditor report path not found: {report_path}")
 
@@ -274,13 +454,15 @@ def validate_and_load_auditor_report(
     if antigravity:
         try:
             # Check schema using antigravity adapter
-            required_rules = rule_selection.get("rules", []) if rule_selection else None
-            sel_sha = rule_selection.get("selection_sha256") if rule_selection else None
+            has_rules = bool(rule_selection and rule_selection.get("rules") and rule_selection.get("selection_sha256"))
+            required_rules = rule_selection.get("rules") if has_rules else None
+            sel_sha = rule_selection.get("selection_sha256") if has_rules else None
             return antigravity.check_report(
                 report,
                 required_paths=required_paths,
                 required_rules=required_rules,
                 selection_sha256=sel_sha,
+                evidence_inventory=evidence_inventory if has_rules else None,
             )
         except Exception as exc:
             # Return report with failure finding
@@ -540,16 +722,87 @@ def run_pr_review(args: argparse.Namespace) -> int:
                 "rules": [],
             }
 
-    # 5. Auditor Report Intake (R-02)
+    # 5. Diff hashes and snapshot (R-05: Schema 1.0, bound base/head/diff/rules)
+    file_hashes, overall_diff_hash = compute_diff_hashes(pr_data.get("files", []))
+    cumulative_diff = fetch_pr_cumulative_diff(repo_name, pr_number, pr_data.get("files", []))
+
+    # Evidence inventory and external evidence dir
+    evidence_dir = Path(args.evidence_dir).resolve() if getattr(args, "evidence_dir", None) else None
+    evidence_inventory = build_evidence_inventory(
+        evidence_dir=evidence_dir,
+        pr_data=pr_data,
+        cumulative_diff=cumulative_diff,
+        check_runs=check_runs,
+        rule_selection=rule_selection,
+    )
+
+    # Optional export of frozen auditor context
+    if getattr(args, "export_auditor_context", None):
+        export_path = Path(args.export_auditor_context).resolve()
+        export_path.parent.mkdir(parents=True, exist_ok=True)
+        auditor_prompt = build_auditor_prompt(pr_data, rule_selection, evidence_inventory, cumulative_diff)
+        context_payload = {
+            "pr_number": pr_data.get("number"),
+            "title": pr_data.get("title"),
+            "author": pr_data.get("author"),
+            "base_ref": pr_data.get("base_ref"),
+            "base_sha": base_sha_at_start,
+            "head_ref": pr_data.get("head_ref"),
+            "head_sha": head_sha_at_start,
+            "diff_sha256": overall_diff_hash,
+            "required_paths": sorted({f.get("filename", "") for f in pr_data.get("files", [])}),
+            "rule_selection": rule_selection,
+            "selection_sha256": rule_selection.get("selection_sha256") if rule_selection else None,
+            "evidence_inventory": evidence_inventory,
+            "cumulative_diff": cumulative_diff,
+            "auditor_prompt": auditor_prompt,
+        }
+        export_path.write_text(json.dumps(context_payload, indent=2, sort_keys=True), encoding="utf-8")
+        if evidence_dir:
+            (evidence_dir / "auditor_prompt.txt").write_text(auditor_prompt, encoding="utf-8")
+        print(f"✅ Auditor context exported to {export_path}")
+        if not getattr(args, "auditor_report", None) and not getattr(args, "auto_audit", False):
+            return 0
+
+    # 6. Auditor Report Intake (R-02)
     auditor_report = None
     if getattr(args, "auditor_report", None):
         auditor_report_path = Path(args.auditor_report).resolve()
-        auditor_report = validate_and_load_auditor_report(auditor_report_path, pr_data, rule_selection)
+        auditor_report = validate_and_load_auditor_report(
+            auditor_report_path, pr_data, rule_selection, evidence_inventory=evidence_inventory
+        )
+    elif getattr(args, "auto_audit", False):
+        try:
+            target_evidence_dir = evidence_dir or Path(tempfile.mkdtemp(prefix=f"harness-evidence-pr{pr_number or 0}-"))
+            audit_timeout = getattr(args, "audit_timeout", 300)
+            auditor_report = run_auto_audit(
+                pr_data=pr_data,
+                rule_selection=rule_selection,
+                evidence_inventory=evidence_inventory,
+                cumulative_diff=cumulative_diff,
+                evidence_dir=target_evidence_dir,
+                timeout=audit_timeout,
+            )
+        except Exception as exc:
+            required_paths = sorted({f.get("filename", "") for f in pr_data.get("files", [])})
+            auditor_report = {
+                "status": "FAIL",
+                "findings": [
+                    {
+                        "severity": "CRITICAL",
+                        "file": "audit",
+                        "line": 1,
+                        "rule": "AUDIT-SPAWN",
+                        "explanation": f"Independent Auditor auto-spawn failed: {exc}",
+                        "fix": "Verify native toolchain and re-run independent Auditor.",
+                    }
+                ],
+                "limitations": [f"Auto-audit spawn failure: {exc}"],
+                "reviewed_scope": required_paths,
+            }
     elif fixture_auditor_report:
         auditor_report = fixture_auditor_report
 
-    # 6. Diff hashes and snapshot (R-05: Schema 1.0, bound base/head/diff/rules)
-    file_hashes, overall_diff_hash = compute_diff_hashes(pr_data.get("files", []))
     snapshot = {
         "schema_version": "1.0",
         "pr_number": pr_data.get("number"),
@@ -639,6 +892,10 @@ def main() -> int:
     parser.add_argument("--candidate-repo", default=".", help="Local repository path for G0 and CODEOWNERS checks")
     parser.add_argument("--fixture", help="Path to synthetic PR fixture JSON (for offline validation)")
     parser.add_argument("--auditor-report", help="Path to external Auditor report JSON")
+    parser.add_argument("--auto-audit", action="store_true", help="Automatically spawn fresh independent Auditor via agy sandbox")
+    parser.add_argument("--audit-timeout", type=int, default=300, help="Timeout in seconds for Auditor auto-spawn (default: 300)")
+    parser.add_argument("--evidence-dir", help="Directory for external evidence storage (outside candidate worktree)")
+    parser.add_argument("--export-auditor-context", help="Path to write frozen auditor context JSON")
     parser.add_argument("--output-json", help="Path to write structured JSON evaluation output")
     parser.add_argument("--output-md", help="Path to write Markdown review report")
     parser.add_argument("--publish-comment", action="store_true", help="Publish or update comment on GitHub PR (requires operator authorization)")

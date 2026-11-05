@@ -149,6 +149,8 @@ def check_report(report: Any, required_paths: set[str], required_rules=None,
     scoped = required_rules is not None
     if not scoped and (selection_sha256 is not None or evidence_inventory is not None):
         raise AuditError("Partial Host scope cannot fall back to legacy validation")
+    if scoped and evidence_inventory is None:
+        evidence_inventory = {}
     keys = _ROOT_KEYS | {"selection_sha256", "rule_results"} if scoped else _ROOT_KEYS
     if not isinstance(report, dict) or set(report) != keys:
         raise AuditError("audit report keys differ from required schema")
@@ -189,6 +191,8 @@ def check_report(report: Any, required_paths: set[str], required_rules=None,
     if scoped:
         try:
             _check_rules(report, required_rules, selection_sha256, evidence_inventory)
+        except AuditError:
+            raise
         except (KeyError, TypeError, ValueError, AttributeError) as exc:
             raise AuditError("Scoped rule or evidence verification failed") from exc
     return report
