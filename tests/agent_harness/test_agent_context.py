@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -64,6 +65,27 @@ class AgentContextTests(unittest.TestCase):
         sub.mkdir()
         with self.assertRaises(ContextGateError):
             load_context(sub)
+
+    def test_staged_policy_hidden_by_restored_worktree_fails(self):
+        path = self.root / "AGENTS.md"
+        original = path.read_bytes()
+        path.write_text("Changed staged policy\n")
+        git(self.root, "add", "AGENTS.md")
+        path.write_bytes(original)
+        with self.assertRaises(ContextGateError):
+            load_context(self.root)
+
+    def test_cli_docs_omit_standards_and_unknown_requested_id_blocks(self):
+        command = [sys.executable, str(Path(__file__).resolve().parents[2] /
+                   "scripts/agent_harness/agent_context.py"), "--repo", str(self.root),
+                   "--allowed-path", "README.md"]
+        done = subprocess.run(command, capture_output=True, text=True, timeout=15)
+        self.assertEqual(done.returncode, 0, done.stdout)
+        self.assertEqual(json.loads(done.stdout)["standards"]["selected_ids"], [])
+        rejected = subprocess.run(command + ["--rule-id", "INVALID-999"],
+                                  capture_output=True, text=True, timeout=15)
+        self.assertEqual(rejected.returncode, 2)
+        self.assertEqual(json.loads(rejected.stdout)["status"], "BLOCKED")
 
 
 if __name__ == "__main__":

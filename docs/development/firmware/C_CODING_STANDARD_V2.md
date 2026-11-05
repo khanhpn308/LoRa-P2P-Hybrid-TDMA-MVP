@@ -1,30 +1,19 @@
-## 0. Agent entrypoint: execute this decision flow
-**Authority:** Host-verified `AGENTS.md`/G0 → live Issue/AC/allowed paths/branch → approved ADRs/contracts → current code. This document does not grant scope or override higher authority; conflicts/D01–D13 → `STOP_AND_REPORT`.
-
-**Core for every firmware task:** §0 + §1 GOV + §2 C + §3 MEM + §4 ERR + §11 QA + §12 decisions + §13 evidence. Load only relevant IDs.
-
-| Affected path | Add to Core |
+| Group | Rule IDs |
 |---|---|
-| `firmware/components/sx1276_driver/**` | §5 RTOS + §8 RAD |
-| `firmware/components/lora_mac/**` | §7 SEC + §9 MAC |
-| `firmware/components/tdma_common/**` | §6 ARCH + §10 TDMA |
-| `firmware/components/airtime_policy/**` | §8 RAD + §10 TDMA |
-| `firmware/gateway_master/**` / `firmware/sensor_node/**` | Sections directly affected by diff |
-```bash
-# Exact Rule IDs only — no repeated table headers
-rg -n '^\| (GOV|C|MEM|ERR|RTOS|RAD|QA)-[0-9]{3} ' docs/development/firmware/C_CODING_STANDARD_V2.md
-```
-**`STATIC(CG)`:** MUST use available `codegraph_explore` for caller/callee, ISR/`ESP_TIMER_ISR`, SPI and single-radio ownership before broad-tree reads. Cross-scope results are READ ONLY, not runtime/HIL/RF evidence. Missing MCP: `NOT_RUN: codegraph_explore` plus scoped read-only `rg` and call-site review.
+| GOV | GOV-001..010 |
+| C | C-001..020 |
+| MEM | MEM-001..008 |
+| ERR | ERR-001..007 |
+| RTOS | RTOS-001..010 |
+| ARCH | ARCH-001..007 |
+| SEC | SEC-001..008 |
+| RAD | RAD-001..009 |
+| MAC | MAC-001..007 |
+| TDMA | TDMA-001..010 |
+| QA | QA-001..008 |
 
-**Flow:** `PRECHECK` (G0/Issue/tree) → `DESIGN_BOUNDARY` (authority/ownership) → `IMPLEMENT` (scope) → `VERIFY` (actual receipts) → `HANDOFF` (Draft PR + humans). Missing G0, dirty tree, forbidden writes or unapproved RF/wire/security/pin/timing decision → `STOP_AND_REPORT`.
+Rule fields: `ID | scope | directive | verification | failure action`. Source mapping: §15. `STATIC(CG)` uses available CodeGraph for caller/owner inspection; unavailable tooling is `NOT_RUN`, never runtime proof.
 
-**Status semantics:** (1) `MUST`/`MUST_NOT` = conservative review safeguards, not activated policy; (2) Owner content approval and agent use do not constitute technical sign-off; (3) `NOT_VERIFIED` is neither PASS nor FAIL and G0–G6 need distinct evidence.
-### Rule grammar and verification evidence
-Every atomic line uses this format:
-
-`RULE_ID | SCOPE | DIRECTIVE | VERIFY | IF_VIOLATED`
-
-`VERIFY` tags: `STATIC` (inspection/lint), `UNIT`, `BUILD`, `CONTRACT`, `INTEGRATION`, `SIM`, `HIL`, `RF`, `SECURITY`, `HUMAN`. Tags are **required evidence types, not reported test results**. `IF_VIOLATED=FIX` permits a scoped correction; `STOP` requires escalation or authorization. Source mapping is in [§15](#15-sourceprovenance-and-migration-matrix) and the Cold Audit archive. `STATIC(CG)` follows §0; absent MCP means `NOT_RUN`.
 ## 1. GOV — agent safety, scope, authority (all firmware work)
 | Rule ID | Scope | Directive | Verify | If violated |
 |---|---|---|---|---|
@@ -179,15 +168,6 @@ Every atomic line uses this format:
 ## 13. Deterministic agent checklist (required PR evidence)
 ### Preflight
 **Pre-edit report:** `ISSUE_URL`, `BASE_SHA`, `BRANCH`, `ISSUE_ALLOWED_PATHS`, `APPLICABLE_RULE_IDS`, `RULE_APPROVAL_STATUS`, `CONTRACT_CONFLICTS`, `BLOCKED_DECISIONS`, `TEST_PLAN`.
-```bash
-git remote -v
-git branch --show-current
-git status --porcelain=v1
-git rev-parse HEAD origin/main
-git diff --name-only origin/main...HEAD
-cat firmware/esp-idf-version.txt
-```
-Read the Issue's exact allowed paths before editing. A clean worktree assertion means **empty output** from `git status --porcelain=v1`. If this or toolchain/config identity fails, STOP; do not `reset --hard`, `clean -fd`, `push --force` or silently stash user work. Fetch `origin/main` only after verifying remote and branch identity.
 ### Verification selection
 | Change kind | Minimum review/check (as permitted by Issue) | Explicitly NOT implied |
 |---|---|---|
@@ -198,15 +178,14 @@ Read the Issue's exact allowed paths before editing. A clean worktree assertion 
 | TDMA scheduling | static validator, simulation then measured ToA/IRQ/drift/guard and recovery HIL | Numeric guarantees from planner |
 | MQTT/API boundary | reviewed schema/version, producer/consumer integration, ACL/replay/expiry | PUBACK = application ACK |
 ### PR result contract
-**Final task/review report:** `TASK_ID`, `ISSUE_URL`, `BASE_SHA`, `HEAD_SHA`, `BRANCH`, `CHANGED_PATHS`, `SCOPE_CHECK`, `RULE_IDS_CONSULTED`, `RULE_IDS_APPLIED`, `CONFLICTS_OR_EXCEPTIONS`, `BLOCKED_DECISIONS`, `TOOLCHAIN_VERSION`, `TEST_COMMANDS`, `TESTS_RUN`, `NOT_RUN`, `KNOWN_LIMITATIONS`, `EVIDENCE_STATUS`, `EVIDENCE_URLS`, `REVIEWERS_REQUIRED`, `PR_URL`, `FINAL_STATUS`. Values must be truthful. Current status is `OWNER_APPROVED_FROZEN / TECHNICAL_REVIEW_PENDING / ENFORCEMENT_REVIEW_ONLY`; relevant G0–G6 gates remain `NOT_VERIFIED` absent their distinct signed/independent evidence.
+**Final task/review report:** `TASK_ID`, `ISSUE_URL`, `BASE_SHA`, `HEAD_SHA`, `BRANCH`, `CHANGED_PATHS`, `SCOPE_CHECK`, `RULE_IDS_CONSULTED`, `RULE_IDS_APPLIED`, `CONFLICTS_OR_EXCEPTIONS`, `BLOCKED_DECISIONS`, `TOOLCHAIN_VERSION`, `TEST_COMMANDS`, `TESTS_RUN`, `NOT_RUN`, `KNOWN_LIMITATIONS`, `EVIDENCE_STATUS`, `EVIDENCE_URLS`, `REVIEWERS_REQUIRED`, `PR_URL`, `FINAL_STATUS`. Values must be truthful. Relevant G0–G6 gates remain `NOT_VERIFIED` absent their distinct evidence.
 ## 14. AI agent conformance evaluation (test specification; NOT_EXECUTED)
 AI agent conformance evaluation scenarios (CASE-01..12) are maintained in [agent-conformance-scenarios.md](../../verification/agent-conformance-scenarios.md) (`NOT_EXECUTED`). AI Coding Workers must not load that file during normal implementation tasks.
 ## 15. Source/provenance and migration matrix
-1. **Monorepo authority:** `AGENTS.md` (Codex/AGY entrypoint); Copilot-specific instructions are optional historical/compatibility sources, not mandatory. `docs/requirements/requirements.md` (23 RTM rows pending approval); `docs/adr/0001-hybrid-tdma.md`; `docs/adr/0002-mqtt-5.md`; `docs/adr/0003-esp-idf-v6-1.md`; `docs/verification/acceptance-gates.md`; `contracts/OPEN_DECISIONS.md`; `contracts/{radio-mac,mqtt,api}/`.
-2. **Upstream demo source:** `khanhpn308/esp32e_sx1768-915Mhz`, immutable commit `2af2bd2a99234b15f59848f4bdd0b1e920c2dcd5`, `docs/C_CODING_STANDARDS.md`, 41,197 bytes, SHA-256 `70fc06ec5f21e21725f0227238ed3ab258e21b113b95f9ef481332d54715c5de`. **Source-local approval does not transfer.**
-3. **Rule-by-rule v1 disposition:** [Cold source traceability](../../audits/firmware/C_STANDARD_SOURCE_TRACEABILITY.md) is the preserved mapping of **123 upstream IDs across 12 categories**, with KEEP/MODIFY/RELOCATE/BLOCKED dispositions. v2 Rule IDs here are **new operational IDs**; do not pretend they form a one-to-one correspondence with all 123 v1 IDs.
-4. **API reference:** [Espressif ESP-IDF v6.1 / ESP32 esp_timer](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32/api-reference/system/esp_timer.html), specifically TASK vs ISR callback dispatch and task callback blocking. Other API details require exact-version recheck during the actual implementation Issue.
-5. **Hardware authority:** Semtech `SX1276_Datasheet.pdf` and Espressif `esp32-wroom-32e_esp32-wroom-32ue_datasheet_en.pdf` are reference artifacts in the project; confirm manufacturer revision and target board/silicon before freezing pins, mode masks or PA power behavior.
+- [Cold source traceability](../../audits/firmware/C_STANDARD_SOURCE_TRACEABILITY.md) maps upstream IDs to operational v2 domains. Upstream `docs/C_CODING_STANDARDS.md` at `khanhpn308/esp32e_sx1768-915Mhz@2af2bd2a99234b15f59848f4bdd0b1e920c2dcd5`; SHA-256 `70fc06ec5f21e21725f0227238ed3ab258e21b113b95f9ef481332d54715c5de`.
+- GOV/ARCH/SEC/MAC/TDMA/QA use `AGENTS.md`, approved `docs/requirements/`, `docs/adr/`, `contracts/` and `docs/verification/acceptance-gates.md` according to their individual approval status. No standard grants authority to resolve blocked contracts.
+- C/MEM/ERR/RTOS/RAD use source traceability, exact ESP-IDF v6.1 APIs and manufacturer documents. [ESP-IDF v6.1 ESP32 esp_timer](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32/api-reference/system/esp_timer.html) distinguishes task and ISR dispatch. Verify API, board and silicon revision before adopting assumptions.
+- Hardware sources: Semtech `SX1276_Datasheet.pdf`; Espressif `esp32-wroom-32e_esp32-wroom-32ue_datasheet_en.pdf`. Demo values do not approve RF profiles, pins, timing or crypto.
 
 | Upstream v1 domain | v2 implementation | Disposition boundary |
 |---|---|---|
@@ -217,9 +196,3 @@ AI agent conformance evaluation scenarios (CASE-01..12) are maintained in [agent
 | PRO | SEC-001..008; MAC-001..007 | Security and parser rules; no 8-byte header/CRC-only production codec |
 | HW | GOV-004; RAD-005/007 | Hardware/GPIO/power facts relocated to board revision and legal/RF evidence |
 | DOC, QA | QA-001..008; §13/14 | Distinguish proof types, explicit claims and agent conformance |
-## 16. Human review / activation conditions
-This `v2.0.0` content is `OWNER_APPROVED_FROZEN` and agent use is `OWNER_AUTHORIZED` under Issue #108. Project Owner approval to advance the standard and perform a Skill Gap Analysis was recorded on 2026-10-28 (Issue #97). These decisions do not constitute technical sign-off. **Technical approval and rule enforcement remain PENDING** until: (a) Embedded Gateway/Node reviewers validate C, FreeRTOS, ISR and exact ESP-IDF v6.1 API claims; (b) RF/Hardware reviewers validate radio/hardware boundaries with manufacturer sources and actual board revision; (c) Security/QA reviewers validate crypto/replay/evidence boundaries; (d) required conflicts/dependencies and any exceptions are dispositioned; and (e) a separately scoped, reviewed policy activation change explicitly updates the applicable agent entrypoints and enforcement. Record each reviewer, exact reviewed SHA, findings and approval evidence. No review, merge or Owner approval of this *document* freezes D01–D13, approves a radio profile or constitutes any G0–G6/HIL/RF/Timing/Security PASS.
-
-**Skills boundary (Issue #97):** [ESP32 Skill Gap Analysis plan](ESP32_SKILL_GAP_ANALYSIS_PLAN.md) is authorized for read-only evaluation, not automatic installation, execution, skill routing or policy override. Approved repository authority always precedes third-party skill instructions.
-
-**Output expectation:** a worker applying this document must cite exact v2 Rule IDs **and** authoritative repository/contract paths. If a rule remains proposed or conflicts with an approved instruction, the agent reports that fact rather than assuming this document overrides it.

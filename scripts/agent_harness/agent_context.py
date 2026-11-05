@@ -66,6 +66,9 @@ def load_context(repo: Path) -> dict:
                 not HEX_SHA.fullmatch(expected_blob) or
                 actual_blob != expected_blob):
             raise ContextGateError("AGENTS.md differs from HEAD; do not run Worker")
+        if _git(root, "diff", "--no-ext-diff", "--no-textconv", "--cached", "--name-only",
+                "HEAD", "--", "AGENTS.md"):
+            raise ContextGateError("AGENTS.md index differs from HEAD; do not run Worker")
         # Detect in-place changes between initial read and verified prompt use.
         if path.read_bytes() != data:
             raise ContextGateError("AGENTS.md changed during context preflight")
@@ -91,11 +94,25 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, required=True)
     parser.add_argument("--expected-sha256", default=None)
+    parser.add_argument("--base", default="HEAD")
+    parser.add_argument("--allowed-path", action="append", default=[])
+    parser.add_argument("--rule-id", action="append", default=[])
     args = parser.parse_args(argv)
     try:
         source = load_context(args.repo)
         if args.expected_sha256 is not None and args.expected_sha256 != source["agents_sha256"]:
             raise ContextGateError("AGENTS.md SHA-256 does not match supplied expectation")
+        try:
+            from .standards_policy import select_rules, StandardsError
+        except ImportError:
+            from standards_policy import select_rules, StandardsError
+        try:
+            selection = select_rules(args.repo, args.allowed_path, requested_ids=args.rule_id,
+                                     base=args.base, expected_source_sha=source["source_sha"])
+        except StandardsError as exc:
+            raise ContextGateError(str(exc)) from exc
+        source["standards"] = selection
+        source["agent_input"] += selection["agent_input"]
         print(json.dumps(source, ensure_ascii=False))
         return 0
     except ContextGateError as exc:

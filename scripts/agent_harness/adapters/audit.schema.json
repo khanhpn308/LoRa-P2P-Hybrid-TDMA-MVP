@@ -74,5 +74,73 @@
     "findings",
     "limitations",
     "reviewed_scope"
-  ]
+  ],
+  "$defs": {
+    "selection_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "rule_results": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "rule_id": {
+            "type": "string",
+            "pattern": "^[A-Z]+-[0-9]{3}$"
+          },
+          "rule_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PASS",
+              "FAIL",
+              "NOT_RUN",
+              "NOT_VERIFIED",
+              "WAIVED_WITH_REASON"
+            ]
+          },
+          "evidence": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "receipt_path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "receipt_sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              },
+              "required": [
+                "receipt_path",
+                "receipt_sha256"
+              ]
+            }
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "rule_id",
+          "rule_sha256",
+          "status",
+          "evidence",
+          "reason"
+        ]
+      }
+    }
+  }
 }

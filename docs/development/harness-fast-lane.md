@@ -19,6 +19,10 @@
 
 **G0 mandatory AGENTS context gate:** Trước khi Worker sửa bất cứ file nào, Host chạy `python3 scripts/agent_harness/agent_context.py --repo <candidate>`; yêu cầu `status=HOST_CONTEXT_LOADED`, đúng tracked HEAD blob và SHA-256, rồi chuyển **toàn bộ** `agent_input` vào request Worker. Fresh Auditor nhận đúng version/hash này. Missing, unreadable, symlink, dirty hoặc hash drift → `BLOCKED` (fail closed); ghi context SHA và receipt. Agent tự khẳng định đã đọc là không đủ chứng cứ. Chạy native `agy`/`codex` không qua Host giám sát chỉ là instruction routing, **không** được báo là hard-enforced hay E2E PASS.
 
+**Selective standards gate, Owner #137, 2026-11-04:** C v2 và Go v2 là mandatory cho công việc áp dụng. Coordinator vẫn lập kế hoạch, đề xuất component/task/Rule IDs và ảnh hưởng caller/consumer. Host deterministic độc lập union safety core, module, operation/security/contract rules từ allowlist, mapping và diff thực tế; xác minh tracked index, source/blob/hash và từng dòng rule. Host chỉ inject các dòng đã chọn cùng receipts có giới hạn trước Worker, không inject toàn bộ standard hay toàn bộ IDs. Docs-only không tự kéo C/Go; một component không kéo blanket rules của component kia. `MUST`/`MUST_NOT` binding, `SHOULD` advisory cần ghi exception, `STOP/BLOCKED` bắt buộc giải quyết; không phê duyệt thay RF/crypto/contracts đang blocked.
+
+Sau mỗi diff/scope change và trước Auditor, Host tính lại selection. ID mới phải được inject cho focused repair/review trước khi chấp nhận; diff ngoài allowlist dừng. Auditor nhận bộ rows frozen được xác minh riêng, full diff và per-ID evidence. Worker self-attestation không đủ cấp PASS. Thiếu rule, injection, receipt, source drift, STOP chưa xử lý hoặc exception chưa review chặn automatic acceptance. So candidate/selection/patch/evidence fingerprints trước và sau audit. Full Access không thay thế các kiểm tra này.
+
 Coordinator tự xử lý theo bảng dưới. Không yêu cầu một prompt dài, approval banner hay pilot README. Chỉ hỏi operator **khi thực sự thiếu quyết định về scope/contract/security hoặc gặp blocker không khắc phục an toàn được**.
 
 | Gate | Agent phải làm | Bằng chứng tối thiểu |
