@@ -23,7 +23,7 @@ class NativeCapabilityProbeTests(unittest.TestCase):
         self.repo = Path(self.tmp.name).resolve() / "test_repo"
         self.repo.mkdir(parents=True)
 
-    def test_probe_ready_when_configured(self):
+    def test_probe_configured_host_ready(self):
         # Setup mock configured AGY and Codex
         agy_cfg = self.home / ".gemini/antigravity-cli/settings.json"
         agy_cfg.parent.mkdir(parents=True, exist_ok=True)
@@ -45,12 +45,14 @@ class NativeCapabilityProbeTests(unittest.TestCase):
                  "agents_sha256": "f" * 64,
              }), "")):
             res = probe.probe_environment(self.repo, self.home)
-            self.assertEqual(res["status"], "READY")
+            self.assertEqual(res["status"], "CONFIGURED_HOST_READY")
             self.assertEqual(len(res["blockers"]), 0)
-            self.assertEqual(res["clients"]["agy"]["status"], "READY")
-            self.assertEqual(res["clients"]["codex"]["status"], "READY")
+            self.assertEqual(res["clients"]["agy"]["status"], "CONFIGURED")
+            self.assertEqual(res["clients"]["codex"]["status"], "CONFIGURED")
+            self.assertFalse(res["model_runtime_verified"])
+            self.assertEqual(res["auditor_status"], "AUDIT_NOT_VERIFIED")
 
-    def test_negative_missing_clis(self):
+    def test_negative_missing_clis_reports_unsupported_runtime(self):
         with patch.object(probe.shutil, "which", side_effect=lambda x: "/usr/bin/git" if x in ("git", "python3") else None), \
              patch.object(probe, "run_cmd", return_value=(0, json.dumps({"status": "HOST_CONTEXT_LOADED"}), "")):
             res = probe.probe_environment(self.repo, self.home)
@@ -75,6 +77,24 @@ class NativeCapabilityProbeTests(unittest.TestCase):
             self.assertEqual(res["clients"]["agy"]["status"], "PARTIAL")
             self.assertFalse(res["clients"]["agy"]["tool_permission_ok"])
             self.assertFalse(res["clients"]["agy"]["repo_trusted"])
+            self.assertFalse(res["clients"]["agy"]["agent_mode_ok"])
+
+    def test_negative_gemini_restricted_allowlist_missing_git(self):
+        agy_cfg = self.home / ".gemini/antigravity-cli/settings.json"
+        agy_cfg.parent.mkdir(parents=True, exist_ok=True)
+        agy_cfg.write_text(json.dumps({
+            "model": "Gemini 3.8 Flash (High)",
+            "agentMode": "accept-edits",
+            "toolPermission": "always-proceed",
+            "trustedWorkspaces": [str(self.repo.resolve())],
+            "permissions": {"allow": ["command(ls)", "command(cat)"]},
+        }), encoding="utf-8")
+
+        with patch.object(probe.shutil, "which", return_value="/usr/bin/agy"):
+            res = probe.inspect_agy(self.home, self.repo)
+            self.assertFalse(res["model_tools_supported"])
+            self.assertEqual(res["status"], "PARTIAL")
+            self.assertTrue(any("missing git commands" in b for b in res["blockers"]))
 
     def test_negative_bad_config_fails_closed(self):
         agy_cfg = self.home / ".gemini/antigravity-cli/settings.json"
@@ -123,7 +143,8 @@ class NativeCapabilityProbeTests(unittest.TestCase):
         self.assertEqual(res["smoke_status"], "BLOCKED")
         self.assertIn("Operator consent required", res["reason"])
 
-    def test_smoke_happy_path(self):
+    def test_smoke_reports_host_smoke_pass_and_auditor_not_verified(self):
+        # Finding F-01 regression test: smoke must NOT fabricate an auditor PASS
         smoke_dir = Path(self.tmp.name).resolve() / "smoke_dir"
         with patch.object(probe, "run_cmd") as mock_run:
             def fake_run(argv, cwd=None, timeout=15, input_text=None):
@@ -137,9 +158,17 @@ class NativeCapabilityProbeTests(unittest.TestCase):
 
             mock_run.side_effect = fake_run
             res = probe.run_smoke(smoke_dir, self.repo, consent=True)
-            self.assertEqual(res["smoke_status"], "SMOKE_PASS")
-            self.assertEqual(len(res["steps"]), 5)
-            self.assertTrue(all(s["status"] == "PASS" for s in res["steps"]))
+            self.assertEqual(res["smoke_status"], "HOST_SMOKE_PASS")
+            self.assertFalse(res["model_runtime_verified"])
+            self.assertEqual(res["auditor_capability"], "AUDIT_NOT_VERIFIED")
+            self.assertIn("not simulated", res["limitation"].lower())
+
+            # Verify step 5 is fixture_schema_smoke and does NOT report fresh auditor pass
+            fixture_step = next(s for s in res["steps"] if s["step"] == "fixture_schema_smoke")
+            self.assertEqual(fixture_step["auditor_status"], "AUDIT_NOT_VERIFIED")
+            self.assertTrue(fixture_step["schema_valid"])
+            self.assertNotIn("fresh_auditor_verification", [s["step"] for s in res["steps"]])
+
             summary_file = Path(res["receipts_dir"]) / "smoke_summary.json"
             self.assertTrue(summary_file.is_file())
 
@@ -150,7 +179,7 @@ class NativeCapabilityProbeTests(unittest.TestCase):
             mock_run.return_value = (1, "", "Permission denied")
             res = probe.run_smoke(smoke_dir, self.repo, consent=True)
             self.assertEqual(res["smoke_status"], "SMOKE_FAILED")
-            self.assertEqual(res["failed_step"], "shell_execution")
+            self.assertEqual(res["failed_step"], "host_python_shell")
 
 
 if __name__ == "__main__":

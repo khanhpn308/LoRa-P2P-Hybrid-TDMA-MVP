@@ -4,6 +4,8 @@
 Inspects actual Codex/AGY client binaries, configuration, tool surfaces,
 and executes safe smoke tests in an isolated disposable workspace.
 Read-only by default; does not mutate candidate repository or credentials.
+Distinguishes Host Python preflight from live model-session capabilities;
+never fabricates an Auditor receipt or simulates missing tool surfaces.
 """
 from __future__ import annotations
 
@@ -98,6 +100,7 @@ def inspect_codex(home: Path, repo: Path) -> dict[str, Any]:
             "config_path": str(home / ".codex/config.toml"),
             "config_exists": False,
             "repo_trusted": False,
+            "auditor_status": "AUDIT_NOT_VERIFIED",
             "status": "SKIP",
             "reason": "Codex CLI not installed",
         }
@@ -128,7 +131,8 @@ def inspect_codex(home: Path, repo: Path) -> dict[str, Any]:
         "config_path": str(cfg_path),
         "config_exists": cfg_exists,
         "repo_trusted": repo_trusted,
-        "status": "READY" if repo_trusted else "PARTIAL",
+        "auditor_status": "AUDIT_NOT_VERIFIED",
+        "status": "CONFIGURED" if repo_trusted else "PARTIAL",
         "reason": "Configured and trusted" if repo_trusted else "Repo not marked trusted in config.toml",
     }
 
@@ -144,6 +148,8 @@ def inspect_agy(home: Path, repo: Path) -> dict[str, Any]:
             "repo_trusted": False,
             "tool_permission_ok": False,
             "agent_mode_ok": False,
+            "model_tools_supported": False,
+            "auditor_status": "AUDIT_NOT_VERIFIED",
             "status": "SKIP",
             "reason": "AGY CLI not installed",
         }
@@ -157,6 +163,8 @@ def inspect_agy(home: Path, repo: Path) -> dict[str, Any]:
     tool_perm_ok = False
     agent_mode_ok = False
     model = None
+    model_tools_supported = True
+    blockers: list[str] = []
 
     if cfg_exists:
         try:
@@ -167,14 +175,39 @@ def inspect_agy(home: Path, repo: Path) -> dict[str, Any]:
                 repo_str = str(repo.resolve())
                 if isinstance(workspaces, list) and repo_str in workspaces:
                     repo_trusted = True
+                else:
+                    blockers.append(f"Workspace '{repo_str}' not in trustedWorkspaces")
+
                 if data.get("toolPermission") == "always-proceed":
                     tool_perm_ok = True
-                if data.get("agentMode") in ("accept-edits", "auto"):
-                    agent_mode_ok = True
-        except Exception:
-            cfg_exists = False
+                else:
+                    tool_perm_ok = False
+                    blockers.append("toolPermission is not 'always-proceed'")
 
-    ready = repo_trusted and tool_perm_ok and agent_mode_ok
+                mode = data.get("agentMode", "accept-edits")
+                if mode in ("accept-edits", "auto"):
+                    agent_mode_ok = True
+                else:
+                    agent_mode_ok = False
+                    blockers.append(f"agentMode '{mode}' does not allow edits (requires accept-edits or auto)")
+
+                # If allowlist exists, check that it does not block git or basic commands
+                perms = data.get("permissions")
+                if isinstance(perms, dict):
+                    allow = perms.get("allow")
+                    if isinstance(allow, list) and allow:
+                        has_git = any("git" in str(item) for item in allow)
+                        if not has_git:
+                            model_tools_supported = False
+                            blockers.append("Restricted permissions.allow list missing git commands")
+        except Exception as e:
+            cfg_exists = False
+            blockers.append(f"Failed to parse settings.json: {e}")
+
+    ready = repo_trusted and tool_perm_ok and agent_mode_ok and model_tools_supported
+    status = "CONFIGURED" if ready else "PARTIAL"
+    reason = "Configured with trusted workspace and permissions" if ready else "; ".join(blockers)
+
     return {
         "installed": True,
         "version": ver,
@@ -184,8 +217,11 @@ def inspect_agy(home: Path, repo: Path) -> dict[str, Any]:
         "repo_trusted": repo_trusted,
         "tool_permission_ok": tool_perm_ok,
         "agent_mode_ok": agent_mode_ok,
-        "status": "READY" if ready else "PARTIAL",
-        "reason": "Configured with trusted workspace and permissions" if ready else "Configuration incomplete",
+        "model_tools_supported": model_tools_supported,
+        "auditor_status": "AUDIT_NOT_VERIFIED",
+        "status": status,
+        "reason": reason,
+        "blockers": blockers,
     }
 
 
@@ -228,7 +264,6 @@ def probe_environment(repo: Path, home: Path | None = None,
         g0_status = "BLOCKED"
         g0_detail = "agent_context.py not found"
 
-    # Evaluate overall capabilities
     blockers: list[str] = []
     if py_status != "PASS":
         blockers.append(f"Python: {py_err}")
@@ -239,11 +274,17 @@ def probe_environment(repo: Path, home: Path | None = None,
     if g0_status != "PASS":
         blockers.append(f"Host G0 Context: {g0_detail}")
 
-    has_client_ready = (codex_info["status"] == "READY" or agy_info["status"] == "READY")
-    if not has_client_ready and (codex_info["installed"] or agy_info["installed"]):
+    has_client_configured = (codex_info["status"] == "CONFIGURED" or agy_info["status"] == "CONFIGURED")
+    if not has_client_configured and (codex_info["installed"] or agy_info["installed"]):
         blockers.append("Client installed but workspace/permissions unconfigured; run setup with --configure-native")
 
-    overall = "READY" if (not blockers and has_client_ready) else "BLOCKED"
+    if blockers:
+        overall = "BLOCKED"
+    elif not has_client_configured:
+        overall = "BLOCKED_UNSUPPORTED_RUNTIME"
+    else:
+        # Client configured, but live model session and fresh auditor need actual execution evidence
+        overall = "CONFIGURED_HOST_READY"
 
     return {
         "status": overall,
@@ -263,10 +304,13 @@ def probe_environment(repo: Path, home: Path | None = None,
             "agents_sha256": g0_sha,
             "detail": g0_detail,
         },
+        "model_runtime_verified": False,
+        "auditor_status": "AUDIT_NOT_VERIFIED",
         "blockers": blockers,
+        "limitation": "Host checks and configurations verified. Live model-session tool execution (Shell/Edit) and independent Auditor subagent require active runtime invocation receipts; not simulated.",
         "next_action": (
-            "Ready for 'Chạy Issue #N' or 'Nghiệm thu PR #N'"
-            if overall == "READY"
+            "Environment configured. Start AGY/Codex with verified profile and verify model tool surface."
+            if overall == "CONFIGURED_HOST_READY"
             else "Run 'bash scripts/setup_harness.sh --configure-native' to resolve configuration blockers"
         ),
     }
@@ -298,11 +342,11 @@ def run_smoke(target_dir: Path, repo: Path, consent: bool = True) -> dict[str, A
 
     steps: list[dict[str, Any]] = []
 
-    # Step 1: Shell Execution check (bounded python execution)
+    # Step 1: Host Python Execution check (bounded python execution)
     s1_code, s1_out, s1_err = run_cmd([sys.executable, "-c", "import sys; print(f'PY_SMOKE:{sys.version_info[0]}.{sys.version_info[1]}')"])
     s1_pass = (s1_code == 0 and "PY_SMOKE:3." in s1_out)
     steps.append({
-        "step": "shell_execution",
+        "step": "host_python_shell",
         "status": "PASS" if s1_pass else "FAIL",
         "command": "python -c 'import sys...'",
         "exit_code": s1_code,
@@ -310,7 +354,7 @@ def run_smoke(target_dir: Path, repo: Path, consent: bool = True) -> dict[str, A
         "error": s1_err.strip(),
     })
     if not s1_pass:
-        return {"smoke_status": "SMOKE_FAILED", "failed_step": "shell_execution", "steps": steps}
+        return {"smoke_status": "SMOKE_FAILED", "failed_step": "host_python_shell", "steps": steps}
 
     # Step 2: File Write / Edit / Read check
     test_file = target_dir / "smoke_sample.txt"
@@ -324,13 +368,13 @@ def run_smoke(target_dir: Path, repo: Path, consent: bool = True) -> dict[str, A
     s2_pass = (read_back == expected_content)
     file_sha = digest(read_back.encode("utf-8"))
     steps.append({
-        "step": "file_write_edit_read",
+        "step": "host_file_write_edit_read",
         "status": "PASS" if s2_pass else "FAIL",
         "sha256": file_sha,
         "bytes_verified": len(read_back),
     })
     if not s2_pass:
-        return {"smoke_status": "SMOKE_FAILED", "failed_step": "file_write_edit_read", "steps": steps}
+        return {"smoke_status": "SMOKE_FAILED", "failed_step": "host_file_write_edit_read", "steps": steps}
 
     # Step 3: Disposable Git operations check
     git_dir = target_dir / "disposable_repo"
@@ -344,12 +388,12 @@ def run_smoke(target_dir: Path, repo: Path, consent: bool = True) -> dict[str, A
     s3_code, s3_out, _ = run_cmd(["git", "status", "--porcelain"], cwd=git_dir)
     s3_pass = (s3_code == 0 and s3_out.strip() == "")
     steps.append({
-        "step": "git_execution",
+        "step": "host_git_execution",
         "status": "PASS" if s3_pass else "FAIL",
         "clean_worktree": s3_pass,
     })
     if not s3_pass:
-        return {"smoke_status": "SMOKE_FAILED", "failed_step": "git_execution", "steps": steps}
+        return {"smoke_status": "SMOKE_FAILED", "failed_step": "host_git_execution", "steps": steps}
 
     # Step 4: Host G0 Context verification
     s4_code, s4_out, s4_err = run_cmd([sys.executable, str(AGENT_CONTEXT_SCRIPT), "--repo", str(repo)])
@@ -372,36 +416,35 @@ def run_smoke(target_dir: Path, repo: Path, consent: bool = True) -> dict[str, A
     if not s4_pass:
         return {"smoke_status": "SMOKE_FAILED", "failed_step": "host_g0_context", "steps": steps}
 
-    # Step 5: Independent Auditor verification
-    # Validate that an auditor can consume frozen input, validate schema, and produce distinct receipt
-    auditor_receipt = {
-        "role": "auditor",
-        "agent_id": "auditor-smoke-" + file_sha[:8],
+    # Step 5: Fixture schema smoke (replaces fabricated auditor claim)
+    # Validates local schema handling on a synthetic fixture without claiming real model audit.
+    schema_fixture = {
         "status": "PASS",
-        "report": {
-            "status": "PASS",
-            "reviewed_scope": ["smoke_sample.txt"],
-            "findings": [],
-            "limitations": "Disposable smoke test validation",
-        },
-        "target_source_sha": g0_sha,
+        "reviewed_scope": ["smoke_sample.txt"],
+        "findings": [],
+        "limitations": "Synthetic schema smoke only; no genuine independent subagent/provider was invoked.",
     }
-    auditor_receipt_file = receipts_dir / "auditor_smoke_receipt.json"
-    auditor_receipt_file.write_text(json.dumps(auditor_receipt, indent=2), encoding="utf-8")
-    s5_pass = auditor_receipt_file.is_file() and auditor_receipt["role"] == "auditor"
+    schema_fixture_file = receipts_dir / "fixture_schema_smoke.json"
+    schema_fixture_file.write_text(json.dumps(schema_fixture, indent=2), encoding="utf-8")
+    s5_pass = schema_fixture_file.is_file()
     steps.append({
-        "step": "fresh_auditor_verification",
+        "step": "fixture_schema_smoke",
         "status": "PASS" if s5_pass else "FAIL",
-        "receipt_path": str(auditor_receipt_file),
-        "auditor_agent_id": auditor_receipt["agent_id"],
+        "receipt_path": str(schema_fixture_file),
+        "schema_valid": s5_pass,
+        "auditor_status": "AUDIT_NOT_VERIFIED",
+        "limitation": "Host fixture schema smoke only; no genuine independent model subagent or external auditor process was invoked.",
     })
 
-    # Save overall smoke summary receipt
+    # Save overall smoke summary receipt with explicit non-simulation limitations
     smoke_summary = {
-        "smoke_status": "SMOKE_PASS",
+        "smoke_status": "HOST_SMOKE_PASS",
+        "model_runtime_verified": False,
+        "auditor_capability": "AUDIT_NOT_VERIFIED",
         "steps": steps,
         "workspace": str(target_dir),
         "receipts_dir": str(receipts_dir),
+        "limitation": "Host Python smoke only confirms local Python/Git environment. Model-session execution (Shell/Edit/Auditor) requires live agent runtime evidence; not simulated.",
     }
     summary_file = receipts_dir / "smoke_summary.json"
     summary_file.write_text(json.dumps(smoke_summary, indent=2), encoding="utf-8")
@@ -428,7 +471,7 @@ def main(argv: list[str] | None = None) -> int:
             smoke_dir = Path(temp_dir_obj.name)
         smoke_res = run_smoke(smoke_dir, args.repo, consent=True)
         result["smoke"] = smoke_res
-        if smoke_res.get("smoke_status") != "SMOKE_PASS":
+        if smoke_res.get("smoke_status") != "HOST_SMOKE_PASS":
             result["status"] = "SMOKE_FAILED"
 
     if args.json:
@@ -445,14 +488,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Codex CLI      : {result['clients']['codex']['status']} ({result['clients']['codex']['reason']})")
         print(f"AGY CLI        : {result['clients']['agy']['status']} ({result['clients']['agy']['reason']})")
         print(f"Host G0        : {result['host_g0']['status']} ({result['host_g0']['detail']})")
+        print(f"Auditor Status : {result['auditor_status']}")
+        print(f"Model Runtime  : {'VERIFIED' if result['model_runtime_verified'] else 'NOT_VERIFIED'}")
         if result["blockers"]:
             print("\nBlockers:")
             for b in result["blockers"]:
                 print(f"  - {b}")
+        print(f"\nLimitation: {result['limitation']}")
         print(f"\nNext Action: {result['next_action']}")
         print("=" * 60)
 
-    return 0 if result["status"] in ("READY", "PASS") else 1
+    return 0 if result["status"] in ("CONFIGURED_HOST_READY", "READY", "PASS") else 1
 
 
 if __name__ == "__main__":
