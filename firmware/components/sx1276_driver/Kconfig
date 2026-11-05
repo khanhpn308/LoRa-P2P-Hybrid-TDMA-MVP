@@ -1,0 +1,284 @@
+menu "SX1276 LoRa Transceiver Configuration"
+
+    menu "Hardware Pin Configuration (PCB HW-001)"
+        config SX1276_PIN_SCK
+            int "SPI Clock (SCK) GPIO"
+            default 5
+            help
+                ESP32 GPIO wired to SX1276 SCK. Note: GPIO5 is MTDI strapping pin.
+
+        config SX1276_PIN_MISO
+            int "SPI MISO GPIO"
+            default 19
+            help
+                ESP32 GPIO wired to SX1276 MISO.
+
+        config SX1276_PIN_MOSI
+            int "SPI MOSI GPIO"
+            default 27
+            help
+                ESP32 GPIO wired to SX1276 MOSI.
+
+        config SX1276_PIN_CS
+            int "SPI Chip Select (NSS/CS) GPIO"
+            default 18
+            help
+                ESP32 GPIO wired to SX1276 NSS/CS.
+
+        config SX1276_PIN_RST
+            int "Hardware Reset (RST) GPIO"
+            default 23
+            help
+                ESP32 GPIO wired to SX1276 NRESET.
+
+        config SX1276_PIN_DIO0
+            int "Interrupt DIO0 GPIO"
+            default 26
+            help
+                ESP32 GPIO wired to SX1276 DIO0. Only DIO pin connected on HW-001.
+
+        config SX1276_SPI_CLOCK_MHZ
+            int "SPI Clock Frequency (MHz)"
+            default 8
+            range 1 10
+            help
+                SPI master clock speed. Maximum silicon limit is 10 MHz.
+    endmenu
+
+    menu "Physical Layer (PHY) Profile Configuration"
+        choice SX1276_PHY_PRESET
+            prompt "PHY Baseline / Preset Profile"
+            default SX1276_PRESET_TEST_PROFILE_V1
+            help
+                Select the preconfigured active PHY profile preset.
+
+            config SX1276_PRESET_TEST_PROFILE_V1
+                bool "SX1276_TEST_PROFILE_V1 (SF7, BW125, CR4/5, Preamble 8, OCP 100mA, AGC ON, HF Boost OFF)"
+            config SX1276_PRESET_CUSTOM
+                bool "Custom PHY Profile"
+        endchoice
+
+        choice SX1276_SPREADING_FACTOR
+            prompt "Spreading Factor (SF)"
+            default SX1276_SF_7
+            help
+                LoRa Spreading Factor (chips per symbol = 2^SF).
+
+            config SX1276_SF_7
+                bool "SF7 (128 chips/symbol)"
+            config SX1276_SF_8
+                bool "SF8 (256 chips/symbol)"
+            config SX1276_SF_9
+                bool "SF9 (512 chips/symbol)"
+            config SX1276_SF_10
+                bool "SF10 (1024 chips/symbol)"
+            config SX1276_SF_11
+                bool "SF11 (2048 chips/symbol)"
+            config SX1276_SF_12
+                bool "SF12 (4096 chips/symbol)"
+        endchoice
+
+        choice SX1276_BANDWIDTH
+            prompt "Bandwidth (BW)"
+            default SX1276_BW_125K
+            help
+                Modulation signal bandwidth.
+
+            config SX1276_BW_125K
+                bool "125 kHz"
+            config SX1276_BW_250K
+                bool "250 kHz"
+            config SX1276_BW_500K
+                bool "500 kHz"
+        endchoice
+
+        choice SX1276_CODING_RATE
+            prompt "Error Coding Rate (CR)"
+            default SX1276_CR_4_5
+            help
+                Forward error correction coding rate.
+
+            config SX1276_CR_4_5
+                bool "CR 4/5"
+            config SX1276_CR_4_6
+                bool "CR 4/6"
+            config SX1276_CR_4_7
+                bool "CR 4/7"
+            config SX1276_CR_4_8
+                bool "CR 4/8"
+        endchoice
+
+        config SX1276_PREAMBLE_LENGTH
+            int "Preamble Length (symbols)"
+            default 8
+            range 6 65535
+            help
+                Transmitted preamble symbol count. Approved test preset is 8 symbols.
+
+        config SX1276_SYNC_WORD
+            hex "LoRa Sync Word"
+            default 0x12
+            range 0x00 0xFF
+            help
+                LoRa frame synchronization word. Default 0x12 (private network). LoRaWAN 0x34 prohibited.
+
+        config SX1276_PAYLOAD_CRC_ON
+            bool "Enable Payload CRC"
+            default y
+            help
+                Hardware payload CRC enabled in transmitted frames and enforced in receiver.
+
+        config SX1276_EXPLICIT_HEADER
+            bool "Explicit Header Mode"
+            default y
+            help
+                Send explicit header containing payload length, coding rate, and CRC flag.
+
+        choice SX1276_LDRO_MODE
+            prompt "Low Data Rate Optimize (LDRO)"
+            default SX1276_LDRO_AUTO
+            help
+                Low data rate optimization mode.
+
+            config SX1276_LDRO_AUTO
+                bool "Auto (Enable if symbol duration > 16 ms)"
+            config SX1276_LDRO_FORCE_ON
+                bool "Force Enabled"
+            config SX1276_LDRO_FORCE_OFF
+                bool "Force Disabled"
+        endchoice
+
+        choice SX1276_DEFAULT_CHANNEL
+            prompt "Default Boot / Test Channel (VN920 V1 Plan)"
+            default SX1276_CHANNEL_CH00
+            help
+                Boot channel for laboratory test bring-up. In production, channel is assigned
+                exclusively by Backend PostgreSQL plan.
+
+            config SX1276_CHANNEL_CH00
+                bool "CH00: 920.250 MHz"
+            config SX1276_CHANNEL_CH01
+                bool "CH01: 920.500 MHz"
+            config SX1276_CHANNEL_CH02
+                bool "CH02: 920.750 MHz"
+            config SX1276_CHANNEL_CH03
+                bool "CH03: 921.000 MHz"
+            config SX1276_CHANNEL_CH04
+                bool "CH04: 921.250 MHz"
+            config SX1276_CHANNEL_CH05
+                bool "CH05: 921.500 MHz"
+            config SX1276_CHANNEL_CH06
+                bool "CH06: 921.750 MHz"
+            config SX1276_CHANNEL_CH07
+                bool "CH07: 922.000 MHz"
+            config SX1276_CHANNEL_CH08
+                bool "CH08: 922.250 MHz"
+            config SX1276_CHANNEL_CH09
+                bool "CH09: 922.500 MHz"
+            config SX1276_CHANNEL_CH10
+                bool "CH10: 922.750 MHz"
+        endchoice
+    endmenu
+
+    menu "PA Path and Transmission Safety Gate"
+        choice SX1276_PA_PATH
+            prompt "Transceiver PA Path Selection"
+            default SX1276_PA_PATH_UNKNOWN
+            help
+                Power amplifier RF routing on installed module.
+                Default is UNKNOWN / UNVERIFIED (TX disabled fail-closed).
+
+            config SX1276_PA_PATH_UNKNOWN
+                bool "UNKNOWN / UNVERIFIED (TX Disabled - Fail-closed)"
+            config SX1276_PA_PATH_RFO
+                bool "RFO_HF (Low power up to +14 dBm)"
+            config SX1276_PA_PATH_BOOST
+                bool "PA_BOOST (High power up to +20 dBm)"
+        endchoice
+
+        config SX1276_RF_TX_ENABLE
+            bool "Enable RF Transmission"
+            default n
+            help
+                Safety interlock. RF TX is disabled by default. Enabling requires verified PA path
+                and bench safety authorization.
+
+        config SX1276_TX_POWER_DBM
+            int "Target TX Output Power (dBm)"
+            default 2
+            range -4 20
+            help
+                Target output power code. Test preset default is +2 dBm, with +5 dBm selectable
+                for supervised comparison.
+
+        config SX1276_PA_RAMP_US
+            int "PA Ramp Time (microseconds)"
+            default 40
+            range 10 3400
+            help
+                PA rise/fall ramp shaping. Approved test preset is 40 us (0x09 in RegPaRamp).
+
+        config SX1276_OCP_ENABLE
+            bool "Enable Over-Current Protection (OCP)"
+            default y
+            help
+                Limit PA supply current to protect module and supply rails.
+
+        config SX1276_OCP_CURRENT_LIMIT_MA
+            int "OCP Current Limit (mA)"
+            default 100
+            range 45 240
+            help
+                PA current limit. Approved test preset is 100 mA (0x2B in RegOcp).
+    endmenu
+
+    menu "Receiver and Demodulator Supervision"
+        config SX1276_AGC_AUTO_ON
+            bool "Enable Automatic Gain Control (AGC)"
+            default y
+            help
+                AGC loop automatically adjusts LNA gain. Approved test preset is ON.
+
+        config SX1276_LNA_BOOST_HF
+            bool "Enable LNA HF Boost"
+            default n
+            help
+                LNA Boost HF (150% LNA current). Approved test preset is OFF (00b in RegLna[1:0]).
+
+        config SX1276_LNA_GAIN_MANUAL
+            int "Manual LNA Gain Step (G1 to G6)"
+            default 1
+            range 1 6
+            help
+                Manual gain step used ONLY when AGC is OFF (1=max gain, 6=min gain).
+
+        config SX1276_RX_SEARCH_MARGIN_MS
+            int "Host RX Search Timer Margin (ms)"
+            default 15
+            range 1 100
+            help
+                FreeRTOS tick and task switch margin added to symbol timeout window.
+
+        config SX1276_RX_DEMOD_MARGIN_MS
+            int "Host Demodulation Extension Margin (ms)"
+            default 20
+            range 1 100
+            help
+                Margin added to maximum packet Time-on-Air during active in-flight demodulation.
+
+        config SX1276_HOST_RX_BUFFER_SIZE
+            int "Host RX Frame Buffer Capacity (bytes)"
+            default 64
+            range 16 256
+            help
+                Static buffer size per frame. Packets exceeding this size are dropped before copy.
+
+        config SX1276_RX_BUFFER_POOL_SIZE
+            int "RX Buffer Descriptor Pool Size"
+            default 4
+            range 2 16
+            help
+                Number of preallocated static frame buffers. Zero malloc in steady state.
+    endmenu
+
+endmenu
