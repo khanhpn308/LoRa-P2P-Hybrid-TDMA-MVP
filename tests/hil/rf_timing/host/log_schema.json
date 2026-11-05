@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ESP32_SX1276_TimingEventRecord",
+  "type": "object",
+  "required": [
+    "ver",
+    "seq",
+    "role",
+    "dev_id",
+    "evt",
+    "ts_us",
+    "class"
+  ],
+  "properties": {
+    "ver": {
+      "type": "string",
+      "enum": [
+        "1.0.0"
+      ]
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "role": {
+      "type": "string",
+      "enum": [
+        "GATEWAY",
+        "NODE"
+      ]
+    },
+    "dev_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evt": {
+      "type": "string",
+      "enum": [
+        "CAD_DONE",
+        "CLOCK_SYNC",
+        "DIO0_IRQ",
+        "ERROR",
+        "INIT",
+        "OVERFLOW",
+        "RX_CMD",
+        "RX_DONE",
+        "RX_TIMEOUT",
+        "TX_CMD",
+        "TX_DONE",
+        "TX_START"
+      ]
+    },
+    "ts_us": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "class": {
+      "type": "string",
+      "enum": [
+        "CALCULATED_TOA",
+        "EXTERNAL_RF_MEASURED",
+        "HARDWARE_CAPTURE",
+        "HOST_SYNTHETIC",
+        "SOFTWARE_TIMESTAMP"
+      ]
+    },
+    "pl_len": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "ch": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10
+    },
+    "status": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "extra": {
+      "type": "integer"
+    }
+  },
+  "additionalProperties": true
+}

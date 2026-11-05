@@ -1,0 +1,6 @@
+{"ver": "1.0.0", "seq": 1, "role": "GATEWAY", "dev_id": "GATEWAY_HIL_01", "evt": "CLOCK_SYNC", "ts_us": 110000000, "class": "HOST_SYNTHETIC", "pl_len": 16, "ch": 0, "status": 0, "extra": 10}
+{"ver": "1.0.0", "seq": 2, "role": "NODE", "dev_id": "NODE_HIL_01", "evt": "CLOCK_SYNC", "ts_us": 110000185, "class": "HOST_SYNTHETIC", "pl_len": 16, "ch": 0, "status": 0, "extra": 185}
+{"ver": "1.0.0", "seq": 3, "role": "GATEWAY", "dev_id": "GATEWAY_HIL_01", "evt": "CLOCK_SYNC", "ts_us": 170000000, "class": "HOST_SYNTHETIC", "pl_len": 16, "ch": 0, "status": 0, "extra": 60}
+{"ver": "1.0.0", "seq": 4, "role": "NODE", "dev_id": "NODE_HIL_01", "evt": "CLOCK_SYNC", "ts_us": 170001110, "class": "HOST_SYNTHETIC", "pl_len": 16, "ch": 0, "status": 0, "extra": 1110}
+{"ver": "1.0.0", "seq": 5, "role": "GATEWAY", "dev_id": "GATEWAY_HIL_01", "evt": "CLOCK_SYNC", "ts_us": 470000000, "class": "HOST_SYNTHETIC", "pl_len": 16, "ch": 0, "status": 0, "extra": 300}
+{"ver": "1.0.0", "seq": 6, "role": "NODE", "dev_id": "NODE_HIL_01", "evt": "CLOCK_SYNC", "ts_us": 470005550, "class": "HOST_SYNTHETIC", "pl_len": 16, "ch": 0, "status": 0, "extra": 5550}
