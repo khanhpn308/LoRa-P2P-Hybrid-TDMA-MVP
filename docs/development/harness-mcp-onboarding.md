@@ -44,6 +44,11 @@ python3 scripts/harness_mcp_setup.py --plan
 
 MCP does **not** automatically create an Agent. With Codex or AGY you can still type **`Chạy Issue #N`**; this invokes the existing Native Fast Lane Coordinator under `AGENTS.md` and SOP, **not** the read-only MCP tools. MCP lets both clients call the same P1 read tools. Full execution through MCP remains unmerged and not authorized in this onboarding change.
 
+### Read-only MCP versus Native Execution Bootstrap (Issue #152)
+- **`--install-mcp` (Issue #95):** Registers the 3 read-only Host inspection tools (`harness_preflight`, `harness_status`, `harness_verify_candidate`) via MCP stdio protocol. It does **not** provide Shell execution, File Edit, Git mutation or subagent spawning.
+- **`--configure-native` (Issue #152):** Configures client settings and permissions for native tool execution (Shell, File Edit, Git, fresh independent Auditor) for the Native Fast Lane (`Chạy Issue #N` / `Nghiệm thu PR #N`).
+- Running `--install-mcp` does not replace `--configure-native`, and vice-versa. Do not assume MCP tools suffice for coding or PR review execution.
+
 ## After installation: client connection verification
 
 Exit existing CLI sessions and **restart** both Codex and AGY so they reload MCP configs. In Codex run `codex mcp list` and open `/mcp` in the TUI. In AGY use `/mcp` and inspect `lora_harness`. The setup smoke proves that the server works from an isolated MCP SDK **client**, but it cannot prove live connection inside both interactive clients; record these as `NOT_VERIFIED` until checked separately.

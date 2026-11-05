@@ -7,11 +7,13 @@
 
 ## 0. Cài đặt một lần (không phải mỗi Issue)
 
+- **One-command bootstrap (Issue #152):** Chạy `bash scripts/setup_harness.sh --configure-native` từ checkout WSL2/Linux để tự động kiểm tra phiên bản Codex/AGY, cấu hình workspace trust và tool execution permissions có xác nhận.
+- Kiểm tra năng lực công cụ thực tế: `python3 scripts/agent_harness/native_capability_probe.py` (hoặc thêm `--smoke` để chạy thử trong workspace dùng một lần).
 - Đồng bộ SOP này và `AGENTS.md` từ PR #84 vào checkout sẽ sử dụng, **sau khi PR được review/merge hoặc chủ repo chủ động dùng nhánh chứa bản mới**. Tài liệu chỉ có trên feature branch thì `main` chưa có cấu hình Fast Lane.
 - **Codex CLI:** mở tại root repository và chọn **Full access** trong `/permissions`. Không cần tạo một agent ảo có tên `harness-coordinator` trong `/agents` của Codex; `/agents` ở đây là giao diện quản lý phiên agent, không giống AGY.
 - **AGY:** mở `agy` tại root repository; trong `/agents` chọn `harness-coordinator` phiên bản mới; chọn quyền CLI của operator (chẳng hạn Turbo, nếu khả dụng). Không cần chạy consumer `agy -p` từ bên trong công cụ khác.
 - Dùng `gh` của user WSL đã đăng nhập, Docker/ESP-IDF v6.1 khi cần build. Không đăng nhập GitHub cho root, không ký `APPROVE`, không tạo thủ công approval JSON.
-- Full Access chỉ cấp quyền ở CLI/OS theo thiết lập thực tế của người dùng. `AGENTS.md` và SOP không thể tự nâng quyền hay đảm bảo native subagents hoạt động trên mọi phiên bản.
+- Full Access chỉ cấp quyền ở CLI/OS theo thiết lập thực tế của người dùng. `AGENTS.md` và SOP không thể tự nâng quyền hay đảm bảo native subagents hoạt động trên mọi phiên bản. Cần probe thực tế tool availability thay vì giả định model có đủ tool.
 
 ## 1. Mỗi task: chỉ một câu
 

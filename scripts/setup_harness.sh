@@ -8,14 +8,16 @@ JSON=0
 ONLINE=0
 INSTALL_CORE=0
 INSTALL_MCP=0
+CONFIGURE_NATIVE=0
 
 usage() {
   cat <<'HELP'
 Usage: bash scripts/setup_harness.sh [--profile core|firmware|infra|all]
-       [--json] [--check-auth] [--install-core] [--install-mcp] [--help]
+       [--json] [--check-auth] [--install-core] [--install-mcp] [--configure-native] [--help]
 
 Default: offline diagnostics, with optional interactive MCP onboarding prompt on first setup.
 Non-interactive or --json: read-only; no sudo, downloads or file edits.
+--configure-native: inspect, plan, confirm, and bootstrap Codex/AGY native execution capability.
 --install-core: explicitly opt in to apt packages python3/git/gh (prompted).
 --install-mcp: inspect, confirm, install pinned SDK, smoke and register Codex/AGY.
 --check-auth: opt in to gh auth status (may contact GitHub).
@@ -32,6 +34,7 @@ while [ "$#" -gt 0 ]; do
     --check-auth) ONLINE=1; shift ;;
     --install-core) INSTALL_CORE=1; shift ;;
     --install-mcp) INSTALL_MCP=1; shift ;;
+    --configure-native) CONFIGURE_NATIVE=1; shift ;;
     --help|-h) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -75,6 +78,14 @@ if ! command -v python3 >/dev/null; then
   echo "Python3 missing. On Ubuntu, run: sudo apt-get install python3" >&2
   echo "Or use --install-core for an explicit interactive package plan." >&2
   exit 1
+fi
+
+if [ "$CONFIGURE_NATIVE" -eq 1 ]; then
+  if [ "$JSON" -eq 1 ]; then
+    exec python3 "$ROOT/scripts/harness_native_setup.py" --plan --json
+  else
+    exec python3 "$ROOT/scripts/harness_native_setup.py" --apply
+  fi
 fi
 
 # Only an interactive first run can write user MCP config after approval.
