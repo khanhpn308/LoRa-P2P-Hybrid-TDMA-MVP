@@ -15,6 +15,7 @@ tools:
   - search_web
   - schedule
   - generate_image
+  - invoke_subagent
 ---
 
 # Harness Coordinator — Native Fast Lane (owner-selected)

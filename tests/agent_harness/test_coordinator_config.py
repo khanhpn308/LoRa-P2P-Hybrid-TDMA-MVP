@@ -53,12 +53,25 @@ class HarnessCoordinatorConfigTests(unittest.TestCase):
         tools = data.get("tools")
         self.assertIsInstance(tools, list, "tools must be declared as a list in frontmatter")
         self.assertIn("run_command", tools, "run_command must be present in tools list")
+        self.assertIn("invoke_subagent", tools, "invoke_subagent must be present in tools list")
         for tool in tools:
             self.assertIn(
                 tool,
                 SUPPORTED_AGY_TOOLS,
                 f"Tool {tool} is not in the set of supported AGY native tools",
             )
+
+    def test_invoke_subagent_capability_required(self):
+        content = self.coordinator_path.read_text(encoding="utf-8")
+        parts = content.split("---")
+        frontmatter = parts[1]
+        data = yaml.safe_load(frontmatter)
+        tools = data.get("tools", [])
+        self.assertIn(
+            "invoke_subagent",
+            tools,
+            "harness-coordinator must explicitly declare invoke_subagent capability",
+        )
 
     def test_preserves_required_instructions_and_pr_review_harness(self):
         content = self.coordinator_path.read_text(encoding="utf-8")
