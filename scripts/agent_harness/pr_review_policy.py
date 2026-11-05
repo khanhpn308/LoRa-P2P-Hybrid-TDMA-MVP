@@ -78,9 +78,29 @@ PROMPT_INJECTION_REGEX = re.compile(
 
 RULE_ID_REGEX = re.compile(r"^[A-Z]+-[0-9]{3}$")
 HASH_REGEX = re.compile(r"^[0-9a-f]{64}$")
-KNOWN_RULE_PREFIXES = frozenset({
-    "C", "GB", "GGS", "GO", "ARCH", "CT", "SE", "RT", "MQ", "DB", "TS", "QG", "AI", "GOV"
+
+try:
+    from .standards_policy import GROUPS as _STANDARDS_GROUPS
+except (ImportError, Exception):
+    try:
+        from standards_policy import GROUPS as _STANDARDS_GROUPS
+    except (ImportError, Exception):
+        _STANDARDS_GROUPS = {}
+
+# Synchronized from standards_policy.py (C Coding Standard v2 and Go Backend Standard v2)
+# C groups: GOV, C, MEM, ERR, RTOS, ARCH, SEC, RAD, MAC, TDMA, QA
+# Go groups: GGS, GB, AR, GO, CT, MQ, SC, DB, RT, OB, SE, TS, QG, AI
+_BASE_KNOWN_RULE_PREFIXES = frozenset({
+    # C Standard v2 groups (11)
+    "ARCH", "C", "ERR", "GOV", "MAC", "MEM", "QA", "RAD", "RTOS", "SEC", "TDMA",
+    # Go Standard v2 groups (14)
+    "AI", "AR", "CT", "DB", "GB", "GGS", "GO", "MQ", "OB", "QG", "RT", "SC", "SE", "TS",
 })
+
+KNOWN_RULE_PREFIXES = frozenset(
+    _BASE_KNOWN_RULE_PREFIXES
+    | {prefix for lang_groups in _STANDARDS_GROUPS.values() for prefix in lang_groups.keys()}
+)
 
 
 def is_synthetic_fixture_path(path: str) -> bool:
