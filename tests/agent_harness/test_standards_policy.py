@@ -354,7 +354,25 @@ class RoutingTests(PolicyFixture):
             inside_cfg.write_text('[filter "lfs"]\n\tclean = git-lfs clean -- %f\n')
             with patch.dict(os.environ, {"GIT_CONFIG_SYSTEM": str(inside_cfg)}):
                 with self.assertRaises(policy.StandardsError):
-                    self.select(["firmware/value.c"])
+                    policy.check_git_filters(self.root)
+                with self.assertRaises(ValueError):
+                    policy.check_git_filters(self.root, exc_class=ValueError)
+                with self.assertRaises(policy.StandardsError):
+                    self.select(["inside.gitconfig", "firmware/value.c"])
+
+    def test_git_config_origin_inside_worktree_fails_closed_for_both_error_classes(self):
+        inside_cfg = self.root / "inside.gitconfig"
+        inside_cfg.write_text(
+            '[filter "lfs"]\n'
+            '\tclean = git-lfs clean -- %f\n'
+            '\tprocess = git-lfs filter-process\n'
+            '\tsmudge = git-lfs smudge -- %f\n'
+        )
+        with patch.dict(os.environ, {"GIT_CONFIG_SYSTEM": str(inside_cfg)}):
+            with self.assertRaises(policy.StandardsError):
+                policy.check_git_filters(self.root, exc_class=policy.StandardsError)
+            with self.assertRaises(ValueError):
+                policy.check_git_filters(self.root, exc_class=ValueError)
 
     def test_gitattributes_filter_assignment_blocked(self):
         attr_file = self.write(".gitattributes", "*.c filter=lfs\n")

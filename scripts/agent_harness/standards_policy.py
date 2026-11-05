@@ -128,14 +128,21 @@ def check_git_filters(repo, exc_class=StandardsError,
                 st = origin_path.lstat()
                 if not stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode):
                     raise exc_class(err_msg)
+                resolved_origin = origin_path.resolve(strict=True)
+                if not stat.S_ISREG(resolved_origin.stat().st_mode):
+                    raise exc_class(err_msg)
             except OSError:
                 raise exc_class(err_msg)
 
+            is_inside_repo = False
             try:
-                origin_path.resolve().relative_to(repo_path)
-                raise exc_class(err_msg)
+                resolved_origin.relative_to(repo_path)
+                is_inside_repo = True
             except ValueError:
-                pass
+                is_inside_repo = False
+
+            if is_inside_repo or resolved_origin.is_relative_to(repo_path):
+                raise exc_class(err_msg)
 
             if key not in TRUSTED_SYSTEM_FILTERS or val != TRUSTED_SYSTEM_FILTERS[key]:
                 raise exc_class(err_msg)
@@ -146,9 +153,12 @@ def check_git_filters(repo, exc_class=StandardsError,
                 raise exc_class(err_msg)
             if attr_file.is_file():
                 for line in attr_file.read_text(errors="ignore").splitlines():
+                    tokens = None
                     try:
                         tokens = shlex.split(line, comments=True)
                     except ValueError:
+                        pass
+                    if tokens is None:
                         raise exc_class(err_msg)
                     if len(tokens) >= 2:
                         for attr in tokens[1:]:
@@ -168,9 +178,12 @@ def check_git_filters(repo, exc_class=StandardsError,
                 raise exc_class(err_msg)
             if info_attr.is_file():
                 for line in info_attr.read_text(errors="ignore").splitlines():
+                    tokens = None
                     try:
                         tokens = shlex.split(line, comments=True)
                     except ValueError:
+                        pass
+                    if tokens is None:
                         raise exc_class(err_msg)
                     if len(tokens) >= 2:
                         for attr in tokens[1:]:
