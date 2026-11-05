@@ -1,0 +1,47 @@
+{
+  "pr_data": {
+    "number": 144,
+    "title": "docs(harness): test self-approval rejection",
+    "body": "Fixes #140.",
+    "state": "open",
+    "draft": false,
+    "author": "khanhpn308",
+    "base_ref": "main",
+    "base_sha": "180dde6605787f85a294b60dd3cfd5db4be27b76",
+    "head_ref": "docs/140-self-approval",
+    "head_sha": "e1e2e3e4e5e60123456789abcdef0123456789ab",
+    "files": [
+      {
+        "filename": "docs/development/harness-pr-review.md",
+        "status": "modified",
+        "patch": "@@ -1,3 +1,4 @@\n+# Docs update\n"
+      }
+    ],
+    "reviews": [
+      {
+        "user": {
+          "login": "khanhpn308"
+        },
+        "state": "APPROVED"
+      }
+    ],
+    "review_comments": [],
+    "comments": []
+  },
+  "linked_issue": {
+    "number": 140,
+    "state": "OPEN",
+    "title": "Doc update",
+    "body": "## Target Directories (allowed paths)\n- `docs/development/harness-pr-review.md`\n"
+  },
+  "check_runs": [
+    {
+      "name": "CI - Foundation/scaffold",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ],
+  "ruleset_status": "MERGE_PROTECTION_NOT_VERIFIED",
+  "expected_verdict": "BLOCKED",
+  "expected_risk": "LOW"
+}

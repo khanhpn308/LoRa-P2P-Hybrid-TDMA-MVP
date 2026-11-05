@@ -1,0 +1,41 @@
+{
+  "pr_data": {
+    "number": 149,
+    "title": "docs(harness): pr with concurrent push",
+    "body": "Fixes #140.",
+    "state": "open",
+    "draft": false,
+    "author": "pusher-dev",
+    "base_ref": "main",
+    "base_sha": "180dde6605787f85a294b60dd3cfd5db4be27b76",
+    "head_ref": "docs/140-stale-head",
+    "head_sha": "6162636465660123456789abcdef0123456789ab",
+    "files": [
+      {
+        "filename": "docs/development/harness-pr-review.md",
+        "status": "modified",
+        "patch": "@@ -1,3 +1,4 @@\n+# Race test\n"
+      }
+    ],
+    "reviews": [],
+    "review_comments": [],
+    "comments": []
+  },
+  "linked_issue": {
+    "number": 140,
+    "state": "OPEN",
+    "title": "PR review doc",
+    "body": "## Target Directories (allowed paths)\n- `docs/development/harness-pr-review.md`\n"
+  },
+  "check_runs": [
+    {
+      "name": "CI - Foundation/scaffold",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ],
+  "head_sha_at_end": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+  "ruleset_status": "MERGE_PROTECTION_NOT_VERIFIED",
+  "expected_verdict": "BLOCKED",
+  "expected_risk": "LOW"
+}

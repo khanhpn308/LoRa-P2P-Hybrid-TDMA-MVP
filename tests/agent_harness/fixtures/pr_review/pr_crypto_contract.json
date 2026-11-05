@@ -1,0 +1,40 @@
+{
+  "pr_data": {
+    "number": 142,
+    "title": "feat(radio-mac): change session key derivation format",
+    "body": "Fixes #140.\nModifies key format without owner review.",
+    "state": "open",
+    "draft": false,
+    "author": "dev-user",
+    "base_ref": "main",
+    "base_sha": "180dde6605787f85a294b60dd3cfd5db4be27b76",
+    "head_ref": "feature/140-key-contract",
+    "head_sha": "c1c2c3c4c5c60123456789abcdef0123456789ab",
+    "files": [
+      {
+        "filename": "contracts/radio-mac/specification.md",
+        "status": "modified",
+        "patch": "@@ -50,6 +50,7 @@\n- Session key derivation AES-128\n+ Unencrypted raw packet transfer\n"
+      }
+    ],
+    "reviews": [],
+    "review_comments": [],
+    "comments": []
+  },
+  "linked_issue": {
+    "number": 140,
+    "state": "OPEN",
+    "title": "Contract update",
+    "body": "## Target Directories (allowed paths)\n- `contracts/radio-mac/specification.md`\n"
+  },
+  "check_runs": [
+    {
+      "name": "CI - Contract Syntax",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ],
+  "ruleset_status": "MERGE_PROTECTION_NOT_VERIFIED",
+  "expected_verdict": "BLOCKED",
+  "expected_risk": "HIGH"
+}
