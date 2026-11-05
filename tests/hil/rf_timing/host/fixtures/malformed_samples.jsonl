@@ -1,0 +1,10 @@
+# This is a comment and should be skipped
+Not a valid JSON line {{{
+{"ver": "2.0.0", "seq": 1, "role": "NODE", "dev_id": "N1", "evt": "TX_CMD", "ts_us": 100, "class": "HOST_SYNTHETIC"}
+{"ver": "1.0.0", "seq": -5, "role": "NODE", "dev_id": "N1", "evt": "TX_CMD", "ts_us": 100, "class": "HOST_SYNTHETIC"}
+{"ver": "1.0.0", "seq": 2, "role": "ALIEN", "dev_id": "N1", "evt": "TX_CMD", "ts_us": 100, "class": "HOST_SYNTHETIC"}
+{"ver": "1.0.0", "seq": 3, "role": "NODE", "dev_id": "", "evt": "TX_CMD", "ts_us": 100, "class": "HOST_SYNTHETIC"}
+{"ver": "1.0.0", "seq": 4, "role": "NODE", "dev_id": "N1", "evt": "INVALID_EVT", "ts_us": 100, "class": "HOST_SYNTHETIC"}
+{"ver": "1.0.0", "seq": 5, "role": "NODE", "dev_id": "N1", "evt": "TX_CMD", "ts_us": -100, "class": "HOST_SYNTHETIC"}
+{"ver": "1.0.0", "seq": 6, "role": "NODE", "dev_id": "N1", "evt": "TX_CMD", "ts_us": 100, "class": "FAKE_EVIDENCE"}
+{"ver": "1.0.0", "seq": 7, "role": "NODE", "dev_id": "N1", "evt": "TX_CMD", "ts_us": 100, "class": "HOST_SYNTHETIC", "pl_len": 300}

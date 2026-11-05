@@ -1,0 +1,9 @@
+provenance,sf,bw_hz,cr,payload_bytes,preamble_len,header_explicit,crc_on,ldro_on,sync_word,freq_hz,t_sym_us,t_sym_ms,n_preamble_sym,t_preamble_us,t_preamble_ms,n_payload_sym,t_payload_us,t_payload_ms,toa_calculated_us,toa_calculated_ms,datasheet_reference
+CALCULATED,7,125000,1,12,8,True,True,False,18,920250000,1024.0,1.024,12.25,12544.0,12.544,28,28672.0,28.672,41216.0,41.216,"Semtech SX1276/77/78/79 Datasheet Rev 7 (March 2015), Sec 4.1.1.5-4.1.1.7"
+CALCULATED,7,125000,1,24,8,True,True,False,18,920250000,1024.0,1.024,12.25,12544.0,12.544,48,49152.0,49.152,61696.0,61.696,"Semtech SX1276/77/78/79 Datasheet Rev 7 (March 2015), Sec 4.1.1.5-4.1.1.7"
+CALCULATED,7,125000,1,32,8,True,True,False,18,920250000,1024.0,1.024,12.25,12544.0,12.544,58,59392.0,59.392,71936.0,71.936,"Semtech SX1276/77/78/79 Datasheet Rev 7 (March 2015), Sec 4.1.1.5-4.1.1.7"
+CALCULATED,7,125000,1,48,8,True,True,False,18,920250000,1024.0,1.024,12.25,12544.0,12.544,83,84992.0,84.992,97536.0,97.536,"Semtech SX1276/77/78/79 Datasheet Rev 7 (March 2015), Sec 4.1.1.5-4.1.1.7"
+CALCULATED,8,125000,1,12,8,True,True,False,18,920250000,2048.0,2.048,12.25,25088.0,25.088,28,57344.0,57.344,82432.0,82.432,"Semtech SX1276/77/78/79 Datasheet Rev 7 (March 2015), Sec 4.1.1.5-4.1.1.7"
+CALCULATED,8,125000,1,24,8,True,True,False,18,920250000,2048.0,2.048,12.25,25088.0,25.088,43,88064.0,88.064,113152.0,113.152,"Semtech SX1276/77/78/79 Datasheet Rev 7 (March 2015), Sec 4.1.1.5-4.1.1.7"
+CALCULATED,8,125000,1,32,8,True,True,False,18,920250000,2048.0,2.048,12.25,25088.0,25.088,53,108544.0,108.544,133632.0,133.632,"Semtech SX1276/77/78/79 Datasheet Rev 7 (March 2015), Sec 4.1.1.5-4.1.1.7"
+CALCULATED,8,125000,1,48,8,True,True,False,18,920250000,2048.0,2.048,12.25,25088.0,25.088,73,149504.0,149.504,174592.0,174.592,"Semtech SX1276/77/78/79 Datasheet Rev 7 (March 2015), Sec 4.1.1.5-4.1.1.7"
