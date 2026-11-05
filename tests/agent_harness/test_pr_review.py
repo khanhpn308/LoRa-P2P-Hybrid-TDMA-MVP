@@ -676,6 +676,142 @@ class PRReviewCLITests(unittest.TestCase):
         self.assertIn("BLOCKED", out)
         self.assertIn("Hardware-in-the-Loop (HIL) test receipt absent", out)
 
+    def test_cli_with_external_auditor_report(self):
+        fixture_path = HARNESS_DIR.parent.parent / "tests" / "agent_harness" / "fixtures" / "pr_review" / "pr_clean_docs.json"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            auditor_file = Path(tmpdir) / "auditor_report.json"
+            auditor_file.write_text(json.dumps({
+                "status": "PASS",
+                "auditor_id": "independent-model-auditor",
+                "findings": [],
+                "limitations": [],
+                "reviewed_scope": ["docs/development/harness-context.md"],
+            }), encoding="utf-8")
+
+            out_json = Path(tmpdir) / "eval.json"
+            cmd = [
+                sys.executable,
+                str(HARNESS_DIR / "pr_review.py"),
+                "--fixture", str(fixture_path),
+                "--candidate-repo", str(HARNESS_DIR.parent.parent),
+                "--auditor-report", str(auditor_file),
+                "--output-json", str(out_json),
+            ]
+            code, out, _ = pr_review._run_cmd(cmd)
+            self.assertEqual(code, 0)
+            self.assertIn("READY FOR HUMAN REVIEW", out)
+
+            eval_data = json.loads(out_json.read_text(encoding="utf-8"))["evaluation"]
+            self.assertEqual(eval_data["dimensions"]["AI_REVIEW_PASS"], "PASS")
+
+    def test_cli_with_author_self_audit_blocks(self):
+        fixture_path = HARNESS_DIR.parent.parent / "tests" / "agent_harness" / "fixtures" / "pr_review" / "pr_clean_docs.json"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            auditor_file = Path(tmpdir) / "auditor_report.json"
+            # author of pr_clean_docs is phong-dev
+            auditor_file.write_text(json.dumps({
+                "status": "PASS",
+                "auditor_id": "phong-dev",
+                "findings": [],
+                "limitations": [],
+                "reviewed_scope": ["docs/development/harness-context.md"],
+            }), encoding="utf-8")
+
+            out_json = Path(tmpdir) / "eval.json"
+            cmd = [
+                sys.executable,
+                str(HARNESS_DIR / "pr_review.py"),
+                "--fixture", str(fixture_path),
+                "--candidate-repo", str(HARNESS_DIR.parent.parent),
+                "--auditor-report", str(auditor_file),
+                "--output-json", str(out_json),
+            ]
+            code, out, _ = pr_review._run_cmd(cmd)
+            self.assertEqual(code, 2)
+            self.assertIn("BLOCKED", out)
+            self.assertIn("Auditor self-review rejected", out)
+
+            eval_data = json.loads(out_json.read_text(encoding="utf-8"))["evaluation"]
+            self.assertEqual(eval_data["dimensions"]["AI_REVIEW_PASS"], "FAIL")
+
+
+class AuditorReportIntakeUnitTests(unittest.TestCase):
+    """Unit tests for validate_and_load_auditor_report."""
+
+    def test_validate_and_load_unscoped_success(self):
+        pr_data = {"files": [{"filename": "docs/architecture/overview.md"}]}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            report_file = Path(tmpdir) / "audit.json"
+            report_file.write_text(json.dumps({
+                "status": "PASS",
+                "auditor_id": "fresh-auditor",
+                "findings": [],
+                "limitations": [],
+                "reviewed_scope": ["docs/architecture/overview.md"],
+            }), encoding="utf-8")
+
+            res = pr_review.validate_and_load_auditor_report(report_file, pr_data, None)
+            self.assertEqual(res["status"], "PASS")
+            self.assertEqual(res["auditor_id"], "fresh-auditor")
+            self.assertEqual(res["reviewed_scope"], ["docs/architecture/overview.md"])
+
+    def test_validate_and_load_envelope_success(self):
+        pr_data = {"files": [{"filename": "docs/architecture/overview.md"}]}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            report_file = Path(tmpdir) / "audit_envelope.json"
+            report_file.write_text(json.dumps({
+                "agent_id": "fresh-subagent-auditor",
+                "role": "auditor",
+                "report": {
+                    "status": "PASS",
+                    "findings": [],
+                    "limitations": [],
+                    "reviewed_scope": ["docs/architecture/overview.md"],
+                },
+            }), encoding="utf-8")
+
+            res = pr_review.validate_and_load_auditor_report(report_file, pr_data, None)
+            self.assertEqual(res["status"], "PASS")
+            self.assertEqual(res["auditor_id"], "fresh-subagent-auditor")
+
+    def test_validate_and_load_missing_file_raises(self):
+        pr_data = {"files": [{"filename": "docs/architecture/overview.md"}]}
+        with self.assertRaises(pr_review.PRReviewError):
+            pr_review.validate_and_load_auditor_report(Path("/nonexistent/audit.json"), pr_data, None)
+
+    def test_validate_and_load_invalid_json_raises(self):
+        pr_data = {"files": [{"filename": "docs/architecture/overview.md"}]}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            report_file = Path(tmpdir) / "invalid.json"
+            report_file.write_text("{bad json", encoding="utf-8")
+            with self.assertRaises(pr_review.PRReviewError):
+                pr_review.validate_and_load_auditor_report(report_file, pr_data, None)
+
+    def test_validate_and_load_non_dict_json_raises(self):
+        pr_data = {"files": [{"filename": "docs/architecture/overview.md"}]}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            report_file = Path(tmpdir) / "list.json"
+            report_file.write_text("[]", encoding="utf-8")
+            with self.assertRaises(pr_review.PRReviewError):
+                pr_review.validate_and_load_auditor_report(report_file, pr_data, None)
+
+    def test_validate_and_load_scope_mismatch_returns_fail_finding(self):
+        pr_data = {"files": [{"filename": "docs/architecture/overview.md"}]}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            report_file = Path(tmpdir) / "mismatch.json"
+            report_file.write_text(json.dumps({
+                "status": "PASS",
+                "auditor_id": "auditor-1",
+                "findings": [],
+                "limitations": [],
+                "reviewed_scope": ["docs/different.md"],
+            }), encoding="utf-8")
+
+            res = pr_review.validate_and_load_auditor_report(report_file, pr_data, None)
+            self.assertEqual(res["status"], "FAIL")
+            self.assertEqual(res["auditor_id"], "auditor-1")
+            self.assertTrue(any(f.get("rule") == "AUDIT-SCHEMA" for f in res["findings"]))
+
 
 if __name__ == "__main__":
     unittest.main()

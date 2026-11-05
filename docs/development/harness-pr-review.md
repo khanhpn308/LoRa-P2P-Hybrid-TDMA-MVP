@@ -6,16 +6,29 @@ The **`Nghiệm thu PR #N`** command triggers an automated, deterministic, and s
 > [!IMPORTANT]
 > **Non-auto-merge policy:** This Harness operates in read-only mode and **NEVER merges pull requests automatically**, self-approves, or disables GitHub branch protections. Human specialist sign-off is mandatory.
 
-## 2. Operator Workflow (`Nghiệm thu PR #N`)
+## 2. Operator & Coordinator Workflow (`Nghiệm thu PR #N`)
+
+### 2.1 Native Fast Lane Automated Flow
+When triggered by an operator with `Nghiệm thu PR #N`, the Coordinator automatically performs:
+1. **Mandatory Host G0 Context:** Runs `agent_context.py --repo .`, validating tracked `AGENTS.md` blob hash and SHA256 before evaluation.
+2. **Deterministic PR Intake:** Queries GitHub API for PR metadata, changed files, diffs, check runs, and linked Issue allowed paths via `scripts/agent_harness/pr_review.py`.
+3. **Fresh Independent Auditor Dispatch:** Dispatches a read-only Auditor subagent (separate conversation/sandbox) with author-independent identity (`auditor_id != author`) to audit the exact PR scope against project standards, correctness, and secret leaks.
+4. **Automated Evidence Evaluation:** Validates the Auditor report against schema contracts via `adapters.antigravity.check_report` (retaining `auditor_id` and envelope metadata), and evaluates gates PR-01 through PR-08.
+5. **Report & Recommendation:** Emits structured verdict and Markdown report. Never auto-merges; human specialist approval is required.
+
+### 2.2 CLI Execution Commands
 
 ```bash
 # 1. Enforce mandatory Host G0 context on tracked AGENTS.md
 python3 scripts/agent_harness/agent_context.py --repo .
 
-# 2. Run read-only PR review against GitHub PR #N
+# 2. Run read-only PR review against GitHub PR #N (without auditor)
 python3 scripts/agent_harness/pr_review.py --pr <PR_NUMBER>
 
-# 3. (Optional) Publish review report to PR comment (requires operator authorization)
+# 3. Run read-only PR review with verified external Auditor report
+python3 scripts/agent_harness/pr_review.py --pr <PR_NUMBER> --auditor-report <AUDITOR_REPORT_PATH>
+
+# 4. (Optional) Publish review report to PR comment (requires operator authorization)
 python3 scripts/agent_harness/pr_review.py --pr <PR_NUMBER> --publish-comment
 ```
 

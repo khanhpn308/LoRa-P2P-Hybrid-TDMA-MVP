@@ -265,26 +265,58 @@ def validate_and_load_auditor_report(
 
     raw_text = report_path.read_text(encoding="utf-8")
     try:
-        report = json.loads(raw_text)
+        raw_report = json.loads(raw_text)
     except Exception as exc:
         raise PRReviewError(f"Auditor report is not valid JSON: {exc}") from exc
 
+    if not isinstance(raw_report, dict):
+        raise PRReviewError("Auditor report must be a JSON object")
+
+    auditor_id = raw_report.get("auditor_id") or raw_report.get("agent_id")
+    body = raw_report.get("report", raw_report)
+    if isinstance(body, dict):
+        auditor_id = auditor_id or body.get("auditor_id") or body.get("agent_id")
+    else:
+        raise PRReviewError("Auditor report body must be a JSON object")
+
+    clean_body = {k: v for k, v in body.items() if k not in ("auditor_id", "agent_id")}
     required_paths = {f.get("filename", "") for f in pr_data.get("files", [])}
 
     if antigravity:
         try:
-            # Check schema using antigravity adapter
-            required_rules = rule_selection.get("rules", []) if rule_selection else None
-            sel_sha = rule_selection.get("selection_sha256") if rule_selection else None
-            return antigravity.check_report(
-                report,
-                required_paths=required_paths,
-                required_rules=required_rules,
-                selection_sha256=sel_sha,
-            )
+            req_rules = rule_selection.get("rules") if rule_selection else None
+            if req_rules:
+                sel_sha = rule_selection.get("selection_sha256")
+                inv = raw_report.get("evidence_inventory") or (body.get("evidence_inventory") if isinstance(body, dict) else {}) or {}
+                validated = antigravity.check_report(
+                    clean_body,
+                    required_paths=required_paths,
+                    required_rules=req_rules,
+                    selection_sha256=sel_sha,
+                    evidence_inventory=inv,
+                )
+            elif "rule_results" in clean_body:
+                sel_sha = rule_selection.get("selection_sha256") if rule_selection else clean_body.get("selection_sha256")
+                inv = raw_report.get("evidence_inventory") or (body.get("evidence_inventory") if isinstance(body, dict) else {}) or {}
+                validated = antigravity.check_report(
+                    clean_body,
+                    required_paths=required_paths,
+                    required_rules=[],
+                    selection_sha256=sel_sha,
+                    evidence_inventory=inv,
+                )
+            else:
+                validated = antigravity.check_report(
+                    clean_body,
+                    required_paths=required_paths,
+                    required_rules=None,
+                )
+            if auditor_id:
+                validated["auditor_id"] = auditor_id
+            return validated
         except Exception as exc:
             # Return report with failure finding
-            return {
+            fail_report = {
                 "status": "FAIL",
                 "findings": [
                     {
@@ -299,8 +331,13 @@ def validate_and_load_auditor_report(
                 "limitations": [f"Audit validation error: {exc}"],
                 "reviewed_scope": list(required_paths),
             }
+            if auditor_id:
+                fail_report["auditor_id"] = auditor_id
+            return fail_report
 
-    return report
+    if auditor_id and isinstance(clean_body, dict):
+        clean_body["auditor_id"] = auditor_id
+    return clean_body
 
 
 def render_markdown_report(
