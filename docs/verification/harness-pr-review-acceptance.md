@@ -96,7 +96,7 @@ This report documents the verification and acceptance evidence for the read-only
 python3 -m unittest discover -s tests/agent_harness -v
 ```
 **Receipt:**
-- Total tests executed: **336**
+- Total tests executed: **344**
 - Status: **ALL PASS (OK)**
 - Failures: **0**, Errors: **0**
 
@@ -291,7 +291,7 @@ python3 scripts/agent_harness/pr_review.py \
 | `HIL_RF_PASS` | **NOT_APPLICABLE** | No radio or embedded firmware modified. |
 | `MERGE_ENFORCEMENT_ACTIVE` | **NOT_VERIFIED** | GitHub branch protection / rulesets cannot be administered by CLI; requires repo admin configuration. |
 
-### 6.4 Remaining Blockers before Human Merge
+### 6.5 Remaining Blockers before Human Merge
 1. **Human Specialist Sign-Off (`HUMAN_APPROVED = PENDING`):**
    - PR touches harness controls and capability probe scripts (`HIGH` risk classification).
    - Requires **>= 2 specialist human approvals** before merge. Author `@khanhpn308` cannot self-approve.
