@@ -227,6 +227,337 @@ class PRReviewPolicyUnitTests(unittest.TestCase):
         self.assertEqual(res["status"], policy.GateStatus.CHANGES_REQUESTED.value)
         self.assertIn("Outstanding CHANGES_REQUESTED", res["summary"])
 
+    # --- Issue #144 R-01: Rule-ID Fail-Closed Tests ---
+
+    def test_pr03_router_error_fails_closed(self):
+        """PR-03 fails closed if Rule-ID router raised an error or status is BLOCKED."""
+        rule_selection = {"status": "BLOCKED", "error": "Router timeout or malformed rule file"}
+        res = policy.eval_pr03_rule_id(rule_selection, ["firmware/main.c"])
+        self.assertEqual(res["status"], policy.GateStatus.BLOCKED.value)
+        self.assertIn("Rule-ID selection failed", res["summary"])
+
+    def test_pr03_bogus_rule_id_fails_closed(self):
+        """PR-03 blocks if bogus or malformed Rule IDs are detected in selection."""
+        rule_selection = {
+            "standards": ["C"],
+            "rules": ["BOGUS-999", "C-001"],
+            "source": "verified_host",
+            "selection_sha256": "a" * 64,
+        }
+        res = policy.eval_pr03_rule_id(rule_selection, ["firmware/main.c"])
+        self.assertEqual(res["status"], policy.GateStatus.BLOCKED.value)
+        self.assertIn("bogus Rule ID detected", res["summary"])
+
+    def test_pr03_missing_ts001_on_go_test_file_blocks(self):
+        """R-01: PR-03 blocks if Go test file is modified but mandatory TS-001 rule is omitted."""
+        rule_selection = {
+            "standards": ["GO"],
+            "rules": ["GGS-001", "GB-001"],
+            "source": "verified_host",
+            "selection_sha256": "b" * 64,
+        }
+        res = policy.eval_pr03_rule_id(rule_selection, ["backend-go/probe_test.go"])
+        self.assertEqual(res["status"], policy.GateStatus.BLOCKED.value)
+        self.assertIn("mandatory TS-001 rule not selected", res["summary"])
+
+    def test_pr03_with_ts001_on_go_test_file_passes(self):
+        """R-01: PR-03 passes when TS-001 is included for Go test modifications."""
+        rule_selection = {
+            "standards": ["GO"],
+            "rules": ["GGS-001", "TS-001"],
+            "source": "verified_host",
+            "selection_sha256": "c" * 64,
+        }
+        res = policy.eval_pr03_rule_id(rule_selection, ["backend-go/probe_test.go"])
+        self.assertEqual(res["status"], policy.GateStatus.PASS.value)
+
+    def test_pr03_head_sha_mismatch_blocks(self):
+        """R-01: PR-03 blocks if rule selection source SHA does not match PR HEAD commit."""
+        rule_selection = {
+            "standards": ["C"],
+            "rules": ["C-001"],
+            "source_sha": "1111111111111111111111111111111111111111",
+            "source": "verified_host",
+            "selection_sha256": "d" * 64,
+        }
+        pr_data = {"head_sha": "2222222222222222222222222222222222222222"}
+        res = policy.eval_pr03_rule_id(rule_selection, ["firmware/main.c"], pr_data=pr_data)
+        self.assertEqual(res["status"], policy.GateStatus.BLOCKED.value)
+        self.assertIn("does not match PR HEAD", res["summary"])
+
+    def test_pr03_forged_selection_hash_blocks(self):
+        """R-01: Verified host selection requires a valid 64-char selection_sha256 receipt."""
+        rule_selection = {
+            "standards": ["C"],
+            "rules": ["C-001"],
+            "source": "verified_host",
+            "selection_sha256": "invalid-non-hex-hash",
+        }
+        res = policy.eval_pr03_rule_id(rule_selection, ["firmware/main.c"])
+        self.assertEqual(res["status"], policy.GateStatus.BLOCKED.value)
+        self.assertIn("missing or malformed selection_sha256 receipt", res["summary"])
+
+    def test_pr03_synthetic_fixture_cannot_pass_live_pr(self):
+        """R-01: Synthetic fixture evidence cannot be used for live PR validation."""
+        rule_selection = {
+            "standards": ["C"],
+            "rules": ["C-001"],
+            "source": "fixture",
+        }
+        pr_data = {"is_live": True, "head_sha": "abc"}
+        res = policy.eval_pr03_rule_id(rule_selection, ["firmware/main.c"], pr_data=pr_data)
+        self.assertEqual(res["status"], policy.GateStatus.BLOCKED.value)
+        self.assertIn("Synthetic fixture rule evidence cannot be used for live PR", res["summary"])
+
+    def test_pr03_entire_standard_selection_blocks(self):
+        """R-01: Ingestion of the entire standard is forbidden and blocks execution."""
+        rule_selection = {
+            "standards": ["C"],
+            "rules": ["C-001"],
+            "entire_standard_selected": True,
+            "source": "verified_host",
+            "selection_sha256": "e" * 64,
+        }
+        res = policy.eval_pr03_rule_id(rule_selection, ["firmware/main.c"])
+        self.assertEqual(res["status"], policy.GateStatus.BLOCKED.value)
+        self.assertIn("Entire standard selection is forbidden", res["summary"])
+
+    # --- Issue #144 R-02: Independent Auditor and Per-ID Evidence Tests ---
+
+    def test_auditor_report_none_results_in_not_verified(self):
+        """R-02: When auditor_report is None, AI_REVIEW_PASS is strictly NOT_VERIFIED."""
+        pr_data = {"files": [{"filename": "docs/test.md"}], "reviews": [], "author": "dev"}
+        eval_res = policy.evaluate_pr_policy(
+            pr_data=pr_data,
+            linked_issue={"number": 1, "state": "OPEN"},
+            allowed_paths=["docs/test.md"],
+            codeowners_content="* @dev",
+            rule_selection={"standards": ["DOCS"], "rules": []},
+            auditor_report=None,
+            check_runs=[{"name": "test", "status": "completed", "conclusion": "success"}],
+            hil_receipt=None,
+            head_sha_at_start="1" * 40,
+            head_sha_at_end="1" * 40,
+        )
+        self.assertEqual(eval_res["dimensions"]["AI_REVIEW_PASS"], "NOT_VERIFIED")
+
+    def test_auditor_self_audit_rejected(self):
+        """R-02: Self-auditing by the PR author is rejected with AI_REVIEW_PASS=FAIL and BLOCKED."""
+        pr_data = {"files": [{"filename": "docs/test.md"}], "reviews": [], "author": "author-user"}
+        auditor_report = {
+            "status": "PASS",
+            "auditor_id": "author-user",  # Self audit!
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["docs/test.md"],
+        }
+        eval_res = policy.evaluate_pr_policy(
+            pr_data=pr_data,
+            linked_issue={"number": 1, "state": "OPEN"},
+            allowed_paths=["docs/test.md"],
+            codeowners_content="* @author-user",
+            rule_selection={"standards": ["DOCS"], "rules": []},
+            auditor_report=auditor_report,
+            check_runs=[{"name": "test", "status": "completed", "conclusion": "success"}],
+            hil_receipt=None,
+            head_sha_at_start="1" * 40,
+            head_sha_at_end="1" * 40,
+        )
+        self.assertEqual(eval_res["dimensions"]["AI_REVIEW_PASS"], "FAIL")
+        self.assertEqual(eval_res["verdict"], policy.HostVerdict.BLOCKED.value)
+        self.assertTrue(any("Auditor self-review rejected" in b for b in eval_res["blockers"]))
+
+    def test_auditor_leaked_secret_rejected(self):
+        """R-02: An Auditor report containing credentials/private keys fails closed."""
+        fake_token = "ghp_" + "a" * 30
+        pr_data = {"files": [{"filename": "docs/test.md"}], "reviews": [], "author": "dev"}
+        auditor_report = {
+            "status": "PASS",
+            "auditor_id": "fresh-auditor",
+            "findings": [],
+            "limitations": [f"Scanned token: {fake_token}"],
+            "reviewed_scope": ["docs/test.md"],
+        }
+        eval_res = policy.evaluate_pr_policy(
+            pr_data=pr_data,
+            linked_issue={"number": 1, "state": "OPEN"},
+            allowed_paths=["docs/test.md"],
+            codeowners_content="* @dev",
+            rule_selection={"standards": ["DOCS"], "rules": []},
+            auditor_report=auditor_report,
+            check_runs=[{"name": "test", "status": "completed", "conclusion": "success"}],
+            hil_receipt=None,
+            head_sha_at_start="1" * 40,
+            head_sha_at_end="1" * 40,
+        )
+        self.assertEqual(eval_res["dimensions"]["AI_REVIEW_PASS"], "FAIL")
+        self.assertTrue(any("Credential or private key detected in auditor report" in b for b in eval_res["blockers"]))
+
+    def test_auditor_p0_p1_findings_block_correctness(self):
+        """R-02: Auditor reporting P0/P1 defects causes PR-04 to be BLOCKED."""
+        pr_data = {"files": [{"filename": "firmware/main.c", "status": "modified", "patch": "+int x;"}]}
+        auditor_report = {
+            "status": "FAIL",
+            "findings": [{"severity": "CRITICAL", "file": "firmware/main.c", "line": 1, "rule": "C-001", "explanation": "Memory safety flaw"}],
+            "limitations": [],
+            "reviewed_scope": ["firmware/main.c"],
+        }
+        res = policy.eval_pr04_correctness(pr_data, auditor_report)
+        self.assertEqual(res["status"], policy.GateStatus.BLOCKED.value)
+        self.assertIn("Auditor reported 1 unresolved high-severity finding", res["summary"])
+
+    def test_auditor_pass_with_findings_rejected(self):
+        """R-02: Auditor report cannot claim status PASS while containing findings or limitations."""
+        pr_data = {"files": [{"filename": "firmware/main.c", "status": "modified", "patch": "+int x;"}]}
+        auditor_report = {
+            "status": "PASS",
+            "findings": [{"severity": "LOW", "file": "firmware/main.c", "line": 1, "rule": "C-010", "explanation": "style"}],
+            "limitations": [],
+            "reviewed_scope": ["firmware/main.c"],
+        }
+        res = policy.eval_pr04_correctness(pr_data, auditor_report)
+        self.assertEqual(res["status"], policy.GateStatus.BLOCKED.value)
+        self.assertIn("status PASS cannot carry findings", res["summary"])
+
+    def test_auditor_missing_per_rule_result_blocks(self):
+        """R-02: Auditor report omitting evaluated rules from selection is rejected."""
+        pr_data = {"files": [{"filename": "firmware/main.c", "status": "modified", "patch": "+int x;"}]}
+        rule_selection = {"selected_ids": ["C-001", "C-002"]}
+        auditor_report = {
+            "status": "PASS",
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["firmware/main.c"],
+            "rule_results": [{"rule_id": "C-001", "status": "PASS"}],  # C-002 omitted!
+        }
+        res = policy.eval_pr04_correctness(pr_data, auditor_report, rule_selection=rule_selection)
+        self.assertEqual(res["status"], policy.GateStatus.BLOCKED.value)
+        self.assertIn("missing per-rule results for Rule IDs", res["summary"])
+
+    # --- Issue #144 R-03: Security Review vs Secret Scan Semantics ---
+
+    def test_secret_scan_pass_does_not_imply_security_review_pass(self):
+        """R-03: Clean regex secret scan cannot grant SECURITY_REVIEW_PASS on security paths."""
+        pr_data = {
+            "files": [{"filename": "contracts/crypto/aes_session.md", "status": "modified", "patch": "+specification"}],
+            "reviews": [],
+            "author": "dev",
+        }
+        eval_res = policy.evaluate_pr_policy(
+            pr_data=pr_data,
+            linked_issue={"number": 2, "state": "OPEN"},
+            allowed_paths=["contracts/crypto/aes_session.md"],
+            codeowners_content="* @dev\ncontracts/ @security-lead",
+            rule_selection={"standards": ["DOCS"], "rules": []},
+            auditor_report=None,
+            check_runs=[{"name": "ci", "status": "completed", "conclusion": "success"}],
+            hil_receipt=None,
+            head_sha_at_start="2" * 40,
+            head_sha_at_end="2" * 40,
+        )
+        self.assertEqual(eval_res["dimensions"]["SECRET_SCAN_PASS"], "PASS")
+        self.assertEqual(eval_res["dimensions"]["SECURITY_REVIEW_PASS"], "NOT_VERIFIED")
+        self.assertEqual(eval_res["verdict"], policy.HostVerdict.BLOCKED.value)
+        self.assertFalse(eval_res["ready_to_merge"])
+
+    def test_security_review_not_applicable_for_docs(self):
+        """R-03: Non-security docs PRs correctly evaluate SECURITY_REVIEW_PASS as NOT_APPLICABLE."""
+        pr_data = {
+            "files": [{"filename": "docs/guide.md", "status": "modified", "patch": "+text"}],
+            "reviews": [],
+            "author": "dev",
+        }
+        eval_res = policy.evaluate_pr_policy(
+            pr_data=pr_data,
+            linked_issue={"number": 3, "state": "OPEN"},
+            allowed_paths=["docs/guide.md"],
+            codeowners_content="* @dev",
+            rule_selection={"standards": ["DOCS"], "rules": []},
+            auditor_report=None,
+            check_runs=[{"name": "ci", "status": "completed", "conclusion": "success"}],
+            hil_receipt=None,
+            head_sha_at_start="3" * 40,
+            head_sha_at_end="3" * 40,
+        )
+        self.assertEqual(eval_res["dimensions"]["SECURITY_REVIEW_PASS"], "NOT_APPLICABLE")
+
+    def test_security_specialist_approval_passes_security_review(self):
+        """R-03: Specialist human sign-off grants SECURITY_REVIEW_PASS on security paths."""
+        pr_data = {
+            "files": [{"filename": "contracts/crypto/aes_session.md", "status": "modified", "patch": "+specification"}],
+            "reviews": [{"user": {"login": "security-lead"}, "state": "APPROVED"}],
+            "author": "dev",
+        }
+        eval_res = policy.evaluate_pr_policy(
+            pr_data=pr_data,
+            linked_issue={"number": 4, "state": "OPEN"},
+            allowed_paths=["contracts/crypto/aes_session.md"],
+            codeowners_content="* @dev\ncontracts/ @security-lead",
+            rule_selection={"standards": ["DOCS"], "rules": []},
+            auditor_report=None,
+            check_runs=[{"name": "ci", "status": "completed", "conclusion": "success"}],
+            hil_receipt=None,
+            head_sha_at_start="4" * 40,
+            head_sha_at_end="4" * 40,
+        )
+        self.assertEqual(eval_res["dimensions"]["SECURITY_REVIEW_PASS"], "PASS")
+
+    def test_ready_for_human_review_never_sets_ready_to_merge(self):
+        """R-03: Automated evaluator strictly emits ready_to_merge=False."""
+        pr_data = {
+            "head_ref": "docs/105-readme",
+            "files": [{"filename": "docs/readme.md", "status": "modified", "patch": "+hello"}],
+            "reviews": [{"user": {"login": "reviewer"}, "state": "APPROVED"}],
+            "author": "dev",
+        }
+        eval_res = policy.evaluate_pr_policy(
+            pr_data=pr_data,
+            linked_issue={"number": 5, "state": "OPEN"},
+            allowed_paths=["docs/readme.md"],
+            codeowners_content="* @dev",
+            rule_selection={"standards": ["DOCS"], "rules": []},
+            auditor_report=None,
+            check_runs=[{"name": "ci", "status": "completed", "conclusion": "success"}],
+            hil_receipt=None,
+            head_sha_at_start="5" * 40,
+            head_sha_at_end="5" * 40,
+        )
+        self.assertEqual(eval_res["verdict"], policy.HostVerdict.READY_FOR_HUMAN_REVIEW.value)
+        self.assertFalse(eval_res["ready_to_merge"])
+
+    # --- Issue #144 R-05: TOCTOU and Snapshot Tests ---
+
+    def test_toctou_base_sha_change_blocks(self):
+        """R-05: PR-08 blocks with STALE_REVIEW if base SHA drifts during review."""
+        pr_data = {"reviews": [], "review_comments": []}
+        res = policy.eval_pr08_merge_integrity(
+            pr_data,
+            head_sha_at_start="1" * 40,
+            head_sha_at_end="1" * 40,
+            base_sha_at_start="base1" + "0" * 35,
+            base_sha_at_end="base2" + "0" * 35,
+        )
+        self.assertEqual(res["status"], policy.GateStatus.BLOCKED.value)
+        self.assertIn("PR BASE SHA race detected", res["summary"])
+
+    def test_missing_patch_on_modified_file_blocks(self):
+        """R-05: Modified file with missing patch diff fails closed in PR-04."""
+        pr_data = {
+            "files": [{"filename": "firmware/main.c", "status": "modified"}],  # patch omitted
+        }
+        res = policy.eval_pr04_correctness(pr_data, None)
+        self.assertEqual(res["status"], policy.GateStatus.BLOCKED.value)
+        self.assertIn("Missing patch diff", res["summary"])
+
+    def test_unsupported_git_file_status_blocks(self):
+        """R-05: Unsupported git file status fails closed in PR-04."""
+        pr_data = {
+            "files": [{"filename": "module", "status": "submodule_corrupt", "patch": ""}],
+        }
+        res = policy.eval_pr04_correctness(pr_data, None)
+        self.assertEqual(res["status"], policy.GateStatus.BLOCKED.value)
+        self.assertIn("Unsupported git file status", res["summary"])
+
 
 class PRReviewFixtureTests(unittest.TestCase):
     """Integration tests using all synthetic fixtures."""

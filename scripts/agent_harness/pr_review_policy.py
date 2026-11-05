@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import enum
 import fnmatch
+import json
 from pathlib import PurePosixPath
 import re
 from typing import Any, Iterable
@@ -74,6 +75,24 @@ PROMPT_INJECTION_REGEX = re.compile(
     r"mark\s+(?:all\s+)?(?:gates?\s+)?as\s+pass|"
     r"auto[-_\s]*merge\s+(?:this\s+pr|immediately))"
 )
+
+RULE_ID_REGEX = re.compile(r"^[A-Z]+-[0-9]{3}$")
+HASH_REGEX = re.compile(r"^[0-9a-f]{64}$")
+KNOWN_RULE_PREFIXES = frozenset({
+    "C", "GB", "GGS", "GO", "ARCH", "CT", "SE", "RT", "MQ", "DB", "TS", "QG", "AI", "GOV"
+})
+
+
+def is_security_sensitive_path(path: str) -> bool:
+    """Check if a path touches security, cryptographic, TLS, or auth boundaries."""
+    norm = path.strip("/").lower()
+    if norm.startswith("contracts/"):
+        return True
+    if any(k in norm for k in ("crypto", "tls", "auth", "secret", "token", "credential", "rbac")):
+        return True
+    if norm.startswith("firmware/components/sx1276_driver/") or norm.startswith("firmware/components/lora_mac/"):
+        return True
+    return False
 
 
 class CodeOwnerRule:
@@ -181,7 +200,6 @@ def eval_pr01_governance(
     codeowners_rules: list[CodeOwnerRule],
 ) -> dict[str, Any]:
     """PR-01 GOVERNANCE: Issue linkage, path allowlist, branch name, and owner independence."""
-    reasons: list[str] = []
     blockers: list[str] = []
     changed_files = [f.get("filename", "") for f in pr_data.get("files", [])]
     author = pr_data.get("author", "")
@@ -232,9 +250,10 @@ def eval_pr02_architecture_contract(
     pr_data: dict[str, Any],
 ) -> dict[str, Any]:
     """PR-02 ARCHITECTURE/CONTRACT: Approved ADR, versioned contracts/ compatibility."""
-    contract_paths = [f for f in changed_files if f.startswith("contracts/")]
-    adr_paths = [f for f in changed_files if f.startswith("docs/adr/")]
-    arch_paths = [f for f in changed_files if f.startswith("docs/architecture/") or f.startswith("docs/requirements/")]
+    files = list(changed_files)
+    contract_paths = [f for f in files if f.startswith("contracts/")]
+    adr_paths = [f for f in files if f.startswith("docs/adr/")]
+    arch_paths = [f for f in files if f.startswith("docs/architecture/") or f.startswith("docs/requirements/")]
 
     touched = contract_paths + adr_paths + arch_paths
     if not touched:
@@ -266,10 +285,15 @@ def eval_pr02_architecture_contract(
 def eval_pr03_rule_id(
     rule_selection: dict[str, Any] | None,
     changed_files: Iterable[str],
+    pr_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """PR-03 RULE-ID: Scoped C/Go Rule IDs, never full standard, no unselected rules."""
+    """PR-03 RULE-ID: Scoped C/Go Rule IDs, never full standard, no unselected rules.
+
+    Fail-closed: validates deterministic Host selection, tracked #137 schema,
+    per-ID rule hashes, HEAD commit SHA binding, and test-rule applicability.
+    """
     files = list(changed_files)
-    if not rule_selection:
+    if not rule_selection or not isinstance(rule_selection, dict):
         return {
             "gate": "PR-03 RULE-ID",
             "status": GateStatus.NOT_VERIFIED.value,
@@ -277,55 +301,174 @@ def eval_pr03_rule_id(
             "blockers": ["Rule selection receipt missing."],
         }
 
-    standards = rule_selection.get("standards", [])
-    rules = rule_selection.get("rules", [])
-    rule_count = rule_selection.get("rule_count", len(rules))
+    # Handle explicit router error or failure
+    if rule_selection.get("status") == "BLOCKED" or "error" in rule_selection:
+        err = rule_selection.get("error", "Rule selection failed closed.")
+        return {
+            "gate": "PR-03 RULE-ID",
+            "status": GateStatus.BLOCKED.value,
+            "summary": f"Rule-ID selection failed: {err}",
+            "blockers": [f"Rule-ID selection failed: {err}"],
+        }
 
-    # Check bounds
+    has_c = any(f.startswith("firmware/") and (f.endswith(".c") or f.endswith(".h")) for f in files)
+    has_go = any(f.startswith("backend-go/") and f.endswith(".go") for f in files)
+    has_go_test = any(f.startswith("backend-go/") and f.endswith("_test.go") for f in files)
+
+    source = rule_selection.get("source")
+    if not source:
+        source = "verified_host" if "selection_sha256" in rule_selection else "fixture"
+
+    # Non-code changes (docs only) do not load standards
+    if not (has_c or has_go):
+        return {
+            "gate": "PR-03 RULE-ID",
+            "status": GateStatus.NOT_APPLICABLE.value,
+            "summary": "Docs / non-code change: code standards routing not applicable.",
+            "blockers": [],
+            "rules": [],
+            "selection_source": source,
+        }
+
     blockers: list[str] = []
+
+    # Offline fixture evidence cannot assert live PR GREEN status
+    is_live_pr = pr_data is not None and pr_data.get("is_live", False)
+    if source == "fixture" and is_live_pr:
+        blockers.append("Synthetic fixture rule evidence cannot be used for live PR verification.")
+
+    # 1. Pinned source SHA binding to PR HEAD commit
+    if pr_data and pr_data.get("head_sha") and rule_selection.get("source_sha"):
+        if rule_selection["source_sha"] != pr_data["head_sha"]:
+            blockers.append(
+                f"Rule selection source SHA ({rule_selection['source_sha'][:8]}) "
+                f"does not match PR HEAD ({pr_data['head_sha'][:8]})."
+            )
+
+    # 2. Extract and validate selected Rule IDs
+    raw_ids = rule_selection.get("selected_ids", rule_selection.get("rules", []))
+    selected_ids: list[str] = []
+    if isinstance(raw_ids, list):
+        for item in raw_ids:
+            if isinstance(item, dict):
+                rid = item.get("rule_id", "")
+                if rid:
+                    selected_ids.append(rid)
+            elif isinstance(item, str):
+                selected_ids.append(item)
+            else:
+                selected_ids.append(str(item))
+
+    # Reject malformed or bogus Rule IDs
+    bogus = [
+        r for r in selected_ids
+        if not RULE_ID_REGEX.match(r) or r.split("-")[0] not in KNOWN_RULE_PREFIXES
+    ]
+    if bogus:
+        blockers.append(f"Malformed or bogus Rule ID detected: {', '.join(bogus[:3])}.")
+
+    # 3. Selection hash verification
+    sel_sha = rule_selection.get("selection_sha256")
+    if source == "verified_host":
+        if not sel_sha or not isinstance(sel_sha, str) or not HASH_REGEX.match(sel_sha):
+            blockers.append("Rule selection missing or malformed selection_sha256 receipt.")
+    elif sel_sha:
+        if not isinstance(sel_sha, str) or not HASH_REGEX.match(sel_sha):
+            blockers.append("Rule selection has malformed selection_sha256 receipt.")
+
+    # 4. Check rule count budget
+    rule_count = rule_selection.get("rule_count", len(selected_ids))
     if rule_count > 128:
         blockers.append(f"Selected rule count ({rule_count}) exceeds bounded budget (128).")
 
-    # Check that appropriate standards are loaded
-    has_c = any(f.startswith("firmware/") and (f.endswith(".c") or f.endswith(".h")) for f in files)
-    has_go = any(f.startswith("backend-go/") and f.endswith(".go") for f in files)
+    # 5. Check standards loaded and required rules applicability
+    standards = rule_selection.get("standards", {})
+    standards_set: set[str] = set(standards.keys()) if isinstance(standards, dict) else set(standards)
 
-    if has_c and "C" not in standards:
-        blockers.append("Firmware C code changed but C Coding Standard v2 not selected.")
-    if has_go and "GO" not in standards:
-        blockers.append("Backend Go code changed but Go Backend Engineering Standard v2 not selected.")
+    if has_c:
+        if "C" not in standards_set:
+            blockers.append("Firmware C code changed but C Coding Standard v2 not selected.")
+        if not any(r.startswith("C-") for r in selected_ids):
+            blockers.append("Firmware C code changed but no C-* rules selected.")
+
+    if has_go:
+        if "GO" not in standards_set:
+            blockers.append("Backend Go code changed but Go Backend Engineering Standard v2 not selected.")
+
+    # R-01 mandatory check: TS-001 must be selected if Go test files are modified
+    if has_go_test:
+        if "TS-001" not in selected_ids:
+            blockers.append("Backend Go test code changed (*_test.go) but mandatory TS-001 rule not selected.")
+
+    # Entire standard check
+    if rule_selection.get("entire_standard_selected"):
+        blockers.append("Entire standard selection is forbidden; rules must be scoped.")
 
     status = GateStatus.BLOCKED if blockers else GateStatus.PASS
-    summary = "; ".join(blockers) if blockers else f"Scoped standards ({', '.join(standards) or 'DOCS'}); {rule_count} rules bounded and verified."
-    return {"gate": "PR-03 RULE-ID", "status": status.value, "summary": summary, "blockers": blockers, "rules": rules}
+    summary = "; ".join(blockers) if blockers else f"Scoped standards ({', '.join(sorted(standards_set)) or 'DOCS'}); {len(selected_ids)} rules bounded and verified."
+    return {
+        "gate": "PR-03 RULE-ID",
+        "status": status.value,
+        "summary": summary,
+        "blockers": blockers,
+        "rules": selected_ids,
+        "selection_source": source,
+    }
 
 
 def eval_pr04_correctness(
     pr_data: dict[str, Any],
     auditor_report: dict[str, Any] | None,
+    rule_selection: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """PR-04 CORRECTNESS: Behavior, error/timeout handling, conflict markers, and diff integrity."""
+    """PR-04 CORRECTNESS: Behavior, conflict markers, patch completeness, and auditor findings."""
     blockers: list[str] = []
     files = pr_data.get("files", [])
 
     for f in files:
         patch = f.get("patch", "")
-        if patch:
-            if CONFLICT_MARKER_REGEX.search(patch):
-                blockers.append(f"Git conflict marker found in patch for {f.get('filename')}.")
-
-        # Check for truncated patches / unsupported file modes
+        filename = f.get("filename", "")
         status = f.get("status", "")
-        if status not in ("added", "modified", "removed", "renamed"):
-            blockers.append(f"Unsupported git file status '{status}' for {f.get('filename')}.")
 
-    # Check auditor findings if auditor was run
+        # Conflict marker scan
+        if patch and CONFLICT_MARKER_REGEX.search(patch):
+            blockers.append(f"Git conflict marker found in patch for {filename}.")
+
+        # Supported git status
+        if status not in ("added", "modified", "removed", "renamed"):
+            blockers.append(f"Unsupported git file status '{status}' for {filename}.")
+
+        # Missing or truncated patch on modified/added file
+        if status in ("added", "modified") and "patch" not in f and not f.get("is_binary"):
+            blockers.append(f"Missing patch diff for {filename}.")
+
+    # Evaluate Auditor report if present
     if auditor_report:
+        report_status = auditor_report.get("status", "")
         findings = auditor_report.get("findings", [])
+        limitations = auditor_report.get("limitations", [])
+
+        if report_status == "PASS" and (findings or limitations):
+            blockers.append("Auditor report status PASS cannot carry findings or limitations.")
+
         p0_p1 = [find for find in findings if find.get("severity") in ("P0", "P1", "CRITICAL", "HIGH")]
         if p0_p1:
-            blockers.append(f"Auditor reported {len(p0_p1)} unresolved high-severity finding(s): " +
-                            ", ".join(f"{item.get('rule_id', 'BUG')}: {item.get('detail', '')[:80]}" for item in p0_p1[:3]))
+            desc = ", ".join(f"{item.get('rule', item.get('rule_id', 'BUG'))}: {item.get('explanation', item.get('detail', ''))[:80]}" for item in p0_p1[:3])
+            blockers.append(f"Auditor reported {len(p0_p1)} unresolved high-severity finding(s): {desc}")
+
+        # Check per-rule coverage if rule results are present
+        if rule_selection and "rule_results" in auditor_report:
+            raw_rules = rule_selection.get("selected_ids", rule_selection.get("rules", []))
+            expected_ids = set()
+            for item in raw_rules:
+                if isinstance(item, dict):
+                    expected_ids.add(item.get("rule_id", ""))
+                elif isinstance(item, str):
+                    expected_ids.add(item)
+            covered_ids = {r.get("rule_id") for r in auditor_report.get("rule_results", []) if isinstance(r, dict)}
+            missing = expected_ids - covered_ids
+            if missing:
+                blockers.append(f"Auditor report missing per-rule results for Rule IDs: {', '.join(sorted(missing)[:5])}.")
 
     status = GateStatus.BLOCKED if blockers else GateStatus.PASS
     summary = "; ".join(blockers) if blockers else "No git conflict markers; diff structure valid; correctness checks pass."
@@ -335,7 +478,7 @@ def eval_pr04_correctness(
 def eval_pr05_security(
     pr_data: dict[str, Any],
 ) -> dict[str, Any]:
-    """PR-05 SECURITY: Secret scanning, prompt injection defense, dependency verification."""
+    """PR-05 SECURITY (Static scan): Secret scanning, prompt injection defense."""
     blockers: list[str] = []
     files = pr_data.get("files", [])
 
@@ -360,7 +503,6 @@ def eval_pr05_security(
 
     for text in untrusted_texts:
         if text and PROMPT_INJECTION_REGEX.search(text):
-            # We record a warning/blocker if prompt injection is actively attempting to bypass checks
             blockers.append("Adversarial prompt injection pattern detected in untrusted PR text; command interpretation strictly denied.")
 
     status = GateStatus.BLOCKED if blockers else GateStatus.PASS
@@ -456,17 +598,29 @@ def eval_pr08_merge_integrity(
     pr_data: dict[str, Any],
     head_sha_at_start: str,
     head_sha_at_end: str,
-    ruleset_status: str | None,
+    ruleset_status: str | None = None,
+    base_sha_at_start: str | None = None,
+    base_sha_at_end: str | None = None,
 ) -> dict[str, Any]:
-    """PR-08 MERGE-INTEGRITY: TOCTOU race protection, unresolved review threads, rulesets visibility."""
+    """PR-08 MERGE-INTEGRITY: TOCTOU race protection (HEAD and BASE), unresolved review threads, rulesets visibility."""
     blockers: list[str] = []
     changes_requested: list[str] = []
 
     # 1. TOCTOU check: PR head must not change during review
     if head_sha_at_start != head_sha_at_end:
-        blockers.append(f"PR HEAD SHA race detected! Started review at {head_sha_at_start[:8]}, but HEAD is now {head_sha_at_end[:8]}. Review is STALE.")
+        blockers.append(
+            f"PR HEAD SHA race detected! Started review at {head_sha_at_start[:8]}, "
+            f"but HEAD is now {head_sha_at_end[:8]}. Review is STALE."
+        )
 
-    # 2. Check for unresolved review threads or outstanding CHANGES_REQUESTED
+    # 2. TOCTOU check: PR base must not change during review
+    if base_sha_at_start and base_sha_at_end and base_sha_at_start != base_sha_at_end:
+        blockers.append(
+            f"PR BASE SHA race detected! Started review at {base_sha_at_start[:8]}, "
+            f"but BASE is now {base_sha_at_end[:8]}. Review is STALE."
+        )
+
+    # 3. Check for unresolved review threads or outstanding CHANGES_REQUESTED
     reviews = pr_data.get("reviews", [])
     for r in reviews:
         if r.get("state", "").upper() == "CHANGES_REQUESTED":
@@ -478,7 +632,7 @@ def eval_pr08_merge_integrity(
     if unresolved_threads:
         changes_requested.append(f"{len(unresolved_threads)} unresolved conversation thread(s) remain on PR diff.")
 
-    # 3. Ruleset / branch protection visibility note
+    # 4. Ruleset / branch protection visibility note
     protection_note = ruleset_status or "MERGE_PROTECTION_NOT_VERIFIED"
 
     all_issues = blockers + changes_requested
@@ -511,9 +665,18 @@ def evaluate_pr_policy(
     head_sha_at_start: str,
     head_sha_at_end: str,
     ruleset_status: str | None = None,
+    base_sha_at_start: str | None = None,
+    base_sha_at_end: str | None = None,
 ) -> dict[str, Any]:
-    """Synthesize complete policy evaluation and determine Host verdict."""
+    """Synthesize complete policy evaluation and determine Host verdict.
+
+    Strict separation:
+    - SECRET_SCAN_PASS (basic static regex scan) != SECURITY_REVIEW_PASS (independent specialist review).
+    - READY_FOR_HUMAN_REVIEW indicates only ready to start human review, NOT ready to merge.
+    - ready_to_merge is always False in automated reports.
+    """
     changed_files = [f.get("filename", "") for f in pr_data.get("files", [])]
+    author = pr_data.get("author", "")
     codeowners_rules = parse_codeowners(codeowners_content)
     risk = classify_risk(changed_files)
     policy_rec = get_approval_policy_recommendation(risk)
@@ -521,17 +684,20 @@ def evaluate_pr_policy(
     # Evaluate all 8 gates
     g1 = eval_pr01_governance(pr_data, linked_issue, allowed_paths, codeowners_rules)
     g2 = eval_pr02_architecture_contract(changed_files, pr_data)
-    g3 = eval_pr03_rule_id(rule_selection, changed_files)
-    g4 = eval_pr04_correctness(pr_data, auditor_report)
+    g3 = eval_pr03_rule_id(rule_selection, changed_files, pr_data)
+    g4 = eval_pr04_correctness(pr_data, auditor_report, rule_selection)
     g5 = eval_pr05_security(pr_data)
     g6 = eval_pr06_testing(check_runs)
     g7 = eval_pr07_rf_hil(changed_files, pr_data, hil_receipt)
-    g8 = eval_pr08_merge_integrity(pr_data, head_sha_at_start, head_sha_at_end, ruleset_status)
+    g8 = eval_pr08_merge_integrity(
+        pr_data, head_sha_at_start, head_sha_at_end, ruleset_status,
+        base_sha_at_start, base_sha_at_end
+    )
 
     gates = [g1, g2, g3, g4, g5, g6, g7, g8]
     all_blockers = [b for g in gates for b in g.get("blockers", [])]
 
-    # Independent Dimensions
+    # Automated check pass
     auto_check_pass = (
         g1["status"] == GateStatus.PASS.value and
         g3["status"] in (GateStatus.PASS.value, GateStatus.NOT_APPLICABLE.value) and
@@ -540,23 +706,62 @@ def evaluate_pr_policy(
         g7["status"] in (GateStatus.PASS.value, GateStatus.NOT_APPLICABLE.value)
     )
 
+    # R-03: Separate SECRET_SCAN_PASS from SECURITY_REVIEW_PASS
+    secret_scan_pass = "PASS" if g5["status"] == GateStatus.PASS.value else "FAIL"
+
+    # Evaluate SECURITY_REVIEW_PASS
+    security_touched = any(is_security_sensitive_path(f) for f in changed_files)
+    if not security_touched:
+        security_review_pass = "NOT_APPLICABLE"
+    else:
+        # Check for independent security specialist sign-off or specialist receipt
+        reviews = pr_data.get("reviews", [])
+        security_approved = False
+        for r in reviews:
+            rev_name = r.get("user", {}).get("login") or r.get("author", "")
+            rev_state = r.get("state", "").upper()
+            if rev_state == "APPROVED" and rev_name != author:
+                if rev_name in ("@security-lead", "security-lead", "architect-lead") or r.get("role") == "security_specialist":
+                    security_approved = True
+
+        if pr_data.get("security_receipt") and pr_data["security_receipt"].get("status") == "PASS":
+            security_approved = True
+
+        if security_approved:
+            security_review_pass = "PASS"
+        else:
+            security_review_pass = "NOT_VERIFIED"
+            if any(f.startswith("contracts/") or "crypto" in f.lower() for f in changed_files):
+                all_blockers.append("Independent security review receipt or specialist sign-off absent for security-sensitive paths.")
+
+    # R-02: Auditor evaluation
     ai_review_pass = "NOT_VERIFIED"
     if auditor_report:
-        ai_review_pass = "PASS" if auditor_report.get("status") == "PASS" else "FAIL"
+        # Check author self-audit
+        auditor_id = auditor_report.get("auditor_id")
+        if auditor_id and auditor_id == author:
+            all_blockers.append(f"Auditor self-review rejected: author '@{author}' cannot act as independent Auditor.")
+            ai_review_pass = "FAIL"
+        else:
+            # Check secret leaks in auditor report
+            report_str = json.dumps(auditor_report)
+            if PRIVATE_KEY_REGEX.search(report_str) or TOKEN_REGEX.search(report_str):
+                all_blockers.append("Credential or private key detected in auditor report output.")
+                ai_review_pass = "FAIL"
+            else:
+                ai_review_pass = "PASS" if auditor_report.get("status") == "PASS" else "FAIL"
 
-    author = pr_data.get("author", "")
+    # Human approval status
     valid_approvals = [
         r.get("user", {}).get("login") or r.get("author", "")
         for r in pr_data.get("reviews", [])
         if r.get("state", "").upper() == "APPROVED" and (r.get("user", {}).get("login") or r.get("author", "")) != author
     ]
     human_approved = "APPROVED" if len(valid_approvals) >= policy_rec["required_approvals"] else "PENDING"
-
     hil_rf_pass = g7["status"]
-    security_review_pass = "PASS" if g5["status"] == GateStatus.PASS.value else "FAIL"
 
     # Compute Final Verdict
-    if head_sha_at_start != head_sha_at_end:
+    if head_sha_at_start != head_sha_at_end or (base_sha_at_start and base_sha_at_end and base_sha_at_start != base_sha_at_end):
         verdict = HostVerdict.BLOCKED
     elif any(g["status"] == GateStatus.BLOCKED.value for g in (g1, g2, g3, g4, g5, g7, g8)):
         verdict = HostVerdict.BLOCKED
@@ -569,18 +774,24 @@ def evaluate_pr_policy(
     else:
         verdict = HostVerdict.READY_FOR_HUMAN_REVIEW
 
+    ruleset_note = ruleset_status or "MERGE_PROTECTION_NOT_VERIFIED"
+    merge_active = "ENFORCED" if ("ENFORCED" in ruleset_note or "ACTIVE" in ruleset_note) else "NOT_VERIFIED"
+
     return {
         "verdict": verdict.value,
+        "ready_to_merge": False,  # Never auto-merges
         "risk_level": risk.value,
         "policy_recommendation": policy_rec,
         "gates": gates,
         "blockers": all_blockers,
         "dimensions": {
             "AUTO_CHECK_PASS": auto_check_pass,
+            "SECRET_SCAN_PASS": secret_scan_pass,
+            "SECURITY_REVIEW_PASS": security_review_pass,
             "AI_REVIEW_PASS": ai_review_pass,
             "HUMAN_APPROVED": human_approved,
             "HIL_RF_PASS": hil_rf_pass,
-            "SECURITY_REVIEW_PASS": security_review_pass,
+            "MERGE_ENFORCEMENT_ACTIVE": merge_active,
         },
         "changed_files_count": len(changed_files),
         "required_codeowners": get_required_codeowners(codeowners_rules, changed_files),
