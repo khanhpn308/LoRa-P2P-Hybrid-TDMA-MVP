@@ -84,6 +84,15 @@ Immediately after reset recovery, the driver must verify SPI communication by re
 1. Changing between LoRa and FSK/OOK (`LongRangeMode`, bit 7 of `RegOpMode`) is **only allowed in SLEEP mode**. Attempts to write bit 7 in STDBY, TX, or RX are silently ignored.
 2. Entering SLEEP mode **wipes the FIFO RAM**. Never stage TX data in FIFO and then enter SLEEP.
 3. The silicon automatically reverts to `STDBY` after TX, RX Single, or CAD operations. Driver state machines must mirror this automatic transition.
+4. **TDMA Network Role Policies & Mode Lifecycles:**
+   - **Node Lifecycle:**
+     - Baseline state is ESP32 Deep-sleep / radio low power (#149).
+     - Event detection (button/sensor) triggers local alarm and stages durable pending Event; **no immediate RF TX on event**.
+     - In authorized own DATA slot (#125/#131): Wake $\to$ `STDBY` $\to$ `TX` (Event frame) $\to$ automatically reverts to `STDBY` upon `TxDone` $\to$ configure `RegDioMapping1` for `RxDone` $\to$ enter `RXSINGLE` during bounded ACK window $\to$ upon authenticated ACK, return to Deep-sleep. If ACK missing or invalid, preserve the pending Event and retry only in a subsequent authorized own DATA slot; do not switch to unrestricted continuous listening.
+     - Scheduled Maintenance: Wake before scheduled Maintenance reception slot $\to$ enter `RXSINGLE` to receive Gateway `SYNC_BEACON` $\to$ transition to `STDBY` $\to$ `TX` (`HEALTH_REPLY` in Node's permitted response slot) $\to$ return to Deep-sleep. Maintenance is not RX-only; no DATA/Maintenance/ACK overlap.
+   - **Gateway Lifecycle:**
+     - Baseline state is `RXCONTINUOUS` during scheduled receive phases (including DATA RX windows).
+     - Half-duplex radio transitions: To transmit an authenticated Event ACK or scheduled `SYNC_BEACON`, Gateway Radio Owner executes: `RXCONTINUOUS` $\to$ `STDBY` $\to$ stage payload in FIFO $\to$ configure DIO0 for `TxDone` $\to$ `TX` $\to$ wait `TxDone` (reverts to `STDBY`) $\to$ reconfigure DIO0 for `RxDone` $\to$ return to `RXCONTINUOUS`. The Gateway cannot receive while transmitting its own packets.
 
 ---
 
@@ -320,6 +329,7 @@ RxDone (DIO0 interrupt snapshot)
   2. Executes the strict RX Validation Pipeline.
   3. **Immediate FIFO extraction:** Because the receiver remains in `RXCONT`, incoming RF energy from a subsequent packet will begin writing to the circular FIFO immediately. The host must extract payload bytes before the FIFO pointer wraps around or before the next packet arrives.
   4. **Targeted IRQ Clearing (`snapshot & 0x70`):** The driver clears only the processed flags by executing a targeted write-1-to-clear with `RegIrqFlags = (snapshot & 0x70)` (specifically clearing `RxDone` `[bit 6]`, `PayloadCrcError` `[bit 5]`, and `ValidHeader` `[bit 4]` if asserted for this frame). The radio continues receiving seamlessly.
+- **Gateway Half-Duplex Transmission Transition:** When the Gateway needs to transmit (e.g., sending an Event ACK or Maintenance `SYNC_BEACON`), the Radio Owner task must explicitly transition from `RXCONT` to `STDBY`, stage the payload into `RegFifo`, set DIO0 to `TxDone` (`0x40`), and enter `TX`. After `TxDone` asserts (automatically reverting the transceiver to `STDBY`), the task reconfigures DIO0 to `RxDone` (`0x00`) and transitions back to `RXCONT`. The Gateway cannot receive while transmitting its own packets.
 
 > [!WARNING]
 > **Prohibition of Solitary `0x40` Clearing in Continuous Mode:**
@@ -472,17 +482,25 @@ $$T_{payload} = N_{payload} \times \frac{2^{SF}}{BW}$$
 
 ## 10. Radio Initialization Sequence after ESP32 Wake-Up
 
-Because ESP32 Deep-sleep may disconnect or reset the SX1276 power domain, firmware must reinitialize the transceiver on every wake cycle:
+Because ESP32 Deep-sleep may disconnect or reset the SX1276 power domain, firmware must reinitialize the transceiver on every wake cycle using the validated configuration plan derived from `sx1276_phy_config_t`:
 
 1. Configure ESP32 GPIOs: NSS (GPIO18) high, SCK/MOSI low, RESET (GPIO23) floating, DIO0 (GPIO26) input.
-2. Assert manual reset: Drive GPIO23 low for $150\text{ }\mu\text{s}$, release to open-drain, delay $10\text{ ms}$.
+2. Assert manual reset: Drive GPIO23 low for $\ge 100\text{ }\mu\text{s}$ (recommended $150\text{ }\mu\text{s}$), release to open-drain, delay $10\text{ ms}$.
 3. Read `RegVersion` (`0x42`): Assert error if readback is not `0x12`.
 4. Put radio in `SLEEP` (`RegOpMode = 0x00`), then select LoRa (`RegOpMode = 0x80`).
 5. Switch to `STDBY` (`RegOpMode = 0x81`).
 6. Apply silicon errata fix: Read-modify-write `RegDetectOptimize` (`0x31`): clear bit 7 (`reg & ~0x80`), yielding `0x43` if reset value is `0xC3`. Never hardcode `0x03` as this corrupts reserved bits.
-7. Program carrier frequency (`RegFrMsb/Mid/Lsb`) for the authorized channel.
-8. Configure modem: Write `RegModemConfig1 = 0x72`, set SF7/CRC in `RegModemConfig2`, set `LowDataRateOptimize = 0` in `RegModemConfig3`.
-9. Program sync word: Write `RegSyncWord = 0x12`.
-10. Set FIFO base addresses: `RegFifoTxBaseAddr = 0x80`, `RegFifoRxBaseAddr = 0x00`.
-11. Route DIO0 to `TxDone` (`0x40`) or `RxDone` (`0x00`).
-12. Ready in `STDBY` mode.
+7. Program carrier frequency (`RegFrMsb/Mid/Lsb`) for the Backend-authorized channel (e.g., `0xE61000` for CH00).
+8. Program modem parameters derived from typed configuration (`sx1276_register_plan_build`):
+   - `RegModemConfig1`: write computed byte (`0x72` for BW125/CR4/5/Explicit).
+   - `RegModemConfig2`: set SF7 (`0x70`) and `RxPayloadCrcOn` (`0x04`) while preserving `SymbTimeout[9:8]`.
+   - `RegModemConfig3`: set `LowDataRateOptimize = 0` and `AgcAutoOn = 1` (`0x04`).
+9. Program preamble length: write configured preamble symbols (`0x0008` for 8-symbol test preset in `RegPreambleMsb/Lsb`).
+10. Program PA ramp and OCP: write `0x09` to `RegPaRamp` (40 µs ramp) and `0x2B` to `RegOcp` (100 mA limit).
+11. Program LNA: write `0x20` to `RegLna` (HF Boost OFF, default current; gain controlled by AGC).
+12. Program sync word: write `0x12` to `RegSyncWord` (`0x39`).
+13. Set FIFO base addresses: `RegFifoTxBaseAddr = 0x80`, `RegFifoRxBaseAddr = 0x00`.
+14. Route DIO0 to `TxDone` (`0x40`) or `RxDone` (`0x00`) depending on scheduled role.
+15. Ready in `STDBY` mode.
+
+*(Note: Register byte values in the checklist illustrate the compiled output for `PHY_PROFILE_MVP_V1` and `SX1276_TEST_PROFILE_V1`. The driver logic uses bitfield encoders and validation rather than fixed magic numbers).*
