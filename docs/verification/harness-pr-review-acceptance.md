@@ -160,7 +160,94 @@ python3 scripts/agent_harness/agent_context.py --repo .
 
 ## 6. Real E2E Read-Only Acceptance Trace (PR #153)
 
-### 6.1 Invocation and Coordination Context
+### 6.1 Latest E2E Acceptance Trace at HEAD `b6a9d7f` (2026-11-05)
+
+#### 6.1.1 Invocation and Coordination Context
+- **Command:** One-command `Nghiệm thu PR #153` (Native Fast Lane read-only execution)
+- **Target Pull Request:** `#153` (`feat(harness): one-command AGY/Codex native capability bootstrap (#152)`)
+- **PR URL:** `https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/153`
+- **Head SHA:** `b6a9d7fdb92e2e96677b5af8eb940204d902558b` (`feature/152-native-cli-setup`)
+- **Base SHA:** `00be159ce7fbfff07e02fd1f4f08d7716b8111e0` (`fix/144-pr-review-fail-closed`)
+- **PR Author:** `@khanhpn308`
+- **Candidate Checkout:** `/tmp/lora-issue-152` (clean worktree of branch `feature/152-native-cli-setup`)
+- **Snapshot Diff Hash:** `bede7f842be1c43d22f12be1ceab7cda18855d74954cc15f231a30d54f8935f0`
+- **Auditor Coordination:** Fresh independent read-only model Auditor subagent (`independent-auditor-pr-153`, distinct from PR author `@khanhpn308`).
+- **Auditor Report Status:** `PASS` (exact 13 changed files reviewed, 0 findings, 0 limitations).
+- **Execution Command:**
+```bash
+python3 scripts/agent_harness/pr_review.py \
+  --pr 153 \
+  --candidate-repo /tmp/lora-issue-152 \
+  --auditor-report /home/khanh/.gemini/antigravity-cli/brain/f5a1cf9b-6aff-4443-8445-f33ed2a9ad93/scratch/auditor_report_pr153.json
+```
+- **Exit Code:** `0`
+- **Verdict:** `🟢 READY FOR HUMAN REVIEW` (`ready_to_merge = false`, risk level `HIGH`)
+
+#### 6.1.2 Gate Evaluation Evidence Matrix (PR #153 at b6a9d7f)
+
+| Gate ID | Dimension | Status | Evidence & Summary |
+| :--- | :--- | :---: | :--- |
+| **PR-01** | GOVERNANCE | **PASS** | Linked to OPEN Issue #152; all 13 files in declared allowlist; branch naming compliant; author independence verified (`auditor_id != author`). |
+| **PR-02** | ARCHITECTURE/CONTRACT | **NOT_APPLICABLE** | No `contracts/**` or ADRs modified in this PR. |
+| **PR-03** | RULE-ID | **NOT_APPLICABLE** | PR consists only of documentation, Python harness scripts, and unit tests; code standards routing not applicable. |
+| **PR-04** | CORRECTNESS | **PASS** | No git conflict markers; clean diff structure; independent model Auditor report verified PASS (0 defects). |
+| **PR-05** | SECURITY | **PASS** | Static regex diff scan clean across all 13 files; prompt-injection sanitization verified; non-root and 0600 file protections verified. |
+| **PR-06** | TESTING | **PASS** | All 9 GitHub Actions commit check-runs passed on commit `b6a9d7fd`; 336 unit tests passed locally in `tests/agent_harness`. |
+| **PR-07** | RF/HIL | **NOT_APPLICABLE** | PR does not modify RF stack, MAC timing, SX1276 driver, or firmware hardware paths. |
+| **PR-08** | MERGE-INTEGRITY | **PASS** | HEAD SHA verified immutable (`b6a9d7fd`); BASE SHA verified immutable (`00be159c`); 0 unresolved review threads. |
+
+#### 6.1.3 Independent Dimension Statuses
+
+| Dimension | Status | Evidence |
+| :--- | :--- | :--- |
+| `AUTO_CHECK_PASS` | **PASS** | Gates PR-01, PR-04, PR-05, PR-06, PR-08 pass cleanly. |
+| `SECRET_SCAN_PASS` | **PASS** | Static regex diff scan clean across all 13 files. |
+| `SECURITY_REVIEW_PASS` | **NOT_APPLICABLE** | No cryptographic contracts or protocol boundaries touched. |
+| `AI_REVIEW_PASS` | **PASS** | Genuine fresh independent model Auditor (`independent-auditor-pr-153`) returned schema-compliant PASS. |
+| `HUMAN_APPROVED` | **PENDING** | Required human approvals: 2 (HIGH risk harness controls). Author self-approval rejected. |
+| `HIL_RF_PASS` | **NOT_APPLICABLE** | No radio or embedded firmware modified. |
+| `MERGE_ENFORCEMENT_ACTIVE` | **NOT_VERIFIED** | GitHub branch protection / rulesets cannot be administered by CLI; requires repo admin configuration. |
+
+---
+
+### 6.2 Auditor Provenance & Session ID Verification Assessment
+
+An explicit inspection was performed regarding the binding of `auditor_id` to actual runtime execution:
+1. **Host Policy Check:** `pr_review_policy.py` checks `auditor_id = auditor_report.get("auditor_id")` and verifies author independence (`auditor_id != author`), rejecting author self-audits.
+2. **Current Limitation:** The harness does **NOT** cross-reference `auditor_id` against the live AGY runtime session ID, transcript UUID, or cryptographic provenance token. Any arbitrary string provided in the JSON file is accepted as long as it differs from the PR author.
+3. **Formal Classification:**
+   - Auditor identity binding is currently **unverified at the Host harness level** (`PROVENANCE_NOT_VERIFIED`).
+   - The system **must not assume provenance is verified**.
+   - Operating guidelines require human reviewers to inspect genuine AGY conversation transcripts (`/home/khanh/.gemini/antigravity-cli/brain/<conversation-id>`) independently until cryptographic session attestation is implemented in a future release.
+
+---
+
+### 6.3 Command Failure Triage in Acceptance Trace
+
+During the E2E review trace (conversation `f5a1cf9b-6aff-4443-8445-f33ed2a9ad93`), two commands encountered non-zero exits:
+
+#### 6.3.1 Command 1: Interactive gh CLI Query Failure (`Exit Code 1`)
+- **Command:** `git status && gh pr view 153` (Step 1)
+- **Error:** `GraphQL: Projects (classic) is being deprecated in favor of the new Projects experience... (repository.pullRequest.projectCards)`
+- **Root Cause:** GitHub CLI (v2.45.0) default GraphQL query schema contains deprecated `projectCards` field when invoked without `--json`.
+- **Classification & Acceptance Impact:** **NON-BLOCKING / NO IMPACT ON ACCEPTANCE**.
+  - This was an interactive discovery command by the operator, not part of the deterministic harness pipeline.
+  - Succeeded immediately in subsequent step when queried with explicit JSON fields (`gh pr view 153 --json ...`).
+
+#### 6.3.2 Command 2: Candidate Repo Allowlist Guard Trigger (`Exit Code 2`)
+- **Command:** `python3 scripts/agent_harness/pr_review.py --pr 153 --candidate-repo .` (Step 16)
+- **Error:** `Rule-ID selection failed: Deterministic Rule-ID selection failed: Actual diff exceeds Issue allowlist`
+- **Root Cause:** The command was invoked with `--candidate-repo .` while the current working directory was `/tmp/lora-issue-140-e2e` (the workspace for Issue #140), instead of the dedicated worktree for PR #153 (`/tmp/lora-issue-152`). Because the Issue #140 workspace diff contained files outside Issue #152's declared allowlist, the Standards Router correctly failed closed.
+- **Classification & Acceptance Impact:** **NON-BLOCKING / POSITIVE SECURITY EVIDENCE**.
+  - Does not affect PR #153 acceptance validity.
+  - Confirms that the Host G0 and Standards Router **fail-closed security mechanism is functioning as designed**: attempting to review a PR against a mismatched or contaminated candidate directory immediately blocks execution (`exit 2`).
+  - When re-run pointing to the verified candidate worktree (`--candidate-repo /tmp/lora-issue-152`), the command completed with exit code 0 and clean PASS across all applicable gates.
+
+---
+
+### 6.4 Historical E2E Acceptance Trace at HEAD `13bf5e1` (Archived Initial Run)
+
+#### 6.4.1 Invocation and Coordination Context
 - **Target Pull Request:** `#153` (`feat(harness): one-command AGY/Codex native capability bootstrap (#152)`)
 - **PR URL:** `https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/153`
 - **Head SHA:** `13bf5e17b50270ba9a561ea515a38c620eb1c558`
@@ -179,7 +266,7 @@ python3 scripts/agent_harness/pr_review.py \
 - **Exit Code:** `0`
 - **Verdict:** `🟢 READY FOR HUMAN REVIEW`
 
-### 6.2 Gate Evaluation Evidence Matrix (PR #153)
+#### 6.4.2 Gate Evaluation Evidence Matrix (PR #153 at 13bf5e1)
 
 | Gate ID | Dimension | Status | Evidence & Summary |
 | :--- | :--- | :---: | :--- |
@@ -192,7 +279,7 @@ python3 scripts/agent_harness/pr_review.py \
 | **PR-07** | RF/HIL | **NOT_APPLICABLE** | PR does not modify RF stack, MAC timing, SX1276 driver, or firmware hardware paths. |
 | **PR-08** | MERGE-INTEGRITY | **PASS** | HEAD SHA verified immutable `13bf5e17`; BASE SHA verified immutable `00be159c`; 0 unresolved review threads. |
 
-### 6.3 Independent Dimension Statuses
+#### 6.4.3 Independent Dimension Statuses (PR #153 at 13bf5e1)
 
 | Dimension | Status | Evidence |
 | :--- | :--- | :--- |

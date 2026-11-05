@@ -16,6 +16,9 @@ When triggered by an operator with `Nghiệm thu PR #N`, the Coordinator automat
 4. **Automated Evidence Evaluation:** Validates the Auditor report against schema contracts via `adapters.antigravity.check_report` (retaining `auditor_id` and envelope metadata), and evaluates gates PR-01 through PR-08.
 5. **Report & Recommendation:** Emits structured verdict and Markdown report. Never auto-merges; human specialist approval is required.
 
+> [!NOTE]
+> **Auditor Provenance Limitation:** While the harness enforces author independence (`auditor_id != author`) and validates report schemas, `auditor_id` is currently read from the input JSON payload without live cross-referencing against AGY runtime session IDs. Review records must treat provenance as `PROVENANCE_NOT_VERIFIED` rather than cryptographically bound.
+
 ### 2.2 CLI Execution Commands
 
 ```bash

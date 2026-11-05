@@ -272,6 +272,8 @@ def validate_and_load_auditor_report(
     if not isinstance(raw_report, dict):
         raise PRReviewError("Auditor report must be a JSON object")
 
+    # auditor_id binds identity for author independence checks (auditor_id != author).
+    # Note: Cross-referencing against live AGY session ID / provenance is not yet implemented (PROVENANCE_NOT_VERIFIED).
     auditor_id = raw_report.get("auditor_id") or raw_report.get("agent_id")
     body = raw_report.get("report", raw_report)
     if isinstance(body, dict):
