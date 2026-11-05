@@ -177,14 +177,17 @@ When executing `Nghiệm thu PR #142`, automated gates PR-01 to PR-08 completed 
 2. **Full-Diff Batching and Elimination of Silent Truncation:**
    - Completely eliminated silent diff truncation (e.g. `{cumulative_diff[:50000]}`). Diffs exceeding single-batch budget (`MAX_BATCH_DIFF_BYTES = 60_000`) are partitioned into file and hunk batches via `partition_diff_batches` with batch index, batch diff SHA-256, and overall diff SHA-256. Passing an unbatched oversized diff raises an explicit error.
    - Built `aggregate_batch_reports` requiring 100% path coverage across all batches (`AUDIT-COVERAGE-MISMATCH` if any file is omitted).
-3. **Snapshot Binding Verification:**
-   - In `validate_and_load_auditor_report` and `eval_pr04_correctness`, Auditor reports are cryptographically validated against frozen PR snapshot attributes (`base_sha`, `head_sha`, `diff_sha256`, and per-rule `diff.patch` receipt hash). Any mismatch fails closed with `AUDIT-SNAPSHOT-MISMATCH`.
-4. **Coordinator Sequencing Update (`harness-coordinator.md`):**
-   - Formalized multi-step execution: Host G0 context gate -> `--export-auditor-context` -> fresh `invoke_subagent` (TypeName: `Fresh-Independent-Auditor`, Role: `Fresh Independent Auditor`, read-only workspace) or `--auto-audit` -> Host validation & re-evaluation with `--auditor-report` -> TOCTOU SHA immutability re-check -> verdict reporting.
+3. **Mandatory Snapshot Binding & Anti-Fabrication Wrapper Defense:**
+   - In `validate_and_load_auditor_report` and `eval_pr04_correctness`, Auditor reports are cryptographically validated against frozen PR snapshot attributes (`base_sha`, `head_sha`, `diff_sha256`, and per-rule `diff.patch` receipt hash).
+   - Fail closed on missing/absent fields (`base_sha`, `head_sha`, `diff_sha256`) as well as mismatches (`AUDIT-SNAPSHOT-MISMATCH`).
+   - Anti-fabrication check: detect conflicting metadata between outer envelope and inner report (`AUDIT-SNAPSHOT-MISMATCH`).
+4. **Post-Audit TOCTOU Dual SHA Freshness Protection:**
+   - Re-query `head_sha_at_end` and `base_sha_at_end` directly from GitHub immediately after Auditor completion and prior to final Host verdict calculation (and before optional authorized comment publishing). Any commit push or rebase occurring during audit produces `STALE_REVIEW/BLOCKED`.
 5. **Synthetic Test Separation in Security Classification:**
    - Implemented `is_synthetic_fixture_path` to exempt synthetic fixtures (`/fixtures/`, `tests/agent_harness/fixtures/`, `tests/fixtures/`) from triggering human specialist review blockers, while strictly preserving security review requirements for real test files under `tests/` that touch crypto/security.
-6. **Adapter Compatibility:**
+6. **Adapter Compatibility & Bounded Execution:**
    - Minimal compatibility fix in `antigravity.py` allowing default empty inventory handling for scoped validations while strictly preserving per-rule evidence binding for all `PASS` claims.
+   - Bounded native Auditor execution via `--effort low`, ensuring robust sub-30s completion per batch without timeout.
 
 ### 6.3 Test & Regression Receipts
 - **Unit & Regression Suite:** Added comprehensive negative and positive regression test cases covering:
@@ -199,6 +202,36 @@ When executing `Nghiệm thu PR #142`, automated gates PR-01 to PR-08 completed 
   - Snapshot binding verification for `base_sha` mismatch (`AUDIT-SNAPSHOT-MISMATCH`).
   - Snapshot binding verification for `head_sha` mismatch (`AUDIT-SNAPSHOT-MISMATCH`).
   - Snapshot binding verification for `diff_sha256` mismatch (`AUDIT-SNAPSHOT-MISMATCH`).
+  - Snapshot binding verification for absent `base_sha` (`AUDIT-SNAPSHOT-MISMATCH`).
+  - Snapshot binding verification for absent `head_sha` (`AUDIT-SNAPSHOT-MISMATCH`).
+  - Snapshot binding verification for absent `diff_sha256` (`AUDIT-SNAPSHOT-MISMATCH`).
+  - Snapshot binding verification for fabricated envelope wrapper (`AUDIT-SNAPSHOT-MISMATCH`).
+  - Post-audit TOCTOU HEAD drift rejection (Gate PR-08 `BLOCKED`).
+  - Post-audit TOCTOU BASE drift rejection (Gate PR-08 `BLOCKED`).
+  - Missing batch count rejection in aggregation (`AUDIT-COVERAGE-MISMATCH`).
+  - Missing hunk coverage rejection in aggregation (`AUDIT-COVERAGE-MISMATCH`).
   - Snapshot binding verification for `diff.patch` evidence receipt hash mismatch (`AUDIT-SNAPSHOT-MISMATCH`).
   - Synthetic crypto fixture path separation vs real security test classification.
-- **Suite Outcome:** All 323 tests in `tests/agent_harness/` pass with zero failures and zero errors.
+- **Suite Outcome:** All **331** tests in `tests/agent_harness/` pass with zero failures and zero errors.
+
+### 6.4 Live 3-Batch Native Auditor Execution Receipt on PR #142
+- **Target PR:** `https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/142`
+- **PR HEAD SHA:** `4ee0a28ec2abc2d5ec8d618ed62b26a96e64e154`
+- **PR BASE SHA:** `3e8690187bb73c3503167112c9b59a4cf8c47b43`
+- **Total Diff Size:** 133,990 bytes across 16 files (16 hunks)
+- **Partitioning Receipt (`MAX_BATCH_DIFF_BYTES = 60_000`):**
+  - Batch 1/3: 4 files, 47,607 bytes, 4 hunks, batch SHA-256 `8ccfe8046c17...`
+  - Batch 2/3: 11 files, 52,398 bytes, 11 hunks, batch SHA-256 `800333b55de6...`
+  - Batch 3/3: 1 file, 33,951 bytes, 1 hunk, batch SHA-256 `de82c61210fa...`
+  - Total preserved hunks: 16/16 (100% hunk preservation, zero silent truncation)
+- **Native Auditor Execution:**
+  - Batch 1 Native Run: exit code `0`, duration `23.47s`, status `PASS`, reviewed 4/4 batch files.
+  - Batch 2 Native Run: exit code `0`, status `PASS`, reviewed 11/11 batch files.
+  - Batch 3 Native Run: exit code `0`, status `PASS`, reviewed 1/1 batch files.
+- **Aggregation & Host Verdict:**
+  - Aggregated 3/3 batch reports covering all 16 required files.
+  - Cryptographic snapshot binding: `base_sha` and `head_sha` verified; `diff_sha256` validated.
+  - Post-audit TOCTOU freshness: re-queried GitHub API; HEAD (`4ee0a28e`) and BASE (`3e869018`) verified immutable.
+  - Evaluation Command: `python3 scripts/agent_harness/pr_review.py --pr 142 --candidate-repo /tmp/pr-142-clean --auditor-report /tmp/harness-evidence-pr-142/auditor_report.json --evidence-dir /tmp/harness-evidence-pr-142`
+  - Exit Code: `0`
+  - Verdict: `🟢 READY FOR HUMAN REVIEW` (All 8 gates evaluated; `ready_to_merge = false` preserved).

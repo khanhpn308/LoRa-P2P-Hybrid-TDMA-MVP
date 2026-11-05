@@ -52,6 +52,14 @@ except ImportError:
 DEFAULT_REPO = "khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP"
 COMMENT_HEADER_SIGNATURE = "# 🛡️ Harness PR Review Report"
 MAX_BATCH_DIFF_BYTES = 60_000
+SHA_COMMIT_REGEX = re.compile(r"^[0-9a-f]{7,64}$")
+SHA256_REGEX = re.compile(r"^[0-9a-f]{64}$")
+HUNK_HEADER_REGEX = re.compile(r"(?m)^@@\s+-[0-9]+(?:,[0-9]+)?\s+\+[0-9]+(?:,[0-9]+)?\s+@@.*$")
+
+
+def extract_diff_hunks(diff_text: str) -> list[str]:
+    """Extract list of unified diff hunk headers from diff text."""
+    return HUNK_HEADER_REGEX.findall(diff_text)
 
 
 class PRReviewError(RuntimeError):
@@ -367,8 +375,11 @@ def partition_diff_batches(
         }]
 
     total_bytes = sum(len(d.encode("utf-8")) for _, d in file_diff_map)
+    full_diff = "".join(d for _, d in file_diff_map) if not cumulative_diff else cumulative_diff
+    total_expected_hunks = extract_diff_hunks(full_diff)
+
     if total_bytes <= max_batch_bytes:
-        full_diff = "".join(d for _, d in file_diff_map) if not cumulative_diff else cumulative_diff
+        hunks = extract_diff_hunks(full_diff)
         return [{
             "batch_index": 1,
             "total_batches": 1,
@@ -376,6 +387,9 @@ def partition_diff_batches(
             "batch_diff_sha256": hashlib.sha256(full_diff.encode("utf-8")).hexdigest(),
             "overall_diff_sha256": overall_diff_hash,
             "batch_files": [fname for fname, _ in file_diff_map],
+            "batch_hunks": hunks,
+            "batch_hunk_count": len(hunks),
+            "batch_bytes": len(full_diff.encode("utf-8")),
         }]
 
     batches: list[dict[str, Any]] = []
@@ -442,11 +456,23 @@ def partition_diff_batches(
         })
 
     total_batches = len(batches)
+    total_partitioned_hunks = 0
     for idx, b in enumerate(batches, start=1):
         b["batch_index"] = idx
         b["total_batches"] = total_batches
         b["batch_diff_sha256"] = hashlib.sha256(b["batch_diff"].encode("utf-8")).hexdigest()
         b["overall_diff_sha256"] = overall_diff_hash
+        b_hunks = extract_diff_hunks(b["batch_diff"])
+        b["batch_hunks"] = b_hunks
+        b["batch_hunk_count"] = len(b_hunks)
+        b["batch_bytes"] = len(b["batch_diff"].encode("utf-8"))
+        total_partitioned_hunks += len(b_hunks)
+
+    if total_expected_hunks and total_partitioned_hunks < len(total_expected_hunks):
+        raise PRReviewError(
+            f"Hunk preservation mismatch in diff partitioning: expected {len(total_expected_hunks)} hunks, "
+            f"partitioned {total_partitioned_hunks} hunks. Truncation or hunk loss detected."
+        )
 
     return batches
 
@@ -555,8 +581,10 @@ def aggregate_batch_reports(
     expected_head_sha: str | None = None,
     expected_diff_sha256: str | None = None,
     rule_selection: dict[str, Any] | None = None,
+    expected_batches_count: int | None = None,
+    expected_hunks: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Aggregate multiple batch audit reports with mandatory coverage and snapshot binding."""
+    """Aggregate multiple batch audit reports with mandatory coverage, snapshot binding, and hunk verification."""
     if not batch_reports:
         return {
             "status": "FAIL",
@@ -577,14 +605,42 @@ def aggregate_batch_reports(
             "diff_sha256": expected_diff_sha256,
         }
 
+    # 1. Batch count validation
+    if expected_batches_count is not None and len(batch_reports) != expected_batches_count:
+        err_msg = (
+            f"Batch count mismatch: expected {expected_batches_count} batch reports, "
+            f"received {len(batch_reports)}."
+        )
+        return {
+            "status": "FAIL",
+            "findings": [
+                {
+                    "severity": "CRITICAL",
+                    "file": "audit",
+                    "line": 1,
+                    "rule": "AUDIT-COVERAGE-MISMATCH",
+                    "explanation": err_msg,
+                    "fix": "Ensure all batch reports are provided without omissions.",
+                }
+            ],
+            "limitations": [err_msg],
+            "reviewed_scope": [],
+            "base_sha": expected_base_sha,
+            "head_sha": expected_head_sha,
+            "diff_sha256": expected_diff_sha256,
+        }
+
     all_reviewed: set[str] = set()
     all_findings: list[dict[str, Any]] = []
     all_limitations: list[str] = []
+    all_reported_hunks: set[str] = set()
     seen_finding_keys: set[tuple[str, str, int, str, str]] = set()
     rule_results_map: dict[str, dict[str, Any]] = {}
 
     for rep in batch_reports:
         all_reviewed.update(rep.get("reviewed_scope", []))
+        if "hunks" in rep and isinstance(rep["hunks"], list):
+            all_reported_hunks.update(rep["hunks"])
         for f in rep.get("findings", []):
             key = (
                 f.get("severity", ""),
@@ -618,7 +674,34 @@ def aggregate_batch_reports(
                         ev_seen.add(ev_key)
                         existing["evidence"].append(ev)
 
-    # Mandatory coverage verification
+    # 2. Hunk coverage validation if expected hunks are specified
+    if expected_hunks is not None:
+        missing_hunks = set(expected_hunks) - all_reported_hunks
+        if missing_hunks:
+            err_msg = (
+                f"Hunk coverage mismatch: expected {len(expected_hunks)} hunks, missing {len(missing_hunks)}. "
+                f"Truncated/missing hunks detected."
+            )
+            return {
+                "status": "FAIL",
+                "findings": [
+                    {
+                        "severity": "CRITICAL",
+                        "file": "audit",
+                        "line": 1,
+                        "rule": "AUDIT-COVERAGE-MISMATCH",
+                        "explanation": err_msg,
+                        "fix": "Re-run Auditor ensuring complete hunk coverage.",
+                    }
+                ],
+                "limitations": [err_msg],
+                "reviewed_scope": sorted(all_reviewed),
+                "base_sha": expected_base_sha,
+                "head_sha": expected_head_sha,
+                "diff_sha256": expected_diff_sha256,
+            }
+
+    # 3. Mandatory path coverage verification
     missing_paths = required_paths - all_reviewed
     unexpected_paths = all_reviewed - required_paths
     if missing_paths or unexpected_paths:
@@ -671,7 +754,8 @@ def aggregate_batch_reports(
     if expected_diff_sha256:
         agg["diff_sha256"] = expected_diff_sha256
 
-    if rule_selection and rule_selection.get("selection_sha256"):
+    has_rules = bool(rule_selection and rule_selection.get("rules") and rule_selection.get("selection_sha256"))
+    if has_rules:
         agg["selection_sha256"] = rule_selection["selection_sha256"]
         agg["rule_results"] = list(rule_results_map.values())
 
@@ -698,6 +782,7 @@ def run_auto_audit(
     has_rules = bool(rule_selection and rule_selection.get("rules") and rule_selection.get("selection_sha256"))
     required_rules = rule_selection.get("rules") if has_rules else None
     sel_sha = rule_selection.get("selection_sha256") if has_rules else None
+    target_inventory = evidence_inventory if has_rules else None
     schema_path = Path(__file__).resolve().parent / "adapters" / "audit.schema.json"
 
     evidence_dir.mkdir(parents=True, exist_ok=True)
@@ -738,8 +823,11 @@ def run_auto_audit(
             required_paths=b_files if b_total > 1 else required_paths,
             required_rules=required_rules,
             selection_sha256=sel_sha,
-            evidence_inventory=evidence_inventory,
+            evidence_inventory=target_inventory,
         )
+        if b_total > 1:
+            batch_report_file = evidence_dir / f"auditor_report_batch_{b_idx}.json"
+            batch_report_file.write_text(json.dumps(batch_report, indent=2, sort_keys=True), encoding="utf-8")
         batch_reports.append(batch_report)
 
     final_report = aggregate_batch_reports(
@@ -749,6 +837,7 @@ def run_auto_audit(
         expected_head_sha=pr_data.get("head_sha"),
         expected_diff_sha256=diff_hash,
         rule_selection=rule_selection,
+        expected_batches_count=len(batches),
     )
 
     report_file = evidence_dir / "auditor_report.json"
@@ -810,15 +899,55 @@ def validate_and_load_auditor_report(
 
     expected_base = pr_data.get("base_sha")
     expected_head = pr_data.get("head_sha")
-    valid_diff_hashes = {
-        h for h in (
-            expected_diff_sha256,
-            evidence_inventory.get("diff.patch") if evidence_inventory else None,
-        ) if h
-    }
+    valid_diff_hashes = set()
+    if isinstance(expected_diff_sha256, (set, list, tuple)):
+        valid_diff_hashes.update(expected_diff_sha256)
+    elif expected_diff_sha256:
+        valid_diff_hashes.add(expected_diff_sha256)
+    if evidence_inventory and evidence_inventory.get("diff.patch"):
+        valid_diff_hashes.add(evidence_inventory["diff.patch"])
 
-    # 1. Snapshot binding checks
-    if rep_base and expected_base and rep_base != expected_base:
+    # 1. Anti-fabrication check: detect conflicting metadata between envelope and inner report
+    if envelope_data and isinstance(core_report, dict):
+        for field in ("base_sha", "head_sha", "diff_sha256"):
+            env_val = envelope_data.get(field) or envelope_data.get("snapshot", {}).get(field)
+            rep_val = core_report.get(field) or core_report.get("snapshot", {}).get(field)
+            if env_val and rep_val and env_val != rep_val:
+                return {
+                    "status": "FAIL",
+                    "findings": [
+                        {
+                            "severity": "CRITICAL",
+                            "file": "audit",
+                            "line": 1,
+                            "rule": "AUDIT-SNAPSHOT-MISMATCH",
+                            "explanation": f"Fabricated wrapper detected: envelope {field} ({env_val[:8]}) conflicts with inner report {field} ({rep_val[:8]}).",
+                            "fix": "Do not wrap obsolete reports; run a fresh Auditor on current snapshot.",
+                        }
+                    ],
+                    "limitations": [f"Snapshot mismatch: conflicting {field}"],
+                    "reviewed_scope": list(required_paths),
+                }
+
+    # 2. Mandatory presence & format checks for snapshot binding (fail closed on absent fields)
+    if not rep_base or not isinstance(rep_base, str) or not SHA_COMMIT_REGEX.match(rep_base):
+        return {
+            "status": "FAIL",
+            "findings": [
+                {
+                    "severity": "CRITICAL",
+                    "file": "audit",
+                    "line": 1,
+                    "rule": "AUDIT-SNAPSHOT-MISMATCH",
+                    "explanation": "Auditor report missing or malformed mandatory base_sha snapshot binding.",
+                    "fix": "Re-run independent Auditor with frozen base_sha snapshot binding.",
+                }
+            ],
+            "limitations": ["Missing base_sha snapshot binding"],
+            "reviewed_scope": list(required_paths),
+        }
+
+    if expected_base and rep_base != expected_base:
         return {
             "status": "FAIL",
             "findings": [
@@ -828,14 +957,31 @@ def validate_and_load_auditor_report(
                     "line": 1,
                     "rule": "AUDIT-SNAPSHOT-MISMATCH",
                     "explanation": f"Auditor report base_sha ({rep_base[:8]}) does not match PR base_sha ({expected_base[:8]}).",
-                    "fix": "Re-run Auditor against the exact current PR base snapshot.",
+                    "fix": "Re-run independent Auditor against the exact current PR base snapshot.",
                 }
             ],
             "limitations": ["Snapshot mismatch: base_sha changed"],
             "reviewed_scope": list(required_paths),
         }
 
-    if rep_head and expected_head and rep_head != expected_head:
+    if not rep_head or not isinstance(rep_head, str) or not SHA_COMMIT_REGEX.match(rep_head):
+        return {
+            "status": "FAIL",
+            "findings": [
+                {
+                    "severity": "CRITICAL",
+                    "file": "audit",
+                    "line": 1,
+                    "rule": "AUDIT-SNAPSHOT-MISMATCH",
+                    "explanation": "Auditor report missing or malformed mandatory head_sha snapshot binding.",
+                    "fix": "Re-run independent Auditor with frozen head_sha snapshot binding.",
+                }
+            ],
+            "limitations": ["Missing head_sha snapshot binding"],
+            "reviewed_scope": list(required_paths),
+        }
+
+    if expected_head and rep_head != expected_head:
         return {
             "status": "FAIL",
             "findings": [
@@ -845,14 +991,31 @@ def validate_and_load_auditor_report(
                     "line": 1,
                     "rule": "AUDIT-SNAPSHOT-MISMATCH",
                     "explanation": f"Auditor report head_sha ({rep_head[:8]}) does not match PR head_sha ({expected_head[:8]}).",
-                    "fix": "Re-run Auditor against the exact current PR head snapshot.",
+                    "fix": "Re-run independent Auditor against the exact current PR head snapshot.",
                 }
             ],
             "limitations": ["Snapshot mismatch: head_sha changed"],
             "reviewed_scope": list(required_paths),
         }
 
-    if rep_diff and valid_diff_hashes and rep_diff not in valid_diff_hashes:
+    if not rep_diff or not isinstance(rep_diff, str) or not SHA256_REGEX.match(rep_diff):
+        return {
+            "status": "FAIL",
+            "findings": [
+                {
+                    "severity": "CRITICAL",
+                    "file": "audit",
+                    "line": 1,
+                    "rule": "AUDIT-SNAPSHOT-MISMATCH",
+                    "explanation": "Auditor report missing or malformed mandatory diff_sha256 snapshot binding.",
+                    "fix": "Re-run independent Auditor with frozen diff_sha256 snapshot binding.",
+                }
+            ],
+            "limitations": ["Missing diff_sha256 snapshot binding"],
+            "reviewed_scope": list(required_paths),
+        }
+
+    if valid_diff_hashes and rep_diff not in valid_diff_hashes:
         return {
             "status": "FAIL",
             "findings": [
@@ -862,7 +1025,7 @@ def validate_and_load_auditor_report(
                     "line": 1,
                     "rule": "AUDIT-SNAPSHOT-MISMATCH",
                     "explanation": f"Auditor report diff_sha256 ({rep_diff[:8]}...) does not match PR diff snapshot.",
-                    "fix": "Re-run Auditor against the exact current PR cumulative diff.",
+                    "fix": "Re-run independent Auditor against the exact current PR cumulative diff.",
                 }
             ],
             "limitations": ["Snapshot mismatch: diff_sha256 changed"],
@@ -918,12 +1081,15 @@ def validate_and_load_auditor_report(
         }
 
     # 3. Clean non-schema metadata for antigravity validator
-    snapshot_fields = {k: v for k, v in core_report.items() if k in ("base_sha", "head_sha", "diff_sha256", "snapshot")}
-    clean_report = {k: v for k, v in core_report.items() if k not in snapshot_fields}
+    has_rules = bool(rule_selection and rule_selection.get("rules") and rule_selection.get("selection_sha256"))
+    snapshot_keys = {"base_sha", "head_sha", "diff_sha256", "snapshot"}
+    if not has_rules:
+        snapshot_keys.update({"selection_sha256", "rule_results"})
+    snapshot_fields = {k: v for k, v in core_report.items() if k in snapshot_keys}
+    clean_report = {k: v for k, v in core_report.items() if k not in snapshot_keys}
 
     if antigravity:
         try:
-            has_rules = bool(rule_selection and rule_selection.get("rules") and rule_selection.get("selection_sha256"))
             required_rules = rule_selection.get("rules") if has_rules else None
             sel_sha = rule_selection.get("selection_sha256") if has_rules else None
             validated = antigravity.check_report(
@@ -1265,7 +1431,7 @@ def run_pr_review(args: argparse.Namespace) -> int:
             pr_data,
             rule_selection,
             evidence_inventory=evidence_inventory,
-            expected_diff_sha256=overall_diff_hash,
+            expected_diff_sha256={h for h in (overall_diff_hash, evidence_inventory.get("diff.patch")) if h},
         )
     elif getattr(args, "auto_audit", False):
         try:
@@ -1298,6 +1464,11 @@ def run_pr_review(args: argparse.Namespace) -> int:
             }
     elif fixture_auditor_report:
         auditor_report = fixture_auditor_report
+
+    # 7. Post-audit freshness verification to detect TOCTOU race during audit
+    if not args.fixture and pr_number:
+        head_sha_at_end = fetch_latest_head_sha(repo_name, pr_number)
+        base_sha_at_end = fetch_latest_base_sha(repo_name, pr_number)
 
     snapshot = {
         "schema_version": "1.0",
@@ -1339,7 +1510,7 @@ def run_pr_review(args: argparse.Namespace) -> int:
         ruleset_status=ruleset_status,
         base_sha_at_start=base_sha_at_start,
         base_sha_at_end=base_sha_at_end,
-        expected_diff_sha256=overall_diff_hash,
+        expected_diff_sha256={h for h in (overall_diff_hash, evidence_inventory.get("diff.patch")) if h},
     )
 
     # 9. Render report

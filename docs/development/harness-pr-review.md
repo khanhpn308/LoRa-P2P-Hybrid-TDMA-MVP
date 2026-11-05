@@ -51,9 +51,9 @@ python3 scripts/agent_harness/pr_review.py --fixture tests/agent_harness/fixture
 
 4. **`PR-04 CORRECTNESS`**:
    - Checks for git conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`), truncated patches, or corrupted diffs.
-   - **Full-diff batching & zero silent truncation**: Prompts never silently truncate diffs. Diffs exceeding batch thresholds (`MAX_BATCH_DIFF_BYTES = 60_000`) are partitioned into file/hunk batches with batch index, batch diff SHA-256, and overall diff SHA-256.
-   - **Mandatory 100% path coverage**: The union of reviewed paths across batches must exactly match all changed files; any omission fails closed with `AUDIT-COVERAGE-MISMATCH`.
-   - **Snapshot binding**: Auditor reports are cryptographically bound to frozen PR metadata (`base_sha`, `head_sha`, `diff_sha256`, and per-rule `diff.patch` receipt hash). Any drift fails closed with `AUDIT-SNAPSHOT-MISMATCH`.
+   - **Full-diff batching & zero silent truncation**: Prompts never silently truncate diffs. Diffs exceeding batch thresholds (`MAX_BATCH_DIFF_BYTES = 60_000`) are partitioned into file/hunk batches with batch index, batch diff SHA-256, overall diff SHA-256, and 100% hunk preservation (`extract_diff_hunks`).
+   - **Mandatory 100% path & batch coverage**: The union of reviewed paths across batches must exactly match all changed files, and all expected batches must be accounted for; any omission fails closed with `AUDIT-COVERAGE-MISMATCH`.
+   - **Cryptographic snapshot binding & anti-fabrication defense**: Auditor reports are bound to frozen PR metadata (`base_sha`, `head_sha`, `diff_sha256`, and per-rule `diff.patch` receipt hash). Absent or malformed fields, mismatched commit hashes, or fabricated wrapper envelopes (conflicting outer vs inner snapshot metadata) fail closed with `AUDIT-SNAPSHOT-MISMATCH`.
    - Evaluates unresolved high-severity findings from fresh read-only Auditor; requires full per-ID coverage.
 
 5. **`PR-05 SECURITY`**:
@@ -71,7 +71,7 @@ python3 scripts/agent_harness/pr_review.py --fixture tests/agent_harness/fixture
    - Explicitly marked `NOT_APPLICABLE` for docs and backend changes.
 
 8. **`PR-08 MERGE-INTEGRITY`**:
-   - Pre- and post-review HEAD and BASE SHA check: any commit push or base rebase during review fails closed with `STALE_REVIEW/BLOCKED` (TOCTOU protection).
+   - Pre- and post-review HEAD and BASE SHA check: re-queried immediately before policy evaluation and comment publishing; any commit push or base rebase during review or model audit fails closed with `STALE_REVIEW/BLOCKED` (dual TOCTOU race protection).
    - Unresolved review comment threads or outstanding `CHANGES_REQUESTED` block readiness.
    - Branch protection and rulesets visibility recorded (`MERGE_PROTECTION_NOT_VERIFIED` if unconfigured).
 

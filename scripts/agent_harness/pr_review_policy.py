@@ -465,26 +465,47 @@ def eval_pr04_correctness(
             desc = ", ".join(f"{item.get('rule', item.get('rule_id', 'BUG'))}: {item.get('explanation', item.get('detail', ''))[:80]}" for item in p0_p1[:3])
             blockers.append(f"Auditor reported {len(p0_p1)} unresolved high-severity finding(s): {desc}")
 
-        # Check snapshot binding
+        # Check snapshot binding (mandatory frozen base/head/diff)
         rep_base = auditor_report.get("base_sha")
-        if rep_base and pr_data.get("base_sha") and rep_base != pr_data.get("base_sha"):
-            blockers.append(f"Auditor report base_sha ({rep_base[:8]}) does not match PR base_sha ({pr_data.get('base_sha', '')[:8]}).")
+        expected_base = pr_data.get("base_sha")
+        if expected_base:
+            if not rep_base:
+                blockers.append("Auditor report missing mandatory base_sha snapshot binding.")
+            elif rep_base != expected_base:
+                blockers.append(f"Auditor report base_sha ({rep_base[:8]}) does not match PR base_sha ({expected_base[:8]}).")
 
         rep_head = auditor_report.get("head_sha")
-        if rep_head and pr_data.get("head_sha") and rep_head != pr_data.get("head_sha"):
-            blockers.append(f"Auditor report head_sha ({rep_head[:8]}) does not match PR head_sha ({pr_data.get('head_sha', '')[:8]}).")
+        expected_head = pr_data.get("head_sha")
+        if expected_head:
+            if not rep_head:
+                blockers.append("Auditor report missing mandatory head_sha snapshot binding.")
+            elif rep_head != expected_head:
+                blockers.append(f"Auditor report head_sha ({rep_head[:8]}) does not match PR head_sha ({expected_head[:8]}).")
 
         rep_diff = auditor_report.get("diff_sha256")
-        if rep_diff and expected_diff_sha256 and rep_diff != expected_diff_sha256:
-            blockers.append("Auditor report diff_sha256 does not match PR diff snapshot.")
+        if expected_diff_sha256:
+            valid_diffs = (
+                set(expected_diff_sha256)
+                if isinstance(expected_diff_sha256, (set, list, tuple))
+                else {expected_diff_sha256}
+            )
+            if not rep_diff:
+                blockers.append("Auditor report missing mandatory diff_sha256 snapshot binding.")
+            elif rep_diff not in valid_diffs:
+                blockers.append("Auditor report diff_sha256 does not match PR diff snapshot.")
 
         # Check diff.patch receipt hash in rule results
         if expected_diff_sha256:
+            valid_diffs = (
+                set(expected_diff_sha256)
+                if isinstance(expected_diff_sha256, (set, list, tuple))
+                else {expected_diff_sha256}
+            )
             for item in auditor_report.get("rule_results", []):
                 if isinstance(item, dict):
                     for ref in item.get("evidence", []):
                         if isinstance(ref, dict) and ref.get("receipt_path") == "diff.patch":
-                            if ref.get("receipt_sha256") != expected_diff_sha256:
+                            if ref.get("receipt_sha256") not in valid_diffs:
                                 blockers.append("Auditor rule evidence diff.patch hash does not match PR diff snapshot.")
                                 break
 

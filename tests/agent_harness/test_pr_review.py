@@ -728,6 +728,9 @@ class AutoSpawnAuditorRegressionTests(unittest.TestCase):
         """Auditor report reviewing a subset of files is rejected by check_report."""
         report = {
             "status": "PASS",
+            "base_sha": self.pr_data["base_sha"],
+            "head_sha": self.pr_data["head_sha"],
+            "diff_sha256": self.receipt_sha,
             "findings": [],
             "limitations": [],
             "reviewed_scope": [],  # Subset: omitted firmware/main.c!
@@ -754,6 +757,9 @@ class AutoSpawnAuditorRegressionTests(unittest.TestCase):
         wrong_rule_sha = "f" * 64
         report = {
             "status": "PASS",
+            "base_sha": self.pr_data["base_sha"],
+            "head_sha": self.pr_data["head_sha"],
+            "diff_sha256": self.receipt_sha,
             "findings": [],
             "limitations": [],
             "reviewed_scope": ["firmware/main.c"],
@@ -779,6 +785,9 @@ class AutoSpawnAuditorRegressionTests(unittest.TestCase):
         wrong_receipt_sha = "0" * 64
         report = {
             "status": "PASS",
+            "base_sha": self.pr_data["base_sha"],
+            "head_sha": self.pr_data["head_sha"],
+            "diff_sha256": self.receipt_sha,
             "findings": [],
             "limitations": [],
             "reviewed_scope": ["firmware/main.c"],
@@ -804,6 +813,9 @@ class AutoSpawnAuditorRegressionTests(unittest.TestCase):
         """Per-rule PASS without Host-inventoried evidence references is rejected."""
         report = {
             "status": "PASS",
+            "base_sha": self.pr_data["base_sha"],
+            "head_sha": self.pr_data["head_sha"],
+            "diff_sha256": self.receipt_sha,
             "findings": [],
             "limitations": [],
             "reviewed_scope": ["firmware/main.c"],
@@ -829,6 +841,9 @@ class AutoSpawnAuditorRegressionTests(unittest.TestCase):
         """Valid positive auditor report passes check_report and achieves AI_REVIEW_PASS=PASS."""
         report = {
             "status": "PASS",
+            "base_sha": self.pr_data["base_sha"],
+            "head_sha": self.pr_data["head_sha"],
+            "diff_sha256": self.receipt_sha,
             "findings": [],
             "limitations": [],
             "reviewed_scope": ["firmware/main.c"],
@@ -1052,6 +1067,217 @@ class AutoSpawnAuditorRegressionTests(unittest.TestCase):
         self.assertFalse(policy.is_synthetic_fixture_path("tests/security/test_crypto.py"))
         self.assertTrue(policy.is_security_sensitive_path("tests/security/test_crypto.py"))
         self.assertTrue(policy.is_security_sensitive_path("tests/auth/test_tokens.py"))
+
+    def test_snapshot_binding_absent_base_sha_rejected(self):
+        """Auditor report missing mandatory base_sha is rejected with AUDIT-SNAPSHOT-MISMATCH."""
+        report = {
+            "status": "PASS",
+            "head_sha": self.pr_data["head_sha"],
+            "diff_sha256": self.receipt_sha,
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["firmware/main.c"],
+            "selection_sha256": self.sel_sha,
+            "rule_results": [{
+                "rule_id": "C-001",
+                "rule_sha256": self.rule_sha,
+                "status": "PASS",
+                "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": self.receipt_sha}],
+                "reason": "Safe bounds checked.",
+            }],
+        }
+        report_path = self.evidence_dir / "auditor_report.json"
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        res = pr_review.validate_and_load_auditor_report(
+            report_path, self.pr_data, self.rule_selection, self.evidence_inventory
+        )
+        self.assertEqual(res["status"], "FAIL")
+        self.assertEqual(res["findings"][0]["rule"], "AUDIT-SNAPSHOT-MISMATCH")
+        self.assertIn("missing or malformed mandatory base_sha", res["findings"][0]["explanation"])
+
+    def test_snapshot_binding_absent_head_sha_rejected(self):
+        """Auditor report missing mandatory head_sha is rejected with AUDIT-SNAPSHOT-MISMATCH."""
+        report = {
+            "status": "PASS",
+            "base_sha": self.pr_data["base_sha"],
+            "diff_sha256": self.receipt_sha,
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["firmware/main.c"],
+            "selection_sha256": self.sel_sha,
+            "rule_results": [{
+                "rule_id": "C-001",
+                "rule_sha256": self.rule_sha,
+                "status": "PASS",
+                "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": self.receipt_sha}],
+                "reason": "Safe bounds checked.",
+            }],
+        }
+        report_path = self.evidence_dir / "auditor_report.json"
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        res = pr_review.validate_and_load_auditor_report(
+            report_path, self.pr_data, self.rule_selection, self.evidence_inventory
+        )
+        self.assertEqual(res["status"], "FAIL")
+        self.assertEqual(res["findings"][0]["rule"], "AUDIT-SNAPSHOT-MISMATCH")
+        self.assertIn("missing or malformed mandatory head_sha", res["findings"][0]["explanation"])
+
+    def test_snapshot_binding_absent_diff_sha256_rejected(self):
+        """Auditor report missing mandatory diff_sha256 is rejected with AUDIT-SNAPSHOT-MISMATCH."""
+        report = {
+            "status": "PASS",
+            "base_sha": self.pr_data["base_sha"],
+            "head_sha": self.pr_data["head_sha"],
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["firmware/main.c"],
+            "selection_sha256": self.sel_sha,
+            "rule_results": [{
+                "rule_id": "C-001",
+                "rule_sha256": self.rule_sha,
+                "status": "PASS",
+                "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": self.receipt_sha}],
+                "reason": "Safe bounds checked.",
+            }],
+        }
+        report_path = self.evidence_dir / "auditor_report.json"
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        res = pr_review.validate_and_load_auditor_report(
+            report_path, self.pr_data, self.rule_selection, self.evidence_inventory
+        )
+        self.assertEqual(res["status"], "FAIL")
+        self.assertEqual(res["findings"][0]["rule"], "AUDIT-SNAPSHOT-MISMATCH")
+        self.assertIn("missing or malformed mandatory diff_sha256", res["findings"][0]["explanation"])
+
+    def test_snapshot_binding_fabricated_envelope_wrapper_rejected(self):
+        """Fabricated wrapper with outer base_sha matching PR but inner report with stale base_sha is rejected."""
+        inner_report = {
+            "status": "PASS",
+            "base_sha": "old_base_sha_11111111111111111111111111111",
+            "head_sha": self.pr_data["head_sha"],
+            "diff_sha256": self.receipt_sha,
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["firmware/main.c"],
+            "selection_sha256": self.sel_sha,
+            "rule_results": [{
+                "rule_id": "C-001",
+                "rule_sha256": self.rule_sha,
+                "status": "PASS",
+                "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": self.receipt_sha}],
+                "reason": "Safe bounds checked.",
+            }],
+        }
+        envelope = {
+            "base_sha": self.pr_data["base_sha"],
+            "head_sha": self.pr_data["head_sha"],
+            "diff_sha256": self.receipt_sha,
+            "structured_output": inner_report,
+        }
+        report_path = self.evidence_dir / "auditor_report.json"
+        report_path.write_text(json.dumps(envelope), encoding="utf-8")
+        res = pr_review.validate_and_load_auditor_report(
+            report_path, self.pr_data, self.rule_selection, self.evidence_inventory
+        )
+        self.assertEqual(res["status"], "FAIL")
+        self.assertEqual(res["findings"][0]["rule"], "AUDIT-SNAPSHOT-MISMATCH")
+        self.assertIn("Fabricated wrapper detected", res["findings"][0]["explanation"])
+
+    def test_post_audit_toctou_head_drift_rejected(self):
+        """Post-audit PR HEAD drift detected between start and end blocks PR-08 merge integrity."""
+        res = policy.eval_pr08_merge_integrity(
+            pr_data=self.pr_data,
+            head_sha_at_start="1" * 40,
+            head_sha_at_end="2" * 40,
+            ruleset_status="BRANCH_PROTECTION_ENFORCED",
+            base_sha_at_start="0" * 40,
+            base_sha_at_end="0" * 40,
+        )
+        self.assertEqual(res["status"], "BLOCKED")
+        self.assertTrue(any("PR HEAD SHA race detected" in b for b in res["blockers"]))
+
+        eval_res = policy.evaluate_pr_policy(
+            pr_data=self.pr_data,
+            linked_issue={"number": 100, "state": "OPEN"},
+            allowed_paths=["firmware/main.c"],
+            codeowners_content=self.codeowners,
+            rule_selection=self.rule_selection,
+            auditor_report={"status": "PASS", "findings": [], "limitations": [], "reviewed_scope": ["firmware/main.c"], "base_sha": "0" * 40, "head_sha": "1" * 40, "diff_sha256": self.receipt_sha},
+            check_runs=[{"name": "unit-test", "status": "completed", "conclusion": "success"}],
+            hil_receipt={"status": "PASS"},
+            head_sha_at_start="1" * 40,
+            head_sha_at_end="2" * 40,
+            base_sha_at_start="0" * 40,
+            base_sha_at_end="0" * 40,
+        )
+        self.assertEqual(eval_res["verdict"], "BLOCKED")
+        self.assertFalse(eval_res["ready_to_merge"])
+
+    def test_post_audit_toctou_base_drift_rejected(self):
+        """Post-audit PR BASE drift detected between start and end blocks PR-08 merge integrity."""
+        res = policy.eval_pr08_merge_integrity(
+            pr_data=self.pr_data,
+            head_sha_at_start="1" * 40,
+            head_sha_at_end="1" * 40,
+            ruleset_status="BRANCH_PROTECTION_ENFORCED",
+            base_sha_at_start="0" * 40,
+            base_sha_at_end="3" * 40,
+        )
+        self.assertEqual(res["status"], "BLOCKED")
+        self.assertTrue(any("PR BASE SHA race detected" in b for b in res["blockers"]))
+
+        eval_res = policy.evaluate_pr_policy(
+            pr_data=self.pr_data,
+            linked_issue={"number": 100, "state": "OPEN"},
+            allowed_paths=["firmware/main.c"],
+            codeowners_content=self.codeowners,
+            rule_selection=self.rule_selection,
+            auditor_report={"status": "PASS", "findings": [], "limitations": [], "reviewed_scope": ["firmware/main.c"], "base_sha": "0" * 40, "head_sha": "1" * 40, "diff_sha256": self.receipt_sha},
+            check_runs=[{"name": "unit-test", "status": "completed", "conclusion": "success"}],
+            hil_receipt={"status": "PASS"},
+            head_sha_at_start="1" * 40,
+            head_sha_at_end="1" * 40,
+            base_sha_at_start="0" * 40,
+            base_sha_at_end="3" * 40,
+        )
+        self.assertEqual(eval_res["verdict"], "BLOCKED")
+        self.assertFalse(eval_res["ready_to_merge"])
+
+    def test_aggregate_batch_reports_missing_batch_count_rejected(self):
+        """Aggregating fewer batch reports than expected returns AUDIT-COVERAGE-MISMATCH."""
+        batch_reports = [
+            {"status": "PASS", "findings": [], "limitations": [], "reviewed_scope": ["firmware/a.c"]},
+            {"status": "PASS", "findings": [], "limitations": [], "reviewed_scope": ["firmware/b.c"]},
+        ]
+        res = pr_review.aggregate_batch_reports(
+            batch_reports,
+            required_paths={"firmware/a.c", "firmware/b.c", "firmware/c.c"},
+            expected_batches_count=3,
+        )
+        self.assertEqual(res["status"], "FAIL")
+        self.assertEqual(res["findings"][0]["rule"], "AUDIT-COVERAGE-MISMATCH")
+        self.assertIn("Batch count mismatch: expected 3 batch reports, received 2", res["findings"][0]["explanation"])
+
+    def test_aggregate_batch_reports_missing_hunk_coverage_rejected(self):
+        """Aggregating batch reports missing expected hunks returns AUDIT-COVERAGE-MISMATCH."""
+        batch_reports = [
+            {
+                "status": "PASS",
+                "findings": [],
+                "limitations": [],
+                "reviewed_scope": ["firmware/a.c"],
+                "hunks": ["@@ -1,1 +1,10 @@"],
+            }
+        ]
+        expected_hunks = ["@@ -1,1 +1,10 @@", "@@ -20,1 +20,10 @@"]
+        res = pr_review.aggregate_batch_reports(
+            batch_reports,
+            required_paths={"firmware/a.c"},
+            expected_hunks=expected_hunks,
+        )
+        self.assertEqual(res["status"], "FAIL")
+        self.assertEqual(res["findings"][0]["rule"], "AUDIT-COVERAGE-MISMATCH")
+        self.assertIn("Hunk coverage mismatch: expected 2 hunks, missing 1", res["findings"][0]["explanation"])
 
 
 

@@ -243,9 +243,11 @@ def parse_result(exit_code: int, stdout: str, stderr: str,
 
 def invoke(prompt: str, snapshot: Path, schema: Path, timeout: int,
            required_paths: set[str], required_rules=None,
-           selection_sha256=None, evidence_inventory=None) -> dict:
+           selection_sha256=None, evidence_inventory=None,
+           effort: str = "low") -> dict:
     """Run only in an operator-provisioned sandbox. This is NOT a VM boundary."""
     args = ["agy", "--sandbox", "-p", prompt, "--output-format", "json",
+            "--effort", effort,
             "--json-schema", str(schema), "--print-timeout", f"{max(1, timeout // 60)}m"]
     try:
         with tempfile.TemporaryDirectory(prefix="harness-audit-schema-") as directory:
