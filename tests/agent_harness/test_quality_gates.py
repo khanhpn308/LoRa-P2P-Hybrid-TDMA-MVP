@@ -363,6 +363,26 @@ class GitTests(unittest.TestCase):
                                       env={**os.environ, "GIT_CONFIG_SYSTEM": str(sys_cfg)})
                 self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
 
+    def test_system_filter_config_inside_worktree_is_blocked_with_value_error(self):
+        inside_cfg = self.root / "system.gitconfig"
+        inside_cfg.write_text(
+            '[filter "lfs"]\n'
+            '\tclean = git-lfs clean -- %f\n'
+            '\tprocess = git-lfs filter-process\n'
+            '\tsmudge = git-lfs smudge -- %f\n'
+        )
+        with patch.dict(os.environ, {"GIT_CONFIG_SYSTEM": str(inside_cfg)}):
+            with self.assertRaises(ValueError):
+                gates.git_command(self.root, "diff", "HEAD")
+            self.write("docs/development/notes.md", "Documentation update with inside config\n")
+            with self.assertRaises(ValueError):
+                self.scan()
+            cmd = [sys.executable, gates.__file__, "--repo", str(self.root), "--base", self.base]
+            done = subprocess.run(cmd, capture_output=True, text=True, timeout=30,
+                                  env={**os.environ, "GIT_CONFIG_SYSTEM": str(inside_cfg)})
+            self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
+            self.assertEqual(json.loads(done.stdout)["status"], "NOT_VERIFIED")
+
     def test_hidden_index_flags_block_routing_bypass(self):
         self.write("deploy/compose.yaml", "baseline\n")
         self.git("add", ".")
