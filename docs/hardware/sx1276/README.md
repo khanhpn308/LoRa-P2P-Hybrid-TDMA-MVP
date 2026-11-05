@@ -6,30 +6,80 @@ Use this directory to implement the **SX1276 LoRa P2P radio driver** for **ESP32
 
 | File | Agent task |
 |---|---|
-| [`README.md`](README.md) | Entry point, scope and hardware constraints |
-| [`SX1276_ACTIVE_PROFILE.md`](SX1276_ACTIVE_PROFILE.md) | Approved PHY settings, VN920 channel table and register values |
-| [`SX1276_DRIVER_OPERATIONS.md`](SX1276_DRIVER_OPERATIONS.md) | SPI/reset, TX/RX, FIFO, DIO0 IRQ, timeout, Radio Owner, recovery and ToA |
-| [`SX1276_REGISTER_REFERENCE.md`](SX1276_REGISTER_REFERENCE.md) | Required register addresses, bitfields, reset values, write masks and operational constraints |
+| [`README.md`](README.md) | Entry point, architectural pipeline, hardware constraints, and role policies |
+| [`SX1276_ACTIVE_PROFILE.md`](SX1276_ACTIVE_PROFILE.md) | Approved PHY presets, VN920 channel table, typed-config register mappings, and ToA formula |
+| [`SX1276_DRIVER_OPERATIONS.md`](SX1276_DRIVER_OPERATIONS.md) | SPI/reset, TX/RX lifecycles, FIFO, DIO0 IRQ, timeout, Radio Owner, recovery, and half-duplex TDMA transitions |
+| [`SX1276_REGISTER_REFERENCE.md`](SX1276_REGISTER_REFERENCE.md) | Required register addresses, bitfields, reset values, write masks, and consolidated test-profile register semantics |
 
 Read only the files relevant to the implementation task; start from the Active Profile and Operations Guide, then consult the Register Reference for exact SPI/register access. No additional SX1276 reference or audit files are required for the MVP.
 
-## Fixed MVP Configuration
+## Configurable PHY Architecture & Approved Baseline Presets
 
-- Radio: SX1276 LoRa P2P. SF7, BW125 kHz, CR4/5, Explicit Header, Payload CRC ON, Sync Word `0x12`, LDRO OFF; frequency hopping disabled.
-- RF plan: 11 center frequencies CH00–CH10 (920.250–922.750 MHz in 250 kHz steps). Select the authorized channel at runtime; **do not default to CH05**.
-- SX1276 / ESP32 HW-001: SCK=GPIO5, MISO=GPIO19, MOSI=GPIO27, NSS=GPIO18, RESET=GPIO23, DIO0=GPIO26. **DIO1–DIO5 are NOT_CONNECTED**.
-- SPI Mode 0; do not exceed SX1276 SPI timing limits. GPIO5 is an ESP32 boot-strapping pin; avoid unsafe SCK states during reset.
-- One Radio Owner task owns SPI/radio state. DIO0 ISR sends notification only: **no SPI or blocking work in ISR**. Detect RxTimeout through task-level IRQ polling/host supervision, not a nonexistent DIO1 interrupt.
-- For ESP32 wake-up, perform a full radio reset and register reconfiguration until the SX1276 power rail behavior is verified.
-- Do not send Node packets outside the Gateway-authorized TDMA schedule. PHY CRC detects corruption; it does **not** authenticate MAC messages.
+Operational radio parameters are **not hardcoded constants** in the driver logic. The implementation follows an owner-approved pipeline separating build-time user choices, typed configuration, and register encoding:
 
-## Runtime Parameters Not Yet Frozen
+```text
+idf.py menuconfig (enumerated valid choices)
+       │
+       ▼
+generated sdkconfig.h
+       │
+       ▼
+typed sx1276_phy_config_t / sx1276_hw_config_t
+       │
+       ▼
+sx1276_config_validate() (silicon + hardware + contract constraints)
+       │
+       ▼
+sx1276_register_plan_build() (derive bitfields, masks, write sequences)
+       │
+       ▼
+Radio Owner SPI Execution & Readback Validation
+```
 
-- **TBD**: preamble length; TX output power; physical PA path (`RFO` versus `PA_BOOST`); LNA/HF boost and AGC policy; RX search/demod host guards; final TDMA slot/guard timing.
-- The 8-symbol preamble used in theoretical ToA examples is **not** an approved production value.
-- Do not silently hardcode a TBD as a project decision. Use explicit configuration/validation and report unresolved blockers at the point the feature needs them.
-- Only the BW125 MVP configuration is in scope. Do not apply BW500 or other non-MVP silicon workarounds. Preserve the mandatory `RegDetectOptimize` bit-7 read-modify-write rule documented in the register/operations files.
+### Invariants vs Configurable Parameters
+1. **Configurable via ESP-IDF `menuconfig`:** Discrete SF, BW, CR, preamble length, CRC enable, header mode (explicit/implicit), Sync Word, LDRO (AUTO/manual), test RF channel/frequency, TX PA path, TX target output power, PA ramp time, OCP enable/current limit, LNA gain / HF boost / AGC, RX symbol timeout, and wake/reinitialization options. Both Gateway and Node firmware expose these options with typed bounds.
+2. **Silicon & Hardware Invariants (Code-Level Truth):** Register addresses, bitmask layouts, SPI Mode 0 timing constraints, HW-001 pin mapping, DIO0-only physical interrupt routing, `AutomaticIFOn` bit 7 clear (errata fix), `LongRangeMode` writable exclusively in SLEEP mode, and write-1-to-clear IRQ flag semantics are fixed properties of silicon and circuit design. They are never exposed as manual register byte inputs in `menuconfig`.
+3. **Approved Baseline Preset (`PHY_PROFILE_MVP_V1`):**
+   - Radio: SX1276 LoRa P2P. SF7, BW125 kHz, CR4/5, Explicit Header, Payload CRC ON, Sync Word `0x12`, LDRO OFF; frequency hopping disabled.
+   - RF plan: 11 center frequencies CH00–CH10 (920.250–922.750 MHz in 250 kHz steps) per `VN920_V1`.
+   - **Backend Authority:** Active operational channel is assigned at runtime by authorized Backend PostgreSQL schedule (#154). `menuconfig` supplies only boot/lab-test defaults; lab settings must not silently override production Backend schedule.
+4. **Approved Test Preset (`SX1276_TEST_PROFILE_V1`):**
+   - Preamble: **8 symbols** (selectable test preset default, not a measured production constant).
+   - PA Ramp: **40 µs** (`RegPaRamp = 0x09`).
+   - OCP: **Enabled, limit 100 mA** (`RegOcp = 0x2B`).
+   - AGC: **ON** (`RegModemConfig3.AgcAutoOn = 1`). Manual LNA gain is inapplicable while AGC is active; manual gain is selectable only when AGC is OFF (manual gain level is not yet approved).
+   - LNA HF Boost: **OFF** (`RegLna.LnaBoostHf = 00b`, default current).
+   - TX Output Power Target: **+2 dBm** default selectable target; candidate alternate **+5 dBm** for subsequent supervised testing only.
+   - **PA Path Unknown & TX Fail-Closed:** The installed commercial SX1276 915-MHz module has antenna soldered to `ANT`, but internal RF output topology (`RFO_HF` vs `PA_BOOST`) and 920–923 MHz matching are unverified (`PA_PATH = UNKNOWN / NOT_VERIFIED`). **RF TX is DISABLED by default.** Selecting a target power does not authorize RF transmission. TX must fail closed when PA path is unverified or contradictory.
+
+## Hardware Interface & Radio Owner (HW-001)
+
+- SX1276 / ESP32 HW-001 Pinout: SCK=GPIO5, MISO=GPIO19, MOSI=GPIO27, NSS=GPIO18, RESET=GPIO23, DIO0=GPIO26.
+- **DIO1–DIO5 are NOT_CONNECTED.** Signals mapped to DIO1–DIO5 (including `RxTimeout`) cannot generate hardware interrupts. Detect `RxTimeout` through bounded Radio Owner task IRQ polling + host supervision timer, never an imagined DIO1 interrupt.
+- SPI Mode 0; max clock 10 MHz. GPIO5 is an ESP32 strapping pin; ensure SCK idles low and does not pull up invalid bootstrap states during reset.
+- A single FreeRTOS **Radio Owner task** serializes all SPI access. The DIO0 ISR issues task notifications only: **no SPI or blocking calls in ISR context**.
+- For ESP32 wake-up from Deep-sleep, perform a full hardware reset (GPIO23 low $\ge 100\text{ }\mu\text{s}$) and complete register reconfiguration.
+
+## Radio RX-Mode Policy & TDMA Roles
+
+1. **Node Normal Event Flow:**
+   - Baseline is ESP32 Deep-sleep / radio low-power per #149.
+   - Local button/event triggers alarm and durable pending Event; **no immediate RF TX on event**.
+   - At its Backend-approved static DATA slot (#125/#131), Node transmits Event, then enters **`RxSingle` only during a bounded ACK receive window**.
+   - Upon validating authenticated ACK, Node returns to sleep. If ACK is missing or invalid, preserve the pending Event and retry only in a subsequent authorized own DATA slot; do not switch to unrestricted continuous listening.
+2. **Node Scheduled Maintenance:**
+   - Node wakes for scheduled Maintenance reception window, configures **`RxSingle`** to receive authenticated Gateway `SYNC_BEACON`.
+   - Node switches mode to transmit **`HEALTH_REPLY`** in its permitted Maintenance response slot. Maintenance is **not RX-only**; no DATA/Maintenance/ACK overlap.
+3. **Gateway Baseline:**
+   - Gateway operates in **`RxContinuous` during permitted receive phases** (including DATA RX windows) to monitor Node packets.
+   - Single half-duplex radio: Gateway Radio Owner explicitly executes state transitions: `RxContinuous → Standby → TX (ACK or SYNC_BEACON) → RxContinuous`. The Gateway cannot listen while transmitting. Gateway uses no LoRaWAN stack.
+
+## Runtime Parameters Not Yet Frozen (TBD)
+
+- **TBD:** Actual module PA path; RF output matching at 920–923 MHz; conducted/radiated power measurements; production TX power; RX Symbol Timeout; Host RX Timeout; ACK/Beacon receive windows; clock-drift and TDMA guard timing budgets; hardware mode turnaround.
+- Do not hardcode a TBD as an immutable project constant. Use explicit validation, fail-safe defaults, and report unresolved blockers.
+- Only the BW125 MVP configuration is in scope. Do not apply BW500 or non-MVP errata workarounds. Preserve the mandatory `RegDetectOptimize` bit 7 read-modify-write rule.
 
 ## Scope Boundary
 
-These files describe radio hardware control, **not** a complete MAC or TDMA wire contract. Follow the versioned `contracts/radio-mac/` and approved architecture documents for application integration. Do not treat documentary examples as proven RF, HIL, timing or legal-compliance results.
+These files describe radio hardware control and driver register architecture, **not** a complete MAC or TDMA wire contract. Follow versioned `contracts/radio-mac/` and approved architecture documents for application integration. Documented calculations and test presets do not constitute measured RF, HIL, timing, or regulatory compliance results.
