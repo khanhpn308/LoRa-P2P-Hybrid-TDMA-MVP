@@ -1,0 +1,14 @@
+[
+  {
+    "service": "postgres",
+    "image": "sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea"
+  },
+  {
+    "service": "mqtt-tls",
+    "image": "sha256:0802ed24bcabc8abacf7cfc47e4000b1df809be144aa45dffa46ac2e963019bf"
+  },
+  {
+    "service": "mqtt-dev",
+    "image": "sha256:212f89e1eaeb2c322d6441b64396e3346026674db8fa9c27beac293405c32b3c"
+  }
+]

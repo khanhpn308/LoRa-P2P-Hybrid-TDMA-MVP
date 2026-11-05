@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:loratdma:api:realtime-event:v1.1-draft",
+  "$id": "urn:loratdma:api:realtime-event:v1-draft",
   "title": "Backend→clients WSS events — draft",
   "type": "object",
   "additionalProperties": false,
@@ -13,7 +13,7 @@
   ],
   "properties": {
     "schema_version": {
-      "const": "1.1-draft",
+      "const": "1.0-draft",
       "type": "string"
     },
     "event_id": {
@@ -90,7 +90,8 @@
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 128,
-                "description": "Gateway-origin persistent business Event ID; scoped to originating gateway, unchanged across RF retries, Gateway reboot and MQTT replay. Distinct from Backend WSS envelope ID."
+                "pattern": "^[A-Za-z0-9_-]{1,32}:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}:(0|[1-9][0-9]{0,19})$",
+                "description": "MQTT v1 source event identity <gateway_id>:<gateway_epoch UUID>:<event_seq>. Backend validates same-gateway identity semantics."
               },
               "observed_at": {
                 "type": [
@@ -103,14 +104,31 @@
                 "type": "object",
                 "additionalProperties": false,
                 "required": [
-                  "temp_x10"
+                  "ch1_raw",
+                  "ch2_raw",
+                  "ch3_raw",
+                  "battery_mv"
                 ],
                 "properties": {
-                  "temp_x10": {
+                  "ch1_raw": {
                     "type": "integer",
                     "minimum": -32768,
-                    "maximum": 32767,
-                    "description": "Raw Celsius x10 from Node, e.g. 355 means 35.5 C."
+                    "maximum": 32767
+                  },
+                  "ch2_raw": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 65535
+                  },
+                  "ch3_raw": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 65535
+                  },
+                  "battery_mv": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 65535
                   }
                 }
               }

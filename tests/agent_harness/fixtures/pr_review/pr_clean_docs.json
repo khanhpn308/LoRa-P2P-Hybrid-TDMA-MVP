@@ -1,0 +1,52 @@
+{
+  "pr_data": {
+    "number": 105,
+    "title": "docs(harness): selective architecture context routing",
+    "body": "Resolves #104.\nUpdates documentation guidelines.",
+    "state": "open",
+    "draft": false,
+    "author": "phong-dev",
+    "base_ref": "main",
+    "base_sha": "180dde6605787f85a294b60dd3cfd5db4be27b76",
+    "head_ref": "docs/104-architecture-context-routing",
+    "head_sha": "a1b2c3d4e5f60123456789abcdef0123456789ab",
+    "files": [
+      {
+        "filename": "docs/development/harness-context.md",
+        "status": "modified",
+        "patch": "@@ -1,5 +1,6 @@\n # Context\n+Selective routing documentation.\n"
+      }
+    ],
+    "reviews": [
+      {
+        "user": {
+          "login": "khanhpn308"
+        },
+        "state": "APPROVED"
+      }
+    ],
+    "review_comments": [],
+    "comments": []
+  },
+  "linked_issue": {
+    "number": 104,
+    "state": "OPEN",
+    "title": "Document selective context routing",
+    "body": "## Target Directories (allowed paths)\n- `docs/development/harness-context.md`\n"
+  },
+  "check_runs": [
+    {
+      "name": "CI - Foundation/scaffold",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "CI - Contract Syntax",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ],
+  "ruleset_status": "MERGE_PROTECTION_NOT_VERIFIED",
+  "expected_verdict": "READY_FOR_HUMAN_REVIEW",
+  "expected_risk": "LOW"
+}

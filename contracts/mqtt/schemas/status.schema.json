@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:loratdma:mqtt:status:v1.1-draft",
+  "$id": "urn:loratdma:mqtt:status:v1-draft",
   "title": "LoRa TDMA status (proposed contract)",
   "type": "object",
   "additionalProperties": false,
   "properties": {
     "schema_version": {
-      "const": "1.1-draft",
+      "const": "1.0-draft",
       "type": "string"
     },
     "event_id": {

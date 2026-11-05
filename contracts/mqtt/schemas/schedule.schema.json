@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:loratdma:mqtt:schedule:v1.1-draft",
+  "$id": "urn:loratdma:mqtt:schedule:v1-draft",
   "title": "LoRa TDMA schedule (proposed contract)",
   "type": "object",
   "additionalProperties": false,
   "properties": {
     "schema_version": {
-      "const": "1.1-draft",
+      "const": "1.0-draft",
       "type": "string"
     },
     "request_id": {
@@ -40,24 +40,25 @@
       "description": "Absolute UTC proposal/command acceptance deadline; MQTT Message Expiry is separate and also mandatory."
     },
     "profile_id": {
+      "const": "P-10S-15",
       "type": "string",
-      "minLength": 1,
-      "maxLength": 64,
-      "description": "Identifier for an RF/schedule profile explicitly approved for this Gateway. P-10S-15 is example/mock only; G1/G2/G3 not verified."
+      "description": "Candidate only (P-10S-15); not validated airtime/RF/HIL profile. Do not treat as approved timing."
     },
     "superframe_ms": {
+      "const": 10000,
       "type": "integer",
-      "minimum": 1,
-      "description": "Superframe duration; validation must match separately approved RF timing/airtime profile, not assume 10000ms."
+      "description": "Candidate/mock-only value. Actual timing requires #12/G1/G2/G3 review."
     },
     "min_announce_superframes": {
       "type": "integer",
-      "const": 3,
-      "description": "Owner-approved countdown: three COMPLETE announcement Superframes 3→2→1; must also collect affected Node prepare ACK, prove old slot lease safety and cut over within approved activation_window. If not safe, abort/delay via new approved plan, do not activate."
+      "minimum": 3,
+      "maximum": 30,
+      "description": "Number of COMPLETE beacon announcement superframes before switching; Gateway chooses safe activation boundary."
     },
     "slots": {
       "type": "array",
       "minItems": 1,
+      "maxItems": 15,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -75,40 +76,21 @@
           },
           "slot_id": {
             "type": "integer",
-            "minimum": 1
+            "minimum": 1,
+            "maximum": 15
           },
           "offset_ms": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "maximum": 10000
           },
           "duration_ms": {
-            "type": "integer",
-            "minimum": 1
+            "const": 400,
+            "type": "integer"
           }
         }
       },
-      "description": "Each node_id scoped to gateway_id; slot IDs, offsets, durations and guards must conform to an approved RF profile and not overlap; shadow/lease/cutover checked semantically, not by schema alone."
-    },
-    "activation_window": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "not_before",
-        "not_after"
-      ],
-      "properties": {
-        "not_before": {
-          "type": "string",
-          "format": "date-time",
-          "pattern": "Z$"
-        },
-        "not_after": {
-          "type": "string",
-          "format": "date-time",
-          "pattern": "Z$"
-        }
-      },
-      "description": "Owner-approved earliest/latest UTC time at which Gateway may select a local superframe boundary. Backend checks Owner authorization, ordered bounds; Gateway validates trusted-time confidence and must fail closed if not provable."
+      "description": "Shape only: slot uniqueness, non-overlap, half-duplex, timing/airtime and guards require semantic validation."
     }
   },
   "required": [
@@ -122,8 +104,7 @@
     "profile_id",
     "superframe_ms",
     "min_announce_superframes",
-    "slots",
-    "activation_window"
+    "slots"
   ],
-  "description": "DRAFT G0-aligned C03/C04 schedule proposal. Owner-approved activation window required; Gateway does not modify Slot Assignment, requires affected-Node prepare ACK and safe old lease termination. Numeric timing not frozen."
+  "description": "DRAFT MQTT v1 payload; schema checks local shape, not topic authorization, replay, clock freshness, state transitions or MQTT properties. Cross-team review pending (Issue #14)."
 }

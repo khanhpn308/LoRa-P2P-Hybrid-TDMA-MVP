@@ -1,5 +1,5 @@
 {
-  "revision": "1.1-draft",
+  "revision": "1.0.0-draft",
   "description": "Pure synthetic REST/OpenAPI component examples, not HTTP server integration evidence. Data values are mock only.",
   "cases": [
     {
@@ -41,8 +41,7 @@
         "node_id": 1,
         "state": "QUEUED",
         "created_at": "2026-10-20T08:00:05Z",
-        "state_revision": "1",
-        "gateway_id": "gw01"
+        "state_revision": "1"
       }
     },
     {
@@ -54,8 +53,7 @@
         "node_id": 1,
         "state": "NODE_ACKED",
         "created_at": "2026-10-20T08:00:05Z",
-        "state_revision": "3",
-        "gateway_id": "gw01"
+        "state_revision": "3"
       }
     },
     {
@@ -67,8 +65,7 @@
         "node_id": 1,
         "state": "QUEUED",
         "created_at": "2026-10-20T08:00:05Z",
-        "state_revision": "1",
-        "gateway_id": "gw01"
+        "state_revision": "1"
       }
     },
     {
@@ -80,8 +77,7 @@
         "node_id": 1,
         "state": "ACTIVE",
         "created_at": "2026-10-20T08:00:05Z",
-        "state_revision": "1",
-        "gateway_id": "gw01"
+        "state_revision": "1"
       }
     },
     {
@@ -93,8 +89,7 @@
         "node_id": 1,
         "state": "QUEUED",
         "created_at": "2026-10-20T08:00:05Z",
-        "state_revision": 9007199254740994,
-        "gateway_id": "gw01"
+        "state_revision": 9007199254740994
       }
     },
     {
@@ -136,11 +131,7 @@
       "schema": "ScheduleActivationRequest",
       "valid": true,
       "message": {
-        "expected_version": 8,
-        "activation_window": {
-          "not_before": "2026-10-20T08:02:00Z",
-          "not_after": "2026-10-20T08:05:00Z"
-        }
+        "expected_version": 8
       }
     },
     {
@@ -148,11 +139,7 @@
       "schema": "ScheduleActivationRequest",
       "valid": false,
       "message": {
-        "expected_version": "8",
-        "activation_window": {
-          "not_before": "2026-10-20T08:02:00Z",
-          "not_after": "2026-10-20T08:05:00Z"
-        }
+        "expected_version": "8"
       }
     },
     {
@@ -160,11 +147,7 @@
       "schema": "ScheduleActivationRequest",
       "valid": false,
       "message": {
-        "expected_version": -1,
-        "activation_window": {
-          "not_before": "2026-10-20T08:02:00Z",
-          "not_after": "2026-10-20T08:05:00Z"
-        }
+        "expected_version": -1
       }
     },
     {
@@ -172,92 +155,15 @@
       "schema": "GenerateScheduleRequest",
       "valid": true,
       "message": {
-        "profile_id": "P-10S-15",
-        "min_announce_superframes": 3
+        "profile_id": "P-10S-15"
       }
     },
     {
-      "id": "REST-GENERATE-UNAPPROVED-PROFILE-SCHEMA-ONLY",
-      "schema": "GenerateScheduleRequest",
-      "valid": true,
-      "message": {
-        "profile_id": "REGION-UNKNOWN",
-        "min_announce_superframes": 3
-      },
-      "note": "Well-formed, but unapproved profile MUST be rejected by Backend semantic approval policy; schema validity is not authorization."
-    },
-    {
-      "id": "REST-GENERATE-EMPTY-PROFILE",
+      "id": "REST-GENERATE-PROFILE-UNKNOWN",
       "schema": "GenerateScheduleRequest",
       "valid": false,
       "message": {
-        "profile_id": ""
-      }
-    },
-    {
-      "id": "REST-ACTIVATION-MISSING-WINDOW",
-      "schema": "ScheduleActivationRequest",
-      "valid": false,
-      "message": {
-        "expected_version": 8
-      }
-    },
-    {
-      "id": "REST-COMMAND-MISSING-GATEWAY",
-      "schema": "CommandTicket",
-      "valid": false,
-      "message": {
-        "command_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-        "node_id": 1,
-        "state": "QUEUED",
-        "created_at": "2026-10-20T08:00:05Z"
-      }
-    },
-    {
-      "id": "REST-GENERATE-BAD-COUNTDOWN",
-      "schema": "GenerateScheduleRequest",
-      "valid": false,
-      "message": {
-        "profile_id": "P-10S-15",
-        "min_announce_superframes": 2
-      }
-    },
-    {
-      "id": "REST-TELEMETRY-OWNER-VALID",
-      "schema": "TelemetryReading",
-      "valid": true,
-      "message": {
-        "reading_id": "50",
-        "node_id": 1,
-        "gateway_id": "gw01",
-        "event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:42",
-        "observed_at": "2026-10-20T08:00:00Z",
-        "received_at": "2026-10-20T08:00:01Z",
-        "buffered": false,
-        "superframe_seq": 100,
-        "frame_counter": 51,
-        "data": {
-          "temp_x10": 355
-        }
-      }
-    },
-    {
-      "id": "REST-TELEMETRY-LEGACY-DATA-INVALID",
-      "schema": "TelemetryReading",
-      "valid": false,
-      "message": {
-        "reading_id": "50",
-        "node_id": 1,
-        "gateway_id": "gw01",
-        "event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:42",
-        "observed_at": "2026-10-20T08:00:00Z",
-        "received_at": "2026-10-20T08:00:01Z",
-        "buffered": false,
-        "superframe_seq": 100,
-        "frame_counter": 51,
-        "data": {
-          "ch1_raw": 355
-        }
+        "profile_id": "REGION-UNKNOWN"
       }
     }
   ]

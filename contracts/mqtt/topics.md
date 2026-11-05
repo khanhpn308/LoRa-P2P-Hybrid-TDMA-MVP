@@ -1,5 +1,5 @@
 # MQTT Contract v1 — Gateway ↔ Mosquitto ↔ Backend Go
-**Version:** `1.1-draft` · **MQTT 5.0:** `OWNER_ACCEPTED` (ADR-0002, PR #26) · **Contract:** `DRAFT / PENDING CROSS-TEAM REVIEW` (Issue #14) · **Implementation:** `NOT_VERIFIED`.
+**Version:** `0.1.0-draft` · **MQTT 5.0:** `OWNER_ACCEPTED` (ADR-0002, PR #26) · **Contract:** `DRAFT / PENDING CROSS-TEAM REVIEW` (Issue #14) · **Implementation:** `NOT_VERIFIED`.
 
 ## 1. Topics, QoS và ownership
 
@@ -30,15 +30,15 @@ Gateway chỉ publish `uplink/#` và subscribe `downlink/#` của **chính mình
 
 ## 2. Envelope & dữ liệu
 
-MQTT JSON UTF-8; `schema_version="1.1-draft"` độc lập với tiền tố topic `v1`. **Telemetry/Alert:** `event_id` do **Gateway cấp một lần khi persist RF uplink hợp lệ**; Backend chống trùng theo `(gateway_id,event_id)` và kiểm tra xung đột payload/source Node. `gateway_epoch/event_seq` thuộc Event ID đã cấp và phải giữ nguyên qua retransmission/reboot/MQTT replay, không đánh số lại theo lần RX. **Status/ACK** tiếp tục dùng Gateway-origin event IDs. Gateway lưu bền ánh xạ `(gateway_id,node_id,security_session,frame_counter) → event_id`; phương thức DB/key/nonce còn G2/G4.
+MQTT JSON UTF-8; `schema_version="1.0-draft"` độc lập với tiền tố topic `v1`. `event_id` phải duy nhất ổn định qua QoS1 retry và offline-buffer replay, có `gateway_epoch` UUID boot-session và `event_seq` dạng chuỗi thập phân (tránh lỗi JS > 2^53). Backend lưu unique `(gateway_id,event_id)`. Tuyệt đối không chỉ dùng `SEQ_NUM` 8-bit hoặc thời gian phát để deduplicate; node reset / rollover làm trùng.
 
-`observed_at` là RFC3339 UTC hoặc null; `observed_time_source` nêu cơ sở clock, `radio_rx_monotonic_us` là chuỗi thời gian tương đối theo boot Gateway, `buffered` xác định sự kiện phát lại. Backend gán `ingested_at` bằng server clock. `data.temp_x10` là số nguyên int16 (nhiệt độ °C ×10), RF Telemetry chỉ 2 byte measurement. Các trường ch1/ch2/ch3/battery/slot/duty cũ **không nằm trong RF Telemetry**. `frame_counter` là metadata nguồn RF chống replay, không phải Event ID. `trigger` của Alert chỉ cho phép từ nhiệt độ và threshold cấu hình có nguồn xác thực; nếu không có bằng chứng thì bỏ qua, không tự bịa.
+`observed_at` là RFC3339 UTC hoặc null; `observed_time_source` nêu cơ sở clock, `radio_rx_monotonic_us` là chuỗi thời gian tương đối theo boot Gateway, `buffered` xác định sự kiện phát lại. Backend gán `ingested_at` bằng server clock. `data` truyền integer raw RF §6.2; unit/scale cần mapping theo phiên bản cấu hình cảm biến, không suy diễn. Nếu PRIORITY_ALERT 12B thiếu kênh/ngưỡng thì **không bịa `trigger`**; trường này optional đến khi RF v1 được duyệt.
 
 QoS1 có thể giao trùng và sai thứ tự; không có cam kết latency, exactly-once hay bảo đảm buffer không bao giờ tràn. Gateway cung cấp `offline_dropped_telemetry`, `offline_dropped_alert` khi mất dữ liệu; `event_id` của một bản ghi không đổi khi resubmit.
 
 ## 3. Transaction lịch TDMA
 
-Backend: `PROPOSED → SENT → STAGED → ACTIVE` hoặc `REJECTED/EXPIRED`; User phê duyệt lịch và `activation_window`. Gateway validate → persist Shadow → **announce 3 nhịp hoàn chỉnh 3→2→1**/collect affected Node prepare ACK → verify old slot lease safe expiration → activate tại đầu Superframe trong window → `ACTIVE_REPORT`. Không tự sửa slot/kênh; thông báo nhiều lần không thay ACK/lease.
+Backend: `PROPOSED → SENT → STAGED → ACTIVE` hoặc `REJECTED / EXPIRED`; Gateway: validate → stage shadow NVS → announce ≥`min_announce_superframes` chu kỳ hoàn chỉnh → activate tại ranh giới superframe → report.
 
 - `STAGE_ACK`: Gateway đã validate/persist; **không** chứng minh các Node nhận được lịch và **không** cho Backend cập nhật ACTIVE.
 - `VERIFY_NACK`: từ chối với `reason_code`; active trước đó giữ nguyên.
@@ -48,7 +48,7 @@ Backend: `PROPOSED → SENT → STAGED → ACTIVE` hoặc `REJECTED/EXPIRED`; Us
 
 ## 4. Downlink commands và xác nhận
 
-`command_id` idempotent; `created_at/expires_at` và Backend RBAC bắt buộc. `SET_PERIODIC_MODE` OFF vẫn giữ Alert. `SUSPEND_NODE/RESUME_NODE/REVOKE_NODE` đòi Gateway validate/persist authorization state; mất Internet không tự gia hạn quyền. Reprovision/credential rotation còn OPEN G2. `uplink/command-ack` phân biệt trạng thái vận chuyển, tiếp nhận và Node execution; MQTT PUBACK không là chứng cứ lệnh thực thi. Gateway không phát ngoài slot/airtime, retained status không chứng minh online.
+`command_id` idempotent; `created_at/expires_at` bắt buộc, action theo allowlist và RBAC chỉ do Backend kiểm. `uplink/command-ack` (proposed) phân biệt `QUEUED`, `DISPATCHED`, `NODE_ACKED`, `REJECTED`, `EXPIRED`, `UNKNOWN`. Broker PUBACK **không phải** chứng cứ Node thi hành lệnh. Gateway không phát lệch slot hoặc vượt airtime policy. `uplink/status` retained không chứng minh thiết bị đang online; Backend phải có timeout/LWT và server ingest time.
 
 ## 5. Quy tắc chính xác và tài liệu chi tiết
 

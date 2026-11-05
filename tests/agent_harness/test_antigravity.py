@@ -5,10 +5,11 @@ import sys
 import unittest
 import subprocess
 import tempfile
+import copy
 from unittest.mock import patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "scripts" / "agent_harness"))
-from adapters.antigravity import AuditError, check_report, parse_result, invoke
+from adapters.antigravity import AuditError, check_report, parse_result, invoke, scoped_schema
 
 PATHS = {"firmware/components/sx1276_driver/sx1276.c"}
 
@@ -253,6 +254,15 @@ class StrictAuditContractTests(unittest.TestCase):
     def test_schema_contract_requires_review(self):
         schema_path = pathlib.Path(__file__).resolve().parents[2] /             "scripts" / "agent_harness" / "adapters" / "audit.schema.json"
         schema = json.loads(schema_path.read_text())
+        definitions = schema.pop("$defs")
+        self.assertEqual(set(definitions), {"selection_sha256", "rule_results"})
+        result = definitions["rule_results"]
+        self.assertEqual(result["maxItems"], 128)
+        self.assertFalse(result["items"]["additionalProperties"])
+        self.assertEqual(set(result["items"]["required"]),
+                         {"rule_id", "rule_sha256", "status", "evidence", "reason"})
+        self.assertEqual(set(result["items"]["properties"]["status"]["enum"]),
+                         {"PASS", "FAIL", "NOT_RUN", "NOT_VERIFIED", "WAIVED_WITH_REASON"})
         root_keys = ("status", "findings", "limitations", "reviewed_scope")
         finding_keys = ("severity", "file", "line", "rule", "explanation", "fix")
         expected = {
@@ -276,6 +286,96 @@ class StrictAuditContractTests(unittest.TestCase):
         self.assertEqual(schema, expected)
 
 
+
+
+class ScopedRuleReportTests(unittest.TestCase):
+    def setUp(self):
+        self.rules = [{"rule_id": "MEM-001", "rule_sha256": "a" * 64}]
+        self.selection = "b" * 64
+        self.inventory = {"unit.log": "c" * 64}
+        self.report = dict(good(), selection_sha256=self.selection, rule_results=[{
+            "rule_id": "MEM-001", "rule_sha256": "a" * 64, "status": "PASS",
+            "evidence": [{"receipt_path": "unit.log", "receipt_sha256": "c" * 64}],
+            "reason": "Host test evidence and inspected bounds cover this rule."}])
+
+    def check(self, report):
+        return check_report(report, PATHS, self.rules, self.selection, self.inventory)
+
+    def test_exact_rule_and_trusted_evidence_accepted(self):
+        self.assertEqual(self.check(self.report)["rule_results"][0]["status"], "PASS")
+        schema = scoped_schema(self.rules, self.selection, PATHS)
+        self.assertEqual(set(schema["required"]), set(self.report))
+        self.assertEqual(schema["properties"]["rule_results"]["minItems"], 1)
+        self.assertEqual(schema["properties"]["selection_sha256"]["enum"], [self.selection])
+
+    def test_missing_extra_duplicate_and_changed_rule_rejected(self):
+        mutations = [[], self.report["rule_results"] * 2,
+                     [dict(self.report["rule_results"][0], rule_id="SEC-001")],
+                     [dict(self.report["rule_results"][0], rule_sha256="d" * 64)]]
+        for results in mutations:
+            with self.subTest(results=len(results)), self.assertRaises(AuditError):
+                self.check(dict(self.report, rule_results=results))
+        rules = self.rules + [{"rule_id": "MEM-002", "rule_sha256": "d" * 64}]
+        with self.assertRaises(AuditError):
+            check_report(dict(self.report, rule_results=self.report["rule_results"] * 2),
+                         PATHS, rules, self.selection, self.inventory)
+
+    def test_missing_extra_malformed_and_stale_scoped_fields_rejected(self):
+        for key in self.report:
+            report = copy.deepcopy(self.report)
+            del report[key]
+            with self.subTest(key=key), self.assertRaises(AuditError):
+                self.check(report)
+        for change in ({"selection_sha256": "e" * 64}, {"extra": True},
+                       {"rule_results": None}, {"rule_results": {}}):
+            with self.subTest(change=next(iter(change))), self.assertRaises(AuditError):
+                self.check(dict(self.report, **change))
+        for key in self.report["rule_results"][0]:
+            report = copy.deepcopy(self.report)
+            del report["rule_results"][0][key]
+            with self.subTest(rule_key=key), self.assertRaises(AuditError):
+                self.check(report)
+
+    def test_missing_fabricated_changed_duplicate_and_unsafe_evidence_rejected(self):
+        for evidence in ([], [{"receipt_path": "invented.log", "receipt_sha256": "c" * 64}],
+                         [{"receipt_path": "unit.log", "receipt_sha256": "d" * 64}],
+                         [{"receipt_path": "../unit.log", "receipt_sha256": "c" * 64}],
+                         self.report["rule_results"][0]["evidence"] * 2,
+                         [{"receipt_path": "unit.log"}]):
+            report = copy.deepcopy(self.report)
+            report["rule_results"][0]["evidence"] = evidence
+            with self.subTest(count=len(evidence)), self.assertRaises(AuditError):
+                self.check(report)
+
+    def test_waiver_incomplete_and_failed_rule_cannot_grant_overall_pass(self):
+        for status in ("FAIL", "NOT_RUN", "NOT_VERIFIED", "WAIVED_WITH_REASON", "UNKNOWN", True):
+            report = copy.deepcopy(self.report)
+            report["rule_results"][0]["status"] = status
+            with self.subTest(status=status), self.assertRaises(AuditError):
+                self.check(report)
+        report["status"] = "INCONCLUSIVE"
+        report["rule_results"][0].update(status="NOT_VERIFIED", evidence=[])
+        self.assertEqual(self.check(report)["status"], "INCONCLUSIVE")
+
+    def test_oversize_secret_and_deep_report_rejected_without_leak(self):
+        for text in ("x" * 160001, "ghp_" + "A" * 30,
+                     "Untrusted dump: -----BEGIN " + "PRIVATE KEY-----",
+                     "Untrusted dump token=" + "synthetic-value"):
+            report = copy.deepcopy(self.report)
+            report["rule_results"][0]["reason"] = text
+            with self.assertRaises(AuditError) as error:
+                self.check(report)
+            self.assertNotIn(text, str(error.exception))
+        with self.assertRaises(AuditError):
+            parse_result(0, "[" * 2000 + "]" * 2000, "", PATHS)
+
+    def test_strict_invocation_does_not_fall_back_to_legacy_report(self):
+        with tempfile.TemporaryDirectory() as tmp, patch(
+                "adapters.antigravity.subprocess.run",
+                return_value=subprocess.CompletedProcess([], 0, envelope(good()), "")):
+            with self.assertRaises(AuditError):
+                invoke("Review scoped rules", pathlib.Path(tmp), pathlib.Path(tmp) / "schema.json",
+                       120, PATHS, self.rules, self.selection, self.inventory)
 
 
 if __name__ == "__main__":

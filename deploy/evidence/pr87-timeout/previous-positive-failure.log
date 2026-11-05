@@ -1,0 +1,96 @@
+test_only_selected_identity_files_are_mounted_read_only (test_infra_security.ClientCredentialTests.test_only_selected_identity_files_are_mounted_read_only) ... ok
+test_container_cleanup_error_is_not_ignored (test_infra_security.SubscriberProcessTests.test_container_cleanup_error_is_not_ignored) ... ok
+test_container_removal_still_runs_when_local_reap_times_out (test_infra_security.SubscriberProcessTests.test_container_removal_still_runs_when_local_reap_times_out) ... ok
+test_container_removal_timeout_fails_with_a_bounded_wait (test_infra_security.SubscriberProcessTests.test_container_removal_timeout_fails_with_a_bounded_wait) ... ok
+test_docker_teardown_can_outlast_old_deadline_without_changing_mqtt_window (test_infra_security.SubscriberProcessTests.test_docker_teardown_can_outlast_old_deadline_without_changing_mqtt_window) ... ok
+test_missing_suback_does_not_publish_and_still_cleans_process (test_infra_security.SubscriberProcessTests.test_missing_suback_does_not_publish_and_still_cleans_process) ... ok
+test_negative_receive_rejects_payload_and_unexpected_exit_codes (test_infra_security.SubscriberProcessTests.test_negative_receive_rejects_payload_and_unexpected_exit_codes) ... ok
+test_positive_receive_still_requires_payload_and_success (test_infra_security.SubscriberProcessTests.test_positive_receive_still_requires_payload_and_success) ... ok
+test_process_timeout_is_not_authorization_success_and_cleans_owned_container (test_infra_security.SubscriberProcessTests.test_process_timeout_is_not_authorization_success_and_cleans_owned_container) ... ok
+test_publisher_failure_still_cleans_subscriber (test_infra_security.SubscriberProcessTests.test_publisher_failure_still_cleans_subscriber) ... ok
+test_local_infrastructure (test_local_infra.LocalInfrastructureTest.test_local_infrastructure) ... PASS: Compose profiles, loopback-only bindings and dev network isolation
+PASS: missing/empty PostgreSQL environment rejected
+PASS: broker uid1883, ACL owner1883:1883 mode0600, server-only key mount; no ownership/startup warnings
+ALL BROKER STARTUP LOG BEGIN
+mqtt-dev-1  | 1793098683: mosquitto version 2.0.22 starting
+mqtt-dev-1  | 1793098683: Config loaded from /mosquitto/config/mosquitto.conf.
+mqtt-dev-1  | 1793098683: Opening ipv4 listen socket on port 1883.
+mqtt-dev-1  | 1793098683: mosquitto version 2.0.22 running
+mqtt-tls-1  | 1793098684: mosquitto version 2.0.22 starting
+mqtt-tls-1  | 1793098684: Config loaded from /mosquitto/config/mosquitto.conf.
+mqtt-tls-1  | 1793098684: Opening ipv4 listen socket on port 8883.
+mqtt-tls-1  | 1793098684: mosquitto version 2.0.22 running
+ALL BROKER STARTUP LOG END
+PASS: each client sees only public CA and its own certificate/key; anonymous sees CA only
+PASS: PostgreSQL healthcheck and persistence after container recreation
+PASS: separate-network client reaches non-loopback control listener on 192.168.1.3
+PASS: postgres reachable via localhost, rejected via non-loopback 192.168.1.3:44655
+PASS: mqtt-dev reachable via localhost, rejected via non-loopback 192.168.1.3:44653
+PASS: mqtt-tls reachable via localhost, rejected via non-loopback 192.168.1.3:44654
+PASS: published TLS port verifies server CA and hostname
+PASS: anonymous/no certificate rejected by TLS
+PASS: untrusted certificate rejected by TLS
+BROKER LOG BEGIN
+mqtt-dev-1  | 1793098683: mosquitto version 2.0.22 starting
+mqtt-dev-1  | 1793098683: Config loaded from /mosquitto/config/mosquitto.conf.
+mqtt-dev-1  | 1793098683: Opening ipv4 listen socket on port 1883.
+mqtt-dev-1  | 1793098683: mosquitto version 2.0.22 running
+mqtt-dev-1  | 1793098753: New connection from 172.23.0.1:47174 on port 1883.
+mqtt-dev-1  | 1793098753: Client <unknown> closed its connection.
+mqtt-tls-1  | 1793098684: mosquitto version 2.0.22 starting
+mqtt-tls-1  | 1793098684: Config loaded from /mosquitto/config/mosquitto.conf.
+mqtt-tls-1  | 1793098684: Opening ipv4 listen socket on port 8883.
+mqtt-tls-1  | 1793098684: mosquitto version 2.0.22 running
+mqtt-tls-1  | 1793098753: New connection from 172.22.0.1:45482 on port 8883.
+mqtt-tls-1  | 1793098753: OpenSSL Error[0]: error:0A000126:SSL routines::unexpected eof while reading
+mqtt-tls-1  | 1793098753: Client <unknown> disconnected: Protocol error.
+mqtt-tls-1  | 1793098775: New connection from 172.22.0.1:45834 on port 8883.
+mqtt-tls-1  | 1793098775: OpenSSL Error[0]: error:0A000126:SSL routines::unexpected eof while reading
+mqtt-tls-1  | 1793098775: Client <unknown> closed its connection.
+mqtt-tls-1  | 1793098776: New connection from 172.22.0.4:41766 on port 8883.
+mqtt-tls-1  | 1793098776: OpenSSL Error[0]: error:0A0000C7:SSL routines::peer did not return a certificate
+mqtt-tls-1  | 1793098776: Client <unknown> disconnected: Protocol error.
+mqtt-tls-1  | 1793098777: New connection from 172.22.0.4:41768 on port 8883.
+mqtt-tls-1  | 1793098777: OpenSSL Error[0]: error:0A000086:SSL routines::certificate verify failed
+mqtt-tls-1  | 1793098777: Client <unknown> disconnected: Protocol error.
+mqtt-tls-1  | 1793098779: New connection from 172.22.0.4:40000 on port 8883.
+mqtt-tls-1  | 1793098779: New client connected from 172.22.0.4:40000 as auto-801B1F7E-0609-8BF8-AFDD-88A6010D85DA (p5, c1, k60, u'backend').
+mqtt-tls-1  | 1793098787: Client auto-801B1F7E-0609-8BF8-AFDD-88A6010D85DA disconnected.
+mqtt-tls-1  | 1793098801: New connection from 172.22.0.4:35250 on port 8883.
+mqtt-tls-1  | 1793098801: New client connected from 172.22.0.4:35250 as auto-DE0FF2E0-8A16-6773-36C1-FFDB746BA99F (p5, c1, k60, u'gw-a').
+mqtt-tls-1  | 1793098801: Client auto-DE0FF2E0-8A16-6773-36C1-FFDB746BA99F disconnected.
+BROKER LOG END
+FAIL
+test_forbidden_paths (test_verify_no_secrets.SecretScanTests.test_forbidden_paths) ... ok
+test_ignored_untracked_secrets_not_read (test_verify_no_secrets.SecretScanTests.test_ignored_untracked_secrets_not_read) ... ok
+test_private_key_under_innocent_name_in_index (test_verify_no_secrets.SecretScanTests.test_private_key_under_innocent_name_in_index) ... ok
+test_public_cert_and_env_template_allowed (test_verify_no_secrets.SecretScanTests.test_public_cert_and_env_template_allowed) ... ok
+test_schema_and_scanner_source_are_not_credentials (test_verify_no_secrets.SecretScanTests.test_schema_and_scanner_source_are_not_credentials) ... ok
+test_symlink_rejected (test_verify_no_secrets.SecretScanTests.test_symlink_rejected) ... ok
+test_unstaged_password_and_staged_diff (test_verify_no_secrets.SecretScanTests.test_unstaged_password_and_staged_diff) ... ok
+
+======================================================================
+FAIL: test_local_infrastructure (test_local_infra.LocalInfrastructureTest.test_local_infrastructure)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/lora-pr87-timeout-fix/tests/integration/test_local_infra.py", line 71, in test_local_infrastructure
+    self.authorization()
+  File "/tmp/pr87-timeout-evidence/precommit/run_infra.py", line 93, in auth
+    original_auth(self)
+  File "/tmp/lora-pr87-timeout-fix/tests/integration/test_local_infra.py", line 263, in authorization
+    self.exchange("backend", gateway, f"iot/v1/gw/{gateway}/uplink/{suffix}")
+  File "/tmp/lora-pr87-timeout-fix/tests/integration/test_local_infra.py", line 230, in exchange
+    self.assertEqual(subscriber.returncode, 0, output)
+AssertionError: 27 != 0 : Client null sending CONNECT
+Client auto-801B1F7E-0609-8BF8-AFDD-88A6010D85DA received CONNACK (0)
+Client auto-801B1F7E-0609-8BF8-AFDD-88A6010D85DA sending SUBSCRIBE (Mid: 1, Topic: iot/v1/gw/gw-a/uplink/telemetry, QoS: 1, Options: 0x00)
+Client auto-801B1F7E-0609-8BF8-AFDD-88A6010D85DA received SUBACK
+Subscribed (mid: 1): 1
+Client auto-801B1F7E-0609-8BF8-AFDD-88A6010D85DA sending DISCONNECT
+Timed out
+
+
+----------------------------------------------------------------------
+Ran 18 tests in 159.194s
+
+FAILED (failures=1)

@@ -1,0 +1,11 @@
+{
+  "command": [
+    "timeout",
+    "600s",
+    "python3",
+    "-u",
+    "/tmp/pr87-timeout-evidence/precommit-v2/run_infra.py"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 416.00087571144104
+}

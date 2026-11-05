@@ -9,19 +9,19 @@
 | JSON UTF-8, required fields, types, enums, date-time with UTC `Z`, UUID format, conditional ACK fields | Gateway producer + Go consumer (draft) | YES with Draft 2020-12 and **enabled FormatChecker** |
 | Topic ↔ authenticated principal ↔ payload `gateway_id` match | Mosquitto ACL + Backend/Gateway application check | NO |
 | QoS 1, `Retain`, Message Expiry, SUBACK Granted QoS, Clean Start, Session Expiry, TLS cert/ACL | MQTT 5 transport and broker configuration | NO |
-| Gateway-created durable Event ID vs RF frame identity; DB uniqueness; timestamp plausibility | Backend ingestion | NO |
+| `event_id` component equality; anti-duplicate DB uniqueness; timestamp plausibility | Backend ingestion | NO |
 | Schedule monotonic version, dedup request, expiry with trusted clock, collision, airtime, staged→active | Gateway executor + Backend planner | NO |
 | Command action-specific parameters, authorization, command expiry, radio ACK and actuator safety | Backend + Gateway + Node | NO |
 
 **Normative status:** all `MUST` statements below are *proposed* contract rules until required human sign-offs. JSON Schema PASS proves neither authorization nor schedule safety nor MQTT delivery.
 
-## 2. Identity, durable receipt và telemetry payload
+## 2. Event identity, buffering and clock
 
-1. **Owner revision G06:** Gateway cấp **Event ID duy nhất tại lần persist đầu tiên** cho một uplink hợp lệ; Node **không** đưa Event ID vào RF frame. Gateway lưu bền `(gateway_id,node_id,security_session,frame_counter) → (event_id,payload)`, không gán ID mới cho cùng frame qua RF retry, mất ACK, reboot hoặc MQTT QoS1 replay. `event_id` của Telemetry/Alert dùng Gateway-origin identity; `gateway_epoch/event_seq` là các thành phần của ID gốc, phải bảo toàn khi phát lại, không chỉ là RX metadata mới.
-2. **Backend:** dedup theo `(gateway_id,event_id)`, đối chiếu authenticated `node_id` và payload; conflicting duplicate phải quarantine. RF replay counter/identity và MQTT redelivery có lớp dedup khác nhau. Không suy từ MQTT PUBACK ra đã commit DB.
-3. **Temperature only:** Telemetry `data = {"temp_x10": <signed int16>}`, giá trị nhiệt độ Celsius ×10 (35,5°C→355). RF không chứa ch1/ch2/ch3/battery/node_duty/slot metadata. `frame_counter` là counter RF metadata (uint32 DRAFT), không phải business Event ID; Alert RF wire/ACK chưa khóa. `trigger` của MQTT Alert tùy chọn và chỉ được tạo nếu có cấu hình ngưỡng đủ nguồn.
-4. `observed_at` dùng RFC3339 UTC `Z` hoặc null; `observed_time_source` chỉ nguồn thời gian. `unknown` buộc `observed_at=null`; `radio_rx_monotonic_us` nằm trong clock domain Gateway. Không tự lấy ingest time thay thời gian sự kiện.
-5. **Bảo vệ lỗi:** mất persisted event mapping/counter continuity → fail closed hoặc reconcile; không cấp Event ID thứ hai cho frame cũ. Gateway enqueue event bền vững trước khi Beacon đặt bit ACK =1. MQTT schema không tự xác nhận toàn vẹn RF, security session hay nguồn dữ liệu.
+1. Uplink `event_id` is a stable tuple encoded as `<gateway_id>:<gateway_epoch>:<event_seq>`; the three components **MUST** match their respective fields. Schema checks its syntax, Backend checks component equality. `gateway_epoch` is one random UUID per **Gateway boot**, not per MQTT reconnect. `event_seq` is an unsigned 64-bit decimal string incremented once per newly captured logical event, with no silent wrap/reuse. RNG/counter persistence correctness remains `NOT_VERIFIED`.
+2. When an event is written to a durable offline queue, the record **MUST** preserve its original ID, boot epoch, seq, node info, measured payload and timestamps through reboot/retransmission. Re-publishing the *same* event cannot mint another event ID. `buffered` describes queue history and may switch false→true on retry; it is **not** identity. The consumer dedup key is `UNIQUE(gateway_id,event_id)`; mismatching immutable business payloads under one key **MUST** be quarantined/flagged rather than silently overwriting a previously committed record (DB implementation in #18).
+3. A new MQTT Packet Identifier or DUP flag does not define application identity. RF `seq_num` (8-bit) and `superframe_seq` are **not** sufficient DB keys. Duplicate RF packets and duplicate MQTT deliveries are distinct dedup layers.
+4. `observed_at` is an RFC3339 UTC `Z` time or `null`, `observed_time_source` identifies its provenance. `unknown` **MUST** imply `observed_at=null`. `radio_rx_monotonic_us` is gateway-local time only, not wall-clock or a cross-boot sequence. Backend sets `ingested_at` with its own UTC clock; never replace an unknown occurrence timestamp with ingest time without preserving provenance.
+5. Uplink with missing/invalid schema, wrong authenticated Gateway/topic, ambiguous identity or conflicting duplicate payload is rejected/quarantined per backend policy; it cannot mutate schedule/actuator state.
 
 ## 3. MQTT 5.0 transport, ACL, staleness
 
@@ -46,11 +46,11 @@
 | STAGED | `ACTIVE_REPORT` matching request/version/gateway/epoch and actual local superframe activation | ACTIVE | This is the **only transition** to ACTIVE |
 | ACTIVE | Duplicate/late `STAGE_ACK`, old ACK/NACK/replay | ACTIVE | Never regress a newer active version from stale messages |
 
-Gateway validates authenticated Gateway/topic/version/expiry, **Owner-approved activation_window**, full schedule non-overlap/airtime and trusted clock; persists Shadow before `STAGE_ACK`. **Owner countdown: exactly three complete announce Superframes 3→2→1 before cutover**, with start at a Superframe boundary; never treat countdown as proof of Node ACK. **Affected Node prepare ACK + old Slot Lease safely expired/terminated** are prerequisites for cutover at the Superframe boundary inside window; announcements alone do not establish readiness. Gateway never rewrites Slot Assignment/channel. `ACTIVE_REPORT` follows actual activation; planned versus actual boundaries are distinguished.
+Gateway validates gateway/topic/auth provenance, schema, monotonic **Backend** schedule version, identity, expiry and a safe activation horizon; persists shadow schedule, announces for at least `min_announce_superframes` **complete** superframes, then switches at a local boundary. It reports `STAGE_ACK` only after durable staging, and `ACTIVE_REPORT` only after actual local switch. `activate_at_superframe_seq` = planned boundary; new `activated_at_superframe_seq` = actual observed boundary and is **required only on ACTIVE_REPORT**. `reason_code=NONE` for ACK/ACTIVE; NACK requires a non-NONE reason. `activated_at_superframe_seq` is null or absent for ACK/NACK.
 
 A delayed, buffered `ACTIVE_REPORT` after Backend marked EXPIRED must be reconciled against Gateway current status and trustworthy reported activation epoch/sequence **before** any transition; no blind state flip. `expires_at` is the deadline for accepting/activating this proposal, **not** an unapproved periodic schedule lease (separate design needed for lease revocation). Boot/reconnect and active/shadow NVS recovery require idempotent reconciliation; a shadow proposal is never silently activated on reboot. If UTC is untrusted at acceptance, fail closed. A schedule may continue locally while backhaul is absent only under the separate active-schedule safety requirements.
 
-Schedule `P-10S-15`, `superframe_ms=10000`, 400 ms slots and radio version mapping are **candidate values only**; **three announcement Superframes are an Owner decision, not an RF timing measurement**; no RF timing/airtime/G1/G2/G3 PASS is implied. Radio `SCHED_VER` wrap/truncation remains BLOCKED at #12/D11. JSON Schema cannot check overlap or half-duplex; the Gateway must do those checks.
+Schedule `P-10S-15`, `superframe_ms=10000`, 400 ms slots and radio version mapping are **candidate values only**; no RF timing/airtime/G1/G2/G3 PASS is implied. Radio `SCHED_VER` wrap/truncation remains BLOCKED at #12/D11. JSON Schema cannot check overlap or half-duplex; the Gateway must do those checks.
 
 ## 5. Error codes and ACK semantics
 
@@ -68,21 +68,21 @@ Schedule `P-10S-15`, `superframe_ms=10000`, 400 ms slots and radio version mappi
 
 `command-ack.status` is one of `QUEUED | DISPATCHED | NODE_ACKED | REJECTED | EXPIRED | UNKNOWN`. Success/queueing states require `reason_code=NONE`; rejected/expired/unknown require a specific error, and EXPIRED uses `EXPIRED`. Draft error enum: `BAD_SCHEMA, BAD_AUTH, WRONG_GATEWAY, EXPIRED, STALE_COMMAND, DUPLICATE_CONFLICT, UNSUPPORTED_ACTION, BAD_PARAMS, AIRTIME_LIMIT, NODE_NACK, NODE_TIMEOUT, UNTRUSTED_CLOCK, INTERNAL_ERROR` (plus NONE). `NODE_ACKED` is **Node-level** acknowledgment, not Gateway MQTT PUBACK. No arbitrary string accepted as an error code.
 
-`SET_PERIODIC_MODE(false)` disables periodic telemetry but keeps Alert. `SUSPEND_NODE`, `RESUME_NODE`, `REVOKE_NODE` require authenticated Backend RBAC, Gateway durable enforcement and local authorization validity; no automatic offline renewal. Reprovision/credential reset is a separate security-approved procedure OPEN G2. `command.params` keys are only syntactically constrained; action-specific semantic safety must be reviewed (physical actuator control is not approved under this command allowlist).
+`command.params` keys are only syntactically constrained by JSON Schema. Their action-specific allowlist, actuator safety and permissions **MUST** be reviewed before real command execution; schema validation alone never enables `SET_RELAY`. No unstated signing/MIC mechanism is assumed: MQTT TLS+broker identity are transport properties; Radio MAC authentication is separately BLOCKED #12.
 
 ## 6. Review matrix for seven schemas (no test verdict asserted)
 
 | File | Schema-layer checks | Semantic/integration rules outside schema |
 |---|---|---|
-| [telemetry](schemas/telemetry.schema.json) | Gateway Event ID, candidate 32-bit frame counter, temp_x10 int16, UTC conditional | Persistent mapping/dedup, measurement scale and DB commit |
-| [alert](schemas/alert.schema.json) | Gateway Event ID, temperature-only data, severity, optional sourced trigger | No fabricated threshold/trigger, Alert RF/ACK still OPEN |
+| [telemetry](schemas/telemetry.schema.json) | Mandatory envelope, 8-bit RF seq bound, raw measurement ranges, UTC source conditional | RF dedup vs MQTT dedup; sensor scaling/config and DB commit |
+| [alert](schemas/alert.schema.json) | Severity enum, mandatory envelope, optional trigger object | No fabricated trigger from missing RF payload; P0 prioritization/ACK |
 | [status](schemas/status.schema.json) | Mode/ranges + optional active/staged references | Retained snapshot not online; reconciliation/LWT |
 | [schedule](schemas/schedule.schema.json) | UUIDs, deadlines RFC3339 UTC, candidate slot shape | expiry ordering, unique non-overlap, timing/airtime, version/epoch |
 | [schedule-ack](schemas/schedule-ack.schema.json) | Stage/code conditional; actual activation field only required for ACTIVE_REPORT | Backend state transitions, reordered reports, actual activation verification |
 | [command](schemas/command.schema.json) | Proposed action enum, params type/key shape, deadlines | per-action parameter allowlist, expiry/authorization/airtime |
 | [command-ack](schemas/command-ack.schema.json) | Enumerated error codes and status-dependent constraints | Node acknowledgment evidence, duplicate command responses |
 
-**Original examples** in [examples/cases.json](examples/cases.json): `T-VALID/T-MISSING-ID/T-FRAME-COUNTER-OVERFLOW`, `ALERT-VALID/ALERT-SEVERITY-INVALID`, `SCHEDULE-VALID/SCHEDULE-DURATION-INVALID/SCHEDULE-DUPLICATE-SLOT`, `SCHEDULE-ACK-VALID/SCHEDULE-ACK-INVALID-NACK-REASON`, `STATUS-VALID`, `COMMAND-VALID`, `COMMAND-ACK-VALID`. Additional schema-shape examples added here cover ACTIVE_REPORT/ACK invariants, enum errors, unknown-time, UTC, invalid command key and malformed event ID. Runtime behavior/replay/authorization tests and actual reports belong to **Step B**, `tests/contract/`. No official validator/CI/HIL result is claimed here.
+**Original examples** in [examples/cases.json](examples/cases.json): `T-VALID/T-MISSING-ID/T-SEQ-OVERFLOW`, `ALERT-VALID/ALERT-SEVERITY-INVALID`, `SCHEDULE-VALID/SCHEDULE-DURATION-INVALID/SCHEDULE-DUPLICATE-SLOT`, `SCHEDULE-ACK-VALID/SCHEDULE-ACK-INVALID-NACK-REASON`, `STATUS-VALID`, `COMMAND-VALID`, `COMMAND-ACK-VALID`. Additional schema-shape examples added here cover ACTIVE_REPORT/ACK invariants, enum errors, unknown-time, UTC, invalid command key and malformed event ID. Runtime behavior/replay/authorization tests and actual reports belong to **Step B**, `tests/contract/`. No official validator/CI/HIL result is claimed here.
 
 ### Cross-team review questions before APPROVED
 

@@ -14,8 +14,10 @@ import sys
 
 try:
     from .scope import violations
+    from . import standards_policy
 except ImportError:
     from scope import violations
+    import standards_policy
 
 # Control paths take precedence over the ordinary Markdown fast path.
 POLICY_FILES = {
@@ -25,6 +27,8 @@ POLICY_FILES = {
     "docs/development/ai_task_start_protocol.md",
     "docs/development/agent-harness-firmware.md",
     "docs/development/agy-supervised-pilot.md",
+    "docs/development/firmware/c_coding_standard_v2.md",
+    "docs/development/backend-go/go_backend_engineering_standard_v2.md",
 }
 POLICY_PREFIXES = (".agents/", ".agent-harness/", ".codex/",
                    ".github/instructions/", "scripts/agent_harness/")
@@ -41,6 +45,7 @@ REGISTRY = {
     "NET-LOOPBACK": ("P0", "infra"),
     "TLS-AUTH/ACL-NEGATIVE": ("P0", "mqtt"),
     "SECURITY-CHECK": ("P1", "security"),
+    "STANDARDS-CHECK": ("P1", "standards"),
 }
 MAX_BYTES = 8_000_000
 MAX_TOTAL = 64_000_000
@@ -59,13 +64,12 @@ def digest(data):
 
 
 def git_command(repo, *args):
-    command = ["git", "--no-optional-locks", "-c", "core.fsmonitor=false", "-C", str(repo)]
+    command = ["git", "--no-optional-locks", "-c", "core.fsmonitor=false",
+               "-c", "filter.lfs.clean=", "-c", "filter.lfs.process=", "-c", "filter.lfs.smudge=",
+               "-C", str(repo)]
     if args and args[0] == "diff":
-        configured = subprocess.run(
-            [*command, "config", "--name-only", "--get-regexp", r"^filter\..*\.(clean|process)$"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
-        if configured.returncode not in (0, 1) or configured.stdout:
-            raise ValueError("Configured Git conversion filters require trusted disposable checkout")
+        standards_policy.check_git_filters(repo, exc_class=ValueError,
+                                          err_msg="Configured Git conversion filters require trusted disposable checkout")
     return [*command, *args]
 
 
@@ -341,20 +345,130 @@ def reject_duplicates(pairs):
     return result
 
 
+def standards_check(repo, base, source, payload, evidence_root):
+    """Recompute applicability and validate separate Host, Worker and Auditor bytes."""
+    selected = None
+
+    def incomplete(status, reason):
+        rows = [{"rule_id": r["rule_id"], "rule_sha256": r["rule_sha256"], "status": status,
+                 "source_sha": source["source_sha"], "failure_action": r["failure_action"],
+                 "file:line": standards_policy.STANDARDS[r["component"]] + ":" + str(r["line"]),
+                 "severity": "P1", "limitation": reason} for r in selected["rules"]] if selected else []
+        return selected, rows, status, reason
+
+    try:
+        frozen = payload.get("selection") if isinstance(payload, dict) else None
+        selected = standards_policy.select_rules(
+            repo, frozen.get("allowed_paths", ()) if isinstance(frozen, dict) else (),
+            requested_ids=frozen.get("requested_ids", ()) if isinstance(frozen, dict) else (),
+            base=base, expected_source_sha=source["source_sha"])
+        if not selected["selected_ids"]:
+            if frozen is not None and frozen != selected:
+                raise ValueError("Stale standards selection")
+            return selected, [], "NOT_RUN", "No C/Go implementation impact"
+        if frozen is None:
+            return incomplete("NOT_RUN", "Required scoped rules/injection receipts missing")
+        if frozen != selected:
+            raise ValueError("Missing, stale or altered applicable rules")
+        standards_policy.verify_selection(repo, frozen)
+        hashes = {r["rule_id"]: r["rule_sha256"] for r in selected["rules"]}
+        reports = {}
+        verdicts = []
+        identities = set()
+        paths = set()
+        from adapters.antigravity import check_report
+        for role in ("worker", "auditor"):
+            entry = payload.get(role)
+            status, _, _ = receipt_check("STANDARDS-CHECK", entry, evidence_root, source)
+            if status != "PASS":
+                raise ValueError("Missing valid independent injection/report receipt")
+            raw = safe_read(evidence_root, entry["receipt_path"])
+            record = json.loads(raw, object_pairs_hook=reject_duplicates)
+            if (not isinstance(record["agent_id"], str) or not record["agent_id"].strip()
+                    or record["agent_id"] in identities or entry["receipt_path"] in paths
+                    or record["role"] != role
+                    or record["agent_input_sha256"] != selected["agent_input_sha256"]
+                    or record["selection_sha256"] != selected["selection_sha256"]
+                    or record["selected_ids"] != selected["selected_ids"]
+                    or record["rule_hashes"] != hashes):
+                raise ValueError("Incomplete, shared or stale injection record")
+            identities.add(record["agent_id"])
+            paths.add(entry["receipt_path"])
+            inventory = record["evidence_inventory"]
+            if not isinstance(inventory, dict) or not inventory:
+                raise ValueError("Actual Host check inventory required")
+            for name, expected in inventory.items():
+                if digest(safe_read(evidence_root, name)) != expected:
+                    raise ValueError("Model evidence does not match Host bytes")
+            if role == "worker":
+                edit = json.loads(safe_read(evidence_root, record["edit_receipt_path"]),
+                                  object_pairs_hook=reject_duplicates)
+                if (edit["agent_input_sha256"] != selected["agent_input_sha256"]
+                        or edit["source_sha"] != source["source_sha"]
+                        or edit["selected_ids"] != selected["selected_ids"]
+                        or edit["rule_hashes"] != hashes):
+                    raise ValueError("Applicable rules were not injected before Worker edit")
+            report = check_report(record["report"], set(source["changed_paths"]),
+                                  required_rules=selected["rules"],
+                                  selection_sha256=selected["selection_sha256"],
+                                  evidence_inventory=inventory)
+            reports[role] = {r["rule_id"]: r for r in report["rule_results"]}
+            verdicts.append(report["status"])
+        entries = payload["rules"]
+        if not isinstance(entries, dict) or set(entries) != set(hashes):
+            raise ValueError("Missing or unexpected per-ID Host evidence")
+        results = []
+        for rule in selected["rules"]:
+            rule_id = rule["rule_id"]
+            entry = entries[rule_id]
+            status, reason, metadata = receipt_check("STANDARDS-CHECK", entry, evidence_root, source)
+            facts = entry.get("observations", {}) if isinstance(entry, dict) else {}
+            if (facts.get("selection_sha256") != selected["selection_sha256"]
+                    or facts.get("rule_sha256") != hashes[rule_id]):
+                status, reason = "NOT_VERIFIED", "Per-ID source/selection binding missing"
+            model_states = [reports[role][rule_id]["status"] for role in reports]
+            if "FAIL" in model_states:
+                status, reason = "FAIL", "Worker/Auditor identified a rule violation"
+            elif "WAIVED_WITH_REASON" in model_states:
+                status, reason = "WAIVED_WITH_REASON", "Written exception awaits human technical review"
+            elif any(s != "PASS" for s in model_states):
+                status, reason = "NOT_VERIFIED", "Worker/Auditor rule coverage is incomplete"
+            results.append({"rule_id": rule_id, "status": status, "severity": "P1",
+                            "file:line": standards_policy.STANDARDS[rule["component"]] + ":" + str(rule["line"]),
+                            "source_sha": source["source_sha"],
+                            "rule_sha256": hashes[rule_id], "failure_action": rule["failure_action"],
+                            "limitation": reason, **metadata})
+        passed = all(r["status"] == "PASS" for r in results) and all(v == "PASS" for v in verdicts)
+        return selected, results, "PASS" if passed else "NOT_VERIFIED", "Per-ID Host evidence and separate model reports checked"
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
+        return incomplete("NOT_VERIFIED", "Standards source, routing, injection or per-ID evidence verification failed")
+
+
 def evaluate(repo, base, manifest=None, evidence_root=None):
     repo = repo.resolve(strict=True)
+    if manifest is not None and (evidence_root is None or evidence_root.resolve(strict=True).is_relative_to(repo)):
+        raise ValueError("Host evidence must remain outside candidate worktree")
     if Path(git(repo, "rev-parse", "--show-toplevel").decode().strip()) != repo:
         raise ValueError("Select the repository root")
     source, secrets = inventory(repo, base)
     risks = route(source["changed_paths"])
     entries = {}
+    standards_payload = None
     manifest_hash = None
     if manifest is not None:
         manifest_bytes = safe_read(evidence_root, manifest)
         manifest_hash = digest(manifest_bytes)
-        entries = json.loads(manifest_bytes, object_pairs_hook=reject_duplicates)["checks"]
-        if not isinstance(entries, dict) or set(entries) - set(REGISTRY):
+        document = json.loads(manifest_bytes, object_pairs_hook=reject_duplicates)
+        entries = document["checks"]
+        standards_payload = document.get("standards")
+        if (not isinstance(entries, dict)
+                or set(entries) - set(REGISTRY)
+                or any(not isinstance(v, dict) for v in entries.values() if v is not None)):
             raise ValueError("Unknown rule or invalid checks object")
+    selection, rule_results, standard_status, standard_reason = standards_check(
+        repo, source["base_sha"], source, standards_payload, evidence_root)
+    if standard_status != "NOT_RUN" or (selection is not None and selection["selected_ids"]):
+        risks.add("standards")
     results = []
     for rule, (severity, risk) in REGISTRY.items():
         result = {"rule_id": rule, "status": "NOT_RUN", "severity": severity,
@@ -376,6 +490,9 @@ def evaluate(repo, base, manifest=None, evidence_root=None):
                           command="git diff --no-ext-diff --no-textconv --check <base>",
                           exit_code=checked.returncode,
                           limitation="Untracked text is scanned for secrets; stage it before final diff check")
+        elif rule == "STANDARDS-CHECK":
+            result.update(status=standard_status, limitation=standard_reason,
+                          command="tracked scoped standards routing and per-ID evidence validation")
         else:
             status, reason, metadata = receipt_check(rule, entries.get(rule), evidence_root, source)
             result.update(metadata, status=status, limitation=reason)
@@ -391,6 +508,10 @@ def evaluate(repo, base, manifest=None, evidence_root=None):
     return {**source, "manifest_sha256": manifest_hash,
             "runner_sha256": digest(Path(__file__).read_bytes()),
             "risks": sorted(risks), "results": results,
+            "standards": {"selected_ids": selection["selected_ids"] if selection else [],
+                          "selection_sha256": selection["selection_sha256"] if selection else None,
+                          "results": rule_results, "status": standard_status,
+                          "limitation": standard_reason},
             "auto_check": "AUTO_CHECK_PASS" if auto_pass else "BLOCKED",
             "audit": "NOT_VERIFIED",
             "human_security_review": "HUMAN_SECURITY_REVIEW_PENDING" if security else "NOT_REQUIRED",

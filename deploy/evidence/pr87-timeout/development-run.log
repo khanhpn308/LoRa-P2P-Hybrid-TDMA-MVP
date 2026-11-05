@@ -1,0 +1,201 @@
+test_only_selected_identity_files_are_mounted_read_only (test_infra_security.ClientCredentialTests.test_only_selected_identity_files_are_mounted_read_only) ... ok
+test_container_cleanup_error_is_not_ignored (test_infra_security.SubscriberProcessTests.test_container_cleanup_error_is_not_ignored) ... ok
+test_container_removal_still_runs_when_local_reap_times_out (test_infra_security.SubscriberProcessTests.test_container_removal_still_runs_when_local_reap_times_out) ... ok
+test_container_removal_timeout_fails_with_a_bounded_wait (test_infra_security.SubscriberProcessTests.test_container_removal_timeout_fails_with_a_bounded_wait) ... ok
+test_docker_teardown_can_outlast_old_process_deadline (test_infra_security.SubscriberProcessTests.test_docker_teardown_can_outlast_old_process_deadline) ... ok
+test_missing_suback_does_not_publish_and_still_cleans_process (test_infra_security.SubscriberProcessTests.test_missing_suback_does_not_publish_and_still_cleans_process) ... ok
+test_negative_receive_rejects_payload_and_unexpected_exit_codes (test_infra_security.SubscriberProcessTests.test_negative_receive_rejects_payload_and_unexpected_exit_codes) ... ok
+test_positive_receive_still_requires_payload_and_success (test_infra_security.SubscriberProcessTests.test_positive_receive_still_requires_payload_and_success) ... ok
+test_process_timeout_is_not_authorization_success_and_cleans_owned_container (test_infra_security.SubscriberProcessTests.test_process_timeout_is_not_authorization_success_and_cleans_owned_container) ... ok
+test_publisher_failure_still_cleans_subscriber (test_infra_security.SubscriberProcessTests.test_publisher_failure_still_cleans_subscriber) ... ok
+test_slow_publisher_cannot_turn_an_expired_window_into_negative_success (test_infra_security.SubscriberProcessTests.test_slow_publisher_cannot_turn_an_expired_window_into_negative_success) ... ok
+test_local_infrastructure (test_local_infra.LocalInfrastructureTest.test_local_infrastructure) ... PASS: Compose profiles, loopback-only bindings and dev network isolation
+PASS: missing/empty PostgreSQL environment rejected
+PASS: broker uid1883, ACL owner1883:1883 mode0600, server-only key mount; no ownership/startup warnings
+ALL BROKER STARTUP LOG BEGIN
+mqtt-dev-1  | 1793099118: mosquitto version 2.0.22 starting
+mqtt-dev-1  | 1793099118: Config loaded from /mosquitto/config/mosquitto.conf.
+mqtt-dev-1  | 1793099118: Opening ipv4 listen socket on port 1883.
+mqtt-dev-1  | 1793099118: mosquitto version 2.0.22 running
+mqtt-tls-1  | 1793099119: mosquitto version 2.0.22 starting
+mqtt-tls-1  | 1793099119: Config loaded from /mosquitto/config/mosquitto.conf.
+mqtt-tls-1  | 1793099119: Opening ipv4 listen socket on port 8883.
+mqtt-tls-1  | 1793099119: mosquitto version 2.0.22 running
+ALL BROKER STARTUP LOG END
+PASS: each client sees only public CA and its own certificate/key; anonymous sees CA only
+PASS: PostgreSQL healthcheck and persistence after container recreation
+PASS: separate-network client reaches non-loopback control listener on 192.168.1.3
+PASS: postgres reachable via localhost, rejected via non-loopback 192.168.1.3:44659
+PASS: mqtt-dev reachable via localhost, rejected via non-loopback 192.168.1.3:44656
+PASS: mqtt-tls reachable via localhost, rejected via non-loopback 192.168.1.3:44658
+PASS: published TLS port verifies server CA and hostname
+PASS: anonymous/no certificate rejected by TLS
+PASS: untrusted certificate rejected by TLS
+PASS: both Gateways and Backend exchange every allowlisted topic at MQTT5 QoS1
+PASS: cross-Gateway writes, ClientID/username spoof, reversed roles, unknown CN and unlisted topic denied with PUBACK 135
+PASS: denied receive gw-a on iot/v1/gw/gw-b/downlink/command: MQTT exit27, no payload; Docker process completed in 46.12s
+PASS: denied receive gw-b on iot/v1/gw/gw-a/downlink/command: MQTT exit27, no payload; Docker process completed in 46.54s
+PASS: denied receive gw-a on iot/v1/gw/#: MQTT exit27, no payload; Docker process completed in 46.54s
+PASS: denied receive backend on iot/v1/gw/gw-a/downlink/command: MQTT exit27, no payload; Docker process completed in 46.43s
+PASS: cross-Gateway reads, wildcard leakage and Backend downlink reads deliver no messages
+BROKER LOG BEGIN
+mqtt-dev-1  | 1793099118: mosquitto version 2.0.22 starting
+mqtt-tls-1  | 1793099119: mosquitto version 2.0.22 starting
+mqtt-dev-1  | 1793099118: Config loaded from /mosquitto/config/mosquitto.conf.
+mqtt-dev-1  | 1793099118: Opening ipv4 listen socket on port 1883.
+mqtt-dev-1  | 1793099118: mosquitto version 2.0.22 running
+mqtt-tls-1  | 1793099119: Config loaded from /mosquitto/config/mosquitto.conf.
+mqtt-dev-1  | 1793099187: New connection from 172.22.0.1:48506 on port 1883.
+mqtt-dev-1  | 1793099187: Client <unknown> closed its connection.
+mqtt-tls-1  | 1793099119: Opening ipv4 listen socket on port 8883.
+mqtt-tls-1  | 1793099119: mosquitto version 2.0.22 running
+mqtt-tls-1  | 1793099187: Client connection from 172.23.0.1 failed: error:0A000126:SSL routines::unexpected eof while reading.
+mqtt-tls-1  | 1793099217: New connection from 172.23.0.1:47534 on port 8883.
+mqtt-tls-1  | 1793099217: OpenSSL Error[0]: error:0A000126:SSL routines::unexpected eof while reading
+mqtt-tls-1  | 1793099217: Client <unknown> closed its connection.
+mqtt-tls-1  | 1793099219: New connection from 172.23.0.4:41746 on port 8883.
+mqtt-tls-1  | 1793099219: OpenSSL Error[0]: error:0A0000C7:SSL routines::peer did not return a certificate
+mqtt-tls-1  | 1793099219: Client <unknown> disconnected: Protocol error.
+mqtt-tls-1  | 1793099222: New connection from 172.23.0.4:41750 on port 8883.
+mqtt-tls-1  | 1793099222: OpenSSL Error[0]: error:0A000086:SSL routines::certificate verify failed
+mqtt-tls-1  | 1793099222: Client <unknown> disconnected: Protocol error.
+mqtt-tls-1  | 1793099226: New connection from 172.23.0.4:41756 on port 8883.
+mqtt-tls-1  | 1793099226: New client connected from 172.23.0.4:41756 as auto-22434BAF-B475-F805-7430-8AA080E03972 (p5, c1, k60, u'backend').
+mqtt-tls-1  | 1793099227: New connection from 172.23.0.5:51106 on port 8883.
+mqtt-tls-1  | 1793099227: New client connected from 172.23.0.5:51106 as auto-C379B578-4536-3AD3-B9E5-44773FDD007E (p5, c1, k60, u'gw-a').
+mqtt-tls-1  | 1793099227: Client auto-C379B578-4536-3AD3-B9E5-44773FDD007E disconnected.
+mqtt-tls-1  | 1793099227: Client auto-22434BAF-B475-F805-7430-8AA080E03972 disconnected.
+mqtt-tls-1  | 1793099231: New connection from 172.23.0.4:49440 on port 8883.
+mqtt-tls-1  | 1793099231: New client connected from 172.23.0.4:49440 as auto-75D1D14F-EE6A-E2D1-9158-2575545F7491 (p5, c1, k60, u'backend').
+mqtt-tls-1  | 1793099232: New connection from 172.23.0.5:35528 on port 8883.
+mqtt-tls-1  | 1793099232: New client connected from 172.23.0.5:35528 as auto-F2F2242F-5E37-AEE5-CB92-77BA9AF3A166 (p5, c1, k60, u'gw-a').
+mqtt-tls-1  | 1793099232: Client auto-F2F2242F-5E37-AEE5-CB92-77BA9AF3A166 disconnected.
+mqtt-tls-1  | 1793099232: Client auto-75D1D14F-EE6A-E2D1-9158-2575545F7491 disconnected.
+mqtt-tls-1  | 1793099239: New connection from 172.23.0.4:49438 on port 8883.
+mqtt-tls-1  | 1793099239: New client connected from 172.23.0.4:49438 as auto-6502BD43-C212-02EE-B3B2-160CF315B75F (p5, c1, k60, u'backend').
+mqtt-tls-1  | 1793099241: New connection from 172.23.0.5:42862 on port 8883.
+mqtt-tls-1  | 1793099241: New client connected from 172.23.0.5:42862 as auto-2BEEEC4B-3E52-506E-72BB-9CBCBCB595CD (p5, c1, k60, u'gw-a').
+mqtt-tls-1  | 1793099241: Client auto-2BEEEC4B-3E52-506E-72BB-9CBCBCB595CD disconnected.
+mqtt-tls-1  | 1793099241: Client auto-6502BD43-C212-02EE-B3B2-160CF315B75F disconnected.
+mqtt-tls-1  | 1793099246: New connection from 172.23.0.4:49440 on port 8883.
+mqtt-tls-1  | 1793099246: New client connected from 172.23.0.4:49440 as auto-6A20A0D1-ECBD-C2C1-BA82-3DE01065B327 (p5, c1, k60, u'backend').
+mqtt-tls-1  | 1793099247: New connection from 172.23.0.5:42878 on port 8883.
+mqtt-tls-1  | 1793099247: New client connected from 172.23.0.5:42878 as auto-9EAC2C77-C1DA-9CBC-19AA-FFB75058E00B (p5, c1, k60, u'gw-a').
+mqtt-tls-1  | 1793099247: Client auto-9EAC2C77-C1DA-9CBC-19AA-FFB75058E00B disconnected.
+mqtt-tls-1  | 1793099247: Client auto-6A20A0D1-ECBD-C2C1-BA82-3DE01065B327 disconnected.
+mqtt-tls-1  | 1793099249: New connection from 172.23.0.4:48906 on port 8883.
+mqtt-tls-1  | 1793099249: New client connected from 172.23.0.4:48906 as auto-47DDA7C9-B5B2-7DE5-AFEA-5485ACE65EE9 (p5, c1, k60, u'backend').
+mqtt-tls-1  | 1793099249: New connection from 172.23.0.5:47180 on port 8883.
+mqtt-tls-1  | 1793099249: New client connected from 172.23.0.5:47180 as auto-505E3879-9C70-9741-DC82-A527471E60BE (p5, c1, k60, u'gw-a').
+mqtt-tls-1  | 1793099249: Client auto-505E3879-9C70-9741-DC82-A527471E60BE disconnected.
+mqtt-tls-1  | 1793099249: Client auto-47DDA7C9-B5B2-7DE5-AFEA-5485ACE65EE9 disconnected.
+mqtt-tls-1  | 1793099251: New connection from 172.23.0.4:48908 on port 8883.
+mqtt-tls-1  | 1793099251: New client connected from 172.23.0.4:48908 as auto-419099B7-6648-F197-FA74-CF0E114D931C (p5, c1, k60, u'gw-a').
+mqtt-tls-1  | 1793099252: New connection from 172.23.0.5:47190 on port 8883.
+mqtt-tls-1  | 1793099252: New client connected from 172.23.0.5:47190 as auto-524072BF-0006-4E63-55EB-2FB5F8AF8EBA (p5, c1, k60, u'backend').
+mqtt-tls-1  | 1793099252: Client auto-524072BF-0006-4E63-55EB-2FB5F8AF8EBA disconnected.
+mqtt-tls-1  | 1793099252: Client auto-419099B7-6648-F197-FA74-CF0E114D931C disconnected.
+mqtt-tls-1  | 1793099253: New connection from 172.23.0.4:48916 on port 8883.
+mqtt-tls-1  | 1793099253: New client connected from 172.23.0.4:48916 as auto-39934502-B5A4-3D6E-4BBC-E8514F6ED287 (p5, c1, k60, u'gw-a').
+mqtt-tls-1  | 1793099254: New connection from 172.23.0.5:47192 on port 8883.
+mqtt-tls-1  | 1793099254: New client connected from 172.23.0.5:47192 as auto-A93A4D5C-C3DD-F200-9762-0BD581E0C0D6 (p5, c1, k60, u'backend').
+mqtt-tls-1  | 1793099254: Client auto-A93A4D5C-C3DD-F200-9762-0BD581E0C0D6 disconnected.
+mqtt-tls-1  | 1793099254: Client auto-39934502-B5A4-3D6E-4BBC-E8514F6ED287 disconnected.
+mqtt-tls-1  | 1793099256: New connection from 172.23.0.4:48928 on port 8883.
+mqtt-tls-1  | 1793099256: New client connected from 172.23.0.4:48928 as auto-3F147B72-5CFE-6BAB-6CDB-69328569F89E (p5, c1, k60, u'backend').
+mqtt-tls-1  | 1793099257: New connection from 172.23.0.5:47198 on port 8883.
+mqtt-tls-1  | 1793099257: New client connected from 172.23.0.5:47198 as auto-14F58CC7-A8DB-A7EF-782F-3C471728417A (p5, c1, k60, u'gw-b').
+mqtt-tls-1  | 1793099257: Client auto-14F58CC7-A8DB-A7EF-782F-3C471728417A disconnected.
+mqtt-tls-1  | 1793099257: Client auto-3F147B72-5CFE-6BAB-6CDB-69328569F89E disconnected.
+mqtt-tls-1  | 1793099258: New connection from 172.23.0.4:44170 on port 8883.
+mqtt-tls-1  | 1793099258: New client connected from 172.23.0.4:44170 as auto-B9A13D73-CC25-C454-02F1-0E160C3264EA (p5, c1, k60, u'backend').
+mqtt-tls-1  | 1793099259: New connection from 172.23.0.5:35958 on port 8883.
+mqtt-tls-1  | 1793099259: New client connected from 172.23.0.5:35958 as auto-0AB95F6B-EF7B-F60C-5872-78B1C873793A (p5, c1, k60, u'gw-b').
+mqtt-tls-1  | 1793099259: Client auto-0AB95F6B-EF7B-F60C-5872-78B1C873793A disconnected.
+mqtt-tls-1  | 1793099259: Client auto-B9A13D73-CC25-C454-02F1-0E160C3264EA disconnected.
+mqtt-tls-1  | 1793099261: New connection from 172.23.0.4:44182 on port 8883.
+mqtt-tls-1  | 1793099261: New client connected from 172.23.0.4:44182 as auto-E19D722D-19BB-D0B9-E9F5-4C89D3015975 (p5, c1, k60, u'backend').
+mqtt-tls-1  | 1793099262: New connection from 172.23.0.5:35964 on port 8883.
+mqtt-tls-1  | 1793099262: New client connected from 172.23.0.5:35964 as auto-B9F7CA82-34E0-DB33-F8E7-E286270B8459 (p5, c1, k60, u'gw-b').
+mqtt-tls-1  | 1793099262: Client auto-B9F7CA82-34E0-DB33-F8E7-E286270B8459 disconnected.
+mqtt-tls-1  | 1793099262: Client auto-E19D722D-19BB-D0B9-E9F5-4C89D3015975 disconnected.
+mqtt-tls-1  | 1793099266: New connection from 172.23.0.4:44186 on port 8883.
+mqtt-tls-1  | 1793099266: New client connected from 172.23.0.4:44186 as auto-590862BB-0C9F-5493-B3A5-B1F193FB88F3 (p5, c1, k60, u'backend').
+mqtt-tls-1  | 1793099267: New connection from 172.23.0.5:35978 on port 8883.
+mqtt-tls-1  | 1793099267: New client connected from 172.23.0.5:35978 as auto-B01D7546-C5A1-233A-2EEF-0B70A1C52E15 (p5, c1, k60, u'gw-b').
+mqtt-tls-1  | 1793099267: Client auto-B01D7546-C5A1-233A-2EEF-0B70A1C52E15 disconnected.
+mqtt-tls-1  | 1793099267: Client auto-590862BB-0C9F-5493-B3A5-B1F193FB88F3 disconnected.
+mqtt-tls-1  | 1793099269: New connection from 172.23.0.4:50154 on port 8883.
+mqtt-tls-1  | 1793099269: New client connected from 172.23.0.4:50154 as auto-311D95F6-4242-3562-5D2C-0DFDE9F7D642 (p5, c1, k60, u'backend').
+mqtt-tls-1  | 1793099271: New connection from 172.23.0.5:58916 on port 8883.
+mqtt-tls-1  | 1793099271: New client connected from 172.23.0.5:58916 as auto-FFBD855A-8DCC-C9B0-632F-DEFA0315B333 (p5, c1, k60, u'gw-b').
+mqtt-tls-1  | 1793099271: Client auto-FFBD855A-8DCC-C9B0-632F-DEFA0315B333 disconnected.
+mqtt-tls-1  | 1793099271: Client auto-311D95F6-4242-3562-5D2C-0DFDE9F7D642 disconnected.
+mqtt-tls-1  | 1793099273: New connection from 172.23.0.4:50164 on port 8883.
+mqtt-tls-1  | 1793099273: New client connected from 172.23.0.4:50164 as auto-5BCEDBF1-F448-428C-7D5B-F8A90BD770BC (p5, c1, k60, u'gw-b').
+mqtt-tls-1  | 1793099274: New connection from 172.23.0.5:58932 on port 8883.
+mqtt-tls-1  | 1793099274: New client connected from 172.23.0.5:58932 as auto-F9FDCFAC-DFAA-75BF-1B70-6BC86C1363F8 (p5, c1, k60, u'backend').
+mqtt-tls-1  | 1793099274: Client auto-F9FDCFAC-DFAA-75BF-1B70-6BC86C1363F8 disconnected.
+mqtt-tls-1  | 1793099274: Client auto-5BCEDBF1-F448-428C-7D5B-F8A90BD770BC disconnected.
+mqtt-tls-1  | 1793099278: New connection from 172.23.0.4:52714 on port 8883.
+mqtt-tls-1  | 1793099278: New client connected from 172.23.0.4:52714 as auto-68291377-3CC7-BE40-A4EA-81EB1BB93F03 (p5, c1, k60, u'gw-b').
+mqtt-tls-1  | 1793099279: New connection from 172.23.0.5:54028 on port 8883.
+mqtt-tls-1  | 1793099279: New client connected from 172.23.0.5:54028 as auto-E79EA358-36E4-81B7-2372-B1C0F6386092 (p5, c1, k60, u'backend').
+mqtt-tls-1  | 1793099279: Client auto-E79EA358-36E4-81B7-2372-B1C0F6386092 disconnected.
+mqtt-tls-1  | 1793099279: Client auto-68291377-3CC7-BE40-A4EA-81EB1BB93F03 disconnected.
+mqtt-tls-1  | 1793099280: New connection from 172.23.0.4:52726 on port 8883.
+mqtt-tls-1  | 1793099280: New client connected from 172.23.0.4:52726 as gw-b (p5, c1, k60, u'gw-a').
+mqtt-tls-1  | 1793099280: Client gw-b disconnected.
+mqtt-tls-1  | 1793099281: New connection from 172.23.0.4:52734 on port 8883.
+mqtt-tls-1  | 1793099281: New client connected from 172.23.0.4:52734 as auto-AE42F68F-C96C-BCD5-FA20-6A133E0EBBFD (p5, c1, k60, u'gw-b').
+mqtt-tls-1  | 1793099281: Client auto-AE42F68F-C96C-BCD5-FA20-6A133E0EBBFD disconnected.
+mqtt-tls-1  | 1793099282: New connection from 172.23.0.4:52748 on port 8883.
+mqtt-tls-1  | 1793099282: New client connected from 172.23.0.4:52748 as auto-5133B340-D1CF-FB57-BEF7-F454A41F8A69 (p5, c1, k60, u'gw-a').
+mqtt-tls-1  | 1793099282: Client auto-5133B340-D1CF-FB57-BEF7-F454A41F8A69 disconnected.
+mqtt-tls-1  | 1793099283: New connection from 172.23.0.4:52762 on port 8883.
+mqtt-tls-1  | 1793099283: New client connected from 172.23.0.4:52762 as auto-35046317-3F04-C480-BA5F-CA080DBBDDB2 (p5, c1, k60, u'backend').
+mqtt-tls-1  | 1793099284: Client auto-35046317-3F04-C480-BA5F-CA080DBBDDB2 disconnected.
+mqtt-tls-1  | 1793099285: New connection from 172.23.0.4:52770 on port 8883.
+mqtt-tls-1  | 1793099285: New client connected from 172.23.0.4:52770 as auto-310E50D3-F594-917D-C6C0-40E6664545A5 (p5, c1, k60, u'unknown').
+mqtt-tls-1  | 1793099285: Client auto-310E50D3-F594-917D-C6C0-40E6664545A5 disconnected.
+mqtt-tls-1  | 1793099288: New connection from 172.23.0.4:52774 on port 8883.
+mqtt-tls-1  | 1793099288: New client connected from 172.23.0.4:52774 as auto-A298AF60-7332-6598-9F8B-725B8A19A4CC (p5, c1, k60, u'gw-a').
+mqtt-tls-1  | 1793099288: Client auto-A298AF60-7332-6598-9F8B-725B8A19A4CC disconnected.
+mqtt-tls-1  | 1793099289: New connection from 172.23.0.4:56558 on port 8883.
+mqtt-tls-1  | 1793099289: New client connected from 172.23.0.4:56558 as auto-8A1E8461-C3E6-67AC-0634-00928D7C29B8 (p5, c1, k60, u'gw-a').
+mqtt-tls-1  | 1793099290: New connection from 172.23.0.5:57322 on port 8883.
+mqtt-tls-1  | 1793099290: New client connected from 172.23.0.5:57322 as auto-A581B87E-BE1E-77A3-6376-D963F44DA8E3 (p5, c1, k60, u'backend').
+mqtt-tls-1  | 1793099290: Client auto-A581B87E-BE1E-77A3-6376-D963F44DA8E3 disconnected.
+mqtt-tls-1  | 1793099334: Client auto-8A1E8461-C3E6-67AC-0634-00928D7C29B8 disconnected.
+mqtt-tls-1  | 1793099335: New connection from 172.23.0.4:39088 on port 8883.
+mqtt-tls-1  | 1793099335: New client connected from 172.23.0.4:39088 as auto-E9387FBD-2E03-0F08-E8A3-88F5DFD32322 (p5, c1, k60, u'gw-b').
+mqtt-tls-1  | 1793099336: New connection from 172.23.0.5:50856 on port 8883.
+mqtt-tls-1  | 1793099336: New client connected from 172.23.0.5:50856 as auto-422C4E00-9F87-6EB2-97D7-ACF64626FA20 (p5, c1, k60, u'backend').
+mqtt-tls-1  | 1793099336: Client auto-422C4E00-9F87-6EB2-97D7-ACF64626FA20 disconnected.
+mqtt-tls-1  | 1793099380: Client auto-E9387FBD-2E03-0F08-E8A3-88F5DFD32322 disconnected.
+mqtt-tls-1  | 1793099382: New connection from 172.23.0.4:39832 on port 8883.
+mqtt-tls-1  | 1793099382: New client connected from 172.23.0.4:39832 as auto-FB38628A-C1BE-6EA8-A46F-53494DE9E2C0 (p5, c1, k60, u'gw-a').
+mqtt-tls-1  | 1793099383: New connection from 172.23.0.5:44430 on port 8883.
+mqtt-tls-1  | 1793099383: New client connected from 172.23.0.5:44430 as auto-0CD696A3-F418-0D45-0D1B-F87589C90FC0 (p5, c1, k60, u'gw-b').
+mqtt-tls-1  | 1793099383: Client auto-0CD696A3-F418-0D45-0D1B-F87589C90FC0 disconnected.
+mqtt-tls-1  | 1793099427: Client auto-FB38628A-C1BE-6EA8-A46F-53494DE9E2C0 disconnected.
+mqtt-tls-1  | 1793099428: New connection from 172.23.0.4:52438 on port 8883.
+mqtt-tls-1  | 1793099428: New client connected from 172.23.0.4:52438 as auto-D174FB3B-9597-C07E-CD9C-97E21D6D6DB9 (p5, c1, k60, u'backend').
+mqtt-tls-1  | 1793099429: New connection from 172.23.0.5:36516 on port 8883.
+mqtt-tls-1  | 1793099429: New client connected from 172.23.0.5:36516 as auto-06517B2C-C9FD-2007-C6F9-14519166848C (p5, c1, k60, u'backend').
+mqtt-tls-1  | 1793099429: Client auto-06517B2C-C9FD-2007-C6F9-14519166848C disconnected.
+mqtt-tls-1  | 1793099473: Client auto-D174FB3B-9597-C07E-CD9C-97E21D6D6DB9 disconnected.
+BROKER LOG END
+ok
+test_forbidden_paths (test_verify_no_secrets.SecretScanTests.test_forbidden_paths) ... ok
+test_ignored_untracked_secrets_not_read (test_verify_no_secrets.SecretScanTests.test_ignored_untracked_secrets_not_read) ... ok
+test_private_key_under_innocent_name_in_index (test_verify_no_secrets.SecretScanTests.test_private_key_under_innocent_name_in_index) ... ok
+test_public_cert_and_env_template_allowed (test_verify_no_secrets.SecretScanTests.test_public_cert_and_env_template_allowed) ... ok
+test_schema_and_scanner_source_are_not_credentials (test_verify_no_secrets.SecretScanTests.test_schema_and_scanner_source_are_not_credentials) ... ok
+test_symlink_rejected (test_verify_no_secrets.SecretScanTests.test_symlink_rejected) ... ok
+test_unstaged_password_and_staged_diff (test_verify_no_secrets.SecretScanTests.test_unstaged_password_and_staged_diff) ... ok
+
+----------------------------------------------------------------------
+Ran 19 tests in 414.061s
+
+OK

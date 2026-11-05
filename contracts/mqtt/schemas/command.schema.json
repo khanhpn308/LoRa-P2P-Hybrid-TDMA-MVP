@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:loratdma:mqtt:command:v1.1-draft",
+  "$id": "urn:loratdma:mqtt:command:v1-draft",
   "title": "LoRa TDMA command (proposed contract)",
   "type": "object",
   "additionalProperties": false,
   "properties": {
     "schema_version": {
-      "const": "1.1-draft",
+      "const": "1.0-draft",
       "type": "string"
     },
     "command_id": {
@@ -38,16 +38,13 @@
       "enum": [
         "SET_THRESHOLD",
         "SET_SAMPLE_PERIOD",
-        "SET_PERIODIC_MODE",
-        "SUSPEND_NODE",
-        "RESUME_NODE",
-        "REVOKE_NODE"
+        "SET_RELAY"
       ],
-      "description": "Proposed allowlist: C07 administrative actions apply at Gateway authorization enforcement; SET_PERIODIC_MODE OFF retains alert rights; REPROVISION requires a separate authenticated credential lifecycle (OPEN G2). No actuator control is authorized by this allowlist."
+      "description": "Draft action allowlist; no action authorized for physical execution before producer/consumer review."
     },
     "params": {
       "type": "object",
-      "minProperties": 0,
+      "minProperties": 1,
       "maxProperties": 4,
       "additionalProperties": {
         "oneOf": [
@@ -62,7 +59,7 @@
       "propertyNames": {
         "pattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$"
       },
-      "description": "Action-specific schema/authorization is pending cross-team review. Empty params permitted for SUSPEND_NODE/RESUME_NODE/REVOKE_NODE; SET_PERIODIC_MODE requires boolean enabled, other operations must validate explicitly. No automatic RF physical action from MQTT PUBACK."
+      "description": "Shape-only: each action's allowed keys, ranges and safe actuator preconditions require Gateway/Backend semantic validation."
     }
   },
   "required": [
@@ -75,59 +72,5 @@
     "action",
     "params"
   ],
-  "description": "DRAFT G0 C07/C08 control-plane. Gateway validates authenticated principal, Node scope, revocation version/expiry and durable enforcement. Authority to grant new credentials and exact RF command encoding remain OPEN G2.",
-  "allOf": [
-    {
-      "if": {
-        "properties": {
-          "action": {
-            "const": "SET_PERIODIC_MODE"
-          }
-        },
-        "required": [
-          "action"
-        ]
-      },
-      "then": {
-        "properties": {
-          "params": {
-            "type": "object",
-            "required": [
-              "enabled"
-            ],
-            "properties": {
-              "enabled": {
-                "type": "boolean"
-              }
-            },
-            "additionalProperties": false
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "action": {
-            "enum": [
-              "SUSPEND_NODE",
-              "RESUME_NODE",
-              "REVOKE_NODE"
-            ]
-          }
-        },
-        "required": [
-          "action"
-        ]
-      },
-      "then": {
-        "properties": {
-          "params": {
-            "type": "object",
-            "maxProperties": 0
-          }
-        }
-      }
-    }
-  ]
+  "description": "DRAFT MQTT v1 payload; schema checks local shape, not topic authorization, replay, clock freshness, state transitions or MQTT properties. Cross-team review pending (Issue #14)."
 }

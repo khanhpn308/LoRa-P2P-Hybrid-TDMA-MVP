@@ -1,0 +1,53 @@
+{
+  "pr_data": {
+    "number": 148,
+    "title": "docs(harness): pr with changes requested",
+    "body": "Fixes #140.",
+    "state": "open",
+    "draft": false,
+    "author": "doc-writer",
+    "base_ref": "main",
+    "base_sha": "180dde6605787f85a294b60dd3cfd5db4be27b76",
+    "head_ref": "docs/140-unresolved",
+    "head_sha": "7172737475760123456789abcdef0123456789ab",
+    "files": [
+      {
+        "filename": "docs/development/harness-pr-review.md",
+        "status": "modified",
+        "patch": "@@ -1,3 +1,4 @@\n+# Unresolved draft\n"
+      }
+    ],
+    "reviews": [
+      {
+        "user": {
+          "login": "senior-reviewer"
+        },
+        "state": "CHANGES_REQUESTED"
+      }
+    ],
+    "review_comments": [
+      {
+        "id": 101,
+        "body": "Please address this paragraph typo.",
+        "unresolved": true
+      }
+    ],
+    "comments": []
+  },
+  "linked_issue": {
+    "number": 140,
+    "state": "OPEN",
+    "title": "PR review doc",
+    "body": "## Target Directories (allowed paths)\n- `docs/development/harness-pr-review.md`\n"
+  },
+  "check_runs": [
+    {
+      "name": "CI - Foundation/scaffold",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ],
+  "ruleset_status": "MERGE_PROTECTION_NOT_VERIFIED",
+  "expected_verdict": "CHANGES_REQUESTED",
+  "expected_risk": "LOW"
+}

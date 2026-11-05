@@ -1,0 +1,20 @@
+{
+  "source_sha": "5d50edbf01583100a7ab183ca05e17110b7c8f68",
+  "base_sha": "6b49ba090589496553de444b747b5b1d090a7650",
+  "candidate_sha256": "ea7d3d848bbf1e473eeccd191fb1376fc220d4ae81c72b2651e3a0f819fd3c49",
+  "changed_paths": [
+    ".env.example",
+    "deploy/README.md",
+    "deploy/compose.yaml",
+    "deploy/evidence/issue-16.md",
+    "deploy/mosquitto/.dockerignore",
+    "deploy/mosquitto/Dockerfile",
+    "deploy/mosquitto/acl",
+    "deploy/mosquitto/tls.conf",
+    "scripts/verify_no_secrets.py",
+    "tests/integration/README.md",
+    "tests/integration/test_infra_security.py",
+    "tests/integration/test_local_infra.py",
+    "tests/integration/test_verify_no_secrets.py"
+  ]
+}

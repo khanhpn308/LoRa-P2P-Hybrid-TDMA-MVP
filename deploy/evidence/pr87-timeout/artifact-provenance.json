@@ -1,0 +1,26 @@
+{
+  "development_patch": {
+    "command": [
+      "git",
+      "diff",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--binary",
+      "--unified=0",
+      "5d50edbf01583100a7ab183ca05e17110b7c8f68",
+      "--",
+      "tests/integration/test_local_infra.py",
+      "tests/integration/test_infra_security.py",
+      "tests/integration/README.md"
+    ],
+    "exit_code": 0,
+    "sha256": "567ae729156e41498a33bb07bb2e0fe4d1b6c8ad0b693faa79a33f54d2469713",
+    "collection": "Zero-context patch collected after runtime; all3 tested source/document hashes still match. Full context patch remains in Host evidence."
+  },
+  "previous_positive_failure_log": {
+    "normalization": "CRLF to LF only, to keep Git whitespace checks clean",
+    "original_sha256": "130e5831db62ba84d75b02724618b88538662c3c7bfc976c76f65619c27b8ccd",
+    "committed_sha256": "08de092007ec73d98dd8ea7d2aec9c93bcb93343dd3d7358ea16272a35b68798"
+  },
+  "actual_development_runtime_log_sha256": "3b4b4bb7421b5e3e02e97b760f36092342adf9483ded1b066bc0c43e7e208adb"
+}
