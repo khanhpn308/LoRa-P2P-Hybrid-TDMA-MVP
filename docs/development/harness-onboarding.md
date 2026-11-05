@@ -96,7 +96,7 @@ bash scripts/setup_harness.sh --configure-native
 6. **Thực thi tác vụ:** Sau khi môi trường báo `READY`, operator chỉ cần giao:
    - `Chạy Issue #N`: Điều phối coding, tests, quality gates, fresh audit và Draft PR.
    - `Nghiệm thu PR #N`: Đánh giá PR read-only, đối soát Rule IDs và báo cáo Host.
-7. **Xử lý sự cố nếu thiếu tool surface:** Nếu model được chọn vẫn thiếu tool Shell/Edit trong AGY TUI, vào `/agents` chọn `harness-coordinator` hoặc chuyển sang model hỗ trợ tool execution đầy đủ (như Claude hoặc Gemini chế độ accept-edits). Không tự chế tool giả hoặc tự audit.
+7. **Xử lý sự cố nếu thiếu tool surface:** Nếu model được chọn vẫn thiếu tool Shell/Edit trong AGY TUI, chạy `bash scripts/setup_harness.sh --configure-native` để chuyển sang `agentMode: "auto"` (mặc định được hỗ trợ và kiểm chứng cho AGY v1.5.0 trên Linux/WSL2), vào `/agents` chọn `harness-coordinator` hoặc chuyển sang model hỗ trợ tool execution đầy đủ. Không tự chế tool giả hoặc tự audit.
 
 ## 5. Docker Engine và ESP-IDF v6.1 trong WSL2
 

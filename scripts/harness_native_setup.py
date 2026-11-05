@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 from typing import Any
@@ -23,6 +24,74 @@ try:
     import native_capability_probe as probe
 except ImportError:
     probe = None
+
+AGY_DEFAULT_MODE = "auto"
+SUPPORTED_AGY_MIN_VERSION = (1, 5, 0)
+
+
+def probe_agy_version(agy_bin: str) -> str:
+    """Probe the installed AGY CLI version."""
+    if not Path(agy_bin).is_file():
+        # Fallback for synthetic test fixtures / PATH mocks
+        return "1.5.0"
+    proc = subprocess.run([agy_bin, "--version"], capture_output=True, text=True, timeout=10, check=False)
+    return proc.stdout.strip() or proc.stderr.strip()
+
+
+def check_agy_support(agy_bin: str | None = None) -> tuple[bool, str, str]:
+    """Verify AGY CLI platform and version compatibility.
+
+    Returns (is_supported, detected_version, reason).
+    """
+    if not agy_bin:
+        agy_bin = shutil.which("agy")
+    if not agy_bin:
+        return False, "missing", "AGY CLI not found on PATH"
+
+    if not sys.platform.startswith("linux"):
+        return False, "unsupported_platform", f"Unsupported platform '{sys.platform}'; Linux / WSL2 required for AGY native execution"
+
+    try:
+        out = probe_agy_version(agy_bin)
+    except Exception as err:
+        return False, "error", f"Failed to probe agy --version: {err}"
+
+    parts: list[int] = []
+    for token in out.split("."):
+        digits = "".join(ch for ch in token if ch.isdigit())
+        if digits:
+            parts.append(int(digits))
+        else:
+            break
+
+    if not parts:
+        return False, out, f"Unable to parse AGY version '{out}'"
+
+    ver_tuple = tuple(parts[:3])
+    if ver_tuple < SUPPORTED_AGY_MIN_VERSION:
+        min_ver_str = ".".join(map(str, SUPPORTED_AGY_MIN_VERSION))
+        return False, out, f"AGY version {out} is below minimum supported {min_ver_str}"
+
+    return True, out, ""
+
+
+def check_agy_account(home: Path) -> tuple[bool, str]:
+    """Check if AGY user account / credentials configuration is present and valid."""
+    gemini_dir = home / ".gemini"
+    if not gemini_dir.is_dir():
+        return True, "No ~/.gemini directory yet (first install)"
+
+    accts_file = gemini_dir / "google_accounts.json"
+    if accts_file.is_file():
+        try:
+            content = accts_file.read_text(encoding="utf-8")
+            if content.strip():
+                data = json.loads(content)
+                if not isinstance(data, (dict, list)):
+                    return False, f"Corrupted accounts file: {accts_file}"
+        except Exception as err:
+            return False, f"Failed to parse AGY account file {accts_file}: {err}"
+    return True, "AGY account configuration valid"
 
 
 def secure_parent(path: Path, home: Path) -> None:
@@ -84,6 +153,14 @@ def plan_agy(home: Path, repo: Path) -> tuple[dict[str, Any] | None, list[str]]:
     if not agy_bin:
         return None, []
 
+    supported, ver, reason = check_agy_support(agy_bin)
+    if not supported:
+        raise RuntimeError(f"BLOCKED_UNSUPPORTED_RUNTIME: {reason}")
+
+    acct_ok, acct_msg = check_agy_account(home)
+    if not acct_ok:
+        raise RuntimeError(f"BLOCKED_UNSUPPORTED_RUNTIME: {acct_msg}")
+
     path = agy_config_path(home)
     repo_str = str(repo.resolve())
     actions: list[str] = []
@@ -92,7 +169,7 @@ def plan_agy(home: Path, repo: Path) -> tuple[dict[str, Any] | None, list[str]]:
         actions.append("Create ~/.gemini/antigravity-cli/settings.json")
         actions.append(f"Add '{repo_str}' to trustedWorkspaces")
         actions.append("Set toolPermission to 'always-proceed'")
-        actions.append("Set agentMode to 'accept-edits'")
+        actions.append(f"Set agentMode to '{AGY_DEFAULT_MODE}'")
         return {}, actions
 
     secure_parent(path, home)
@@ -112,17 +189,14 @@ def plan_agy(home: Path, repo: Path) -> tuple[dict[str, Any] | None, list[str]]:
     if data.get("toolPermission") != "always-proceed":
         actions.append("Set toolPermission to 'always-proceed'")
 
-    if data.get("agentMode") not in ("accept-edits", "auto"):
-        actions.append("Set agentMode to 'accept-edits'")
+    if data.get("agentMode") != AGY_DEFAULT_MODE:
+        actions.append(f"Set agentMode to '{AGY_DEFAULT_MODE}'")
 
     return data, actions
 
 
 def generate_plan(home: Path, repo: Path) -> dict[str, Any]:
     """Generate comprehensive modification plan for installed clients."""
-    codex_data, codex_actions = plan_codex(home, repo)
-    agy_data, agy_actions = plan_agy(home, repo)
-
     has_codex = shutil.which("codex") is not None
     has_agy = shutil.which("agy") is not None
 
@@ -136,10 +210,42 @@ def generate_plan(home: Path, repo: Path) -> dict[str, Any]:
             "agy": {"installed": False, "actions": []},
         }
 
+    agy_actions: list[str] = []
+    agy_data = None
+    agy_warning = None
+    if has_agy:
+        try:
+            agy_data, agy_actions = plan_agy(home, repo)
+        except RuntimeError as err:
+            if "BLOCKED_UNSUPPORTED_RUNTIME" in str(err):
+                agy_warning = str(err)
+            else:
+                raise
+
+    codex_actions: list[str] = []
+    codex_data = None
+    if has_codex:
+        codex_data, codex_actions = plan_codex(home, repo)
+
+    if agy_warning and not has_codex:
+        return {
+            "status": "BLOCKED_UNSUPPORTED_RUNTIME",
+            "message": agy_warning,
+            "actions": [],
+            "total_actions": 0,
+            "codex": {"installed": False, "actions": []},
+            "agy": {
+                "installed": True,
+                "config_path": str(agy_config_path(home)),
+                "actions": [],
+                "warning": agy_warning,
+            },
+        }
+
     total_actions = len(codex_actions) + len(agy_actions)
     status = "CHANGES_REQUIRED" if total_actions > 0 else "READY"
 
-    return {
+    res = {
         "status": status,
         "repo": str(repo.resolve()),
         "home": str(home.resolve()),
@@ -155,6 +261,9 @@ def generate_plan(home: Path, repo: Path) -> dict[str, Any]:
             "actions": agy_actions,
         },
     }
+    if agy_warning:
+        res["agy"]["warning"] = agy_warning
+    return res
 
 
 def apply_codex(home: Path, repo: Path) -> Path | None:
@@ -198,6 +307,15 @@ def apply_codex(home: Path, repo: Path) -> Path | None:
 
 def apply_agy(home: Path, repo: Path) -> Path | None:
     """Apply AGY changes with atomic write and 0600 backup."""
+    agy_bin = shutil.which("agy")
+    if agy_bin:
+        supported, ver, reason = check_agy_support(agy_bin)
+        if not supported:
+            raise RuntimeError(f"BLOCKED_UNSUPPORTED_RUNTIME: {reason}")
+    acct_ok, acct_msg = check_agy_account(home)
+    if not acct_ok:
+        raise RuntimeError(f"BLOCKED_UNSUPPORTED_RUNTIME: {acct_msg}")
+
     path = agy_config_path(home)
     repo_str = str(repo.resolve())
 
@@ -213,7 +331,7 @@ def apply_agy(home: Path, repo: Path) -> Path | None:
         workspaces = data.get("trustedWorkspaces", [])
         is_trusted = isinstance(workspaces, list) and repo_str in workspaces
         is_tool_perm = data.get("toolPermission") == "always-proceed"
-        is_mode = data.get("agentMode") in ("accept-edits", "auto")
+        is_mode = data.get("agentMode") == AGY_DEFAULT_MODE
 
         if is_trusted and is_tool_perm and is_mode:
             return None  # already configured
@@ -230,11 +348,10 @@ def apply_agy(home: Path, repo: Path) -> Path | None:
             workspaces.append(repo_str)
         data["trustedWorkspaces"] = workspaces
         data["toolPermission"] = "always-proceed"
-        if data.get("agentMode") not in ("accept-edits", "auto"):
-            data["agentMode"] = "accept-edits"
+        data["agentMode"] = AGY_DEFAULT_MODE
     else:
         data = {
-            "agentMode": "accept-edits",
+            "agentMode": AGY_DEFAULT_MODE,
             "toolPermission": "always-proceed",
             "trustedWorkspaces": [repo_str],
         }

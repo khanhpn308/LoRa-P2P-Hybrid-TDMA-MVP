@@ -184,12 +184,15 @@ def inspect_agy(home: Path, repo: Path) -> dict[str, Any]:
                     tool_perm_ok = False
                     blockers.append("toolPermission is not 'always-proceed'")
 
-                mode = data.get("agentMode", "accept-edits")
-                if mode in ("accept-edits", "auto"):
+                mode = data.get("agentMode")
+                if mode == "auto":
                     agent_mode_ok = True
+                elif mode == "accept-edits":
+                    agent_mode_ok = False
+                    blockers.append("agentMode is 'accept-edits' (requires 'auto' for autonomous tool execution; run setup with --configure-native)")
                 else:
                     agent_mode_ok = False
-                    blockers.append(f"agentMode '{mode}' does not allow edits (requires accept-edits or auto)")
+                    blockers.append(f"agentMode '{mode}' does not allow autonomous tool execution (requires 'auto')")
 
                 # If allowlist exists, check that it does not block git or basic commands
                 perms = data.get("permissions")
@@ -204,7 +207,30 @@ def inspect_agy(home: Path, repo: Path) -> dict[str, Any]:
             cfg_exists = False
             blockers.append(f"Failed to parse settings.json: {e}")
 
-    ready = repo_trusted and tool_perm_ok and agent_mode_ok and model_tools_supported
+    ver_ok = True
+    if ver != "unknown":
+        parts: list[int] = []
+        for token in ver.split("."):
+            digits = "".join(ch for ch in token if ch.isdigit())
+            if digits:
+                parts.append(int(digits))
+            else:
+                break
+        if parts and tuple(parts[:3]) < (1, 5, 0):
+            ver_ok = False
+            blockers.append(f"AGY version {ver} is below minimum supported 1.5.0")
+
+    if not sys.platform.startswith("linux"):
+        blockers.append(f"Unsupported platform '{sys.platform}'; Linux / WSL2 required")
+
+    ready = (
+        repo_trusted
+        and tool_perm_ok
+        and agent_mode_ok
+        and model_tools_supported
+        and ver_ok
+        and sys.platform.startswith("linux")
+    )
     status = "CONFIGURED" if ready else "PARTIAL"
     reason = "Configured with trusted workspace and permissions" if ready else "; ".join(blockers)
 
