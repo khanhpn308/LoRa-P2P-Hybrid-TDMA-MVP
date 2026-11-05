@@ -378,12 +378,12 @@ class GitTests(unittest.TestCase):
     def test_cli_deep_json_returns_machine_readable_blocked_result(self):
         with tempfile.TemporaryDirectory() as outside:
             manifest = Path(outside) / "manifest.json"
-            manifest.write_text('{"checks":{"NET-LOOPBACK":' + '[' * 10000 + '0' + ']' * 10000 + '}}')
+            manifest.write_text('{"checks":{"NET-LOOPBACK":' + '[' * 30000 + '0' + ']' * 30000 + '}}')
             result = subprocess.run(
                 [sys.executable, gates.__file__, "--repo", str(self.root), "--base", self.base,
                  "--evidence-dir", outside, "--manifest", "manifest.json"],
                 capture_output=True, text=True, timeout=30)
-            self.assertEqual(result.returncode, 2)
+            self.assertEqual(result.returncode, 2, f"Expected rc=2, got rc={result.returncode}. stdout: {result.stdout}, stderr: {result.stderr}")
             self.assertEqual(json.loads(result.stdout)["status"], "NOT_VERIFIED")
             self.assertNotIn("Traceback", result.stderr)
 

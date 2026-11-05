@@ -461,7 +461,9 @@ def evaluate(repo, base, manifest=None, evidence_root=None):
         document = json.loads(manifest_bytes, object_pairs_hook=reject_duplicates)
         entries = document["checks"]
         standards_payload = document.get("standards")
-        if not isinstance(entries, dict) or set(entries) - set(REGISTRY):
+        if (not isinstance(entries, dict)
+                or set(entries) - set(REGISTRY)
+                or any(not isinstance(v, dict) for v in entries.values() if v is not None)):
             raise ValueError("Unknown rule or invalid checks object")
     selection, rule_results, standard_status, standard_reason = standards_check(
         repo, source["base_sha"], source, standards_payload, evidence_root)
