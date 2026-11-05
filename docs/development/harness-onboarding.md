@@ -72,6 +72,32 @@ Lệnh này tạo Python venv dưới `~/.local/share/lora-harness/`, cài MCP S
 
 **Native Fast Lane** không bắt dùng signed MCP signer. Không coi việc agent CLI có Full Access là chứng minh security isolation hoặc quyền thực thi của Host/MCP.
 
+## 4b. Cấu hình Native Fast Lane một lệnh (`--configure-native` — Issue #152)
+
+Khi chuyển model trong AGY (ví dụ sang Gemini) hoặc thiết lập máy mới, session có thể chỉ hiển thị các công cụ đọc file read-only mà thiếu Shell (`run_command`), File Edit (`write_file`), Git hoặc cơ chế Auditor độc lập. Để khắc phục triệt để bằng một lệnh:
+
+```bash
+bash scripts/setup_harness.sh --configure-native
+```
+
+### Sổ tay vận hành cho Operator (Vietnamese Runbook)
+1. **Một lệnh thiết lập:** Chạy `bash scripts/setup_harness.sh --configure-native` từ terminal WSL2/Linux bình thường (không chạy dưới root/sudo).
+2. **Kế hoạch và xác nhận:** Script tự động phát hiện phiên bản Codex và AGY, kiểm tra file cấu hình người dùng (`~/.codex/config.toml` và `~/.gemini/antigravity-cli/settings.json`), in kế hoạch thay đổi giới hạn và yêu cầu gõ chính xác:
+   ```text
+   Type CONFIGURE NATIVE to approve changes: CONFIGURE NATIVE
+   ```
+3. **An toàn và Rollback:** Mọi thay đổi đều được tạo bản sao lưu 0600 (`.bak`) trước khi ghi nguyên tử (atomic write). Nếu gặp lỗi, hệ thống tự động hoàn tác (rollback). Các cài đặt MCP, token đăng nhập, tài khoản và workspace khác hoàn toàn được bảo toàn.
+4. **Khởi động lại CLI:** Sau khi cấu hình thành công, thoát và mở lại phiên `codex` hoặc `agy` để nạp cấu hình mới.
+5. **Kiểm tra năng lực thực tế:** Chạy kiểm tra độc lập và smoke test:
+   ```bash
+   python3 scripts/agent_harness/native_capability_probe.py --json
+   python3 scripts/agent_harness/native_capability_probe.py --smoke
+   ```
+6. **Thực thi tác vụ:** Sau khi môi trường báo `READY`, operator chỉ cần giao:
+   - `Chạy Issue #N`: Điều phối coding, tests, quality gates, fresh audit và Draft PR.
+   - `Nghiệm thu PR #N`: Đánh giá PR read-only, đối soát Rule IDs và báo cáo Host.
+7. **Xử lý sự cố nếu thiếu tool surface:** Nếu model được chọn vẫn thiếu tool Shell/Edit trong AGY TUI, chạy `bash scripts/setup_harness.sh --configure-native` để chuyển sang `agentMode: "auto"` (mặc định được hỗ trợ và kiểm chứng cho AGY v1.5.0 trên Linux/WSL2), vào `/agents` chọn `harness-coordinator` hoặc chuyển sang model hỗ trợ tool execution đầy đủ. Không tự chế tool giả hoặc tự audit.
+
 ## 5. Docker Engine và ESP-IDF v6.1 trong WSL2
 
 Docker Desktop **không bắt buộc**. Có thể cài Docker Engine trực tiếp trong Ubuntu WSL2 bằng nguồn package tin cậy và chạy systemd, theo hướng dẫn chính thức phù hợp phiên bản Ubuntu. Doctor không tự cài, `sudo systemctl start docker`, kéo image hoặc `usermod`:
