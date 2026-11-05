@@ -3,7 +3,7 @@
 
 ## Scope and Design Rules
 
-This register reference is strictly pruned to the registers and bitfields required by the **MVP V1 LoRa Driver** on ESP32-WROOM-32E. Non-MVP modes (FSK/OOK, SF6, SF8–SF12, BW other than 125 kHz, frequency hopping, and fast hopping) are segregated into [`reference/SX1276_OTHER_MODES.md`](reference/SX1276_OTHER_MODES.md).
+This register reference is strictly pruned to the registers and bitfields required by the **MVP V1 LoRa Driver** on ESP32-WROOM-32E. Non-MVP modes (FSK/OOK, SF6, SF8–SF12, other bandwidths, frequency hopping and fast hopping) are out of scope and must not be initialized by this MVP driver.
 
 ### Core Silicon Access Rules
 1. **LoRa Mode Selection:** `LongRangeMode` (bit 7 of `RegOpMode`) **can only be modified in SLEEP mode**. Writes in any other mode are ignored.
