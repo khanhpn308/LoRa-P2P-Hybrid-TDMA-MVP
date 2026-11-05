@@ -2,7 +2,11 @@
 
 **Status: MONOREPO FOUNDATION / NOT PRODUCTION READY.**
 
-One ESP32 + SX1276 gateway is both LoRa P2P packet bridge and **local TDMA Master** for 10–15 ESP32 + SX1276 sensor nodes. Go plans/version-controls schedules; Gateway validates and executes them without per-slot MQTT commands. Backhaul: Wi-Fi → Mosquitto MQTT → Go modular monolith → PostgreSQL; clients are React/TypeScript and (later) Flutter.
+**MVP architecture:** Multi-Gateway Star (1–4 ESP32 + SX1276 Gateways), separate operating channels at LoRa BW 125 kHz; Node fixed to one Gateway/channel, no Mesh. Backend Go prepares schedules for User approval; Gateways validate and execute TDMA locally. Wi-Fi/MQTT 5.0/TLS (Mosquitto) connects Gateways to Go Modular Monolith + PostgreSQL. Web/Mobile are part of MVP. Architecture and remaining verification gaps: [System overview](docs/architecture/system-overview.md).
+
+Owner direction dated 2026-11-04 ([#125](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/125), docs child [#126](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/126)): **Local Alarm + Event-Only Remote Logging + Static TDMA + Maintenance Superframe**. A Node raises its local alarm independently of radio delivery and persists Events in a bounded FIFO. It transmits only when an Event is pending, within its approved DATA slot, then receives the Gateway ACK in that slot. The Gateway ACK confirms durable Gateway acceptance, not Backend DB commit. Missing ACK retries the same Event in the next valid own slot; exhausted retries retain durable pending for recovery. Retry limits and FIFO overflow policy remain OPEN.
+
+Scheduled Maintenance Superframes between DATA Superframes target a **300 s** sync/heartbeat interval: authenticated `SYNC_BEACON` followed by each Node's nonoverlapping `HEALTH_REPLY` slot. Beacon transmission alone does not prove a Node is alive. DATA/ACK/JOIN/RECOVERY and maintenance must share the single half-duplex radio safely. Timing, drift/guard/holdover/offline thresholds and wire compatibility remain `NOT_VERIFIED`. Gateway-origin Event ID and its durable RF-identity mapping remain in force; Node queue identity across reboot/retry needs G2 review. The former periodic business flow and contention access policy are superseded, with [approval history](docs/architecture/system-overview.md#7-lịch-sử-thay-thế-và-phạm-vi-migration). Firmware/backend remain scaffolds; contract/schema migration is tracked separately under #125.
 
 ## Repository map
 

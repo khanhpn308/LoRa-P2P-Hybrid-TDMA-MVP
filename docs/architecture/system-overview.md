@@ -1,54 +1,93 @@
-# Kiến trúc hệ thống, baseline R1
+# Kiến trúc hệ thống LoRa P2P Hybrid TDMA — MVP
 
-Status: `DRAFT / DESIGN-READY FOR FEASIBILITY`. RF, timing và HIL: `NOT_VERIFIED`. Remediation [#60](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/60) không chứng minh implementation. Firmware vẫn là scaffold theo [AGENTS.md](../../AGENTS.md).
+**Trạng thái:** `OWNER_APPROVED_DESIGN_DIRECTION`, 2026-11-04, [Issue #125](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/125), tài liệu trong [#126](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/126). Hướng hiện hành là **Local Alarm + Event-Only Remote Logging + Static TDMA + Maintenance Superframe**. Giữ các quyết định C01–C09 ngày 2026-10-30 không mâu thuẫn; các phần bị thay thế có lịch sử ở §7. Implementation, wire compatibility, RF/HIL/Timing/Security/CI và G0–G6 vẫn `NOT_VERIFIED`; phê duyệt hướng không đóng băng thông số giao thức.
 
-## Quyết định và phạm vi
+## 1. Phạm vi và mô hình mạng
 
-[ADR-0001](../adr/0001-hybrid-tdma.md) giữ hướng Gateway-local Hybrid TDMA với Custom LoRa P2P MAC. [ADR-0002](../adr/0002-mqtt-5.md) chọn MQTT 5.0 ở mức `OWNER_ACCEPTED`; cross-team review còn `PENDING`, implementation `NOT_VERIFIED`. [ADR-0003](../adr/0003-esp-idf-v6-1.md) ghi owner approval cho exact ESP-IDF `v6.1`, pin tại [esp-idf-version.txt](../../firmware/esp-idf-version.txt). Các approval này không phê duyệt toàn bộ system design.
+- **Multi-Gateway Star, LoRa P2P Custom Binary MAC:** MVP hỗ trợ **1–4 Gateway ESP32 + SX1276**, mỗi Gateway một bộ thu phát bán song công và các Node chỉ liên lạc **một chặng** với Gateway được gán cố định.
+- **Kênh vô tuyến:** khi có bốn Gateway, mỗi Gateway sử dụng **một kênh riêng**, **BW 125 kHz**. Node cố định kênh theo Gateway của nó; không có tự động quét kênh, handover hoặc chuyển Gateway. Tần số trung tâm, công suất và điều kiện hợp quy Việt Nam phải được G1 thẩm định.
+- **Định danh:** `node_id` 8-bit **duy nhất trong từng Gateway**; định danh logic theo `(gateway_id, node_id)`. Device UID 128-bit chỉ là đề xuất, không coi là quyết định đã duyệt. Định danh logic không thay thế xác thực mật mã.
+- **Phạm vi MVP:** tất cả chức năng Owner yêu cầu phải được triển khai và nghiệm thu trong MVP. **Mesh tạm ngoài phạm vi**. Quy mô Node/ mỗi Gateway và toàn mạng còn chờ xác nhận; mô hình 1 Gateway/10–15 Node trong tài liệu cũ chỉ là cấu hình thử nghiệm, **không còn là giới hạn kiến trúc**.
 
 ```mermaid
 flowchart TB
-  USERS[Admin / Operator / Viewer] <--> CLIENTS[Next.js + TypeScript Web / Kotlin Android App]
-  CLIENTS <-->|HTTPS / WSS| GO[Go Modular Monolith + PostgreSQL]
-  GO <-->|MQTT 5.0 / TLS| BROKER[Mosquitto]
-  BROKER <-->|Wi-Fi / MQTT 5.0 / TLS| GW[ESP32 + SX1276 Gateway: Local TDMA Master]
-  GW <-->|LoRa P2P / Custom MAC draft| NODES[ESP32 + SX1276 Nodes]
+  UI["Web / Mobile (quản trị, giám sát)"] <--> API["Go Modular Monolith + PostgreSQL (Backend)"]
+  API <-->|"MQTT 5.0 / TLS"| MQ["Mosquitto"]
+  MQ <-->|"Wi-Fi / MQTT"| G1["Gateway 01 — CH-1"]
+  MQ <-->|"Wi-Fi / MQTT"| GN["Gateway 02–04 — kênh riêng"]
+  G1 <-->|"LoRa P2P — BW 125 kHz"| N1["Các Node cố định của GW01"]
+  GN <-->|"LoRa P2P — BW 125 kHz"| NN["Các Node cố định của GW02–04"]
 ```
 
-Nguồn sơ đồ: ADR-0001/0002, [deployment contexts](deployment.md), [contract index](../../contracts/README.md). Quy mô thử nghiệm trong planning không phải capacity đã nghiệm thu; xem MAC-001 và ALERT-001 trong [RTM](../requirements/requirements.md#rtm).
+Sơ đồ biểu diễn cấu hình tối đa bốn Gateway; một hệ thống ít Gateway hơn không bắt buộc có đủ bốn kênh đang hoạt động.
 
-## Ranh giới trách nhiệm
+## 2. Phân quyền và trách nhiệm
 
-| Thành phần | Control plane | Data plane và recovery | Nguồn / RTM |
-|---|---|---|---|
-| Backend Go | Planner tạo, lưu, quản lý version/review của lịch tương lai; không bật/tắt TX/RX từng slot | Validate MQTT, dedup, lưu PostgreSQL; REST/WSS và reconcile sau reconnect | ADR-0001/0002; [MQTT semantics §§2–4](../../contracts/mqtt/semantic-rules.md); SYS-001, DATA-001, MAC-003 |
-| Gateway | Executor validate, persist shadow, quảng bá và chọn local activation boundary | Single-radio half-duplex, Beacon/ACK, local airtime; tiếp tục active schedule còn an toàn khi mất backhaul; bounded buffer | [TDMA §§2–3](../../contracts/radio-mac/tdma-schedule.md); MAC-003/005/006, SYS-001/002 |
-| Node | Xác thực Beacon/session/mapping; chỉ dùng slot/cửa sổ ưu tiên được phép | Đọc sensor, phát hiện alarm cục bộ, sync/holdover có điều kiện; ngừng periodic TX nếu không còn an toàn | [Radio MAC §§1/3/4](../../contracts/radio-mac/specification.md); MAC-002/004/007, SEC-001 |
-| Mosquitto | Xác thực principal, topic ACL, session/expiry | QoS 1 vận chuyển; PUBACK không chứng minh DB commit hay Node execution | [topics §§1–4](../../contracts/mqtt/topics.md); SEC-002, DATA-001/002 |
-| Next.js Web / Kotlin Android | Gửi yêu cầu qua Backend có server-side RBAC | Hiển thị, dedup và REST resync khi WSS mất continuity; không truy cập MQTT/DB trực tiếp | [API semantics](../../contracts/api/contract-semantics.md); INT-002 |
-
-Đây là decomposition logic, không áp đặt tên task, core affinity hoặc stack/queue size từ planning. Firmware tách driver, MAC, TDMA và airtime policy theo [C Standard v2](../development/firmware/C_CODING_STANDARD_V2.md) (consultative Draft). Backend giữ modular monolith + PostgreSQL, không thêm Redis/InfluxDB/microservices theo ADR-0001 và AGENTS.md.
-
-## Bất biến và giới hạn an toàn
-
-- Gateway là local TDMA Master; MQTT không phải clock từng slot. Không activate giữa superframe. `STAGE_ACK` khác `ACTIVE_REPORT`; Backend kiểm actual report trước ACTIVE. Nguồn: ADR-0001, MQTT semantics §4; MAC-003.
-- Một radio không TX/RX đồng thời. Single Radio Owner tuần tự hóa SPI/modem; ISR/timer chỉ timestamp và notify có giới hạn, không SPI hoặc blocking network. Nguồn: AGENTS.md, C Standard v2 (consultative Draft), Radio MAC §4; FW-002/003, MAC-005.
-- Mọi TX gồm Beacon, ACK, retry, join và alarm đều qua local airtime admission. Profile/policy chưa được xác minh không tạo quyền TX. Nguồn: Radio MAC §4, [D03](../../contracts/OPEN_DECISIONS.md); RF-001, MAC-006.
-- CRC không xác thực mật mã. TLS/MQTT identity không thay RF authentication, nonce uniqueness hoặc anti-replay. Không production codec trước security/wire approval. Nguồn: Radio MAC §§2–3, D01/D11; SEC-001/003/004.
-- Backhaul mất không vô hiệu hóa local safety. Active chỉ tiếp tục nếu còn hợp lệ; shadow không tự activate sau reboot. Proposal `expires_at` không tự trở thành lease của active schedule. Nguồn: TDMA §3, MQTT semantics §4; SYS-001/002.
-
-## Tham số chưa được nghiệm thu
-
-| Miền | Trạng thái và hành động cần có theo nguồn |
+| Thành phần | Trách nhiệm đã chốt |
 |---|---|
-| Frequency, SF/BW/CR, power/ERP, antenna, duty treatment | D03 `BLOCKED G1`; RF/Hardware xác minh silicon, front-end, board revision và điều kiện pháp lý cho thiết bị/kịch bản trước TX. Nhãn module không là approval. |
-| Header, endianness, cipher/tag, nonce/session/key lifecycle | D01/D11 `BLOCKED G2`; Node/Gateway/Security/Backend review và golden C↔Go vectors trước freeze. |
-| Superframe/slot/guard, IRQ jitter, drift, holdover/recovery threshold | D02/D04/D05 `CANDIDATE / NOT_VERIFIED`; đo riêng ToA RF, command-to-IRQ, IRQ-to-task và clock drift; owner chọn margin sau HIL. |
-| Alarm latency | Research target, chưa là SLA; xác định endpoints, concurrent alarms, RF load và phân phối đo. Không gán hard real-time guarantee cho mobile push. |
-| GPIO, task/core priorities, stack/queue sizes | Không kế thừa demo. Board mapping cần G1; resource budgets cần review và stress/HIL evidence. |
+| **Node** | Đọc cảm biến, phát hiện vi phạm và kích hoạt local alarm độc lập với RF; ghi Event vào persistent bounded FIFO, chỉ truyền Event đang chờ trong DATA slot được duyệt; nhận ACK trong slot và trả HEALTH_REPLY theo lịch Maintenance. |
+| **Gateway** | TDMA Master cục bộ; kiểm tra danh tính/quyền, lịch, đồng bộ và airtime; lưu Active/Shadow; xử lý RX/TX SX1276 bán song công; persist Event trước ACK, giữ buffer hữu hạn và **cấp Event ID bền vững** khi nhận gói RF mới. **Không tự sửa hoặc cấp lại Slot Assignment**. |
+| **Backend Go** | Lập kế hoạch và quản lý phiên bản lịch/kênh, quản lý trạng thái cấp quyền, đối soát Gateway, tiếp nhận dữ liệu và chống ghi trùng theo Event ID do Gateway cấp, lưu PostgreSQL. |
+| **User có quyền** | Phê duyệt lịch và khoảng thời gian kích hoạt trước khi phân phối; phân quyền được Backend kiểm tra, không chỉ ở giao diện. |
+| **Web/Mobile** | Cấu hình, quản trị và hiển thị thông qua REST/WSS của Backend; không truy cập trực tiếp broker/DB. Công nghệ Mobile trong các tài liệu cũ chưa thống nhất (Flutter/Kotlin), cần quyết định riêng trước implementation. |
 
-Nguồn: [OPEN_DECISIONS](../../contracts/OPEN_DECISIONS.md), [G1–G6](../verification/acceptance-gates.md), [Issue #11](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/11), [vector plan](../../contracts/radio-mac/test-vectors/README.md), C Standard v2 (consultative Draft). Profile `P-10S-15` và numeric examples trong TDMA §1 chỉ là candidate mock/simulation, không là production baseline. R1 không sửa contracts hoặc chốt tham số.
+Dùng **ESP-IDF v6.1** cho Gateway/Node ([ADR-0003](../adr/0003-esp-idf-v6-1.md)), FreeRTOS/C và SX1276; Backend Go Modular Monolith + PostgreSQL, Mosquitto MQTT 5.0/TLS ([ADR-0002](../adr/0002-mqtt-5.md)). **Không sử dụng LoRaWAN MAC, OTAA/ADR/ChirpStack**.
 
-## Truy vết và nghiệm thu
+## 3. Lịch TDMA và chuyển lịch (C03–C04)
 
-Xem [RTM](../requirements/requirements.md#rtm), [interface ownership](interfaces.md), [ADR register](../adr/README.md), [contract verification](../../contracts/verification.md), [audit R1](../audits/firmware/ARCHITECTURE_DOCUMENTATION_AUDIT.md). Theo acceptance gates và AGENTS.md, design approval độc lập với verification; syntax/schema/build/simulation không thay HIL/RF/security evidence. Closed Issue hoặc tài liệu tồn tại không đủ để gán PASS.
+1. **Backend tạo/phiên bản hóa** lịch. **User duyệt** lịch và khoảng được phép kích hoạt.
+2. **Gateway kiểm tra** quyền, phiên bản, hết hạn, xung đột slot, đồng bộ và giới hạn phát. Kế hoạch không an toàn phải bị từ chối hoặc chặn TX; Gateway không thay trường phân bổ slot/kênh của lịch.
+3. Gateway **lưu bền vững Shadow** trước khi báo `STAGE_ACK`; phát ba nhịp thông báo lịch trọn Superframe **3 → 2 → 1** và thu ACK chuẩn bị của các Node chịu ảnh hưởng. Ba nhịp **không thay** bằng chứng Node đã chuẩn bị và old Slot Lease safety.
+4. Gateway chỉ chuyển sang lịch mới tại **ranh giới Superframe bên trong cửa sổ đã duyệt**, khi quyền dùng khe cũ đã kết thúc an toàn. Không chắc chắn thì **không kích hoạt**, tiếp tục Active chỉ khi còn an toàn; nếu không thì dừng TX chịu ảnh hưởng.
+5. Gateway phát `ACTIVE_REPORT` **sau khi thực sự kích hoạt**. `MQTT PUBACK` và `STAGE_ACK` không chứng minh lịch ACTIVE. Sau reboot, **không tự nâng Shadow thành Active**.
+
+Gateway điều khiển mốc thời gian RF tại chỗ; Backend **không** kích hoạt TX/RX theo từng slot qua MQTT. Quy trình và phiên bản schema vẫn phải được các nhóm tích hợp kiểm tra tại G2/G4.
+
+DATA Superframe chứa các DATA slot tĩnh theo Node. Maintenance Superframe được chèn giữa các DATA Superframe theo lịch Backend/User duyệt, với **mục tiêu heartbeat/sync 300 s**. Gateway phát authenticated `SYNC_BEACON`; mỗi Node trả `HEALTH_REPLY` trong khe quản trị riêng không chồng lấn. Gateway-only Beacon không chứng minh Node alive; chỉ phản hồi Node hợp lệ mới cung cấp bằng chứng hiện diện. Cách tính `last_seen`, ngưỡng offline, thời điểm đo interval và dung sai còn OPEN.
+
+Validator phải xét toàn bộ DATA/ACK, SYNC_BEACON/HEALTH_REPLY, schedule/control, JOIN/RECOVERY và guard trên một radio half-duplex, kể cả qua ranh giới Superframe. Khoảng 300 s là target thiết kế; ToA SX1276, RX↔TX turnaround, jitter, clock drift/guard và HOLDOVER/UNSYNCED phải được tính và đo trước timing acceptance. Maintenance không thay ba nhịp announcement 3→2→1 hoặc affected Node ACK/old lease safety khi chuyển lịch.
+
+## 4. Dữ liệu, cảnh báo và xác nhận (C05/C08)
+
+- **Gateway tạo và persist Event ID gốc** sau khi xác thực/tiếp nhận frame RF mới; Node không truyền Event ID. Retry RF, MQTT QoS 1 replay, phát lại buffer hoặc reboot **không** tạo thêm một sự kiện nghiệp vụ: Gateway phải giữ ánh xạ `(gateway_id,node_id,security_session,frame_counter) → event_id` bền vững; Backend dedup theo `(gateway_id,event_id)` và phát hiện payload conflict. Định dạng Event ID, bảo vệ counter/nonce và khóa duy nhất DB còn G2/G4 OPEN.
+- Node kích hoạt local alarm ngay khi phát hiện vi phạm, độc lập với kết nối/quyền truyền RF. Event được ghi vào persistent bounded FIFO; không có Event thì không phát application data. Maintenance/control theo lịch vẫn được phép khi đủ quyền và điều kiện an toàn.
+- Node chỉ phát Event trong DATA slot tĩnh đã duyệt: `Event TX → ACK RX`; Gateway thực hiện `Event RX → durable acceptance → ACK TX` trong cùng slot. Không dùng Node broadcast để chặn mạng hoặc contention để giành khe.
+- Không nhận ACK hợp lệ thì giữ **cùng Event**, retry tại slot hợp lệ kế tiếp của chính Node; không chiếm slot Node khác. Retry budget hữu hạn nhưng số lần/policy còn OPEN; hết budget vẫn giữ durable pending để recovery. Queue capacity, overflow/drop observability, retention và cách phục hồi phải được duyệt, không hứa lưu vô hạn.
+- ACK chỉ xác nhận **Gateway durable acceptance**. Gateway idempotently ACK bản lặp đã tiếp nhận bền vững; ACK mất không được tạo thêm logical Event. Không suy Backend DB commit từ ACK hoặc MQTT PUBACK, không hứa exactly-once delivery.
+- Gateway-origin Event ID/G06 vẫn giữ nguyên. Node FIFO phải giữ được cùng Event qua reboot/retry, nhưng identity/counter binding giữa FIFO và frame security context còn cần **versioned G2 compatibility review**; tài liệu này không thêm Node-origin Event ID, không tự chọn nonce/counter hoặc wire payload.
+- Mọi TX, kể cả SYNC_BEACON, HEALTH_REPLY, Event, ACK, Join/Recovery và retry, đều qua airtime admission và điều kiện hợp quy. Độ trễ ghi nhận từ xa phụ thuộc TDMA/retry, khác với local alarm tại chỗ.
+
+## 5. Quyền thiết bị và xử lý lỗi (C07)
+
+- MVP hỗ trợ **tạm ngừng, khôi phục, thu hồi và cấp lại quyền Node**. Backend quản lý quyền RF, Gateway thực thi và giữ trạng thái qua reboot khi có bằng chứng hợp lệ; local alarm độc lập với quyền truyền.
+- **Mất Internet:** Gateway chỉ chấp nhận Node có quyền truy cập **còn hiệu lực và có thể xác minh**, **không tự gia hạn**. Nếu mất điều kiện an toàn, dừng nhận dữ liệu ứng dụng từ Node liên quan; các Node khác vẫn có thể hoạt động khi còn đủ điều kiện.
+- **Mất đồng bộ/lịch hoặc phiên quyền không đáng tin:** không phát ứng dụng theo slot cũ. Active có thể chạy offline chỉ khi an toàn; buffer bị giới hạn và có xử lý tràn, không hứa lưu vô hạn.
+- **Thu hồi quyền ≠ tái phân bổ khe:** quyền truy cập và Slot Lease tách biệt; khe chỉ được tái sử dụng theo chuyển lịch C04 an toàn. Node đã thu hồi không được tự tham gia lại bằng quyền cũ.
+- CRC không phải xác thực mật mã. RF data/control cần xác thực và chống replay; chính sách khóa/nonce, thời hạn quyền và thời gian khôi phục còn chờ thiết kế G2/G3/G5.
+
+## 6. Ranh giới chưa được khóa ở mức byte/thông số
+
+| Miền | Điều kiện trước khi triển khai/đánh dấu đạt |
+|---|---|
+| **G1 — RF/Hardware** | Kênh trung tâm, SF/CR, công suất/antenna, airtime/ToA và áp dụng quy định Việt Nam: **OPEN / NOT_VERIFIED**. |
+| **G2 — Protocol/Security** | Giữ Gateway-origin Event ID; Node FIFO↔RF identity qua reboot/retry, UP_ALERT payload, Event ACK và UP_HEALTH_REPLY codepoint, Beacon/HMAC compatibility, epochs/versions, nonce/key lifecycle và golden vectors: **OPEN / NOT_VERIFIED**. |
+| **G3 — Embedded/Timing** | DATA/Maintenance slot/guard, ToA/turnaround, clock drift qua mục tiêu 300 s, ISR latency, FIFO/retry budgets, holdover/offline thresholds, lease validity và reboot recovery: **OPEN / NOT_VERIFIED**. |
+| **G4–G6 — Integration/Security/Pilot** | MQTT/API/DB contracts, migrations, Web/Mobile chức năng cụ thể, kiểm thử nhiều Node/Gateway, fault injection, thực địa: **chưa nghiệm thu**. |
+
+Giá trị SLA/độ trễ và ví dụ tần số/duty trong tài liệu nháp không phải thông số hoặc kết quả đo đã duyệt. G0 chốt hướng kiến trúc, chưa xác nhận danh mục chức năng đầy đủ hoặc Gate PASS.
+
+## 7. Lịch sử thay thế và phạm vi migration
+
+Quyết định ngày 2026-11-04 trong #125 thay các phần sau ở tầng kiến trúc ứng dụng/MAC. Giữ lịch sử approval ngày 2026-10-30 để truy vết; bảng này không cấp approval cho wire mới.
+
+| Quy tắc cũ / provenance | Disposition hiện hành |
+|---|---|
+| #77 optional periodic; `UP_TELEMETRY`, `TEMP_X10`, `uplink/telemetry` làm luồng nghiệp vụ mặc định | **SUPERSEDED_BY_EVENT_ONLY**; không còn application telemetry định kỳ. Topic/schema phải migration có version, không âm thầm tái dùng packet `0x26`. |
+| `Periodic ON/OFF`, `SET_PERIODIC_MODE` và UI periodic controls | **SUPERSEDED**; không còn business operating mode. Cần migration MQTT/API/UI cùng examples/tests. |
+| C08 / #78: Alert CAP/PCSS/priority contention, CAD/backoff làm đường Event thông thường | **SUPERSEDED_BY_STATIC_TDMA**; local alarm, quyền, airtime và các điều kiện an toàn vẫn giữ. |
+| CT-01-ACK-01: Beacon `ACK_BITMAP` 16-bit/2B cho Telemetry, Beacon N+1 ACK kỳ N, không ACK Telemetry riêng | **SUPERSEDED semantics / NOT_APPLICABLE_TO_EVENT_ACK**. Lịch sử Owner approval giữ nguyên; không xóa/đổi trường, offset, HMAC transcript hoặc tái dùng `0x21` của Beacon 28B trước G2 compatibility review. |
+| Beacon ở mỗi DATA SF với ACK bitmap nghiệp vụ; `P-10S-15`, 5 subframes/400 ms slots/PCSS | **OBSOLETE candidate** cho kiến trúc mới; phải suy timeline DATA/Maintenance từ ToA và phép đo. Schedule countdown/recovery safety vẫn giữ. |
+
+Child #126 chỉ sửa kiến trúc/RTM/ADR trong năm tệp được phép, nối tiếp PR #116. Các active contract/schema/example/test còn mang thiết kế cũ phải được inventory và xử lý trong các child G2/G4/implementation của #125. Tài liệu này **không tuyên bố toàn repository đã migration**, cũng không thay approval của registry/Beacon auth/Join contracts.
+
+**Tài liệu liên quan:** [Requirements/RTM](../requirements/requirements.md) · [ADR-0001](../adr/0001-hybrid-tdma.md) · [Hợp đồng Radio MAC nháp](../../contracts/radio-mac/specification.md) · [Hợp đồng MQTT nháp](../../contracts/mqtt/semantic-rules.md) · [Acceptance Gates](../verification/acceptance-gates.md).
