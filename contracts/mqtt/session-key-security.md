@@ -11,7 +11,7 @@
 
 JSON UTF-8 payloads use `schema_version="1.1-draft"`, `install_protocol_version=1` / `ack_protocol_version=1`, and `aad_version=1` for Install. See `schemas/session-key-install.schema.json` and `schemas/session-key-ack.schema.json`. Unknown fields/versions are rejected. `gateway_id` is the **MQTT string principal/topic identity** (e.g. `gw01`), consistent with existing `topics.md`; `target_gw_id` is the distinct **uint8 RF Gateway ID**. A versioned, authorized Backend↔Gateway mapping must equate them. A numeric RF code must never be silently parsed from arbitrary MQTT string. The Node/Backend `SESSION_CONTEXT` is exactly the previously locked 32 bytes; `session_context_hash` = lowercase hex SHA-256 of that context.
 
-Gateway installs **only** `K_SESSION_UP[32] || K_SESSION_DL[32]` from one pending, Backend-authorized, Node-confirmed session. Gateway MUST NEVER be sent `K_JOIN` or `K_JOIN_CONFIRM`. `KEY_ID:1B` is not the unique session identity; `session_id` UUID plus authorization/revision is Backend/Gateway management metadata, absent from radio frames. Success means key slot durably `INSTALLED_INACTIVE` only; not DATA permission, not an active TDMA Lease.
+Gateway installs **only** `K_SESSION_UP[32] || K_SESSION_DL[32]` from one pending, Backend-authorized, Node-confirmed session (triggered upon authentic Node key confirmation: `UP_JOIN_CONFIRM:19B` in V1 or `UP_JOIN_KEY_CONFIRM:33B` / `DOWN_JOIN_FINISH:31B` in V2 #136). Gateway MUST NEVER be sent `K_JOIN` or `K_JOIN_CONFIRM`. `KEY_ID:1B` is not the unique session identity; `session_id` UUID plus authorization/revision is Backend/Gateway management metadata, absent from radio frames. Success means key slot durably `INSTALLED_INACTIVE` only; not DATA permission, not an active TDMA Lease.
 
 ## 2. JSON wire encoding
 
@@ -95,8 +95,8 @@ To prevent cross-purpose key use, propose:
 | ID | Producer/consumer | Required check | Failure / state |
 |---|---|---|---|
 | SK-01 | Mosquitto, both apps | MQTT 5.0, TLS, per-principal ACL; topic suffix, principal and payload `gateway_id` match | reject `WRONG_GATEWAY` |
-| SK-02 | Gateway | Map MQTT `gateway_id` ↔ authorized `target_gw_id`, bound to provisioned RF plan/identity | reject `WRONG_GATEWAY` |
-| SK-03 | Backend | Only authenticated `NODE_CONFIRMED` session with current User-approved target and assignment revision may be installed | never emit unauthorized install |
+| SK-02 | Gateway | Map MQTT `gateway_id` ↔ authorized `target_gw_id`, bound to provisioned RF plan/identity; in MVP each Gateway holds one exclusive VN920 channel CH00–CH10 (920.250–922.750 MHz) registered persistently in PostgreSQL (#154) | reject `WRONG_GATEWAY` |
+| SK-03 | Backend | Only authenticated Node key-confirmed session (`UP_JOIN_CONFIRM` in V1 or `UP_JOIN_KEY_CONFIRM`/`DOWN_JOIN_FINISH` in V2 #136) with current User-approved target and assignment revision may be installed | never emit unauthorized install |
 | SK-04 | Gateway | `not_before < expires_at`; `install_deadline <= expires_at`; trusted UTC at processing < deadline; MQTT5 Message Expiry ≤ deadline; non-retained | reject `EXPIRED` or `UNTRUSTED_CLOCK` |
 | SK-05 | Gateway | Parse canonical fields/Base64/UUID/uint64 exactly, enforce 64B ciphertext/16B tag/12B nonce, reconstruct AAD from authenticated topic | `BAD_SCHEMA` or `BAD_AUTH` |
 | SK-06 | Gateway | AES-GCM tag valid with matching `wrap_key_id` and provisioned K_GW_WRAP; session context hash matches Backend-authorized 32B context digest | reject `BAD_AUTH` |
@@ -106,7 +106,7 @@ To prevent cross-purpose key use, propose:
 | SK-10 | Gateway | Persist protected inactive keys + installation/dedup/expiry/revision metadata atomically before `INSTALLED` ACK; restore check after reboot | `PERSIST_FAILED`; never mark ACTIVE |
 | SK-11 | Backend | Authenticate ACK HMAC (separate HKDF key); bind topic/principal and pending install/session/revision/expiry/current authority | ignore/quarantine stale, bad or conflicting ACK |
 | SK-12 | Both | No key-install action or successful ACK by MQTT PUBACK alone; reconnect replay/reorder safe; bounded retry same envelope and `install_id` | reconcile persisted state |
-| SK-13 | Gateway/Backend | Loss of backhaul/revocation/expiry never extends device privileges; current authorized Slot/Lease and Beacon sync also required for DATA | keep inactive/suspend |
+| SK-13 | Gateway/Backend | Loss of backhaul/revocation/expiry never extends device privileges; in Event-Only V2 architecture (#125, #136), Node readiness `UP_JOIN_READY` (0x49), TDMA staging/countdown (3→2→1), boundary activation K+H, and all 8 DATA TX guards are also required before DATA transmission | keep inactive/suspend |
 | SK-14 | Security | Secrets absent from RF, plaintext MQTT, logs, telemetry, exceptions and fixture data; verify wrap key provisioning/rotation | block release |
 | SK-15 | Gateway | Unknown protocol/AAD version, unsupported crypto, untrusted clock, counter rollback or invalid storage ⇒ fail closed | reject with specific reason if authenticated ACK possible |
 
@@ -116,13 +116,13 @@ To prevent cross-purpose key use, propose:
 
 | Backend state | Trigger | Next state / invariants |
 |---|---|---|
-| `NODE_CONFIRMED` | Authorized session, insert install intent with stable ID and fresh AEAD envelope | `INSTALL_PENDING` |
+| `NODE_CONFIRMED` | Authorized session (V1 `UP_JOIN_CONFIRM` or V2 `UP_JOIN_KEY_CONFIRM` + `DOWN_JOIN_FINISH`), insert install intent with stable ID and fresh AEAD envelope | `INSTALL_PENDING` |
 | `INSTALL_PENDING` | Publish QoS1 Retain=false, valid TTL and current authority | `INSTALL_SENT` |
-| `INSTALL_SENT` | Authenticated `INSTALLED` ACK matching durable record | `KEY_INSTALLED` (not ACTIVE) |
+| `INSTALL_SENT` | Authenticated `INSTALLED` ACK matching durable record | `KEY_INSTALLED` (Gateway holds `INSTALLED_INACTIVE`, not ACTIVE) |
 | `INSTALL_SENT` | Authenticated `REJECTED` ACK | `INSTALL_REJECTED` |
 | `INSTALL_SENT` | Deadline or authorization expiration | `INSTALL_EXPIRED` |
-| `KEY_INSTALLED` | Backend-approved TDMA plan/Node readiness | `WAIT_TDMA` |
-| `WAIT_TDMA` | Valid synchronized authorized activation/lease | `ACTIVE` |
+| `KEY_INSTALLED` | In V2 (#136), Node transmits `UP_JOIN_READY` (0x49); Gateway verifies `GW_READY_TAG` using installed keys; Backend verifies `BACKEND_READY_PROOF` | `NODE_READY_PENDING_SCHEDULE` (`WAIT_TDMA`) |
+| `WAIT_TDMA` | Backend stages TDMA schedule via `downlink/schedule` with 3→2→1 countdown; activates at superframe boundary K+H with 8 DATA TX guards satisfied | `ACTIVE` (`NODE_ACTIVE_DATA_ELIGIBLE`) |
 | `ANY` | Revocation, conflict, invalid clock/secure state | `SUSPENDED/REVOKED` fail-closed |
 
 Store `install_id`, `session_id`, Gateway mapping, revisions, immutable envelope digest, granted expiry, key-install status and authoritative assignment state durably on Backend; Gateway stores matching bounded key slots and installation receipts in protected nonvolatile storage. One successful authenticated ACK is application evidence from a trusted Gateway, not storage attestation. Maintain irrevocable tombstone/high-water-mark for revoked revisions (do not delete history in a way that allows old installs). Concurrent installs/revoke under same Node require serialized transactional validation or version compare-and-swap.
@@ -132,3 +132,22 @@ An ACK can arrive before Backend marks `INSTALL_SENT`; avoid dropping it merely 
 ## 7. Verification boundaries
 
 `examples/session-key-cases.json` supplies positive/negative **schema-shape fixtures only** (placeholders are not authentic ciphertext/Tag). Contract tests may verify JSON Schema and topic/time formatting; actual Go↔ESP-IDF canonical binary AAD/HMAC test vectors, GCM decrypt/tamper tests, broker TLS/ACL/QoS/reconnect tests, power-loss injection, anti-replay, Gateway secure storage, security G2 and RF/HIL all remain **NOT_VERIFIED** until executed and evidenced. Reviewers: Gateway/Node, Backend Go, Infrastructure/Security, Owner/CODEOWNERS.
+
+## 8. Alignment with Event-Only Architecture and V2 Join Protocol (#125, #126, #127, #128, #136, #154)
+
+This specification explicitly reconciles the MQTT session-key lifecycle with active repository architecture decisions:
+
+1. **V2 Post-Join Lifecycle Integration (#136, PR #168):**
+   - **Trigger:** The Backend initiates `downlink/session-key-install` only after Node-Backend mutual key confirmation is verified (`UP_JOIN_KEY_CONFIRM:33B` / `DOWN_JOIN_FINISH:31B` in V2; historical `UP_JOIN_CONFIRM:19B` in V1).
+   - **Edge Protection:** Gateway installs only derived operational session keys `K_SESSION_UP:32B || K_SESSION_DL:32B`. Root secret `K_JOIN` and confirm secret `K_JOIN_CONFIRM` are strictly withheld from the Gateway.
+   - **State Isolation:** Gateway persists keys into `INSTALLED_INACTIVE` key slot and acknowledges via `uplink/session-key-ack` (`INSTALLED`). This state confers **no radio transmission rights**.
+   - **Readiness Verification:** Once the Gateway holds the verified session keys, the Node emits `UP_JOIN_READY` (0x49) in the authorized Maintenance/CTRL window. The Gateway validates `GW_READY_TAG:8B` using installed session keys and relays the frame to the Backend. The Backend verifies `BACKEND_READY_PROOF:16B` using $K_{\text{JREADY}}$.
+   - **TDMA Staging & 3→2→1 Activation:** Upon valid Node readiness proof, the Backend advances to `NODE_READY_PENDING_SCHEDULE` (`WAIT_TDMA`) and dispatches `downlink/schedule`. The Gateway stages shadow memory and broadcasts `SYNC_BEACON` with announcement countdown (3→2→1). Activation occurs strictly on superframe boundary $K+H$, transitioning the Node to `NODE_ACTIVE_DATA_ELIGIBLE` after satisfying all 8 DATA TX guards.
+
+2. **Event-Only Data Plane Invariants (#125, #126):**
+   - Periodic application telemetry (`uplink/telemetry`) is superseded. Key installation provisions encryption for event-triggered logging frames (`Event TX → Gateway durable acceptance → ACK RX`) within statically assigned TDMA slots.
+   - Health and synchronization traffic is confined to dedicated Maintenance Superframes (~300s target interval) via authenticated `SYNC_BEACON` and scheduled per-Node `HEALTH_REPLY`.
+
+3. **Multi-Gateway Exclusive VN920 Channel Assignment (#154, #125):**
+   - Each Gateway is bound to an exclusive channel from VN920 CH00–CH10 (920.250–922.750 MHz, 125 kHz BW), managed transactionally in PostgreSQL.
+   - The mapping between MQTT string identity `gateway_id` and RF uint8 `target_gw_id` is maintained by the Backend registry. Channel allocation is decoupled from schedule activation and does not grant unscheduled RF rights.

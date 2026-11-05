@@ -93,6 +93,92 @@ class SessionKeySchemaContractTest(unittest.TestCase):
         self.assertIn("tag", properties)
         self.assertIn("wrap_key_id", self.schemas["session-key-ack"]["required"])
 
+    def test_canonical_aad_v1_encoding(self):
+        import base64
+        import struct
+        import uuid
+        case = next(c for c in self.fixtures if c["id"] == "SKI-SCHEMA-VALID")
+        msg = case["message"]
+        topic = case["topic"]
+
+        def lp(s: str) -> bytes:
+            raw = s.encode("utf-8")
+            return struct.pack(">H", len(raw)) + raw
+
+        def time_ms(s: str) -> bytes:
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            return struct.pack(">Q", int(dt.timestamp() * 1000))
+
+        aad = b"".join([
+            lp("LP2P/MQTT/V1/KEY-INSTALL"),
+            lp(topic),
+            lp(msg["schema_version"]),
+            struct.pack(">B", msg["install_protocol_version"]),
+            struct.pack(">B", msg["aad_version"]),
+            lp(msg["gateway_id"]),
+            struct.pack(">B", msg["target_gw_id"]),
+            bytes.fromhex(msg["device_mac"]),
+            struct.pack(">B", msg["node_id"]),
+            struct.pack(">B", msg["key_id"]),
+            uuid.UUID(msg["session_id"]).bytes,
+            uuid.UUID(msg["install_id"]).bytes,
+            struct.pack(">Q", int(msg["session_revision"])),
+            struct.pack(">Q", int(msg["assignment_revision"])),
+            bytes.fromhex(msg["session_context_hash"]),
+            time_ms(msg["not_before"]),
+            time_ms(msg["expires_at"]),
+            time_ms(msg["install_deadline"]),
+            struct.pack(">I", msg["wrap_key_id"]),
+            lp(msg["crypto_suite"]),
+            base64.b64decode(msg["nonce"]),
+        ])
+        self.assertEqual(len(aad), 232)
+        self.assertTrue(aad.startswith(b"\x00\x18LP2P/MQTT/V1/KEY-INSTALL"))
+
+    def test_canonical_ack_transcript_v1_encoding(self):
+        import struct
+        import uuid
+        case = next(c for c in self.fixtures if c["id"] == "SKA-SCHEMA-VALID")
+        msg = case["message"]
+        topic = case["topic"]
+
+        def lp(s: str) -> bytes:
+            raw = s.encode("utf-8")
+            return struct.pack(">H", len(raw)) + raw
+
+        m_ack = b"".join([
+            lp("LP2P/MQTT/V1/M-ACK"),
+            lp(topic),
+            lp(msg["schema_version"]),
+            struct.pack(">B", msg["ack_protocol_version"]),
+            lp(msg["gateway_id"]),
+            uuid.UUID(msg["install_id"]).bytes,
+            uuid.UUID(msg["session_id"]).bytes,
+            struct.pack(">Q", int(msg["session_revision"])),
+            struct.pack(">I", msg["wrap_key_id"]),
+            lp(msg["status"]),
+            lp(msg["reason_code"]),
+        ])
+        self.assertEqual(len(m_ack), 138)
+        self.assertTrue(m_ack.startswith(b"\x00\x12LP2P/MQTT/V1/M-ACK"))
+
+    def test_decimal_uint64_revision_bounds(self):
+        validator = Draft202012Validator(self.schemas["session-key-install"], format_checker=FormatChecker())
+        case = next(c for c in self.fixtures if c["id"] == "SKI-SCHEMA-VALID")
+        msg = dict(case["message"])
+
+        # Valid boundaries
+        for val in ("1", "18446744073709551615"):
+            msg["session_revision"] = val
+            self.assertEqual(list(validator.iter_errors(msg)), [], f"Failed on valid revision {val}")
+
+        # Invalid formats
+        for bad in ("0", "01", "-1", "18446744073709551616", "1.0", "1e5"):
+            msg["session_revision"] = bad
+            errors = list(validator.iter_errors(msg))
+            self.assertTrue(len(errors) > 0 or (bad == "18446744073709551616" and int(bad) > 2**64 - 1),
+                            f"Expected error for bad revision {bad}")
+
 
 if __name__ == "__main__":
     unittest.main()
