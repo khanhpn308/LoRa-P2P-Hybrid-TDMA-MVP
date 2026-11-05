@@ -174,22 +174,31 @@ When executing `Nghiệm thu PR #142`, automated gates PR-01 to PR-08 completed 
    - Added native execution path in `scripts/agent_harness/pr_review.py` utilizing `adapters.antigravity.invoke` within an isolated sandbox.
    - Built deterministic evidence inventory (`diff.patch`, `check_runs.json`, `rule_selection.json`) stored in a secure external directory outside the candidate worktree.
    - Enforced closed schema validation (`audit.schema.json`) via `antigravity.check_report` binding exact changed paths, `selection_sha256`, and per-rule evidence references.
-2. **Coordinator Sequencing Update (`harness-coordinator.md`):**
+2. **Full-Diff Batching and Elimination of Silent Truncation:**
+   - Completely eliminated silent diff truncation (e.g. `{cumulative_diff[:50000]}`). Diffs exceeding single-batch budget (`MAX_BATCH_DIFF_BYTES = 60_000`) are partitioned into file and hunk batches via `partition_diff_batches` with batch index, batch diff SHA-256, and overall diff SHA-256. Passing an unbatched oversized diff raises an explicit error.
+   - Built `aggregate_batch_reports` requiring 100% path coverage across all batches (`AUDIT-COVERAGE-MISMATCH` if any file is omitted).
+3. **Snapshot Binding Verification:**
+   - In `validate_and_load_auditor_report` and `eval_pr04_correctness`, Auditor reports are cryptographically validated against frozen PR snapshot attributes (`base_sha`, `head_sha`, `diff_sha256`, and per-rule `diff.patch` receipt hash). Any mismatch fails closed with `AUDIT-SNAPSHOT-MISMATCH`.
+4. **Coordinator Sequencing Update (`harness-coordinator.md`):**
    - Formalized multi-step execution: Host G0 context gate -> `--export-auditor-context` -> fresh `invoke_subagent` (TypeName: `Fresh-Independent-Auditor`, Role: `Fresh Independent Auditor`, read-only workspace) or `--auto-audit` -> Host validation & re-evaluation with `--auditor-report` -> TOCTOU SHA immutability re-check -> verdict reporting.
-3. **Synthetic Test Separation in Security Classification:**
-   - Narrowed `is_security_sensitive_path` to exclude synthetic test fixtures under `tests/agent_harness/fixtures/` (such as `pr_crypto_contract.json`), avoiding false alarms while preserving strict human sign-off policies for actual `contracts/**` and cryptographic source paths.
-4. **Adapter Compatibility:**
+5. **Synthetic Test Separation in Security Classification:**
+   - Implemented `is_synthetic_fixture_path` to exempt synthetic fixtures (`/fixtures/`, `tests/agent_harness/fixtures/`, `tests/fixtures/`) from triggering human specialist review blockers, while strictly preserving security review requirements for real test files under `tests/` that touch crypto/security.
+6. **Adapter Compatibility:**
    - Minimal compatibility fix in `antigravity.py` allowing default empty inventory handling for scoped validations while strictly preserving per-rule evidence binding for all `PASS` claims.
 
 ### 6.3 Test & Regression Receipts
-- **Unit & Regression Suite:** Added 9 focused regression test cases covering:
+- **Unit & Regression Suite:** Added comprehensive negative and positive regression test cases covering:
   - Positive full-scope receipt with evidence inventory verification.
   - Negative missing tool (`agy` missing from PATH -> fails closed with `AUDIT-SPAWN` CRITICAL finding).
   - Negative failed spawn / adapter error.
-  - Negative truncated / subset diff review (omitted files rejected by `check_report`).
-  - Negative stale SHA / TOCTOU race detection.
-  - Negative wrong Rule-ID hashes.
-  - Negative malformed receipt / untrusted evidence.
-  - Negative pass-by-assertion (PASS without receipts rejected).
-  - Synthetic crypto fixture path separation.
-- **Suite Outcome:** All 315 tests in `tests/agent_harness/` pass with zero failures and zero errors.
+  - Negative truncated / subset diff review (omitted files rejected with `AUDIT-COVERAGE-MISMATCH`).
+  - Negative silent truncation forbidden (oversized unbatched diff raises `PRReviewError`).
+  - Full-diff batch partitioning across multiple files with SHA-256 integrity and 100% file coverage.
+  - Single-batch preservation for small diffs.
+  - Batch aggregation coverage verification (`AUDIT-COVERAGE-MISMATCH`).
+  - Snapshot binding verification for `base_sha` mismatch (`AUDIT-SNAPSHOT-MISMATCH`).
+  - Snapshot binding verification for `head_sha` mismatch (`AUDIT-SNAPSHOT-MISMATCH`).
+  - Snapshot binding verification for `diff_sha256` mismatch (`AUDIT-SNAPSHOT-MISMATCH`).
+  - Snapshot binding verification for `diff.patch` evidence receipt hash mismatch (`AUDIT-SNAPSHOT-MISMATCH`).
+  - Synthetic crypto fixture path separation vs real security test classification.
+- **Suite Outcome:** All 323 tests in `tests/agent_harness/` pass with zero failures and zero errors.

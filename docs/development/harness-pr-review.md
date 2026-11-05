@@ -51,10 +51,14 @@ python3 scripts/agent_harness/pr_review.py --fixture tests/agent_harness/fixture
 
 4. **`PR-04 CORRECTNESS`**:
    - Checks for git conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`), truncated patches, or corrupted diffs.
+   - **Full-diff batching & zero silent truncation**: Prompts never silently truncate diffs. Diffs exceeding batch thresholds (`MAX_BATCH_DIFF_BYTES = 60_000`) are partitioned into file/hunk batches with batch index, batch diff SHA-256, and overall diff SHA-256.
+   - **Mandatory 100% path coverage**: The union of reviewed paths across batches must exactly match all changed files; any omission fails closed with `AUDIT-COVERAGE-MISMATCH`.
+   - **Snapshot binding**: Auditor reports are cryptographically bound to frozen PR metadata (`base_sha`, `head_sha`, `diff_sha256`, and per-rule `diff.patch` receipt hash). Any drift fails closed with `AUDIT-SNAPSHOT-MISMATCH`.
    - Evaluates unresolved high-severity findings from fresh read-only Auditor; requires full per-ID coverage.
 
 5. **`PR-05 SECURITY`**:
    - Automated secret scanning across all diff patches for credentials, tokens, and private keys.
+   - Specialist security review boundary strictly exempts synthetic test fixtures (`/fixtures/`) while enforcing review for real security test code and cryptographic contracts.
    - Prompt-injection defense: PR body, title, and comments are treated strictly as untrusted data, never instructions.
 
 6. **`PR-06 TESTING`**:

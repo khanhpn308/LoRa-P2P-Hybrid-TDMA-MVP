@@ -6,6 +6,7 @@ adversarial injection defense, TOCTOU SHA race protection, and report rendering.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -745,8 +746,8 @@ class AutoSpawnAuditorRegressionTests(unittest.TestCase):
             report_path, self.pr_data, self.rule_selection, self.evidence_inventory
         )
         self.assertEqual(res["status"], "FAIL")
-        self.assertIn("AUDIT-SCHEMA", res["findings"][0]["rule"])
-        self.assertIn("exact changed path set", res["findings"][0]["explanation"])
+        self.assertEqual(res["findings"][0]["rule"], "AUDIT-COVERAGE-MISMATCH")
+        self.assertIn("reviewed_scope does not match", res["findings"][0]["explanation"])
 
     def test_auto_audit_wrong_rule_id_hashes_rejected(self):
         """Auditor report with mismatched rule_sha256 is rejected by check_report."""
@@ -796,7 +797,8 @@ class AutoSpawnAuditorRegressionTests(unittest.TestCase):
             report_path, self.pr_data, self.rule_selection, self.evidence_inventory
         )
         self.assertEqual(res["status"], "FAIL")
-        self.assertIn("AUDIT-SCHEMA", res["findings"][0]["rule"])
+        self.assertEqual(res["findings"][0]["rule"], "AUDIT-SNAPSHOT-MISMATCH")
+        self.assertIn("diff.patch hash does not match", res["findings"][0]["explanation"])
 
     def test_auto_audit_pass_by_assertion_rejected(self):
         """Per-rule PASS without Host-inventoried evidence references is rejected."""
@@ -889,6 +891,168 @@ class AutoSpawnAuditorRegressionTests(unittest.TestCase):
         """pr_crypto_contract.json is recognized as a synthetic test fixture, not a cryptographic contract."""
         self.assertFalse(policy.is_security_sensitive_path("tests/agent_harness/fixtures/pr_review/pr_crypto_contract.json"))
         self.assertTrue(policy.is_security_sensitive_path("contracts/crypto/aes_session.md"))
+
+    def test_build_auditor_prompt_oversized_unbatched_raises(self):
+        """Oversized cumulative diff without batching raises PRReviewError; silent truncation is forbidden."""
+        huge_diff = "diff --git a/foo.c b/foo.c\n" + "+line\n" * 20_000
+        with self.assertRaises(pr_review.PRReviewError) as ctx:
+            pr_review.build_auditor_prompt(
+                self.pr_data,
+                self.rule_selection,
+                self.evidence_inventory,
+                huge_diff,
+                batch_info=None,
+                max_unbatched_bytes=10_000,
+            )
+        self.assertIn("Silent truncation is strictly forbidden", str(ctx.exception))
+
+    def test_partition_diff_batches_splits_multi_file_diff(self):
+        """Multi-file diff partitioning produces multiple batches with complete file coverage and exact SHA-256."""
+        files = [
+            {"filename": "firmware/a.c", "patch": "@@ -1,1 +1,10 @@\n" + "+a\n" * 10},
+            {"filename": "firmware/b.c", "patch": "@@ -1,1 +1,10 @@\n" + "+b\n" * 10},
+            {"filename": "firmware/c.c", "patch": "@@ -1,1 +1,10 @@\n" + "+c\n" * 10},
+        ]
+        overall_hash = "1" * 64
+        batches = pr_review.partition_diff_batches(files, overall_hash, max_batch_bytes=80)
+        self.assertGreater(len(batches), 1)
+
+        # Verify all files covered
+        covered_files = set()
+        for b in batches:
+            covered_files.update(b["batch_files"])
+            self.assertEqual(b["total_batches"], len(batches))
+            self.assertEqual(b["overall_diff_sha256"], overall_hash)
+            self.assertEqual(
+                b["batch_diff_sha256"],
+                hashlib.sha256(b["batch_diff"].encode("utf-8")).hexdigest(),
+            )
+        self.assertEqual(covered_files, {"firmware/a.c", "firmware/b.c", "firmware/c.c"})
+
+    def test_partition_diff_batches_single_batch(self):
+        """Small diff fits in a single batch preserving full content."""
+        files = [
+            {"filename": "firmware/a.c", "patch": "@@ -1,1 +1,2 @@\n+a\n"},
+        ]
+        overall_hash = "2" * 64
+        batches = pr_review.partition_diff_batches(files, overall_hash, max_batch_bytes=60_000)
+        self.assertEqual(len(batches), 1)
+        self.assertEqual(batches[0]["batch_index"], 1)
+        self.assertEqual(batches[0]["total_batches"], 1)
+        self.assertEqual(batches[0]["batch_files"], ["firmware/a.c"])
+
+    def test_aggregate_batch_reports_mandatory_coverage_check(self):
+        """Aggregating batch reports that miss required files returns AUDIT-COVERAGE-MISMATCH."""
+        batch_reports = [
+            {
+                "status": "PASS",
+                "findings": [],
+                "limitations": [],
+                "reviewed_scope": ["firmware/a.c"],
+            }
+        ]
+        required_paths = {"firmware/a.c", "firmware/b.c"}
+        res = pr_review.aggregate_batch_reports(batch_reports, required_paths)
+        self.assertEqual(res["status"], "FAIL")
+        self.assertEqual(res["findings"][0]["rule"], "AUDIT-COVERAGE-MISMATCH")
+        self.assertIn("Missing: ['firmware/b.c']", res["findings"][0]["explanation"])
+
+    def test_snapshot_binding_base_sha_mismatch_rejected(self):
+        """Auditor report with mismatched base_sha is rejected with AUDIT-SNAPSHOT-MISMATCH."""
+        report = {
+            "status": "PASS",
+            "base_sha": "wrong_base_sha_00000000000000000000000000",
+            "head_sha": self.pr_data["head_sha"],
+            "diff_sha256": self.receipt_sha,
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["firmware/main.c"],
+            "selection_sha256": self.sel_sha,
+            "rule_results": [{
+                "rule_id": "C-001",
+                "rule_sha256": self.rule_sha,
+                "status": "PASS",
+                "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": self.receipt_sha}],
+                "reason": "Safe bounds checked.",
+            }],
+        }
+        report_path = self.evidence_dir / "auditor_report.json"
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        res = pr_review.validate_and_load_auditor_report(
+            report_path, self.pr_data, self.rule_selection, self.evidence_inventory
+        )
+        self.assertEqual(res["status"], "FAIL")
+        self.assertEqual(res["findings"][0]["rule"], "AUDIT-SNAPSHOT-MISMATCH")
+        self.assertIn("base_sha", res["findings"][0]["explanation"])
+
+    def test_snapshot_binding_head_sha_mismatch_rejected(self):
+        """Auditor report with mismatched head_sha is rejected with AUDIT-SNAPSHOT-MISMATCH."""
+        report = {
+            "status": "PASS",
+            "base_sha": self.pr_data["base_sha"],
+            "head_sha": "wrong_head_sha_00000000000000000000000000",
+            "diff_sha256": self.receipt_sha,
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["firmware/main.c"],
+            "selection_sha256": self.sel_sha,
+            "rule_results": [{
+                "rule_id": "C-001",
+                "rule_sha256": self.rule_sha,
+                "status": "PASS",
+                "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": self.receipt_sha}],
+                "reason": "Safe bounds checked.",
+            }],
+        }
+        report_path = self.evidence_dir / "auditor_report.json"
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        res = pr_review.validate_and_load_auditor_report(
+            report_path, self.pr_data, self.rule_selection, self.evidence_inventory
+        )
+        self.assertEqual(res["status"], "FAIL")
+        self.assertEqual(res["findings"][0]["rule"], "AUDIT-SNAPSHOT-MISMATCH")
+        self.assertIn("head_sha", res["findings"][0]["explanation"])
+
+    def test_snapshot_binding_diff_sha256_mismatch_rejected(self):
+        """Auditor report with mismatched diff_sha256 is rejected with AUDIT-SNAPSHOT-MISMATCH."""
+        report = {
+            "status": "PASS",
+            "base_sha": self.pr_data["base_sha"],
+            "head_sha": self.pr_data["head_sha"],
+            "diff_sha256": "wrong_diff_sha_00000000000000000000000000",
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["firmware/main.c"],
+            "selection_sha256": self.sel_sha,
+            "rule_results": [{
+                "rule_id": "C-001",
+                "rule_sha256": self.rule_sha,
+                "status": "PASS",
+                "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": self.receipt_sha}],
+                "reason": "Safe bounds checked.",
+            }],
+        }
+        report_path = self.evidence_dir / "auditor_report.json"
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        res = pr_review.validate_and_load_auditor_report(
+            report_path, self.pr_data, self.rule_selection, self.evidence_inventory, expected_diff_sha256="expected_hash_000"
+        )
+        self.assertEqual(res["status"], "FAIL")
+        self.assertEqual(res["findings"][0]["rule"], "AUDIT-SNAPSHOT-MISMATCH")
+        self.assertIn("diff_sha256", res["findings"][0]["explanation"])
+
+    def test_security_sensitive_path_real_tests_vs_fixtures(self):
+        """Real tests touching security are sensitive; synthetic fixtures are not."""
+        # Synthetic fixtures
+        self.assertTrue(policy.is_synthetic_fixture_path("tests/agent_harness/fixtures/pr_review/pr_crypto.json"))
+        self.assertTrue(policy.is_synthetic_fixture_path("tests/fixtures/pr_review/sample.json"))
+        self.assertFalse(policy.is_security_sensitive_path("tests/agent_harness/fixtures/pr_review/pr_crypto.json"))
+
+        # Real test files touching security
+        self.assertFalse(policy.is_synthetic_fixture_path("tests/security/test_crypto.py"))
+        self.assertTrue(policy.is_security_sensitive_path("tests/security/test_crypto.py"))
+        self.assertTrue(policy.is_security_sensitive_path("tests/auth/test_tokens.py"))
+
 
 
 class PRReviewCLITests(unittest.TestCase):
