@@ -185,7 +185,7 @@ AI agent conformance evaluation scenarios (CASE-01..12) are maintained in [agent
 - [Cold source traceability](../../audits/firmware/C_STANDARD_SOURCE_TRACEABILITY.md) maps upstream IDs to operational v2 domains. Upstream `docs/C_CODING_STANDARDS.md` at `khanhpn308/esp32e_sx1768-915Mhz@2af2bd2a99234b15f59848f4bdd0b1e920c2dcd5`; SHA-256 `70fc06ec5f21e21725f0227238ed3ab258e21b113b95f9ef481332d54715c5de`.
 - GOV/ARCH/SEC/MAC/TDMA/QA use `AGENTS.md`, approved `docs/requirements/`, `docs/adr/`, `contracts/` and `docs/verification/acceptance-gates.md` according to their individual approval status. No standard grants authority to resolve blocked contracts.
 - C/MEM/ERR/RTOS/RAD use source traceability, exact ESP-IDF v6.1 APIs and manufacturer documents. [ESP-IDF v6.1 ESP32 esp_timer](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32/api-reference/system/esp_timer.html) distinguishes task and ISR dispatch. Verify API, board and silicon revision before adopting assumptions.
-- Hardware sources: Semtech `SX1276_Datasheet.pdf`; Espressif `esp32-wroom-32e_esp32-wroom-32ue_datasheet_en.pdf`. Demo values do not approve RF profiles, pins, timing or crypto.
+- Hardware sources: vendor-issued Semtech SX1276/77/78/79 datasheet (Rev. 7, May 2020) and Espressif ESP32-WROOM-32E/32UE datasheet (v2.1). Sourced directly from manufacturer references; demo values do not approve RF profiles, pins, timing or crypto.
 
 | Upstream v1 domain | v2 implementation | Disposition boundary |
 |---|---|---|
