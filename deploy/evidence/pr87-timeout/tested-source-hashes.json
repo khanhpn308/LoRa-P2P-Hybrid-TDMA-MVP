@@ -1,0 +1,5 @@
+{
+  "tests/integration/test_local_infra.py": "ef2410818bd50f692efe9406429d0b8a74615c103bdd04beea09182419895638",
+  "tests/integration/test_infra_security.py": "d21cffd77a5f12ecbd2ab9c291254aa64370309a905e4aa513836dee82179a0e",
+  "tests/integration/README.md": "2ed53b16e3a8134406b99391494c3068e21ef141af54fd61eac46e84f3be2d96"
+}

@@ -1,0 +1,208 @@
+{
+  "MQTT-ACL-PERM": {
+    "runtime": true,
+    "startup_logs_complete": true,
+    "broker_uid": 1883,
+    "broker_gid": 1883,
+    "acl_uid": 1883,
+    "acl_gid": 1883,
+    "acl_mode": "0600",
+    "acl_readable": true
+  },
+  "SEC-KEY-MOUNT": {
+    "runtime_inventory_complete": true,
+    "clients": [
+      {
+        "identity": "anonymous",
+        "mounts": [
+          {
+            "source": "/tmp/lora-pr87-timeout-fix/tests/integration/secrets/smoke-97pq2w3t/certs/ca.crt",
+            "target": "/certs/ca.crt",
+            "read_only": true,
+            "kind": "public_certificate"
+          }
+        ]
+      },
+      {
+        "identity": "gw-a",
+        "mounts": [
+          {
+            "source": "/tmp/lora-pr87-timeout-fix/tests/integration/secrets/smoke-97pq2w3t/certs/ca.crt",
+            "target": "/certs/ca.crt",
+            "read_only": true,
+            "kind": "public_certificate"
+          },
+          {
+            "source": "/tmp/lora-pr87-timeout-fix/tests/integration/secrets/smoke-97pq2w3t/certs/gw-a.crt",
+            "target": "/certs/gw-a.crt",
+            "read_only": true,
+            "kind": "public_certificate"
+          },
+          {
+            "source": "/tmp/lora-pr87-timeout-fix/tests/integration/secrets/smoke-97pq2w3t/certs/gw-a.key",
+            "target": "/certs/gw-a.key",
+            "read_only": true,
+            "kind": "private_key",
+            "mode": "0600"
+          }
+        ]
+      },
+      {
+        "identity": "gw-b",
+        "mounts": [
+          {
+            "source": "/tmp/lora-pr87-timeout-fix/tests/integration/secrets/smoke-97pq2w3t/certs/ca.crt",
+            "target": "/certs/ca.crt",
+            "read_only": true,
+            "kind": "public_certificate"
+          },
+          {
+            "source": "/tmp/lora-pr87-timeout-fix/tests/integration/secrets/smoke-97pq2w3t/certs/gw-b.crt",
+            "target": "/certs/gw-b.crt",
+            "read_only": true,
+            "kind": "public_certificate"
+          },
+          {
+            "source": "/tmp/lora-pr87-timeout-fix/tests/integration/secrets/smoke-97pq2w3t/certs/gw-b.key",
+            "target": "/certs/gw-b.key",
+            "read_only": true,
+            "kind": "private_key",
+            "mode": "0600"
+          }
+        ]
+      },
+      {
+        "identity": "backend",
+        "mounts": [
+          {
+            "source": "/tmp/lora-pr87-timeout-fix/tests/integration/secrets/smoke-97pq2w3t/certs/ca.crt",
+            "target": "/certs/ca.crt",
+            "read_only": true,
+            "kind": "public_certificate"
+          },
+          {
+            "source": "/tmp/lora-pr87-timeout-fix/tests/integration/secrets/smoke-97pq2w3t/certs/backend.crt",
+            "target": "/certs/backend.crt",
+            "read_only": true,
+            "kind": "public_certificate"
+          },
+          {
+            "source": "/tmp/lora-pr87-timeout-fix/tests/integration/secrets/smoke-97pq2w3t/certs/backend.key",
+            "target": "/certs/backend.key",
+            "read_only": true,
+            "kind": "private_key",
+            "mode": "0600"
+          }
+        ]
+      },
+      {
+        "identity": "unknown",
+        "mounts": [
+          {
+            "source": "/tmp/lora-pr87-timeout-fix/tests/integration/secrets/smoke-97pq2w3t/certs/ca.crt",
+            "target": "/certs/ca.crt",
+            "read_only": true,
+            "kind": "public_certificate"
+          },
+          {
+            "source": "/tmp/lora-pr87-timeout-fix/tests/integration/secrets/smoke-97pq2w3t/certs/unknown.crt",
+            "target": "/certs/unknown.crt",
+            "read_only": true,
+            "kind": "public_certificate"
+          },
+          {
+            "source": "/tmp/lora-pr87-timeout-fix/tests/integration/secrets/smoke-97pq2w3t/certs/unknown.key",
+            "target": "/certs/unknown.key",
+            "read_only": true,
+            "kind": "private_key",
+            "mode": "0600"
+          }
+        ]
+      },
+      {
+        "identity": "wrong",
+        "mounts": [
+          {
+            "source": "/tmp/lora-pr87-timeout-fix/tests/integration/secrets/smoke-97pq2w3t/certs/ca.crt",
+            "target": "/certs/ca.crt",
+            "read_only": true,
+            "kind": "public_certificate"
+          },
+          {
+            "source": "/tmp/lora-pr87-timeout-fix/tests/integration/secrets/smoke-97pq2w3t/certs/wrong.crt",
+            "target": "/certs/wrong.crt",
+            "read_only": true,
+            "kind": "public_certificate"
+          },
+          {
+            "source": "/tmp/lora-pr87-timeout-fix/tests/integration/secrets/smoke-97pq2w3t/certs/wrong.key",
+            "target": "/certs/wrong.key",
+            "read_only": true,
+            "kind": "private_key",
+            "mode": "0600"
+          }
+        ]
+      }
+    ],
+    "broker": {
+      "mounts": [
+        {
+          "source": "/tmp/lora-pr87-timeout-fix/tests/integration/secrets/smoke-97pq2w3t/broker/ca.crt",
+          "target": "/mosquitto/certs/ca.crt",
+          "read_only": true,
+          "kind": "public_certificate"
+        },
+        {
+          "source": "/tmp/lora-pr87-timeout-fix/tests/integration/secrets/smoke-97pq2w3t/broker/server.crt",
+          "target": "/mosquitto/certs/server.crt",
+          "read_only": true,
+          "kind": "public_certificate"
+        },
+        {
+          "source": "/tmp/lora-pr87-timeout-fix/tests/integration/secrets/smoke-97pq2w3t/broker/server.key",
+          "target": "/mosquitto/certs/server.key",
+          "read_only": true,
+          "kind": "private_key",
+          "mode": "0640"
+        }
+      ]
+    }
+  },
+  "NET-LOOPBACK": {
+    "runtime": true,
+    "inventory_complete": true,
+    "bindings": [
+      {
+        "service": "postgres",
+        "host_ip": "127.0.0.1",
+        "localhost_reachable": true,
+        "non_loopback_reachable": false
+      },
+      {
+        "service": "mqtt-dev",
+        "host_ip": "127.0.0.1",
+        "localhost_reachable": true,
+        "non_loopback_reachable": false
+      },
+      {
+        "service": "mqtt-tls",
+        "host_ip": "127.0.0.1",
+        "localhost_reachable": true,
+        "non_loopback_reachable": false
+      }
+    ],
+    "network_context": "separate default Docker bridge -> Linux host non-loopback IPv4; excludes physical LAN/IPv6/WSL2",
+    "representative": true,
+    "non_loopback_address": "192.168.1.3",
+    "control_reachable": true
+  },
+  "TLS-AUTH/ACL-NEGATIVE": {
+    "runtime": true,
+    "server_verified": true,
+    "allowed_flow": true,
+    "wrong_cert_rejected": true,
+    "anonymous_rejected": true,
+    "cross_gateway_publish_denied": true,
+    "cross_gateway_subscribe_denied": true
+  }
+}
