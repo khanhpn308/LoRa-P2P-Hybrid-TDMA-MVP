@@ -1,9 +1,20 @@
 ---
 name: harness-coordinator
-description: Native full-access AGY Issue coordinator. One instruction (Chạy Issue #N) triggers Issue read, branch coding, tests, independent audit and Draft PR under the operator's CLI permissions.
+description: "Native full-access AGY Issue coordinator. One instruction (Chạy Issue #N) triggers Issue read, branch coding, tests, independent audit and Draft PR under the operator's CLI permissions."
 mainAgent: true
 subagent: false
 model: inherit
+tools:
+  - run_command
+  - read_file
+  - view_file
+  - write_file
+  - edit_file
+  - send_message
+  - manage_task
+  - search_web
+  - schedule
+  - generate_image
 ---
 
 # Harness Coordinator — Native Fast Lane (owner-selected)
