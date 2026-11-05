@@ -1,6 +1,5 @@
 # SX1276 Driver Operations Guide
 
-Source: Semtech SX1276/77/78/79 Datasheet Rev. 7 (May 2020), Sections 2.2, 2.5.6 (Table 11), 4.1.1–4.1.3, 4.1.7 (Table 18), 5.2, 7.2; PDF pages 22, 27–31, 34–35, 38–46, 80, 110–111, 116–117.
 
 ## 1. Physical Hardware Interface and Strapping Pins (HW-001)
 
@@ -20,7 +19,6 @@ The SX1276 communicates with the ESP32-WROOM-32E host through an SPI bus, an act
 
 ## 2. SPI Protocol and Transaction Framing
 
-Source: Datasheet Section 2.2 and Section 2.5.6 (Table 11); PDF pages 22, 80.
 
 ### Protocol Parameters
 - **SPI Mode:** Mode 0 (**CPOL = 0, CPHA = 0**). SCK idles low. MOSI changes on falling edge and is sampled on rising edge.
@@ -40,7 +38,7 @@ Source: Datasheet Section 2.2 and Section 2.5.6 (Table 11); PDF pages 22, 80.
    - Assert NSS low $\to$ Send Address `0x00` (or `0x80` for write) $\to$ Stream payload bytes $\to$ De-assert NSS high.
    - The internal address pointer **remains held at `0x00`** and does not auto-increment, allowing rapid bulk transfer of packet payloads into/out of the 256-byte FIFO RAM buffer.
 
-### Timing Limits (Table 11, PDF p. 22)
+### Reset Timing Limits
 - MOSI setup time: $\ge 30\text{ ns}$ before rising SCK edge.
 - MOSI hold time: $\ge 20\text{ ns}$ after rising SCK edge.
 - NSS setup time: $\ge 30\text{ ns}$ from falling NSS to first rising SCK edge.
@@ -51,7 +49,6 @@ Source: Datasheet Section 2.2 and Section 2.5.6 (Table 11); PDF pages 22, 80.
 
 ## 3. Reset Dynamics and Chip Health Verification
 
-Source: Datasheet Section 5.2 and Section 7.2; PDF pages 116–117.
 
 ### Hardware Reset Procedures
 1. **Power-On Reset (POR):**
@@ -71,7 +68,6 @@ Immediately after reset recovery, the driver must verify SPI communication by re
 
 ## 4. Operating Modes and State Machine Transitions
 
-Source: Datasheet Sections 4.1.2.1, 4.1.2.3, 4.1.3; PDF pages 34–35, 38–41, 108.
 
 | Operating Mode | Mode Code (`RegOpMode[2:0]`) | Oscillator & PLL | RF / PA Block | FIFO RAM Status | Permitted Operations |
 |---|---|---|---|---|---|
@@ -115,7 +111,6 @@ Flags in `RegIrqFlags` (`0x12`) are **cleared by writing a `1`** to the correspo
 
 ## 6. Packet Transmission (TX) Sequence
 
-Source: Datasheet Section 4.1.3; PDF page 39.
 
 ```text
 [STANDBY] ──> Set FifoAddrPtr = FifoTxBaseAddr (0x80)
@@ -135,11 +130,6 @@ Source: Datasheet Section 4.1.3; PDF page 39.
 
 ## 7. Packet Reception (RX) Lifecycle, Timeout, and IRQ Architecture
 
-Source: Semtech SX1276 Datasheet Rev. 7:
-- Section 4.1.3 ("Operation of the LoRa Modem", printed pp. 36, 40–42, PDF pp. 37, 41–43).
-- Section 4.1.2.4 ("Interrupts in LoRa Mode", printed p. 35, PDF p. 36).
-- Section 4.1.8 ("Modem Status Indicators", printed p. 46, PDF p. 47).
-- Section 4.1.7 ("Digital IO Pin Mapping", Table 18, printed p. 45, PDF p. 46).
 
 ### 7.1. RX Event & Termination Taxonomy
 
@@ -164,8 +154,7 @@ To ensure deterministic firmware state machine transitions, the driver distingui
 
 ### 7.2. Silicon Demodulator Behavior in RX Single Mode
 
-According to Semtech SX1276 Datasheet Section 4.1.3 (printed p. 41, PDF p. 41):
-> *"One of the advantages of the RxSingle mode is that the interrupt RxTimeout will not be triggered if the device is currently receiving data, thus giving the priority to the reception of the data over the timeout. However, if during the reception, the device loses track of the data due to external perturbation, the device will drop the reception, flag the interrupt RxTimeout and go in StandBy mode to decrease the power consumption of the system."*
+**RX Single hardware behavior:** `RxTimeout` is suppressed while SX1276 is receiving packet data. If demodulation loses track of the packet, SX1276 raises `RxTimeout` and returns to `STDBY`. Reception takes priority over the preamble-search timeout.
 
 #### The "Preamble Near Window End" Hazard & Host Supervision Rule
 - In `RxSingle` mode, `RegSymbTimeout` defines the time window to search for a preamble:
@@ -344,7 +333,6 @@ RxDone (DIO0 interrupt snapshot)
 
 ## 8. FIFO Memory Management, Host Buffer Capacity, and Ownership
 
-Source: Semtech SX1276 Datasheet Section 4.1.2.3 and Section 4.4; printed pp. 34–35, 114, PDF pp. 35–36, 115.
 
 ### 8.1. Pre-Copy Validation Checklist
 
@@ -429,7 +417,6 @@ To guarantee real-time predictability and prevent heap exhaustion:
 
 ## 9. Time-on-Air (ToA) Formulation and Static TDMA Guard Times
 
-Source: Datasheet Section 4.1.1.7; PDF page 31.
 
 The total packet transmission duration is:
 

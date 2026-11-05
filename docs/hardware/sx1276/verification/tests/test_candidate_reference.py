@@ -646,5 +646,19 @@ class TestFinalRemediationRegression(unittest.TestCase):
         )
 
 
+class TestAgentFirstHotDocs(unittest.TestCase):
+    """Hot context has register/configuration rules, not PDF citation metadata."""
+
+    def test_hot_docs_have_no_pdf_citation_metadata(self):
+        for name in HOT_FILES:
+            path = os.path.join(CANDIDATE_ROOT, name)
+            with self.subTest(file=name):
+                with open(path, encoding="utf-8") as f:
+                    text = f.read()
+                self.assertNotIn("Citation (Printed / PDF)", text)
+                self.assertNotRegex(text, r"(?m)^Source:\s")
+                self.assertNotRegex(text, r"(?i)\b(?:printed|pdf)\s+(?:pp?\.|pages?\b)")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,5 @@
 # SX1276 Active PHY Profile — PHY_PROFILE_MVP_V1
 
-Source: Project Owner Approved PHY Specification & Semtech SX1276 Datasheet Rev. 7 (May 2020), Sections 3.3.3, 4.1.1, 4.4; Printed pp. 26–31, 36, 82, 108–115 / PDF pp. 27–32, 37, 83, 109–116.
 
 ## 1. Approved PHY Parameters Summary
 
@@ -38,7 +37,6 @@ The project utilizes 11 discrete RF channels with a constant **250 kHz channel s
 
 ### Synthesizer Step and Quantization Precision
 
-Source: Datasheet Section 3.3.3 and Section 4.1.4 (Printed pp. 36, 82 / PDF pp. 37, 83).
 
 The RF carrier synthesizer step for the specified $F_{XOSC} = 32.000\text{ MHz}$ crystal is:
 
@@ -79,7 +77,6 @@ Because $250,000\text{ Hz} / 61.03515625\text{ Hz} = 4096 = 0x1000$ exactly, eve
 
 ## 3. Register Configuration for Active Profile
 
-Source: Datasheet Section 4.4, Table 41 (PDF pages 108–115).
 
 To guarantee protocol compliance, the driver must enforce the following register configurations:
 
@@ -150,7 +147,6 @@ When initializing the transceiver into `PHY_PROFILE_MVP_V1`, the driver must exe
 
 ## 5. Physical Time-on-Air (ToA) for Active Profile
 
-Source: Datasheet Section 4.1.1.7 (PDF page 31).
 
 For the active profile parameters ($BW = 125\text{ kHz}$, $SF = 7$, $CR = 1$, $IH = 0$, $CRC = 1$, $DE = 0$, $N_{preamble} = 8$):
 - **Symbol Duration:** $T_s = \frac{2^7}{125000} = \mathbf{1.024\text{ ms}}$.
