@@ -12,8 +12,10 @@ Root `iot/v1/gw/{gateway_id}`. **MQTT 5.0 bắt buộc** cho Gateway và Backend
 | `uplink/status` | Gateway → Backend | 1 | true | [status](schemas/status.schema.json) |
 | `uplink/schedule-ack` | Gateway → Backend | 1 | false | [schedule-ack](schemas/schedule-ack.schema.json) |
 | `uplink/command-ack` (bổ sung đề xuất) | Gateway → Backend | 1 | false | [command-ack](schemas/command-ack.schema.json) |
+| `uplink/session-key-ack` (NEW · DRAFT) | Gateway → Backend | 1 | **false** | [session-key-ack](schemas/session-key-ack.schema.json) |
 | `downlink/schedule` | Backend → Gateway | 1 | **false** | [schedule](schemas/schedule.schema.json) |
 | `downlink/command` | Backend → Gateway | 1 | false | [command](schemas/command.schema.json) |
+| `downlink/session-key-install` (NEW · DRAFT) | Backend → Gateway | 1 | **false** | [session-key-install](schemas/session-key-install.schema.json) |
 
 Gateway chỉ publish `uplink/#` và subscribe `downlink/#` của **chính mình**; Backend ngược lại. Topic `gateway_id` phải khớp danh tính đã được Broker xác thực; payload `gateway_id` phải khớp topic/identity (semantic check), không dùng riêng `ClientID` tự khai báo để cấp quyền. Web/Mobile không truy cập MQTT trực tiếp. Không tạo ngầm alias `iot/gw/{id}/control/schedule/set` hay `uplink/sched_ack` nêu trong tài liệu đính kèm: namespace canonical là của repository.
 
@@ -68,3 +70,15 @@ Các ràng buộc **MUST/SHOULD**, state transition table, error-code ownership,
 - Thiếu/nhầm ACL hoặc command quá hạn → từ chối.
 - JSON Schema không thay được kiểm tra liên trường: unique slot/node, thời hạn với clock, transition hợp lệ và airtime.
 - [Fixture](examples/cases.json) / [Hướng dẫn kiểm thử](../verification.md): chỉ là synthetic test; HIL/consumer approval **NOT_VERIFIED**.
+
+## 7. SESSION_KEY_INSTALL / SESSION_KEY_ACK (new versioned draft)
+
+Based on OWNER_APPROVED design decisions `MQTT-SESSION-KEY-01`, `MQTT-KEY-WRAP-01`, `MQTT-KEY-ACK-01` ([PR #116](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/pull/116#issuecomment-6568895005)). Detailed cryptographic/cross-field proposal: [session-key-security.md](session-key-security.md), `schemas/session-key-{install,ack}.schema.json`, `examples/session-key-cases.json`. Reconciled with Event-Only architecture and V2 Join Protocol (#125, #126, #127, #128, #136, #154).
+
+- New messages are `schema_version="1.1-draft"`; existing older 1.0-draft schema/fixtures are not silently rewritten in this PR. Cross-team version compatibility review required.
+- `gateway_id` remains a **string** MQTT identity (e.g. `gw01`), distinct from `target_gw_id:uint8` RF code; enforce an authenticated Backend-provisioned mapping. In MVP, Gateways hold exclusive VN920 channels CH00–CH10 (Issue #154).
+- `downlink/session-key-install`: QoS1, Retain=false, MQTT5 Message Expiry Interval bounded by `install_deadline`. Install requires authentic Node key confirmation (`UP_JOIN_CONFIRM:19B` in V1, or `UP_JOIN_KEY_CONFIRM:31B` / `DOWN_JOIN_FINISH:31B` in V2 #127/#136) and current authorized target/assignment. Ciphertext=64B (UP[32]||DL[32]) under per-Gateway AES-256-GCM is an Owner-approved V1 design; V2 key distribution vs local derivation is `OPEN_DECISION / BLOCKED_BY_#127`. No bootstrap root/confirm key is transmitted.
+- `uplink/session-key-ack`: QoS1, Retain=false, application-level HMAC. `INSTALLED` is sent only after secure *inactive* persistence. MQTT PUBACK alone never advances install state.
+- Post-install activation: Key installation places the slot into `INSTALLED_INACTIVE` on the Gateway; it does not grant TDMA DATA slot or active lease. Pre-staging before `not_before` is permitted, but keys cannot be used for DATA TX before `not_before` or after `expires_at`. In proposed V2 flow (#136), candidate Node readiness `UP_JOIN_READY` (0x49, candidate for Owner decision, verified at edge via `K_KC_UP`, not data session keys) and TDMA schedule staging/countdown (3→2→1) occur only after successful session key installation.
+- Event-Only data plane (#125): Key installation enables cryptographic verification for event-triggered transmissions (`Event TX → ACK RX`) and Maintenance superframe health sync; periodic business telemetry remains superseded.
+- Static JSON Schema validation ≠ GCM tag verification, authenticated current session, durable Flash write, G2/G4 or radio tests. This contract is pending cross-team/G2 security review.

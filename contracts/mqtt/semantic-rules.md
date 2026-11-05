@@ -90,3 +90,17 @@ Schedule `P-10S-15`, `superframe_ms=10000`, 400 ms slots and radio version mappi
 2. Backend: can it enforce dedup payload conflict detection, actual activation correlation and out-of-order ACK handling?
 3. Infrastructure/Security: authenticate principal↔topic binding; test SUBACK downgrade, retained handling, LWT/session expiry and broker queue durability?
 4. All: confirm application error-code names, action-specific params/permissions and RF version mapping with #12; revise draft schemas before freezing v1.
+
+## 7. Session key install extension — Owner-approved architecture, draft codec
+
+**New MQTT interfaces:** `downlink/session-key-install` and `uplink/session-key-ack`, QoS1/Retain=false, under existing `iot/v1/gw/{gateway_id}`. Full versioned schema, canonical AAD/ACK byte encoding, state transitions and inter-field checks: [session-key-security.md](session-key-security.md#5-cross-field-and-environment-rules-must-enforce-outside-json-schema), particularly **SK-01…SK-15**. Reconciled with Event-Only architecture and V2 Join Protocol (#125, #126, #127, #128, #136, #154).
+
+Specific invariants:
+1. **Identity & Channel:** Trusted MQTT string Gateway principal must map to RF uint8 `target_gw_id` via Backend-authenticated mapping. Each Gateway holds an exclusive VN920 channel (CH00–CH10, 920.250–922.750 MHz) registered persistently in PostgreSQL (Issue #154).
+2. **Handshake Confirmation Trigger & V1/V2 Boundaries:** Key installation is triggered only after authentic Node key confirmation (`UP_JOIN_CONFIRM:19B` in V1, or `UP_JOIN_KEY_CONFIRM:31B` / `DOWN_JOIN_FINISH:31B` in V2 #127/#136). Gateway receives only `K_SESSION_UP[32] || K_SESSION_DL[32]` wrapped by `K_GW_WRAP`; never `K_JOIN` or `K_JOIN_CONFIRM`. The 64B Backend-issued envelope is an Owner-approved V1 design; in V2, ephemeral ECDH shared secret $Z$ is known only to Node and Gateway, so V2 session key delivery vs local derivation remains an **`OPEN_DECISION / BLOCKED_BY_#127`**.
+3. **Envelope & Nonce:** AES-256-GCM uses independently provisioned per-Gateway 32B wrapping key with nonce uniqueness (`WRAP_KEY_EPOCH:4B || WRAP_SEQUENCE:8B`) across reboot and crash recovery. Retries reuse identical envelope and `install_id`.
+4. **Durable Inactive Persistence & Eligibility:** Gateway commits protected inactive key-slot (`INSTALLED_INACTIVE`) in NVS before sending authenticated `INSTALLED` ACK. Application ACK is authenticated using separately derived 32B MAC key (`K_ACK`). Pre-staging before `not_before` is allowed in `INSTALLED_INACTIVE` state, but keys MUST NOT transition to `ACTIVE` or encrypt/decrypt frames before `not_before` or after `expires_at`.
+5. **Post-Install Activation & Event-Only Invariant:** Key installation cannot grant TDMA DATA slot or active lease. In proposed V2 flow (#136), candidate Node readiness `UP_JOIN_READY` (0x49, 31B, non-normative candidate for Owner decision, verified at edge via `K_KC_UP`, not installed data session keys) and Backend TDMA schedule staging/countdown (3→2→1) occur strictly after key installation. Under Event-Only architecture (#125), data slots carry local-alarm-triggered event reports (`Event TX → ACK RX`) and periodic business telemetry is superseded.
+6. **Limits:** FormatChecker/JSON Schema alone cannot verify cryptographic authenticity, NVS persistence, broker ACLs, or RF timing.
+
+Review: Gateway / Backend Go / Infra-Security / CODEOWNERS. G2 security audit, Golden Vectors, MQTT broker/G4 integration, Flash fault injection and RF/HIL remain **NOT_VERIFIED**.
