@@ -289,7 +289,7 @@ def export_matrix_to_csv(results: Sequence[ToAResult]) -> str:
         "toa_calculated_ms",
         "datasheet_reference",
     ]
-    writer = csv.DictWriter(output, fieldnames=fields)
+    writer = csv.DictWriter(output, fieldnames=fields, lineterminator="\n")
     writer.writeheader()
     for r in results:
         d = r.to_dict()
