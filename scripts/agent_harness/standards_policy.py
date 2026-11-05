@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shlex
 import stat
 import subprocess
 
@@ -71,15 +72,119 @@ def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+TRUSTED_SYSTEM_FILTERS = {
+    "filter.lfs.clean": "git-lfs clean -- %f",
+    "filter.lfs.process": "git-lfs filter-process",
+    "filter.lfs.smudge": "git-lfs smudge -- %f",
+}
+
+
+def check_git_filters(repo, exc_class=StandardsError,
+                      err_msg="Configured Git filters require trusted disposable checkout"):
+    repo_path = Path(repo).resolve()
+    cmd = ["git", "--no-optional-locks", "-c", "core.fsmonitor=false", "-C", str(repo_path),
+           "config", "-z", "--show-origin", "--show-scope", "--get-regexp", r"^filter\..*\.(clean|process)$"]
+    try:
+        configured = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, timeout=30, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise exc_class(err_msg) from exc
+
+    if configured.returncode not in (0, 1):
+        raise exc_class(err_msg)
+
+    if configured.returncode == 0 and configured.stdout:
+        raw = configured.stdout
+        parts = raw.split(b"\0")
+        if len(parts) < 4 or (len(parts) - 1) % 3 != 0:
+            raise exc_class(err_msg)
+
+        for i in range(0, len(parts) - 1, 3):
+            try:
+                scope = parts[i].decode("utf-8", errors="strict").strip()
+                origin = parts[i + 1].decode("utf-8", errors="strict").strip()
+                key_val = parts[i + 2].decode("utf-8", errors="strict")
+            except UnicodeError:
+                raise exc_class(err_msg)
+
+            key, sep, val = key_val.partition("\n")
+            if not sep:
+                raise exc_class(err_msg)
+            key = key.strip()
+            val = val.strip()
+
+            if scope != "system":
+                raise exc_class(err_msg)
+
+            if not origin.startswith("file:"):
+                raise exc_class(err_msg)
+
+            raw_path = origin[5:]
+            origin_path = Path(raw_path)
+            if not origin_path.is_absolute():
+                raise exc_class(err_msg)
+
+            try:
+                st = origin_path.lstat()
+                if not stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode):
+                    raise exc_class(err_msg)
+            except OSError:
+                raise exc_class(err_msg)
+
+            try:
+                origin_path.resolve().relative_to(repo_path)
+                raise exc_class(err_msg)
+            except ValueError:
+                pass
+
+            if key not in TRUSTED_SYSTEM_FILTERS or val != TRUSTED_SYSTEM_FILTERS[key]:
+                raise exc_class(err_msg)
+
+    try:
+        for attr_file in repo_path.glob("**/.gitattributes"):
+            if attr_file.is_symlink():
+                raise exc_class(err_msg)
+            if attr_file.is_file():
+                for line in attr_file.read_text(errors="ignore").splitlines():
+                    try:
+                        tokens = shlex.split(line, comments=True)
+                    except ValueError:
+                        raise exc_class(err_msg)
+                    if len(tokens) >= 2:
+                        for attr in tokens[1:]:
+                            if attr == "filter" or attr.startswith("filter="):
+                                raise exc_class(err_msg)
+
+        gitdir_proc = subprocess.run(["git", "--no-optional-locks", "-C", str(repo_path), "rev-parse", "--git-dir"],
+                                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                     stderr=subprocess.DEVNULL, timeout=10, check=False)
+        if gitdir_proc.returncode == 0:
+            gitdir_str = gitdir_proc.stdout.decode("utf-8", errors="ignore").strip()
+            gitdir = Path(gitdir_str)
+            if not gitdir.is_absolute():
+                gitdir = (repo_path / gitdir).resolve()
+            info_attr = gitdir / "info" / "attributes"
+            if info_attr.is_symlink():
+                raise exc_class(err_msg)
+            if info_attr.is_file():
+                for line in info_attr.read_text(errors="ignore").splitlines():
+                    try:
+                        tokens = shlex.split(line, comments=True)
+                    except ValueError:
+                        raise exc_class(err_msg)
+                    if len(tokens) >= 2:
+                        for attr in tokens[1:]:
+                            if attr == "filter" or attr.startswith("filter="):
+                                raise exc_class(err_msg)
+    except (OSError, subprocess.SubprocessError):
+        raise exc_class(err_msg)
+
+
 def _git(repo, *args):
     if args and args[0] == "diff":
-        configured = subprocess.run(
-            ["git", "-c", "core.fsmonitor=false", "-C", str(repo), "config", "--name-only",
-             "--get-regexp", r"^filter\..*\.(clean|process)$"], capture_output=True,
-            timeout=30, check=False)
-        if configured.returncode not in (0, 1) or configured.stdout:
-            raise StandardsError("Configured Git filters require trusted disposable checkout")
+        check_git_filters(repo, StandardsError, "Configured Git filters require trusted disposable checkout")
     done = subprocess.run(["git", "--no-optional-locks", "-c", "core.fsmonitor=false",
+                           "-c", "filter.lfs.clean=", "-c", "filter.lfs.process=", "-c", "filter.lfs.smudge=",
                            "-C", str(repo), *args], stdin=subprocess.DEVNULL,
                           capture_output=True, timeout=30, check=False)
     if done.returncode or len(done.stdout) > MAX_CODE_BYTES:
