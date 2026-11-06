@@ -163,7 +163,7 @@ To avoid phantom increments or uncounted drops without introducing unreviewed fl
    - **Crash boundary:** A new Event staged but not yet durably committed is **not guaranteed preserved** across power loss. CoW/recovery aims to restore the previous or newly committed **valid queue snapshot** and avoid inconsistency; it is not a claim of zero data loss for all incoming real-world signals, nor a proof that every possible brownout can be recovered. Explicit status/failure evidence is required when recovery is ambiguous.
    - **No atomicity shortcut:** `nvs_set_blob()`, CRC or a standalone `nvs_commit()` call **do not by themselves prove atomic cross-record Event + metadata transactions**. Implementation must specify staging capacity, record validation, commit marker/generation, power-fail-safe switching and reclamation order; recoverability must be demonstrated. If Flash full or integrity cannot be established, fail safely rather than falsely increment/drop.
    - **Owner & HIL scope:** Firmware design/implementation belongs to **Issue #131** (Node Event FIFO). Node-specific power-loss HIL must be separately scoped there or in a dedicated Node HIL Issue. **Issue #175 is the Gateway `INSTALLED_INACTIVE` key-slot NVS fault-injection task, NOT Node FIFO validation.** It may share test methods but its PASS does not certify this decision.
-   - **Boundary:** No firmware/schema/Flash layout/codepoint is authorized by this design document. `0x4A = NOT_APPROVED_WIRE`; `DEC-DIAG-01` wire approval, `DEC-DIAG-02/04/06`, physical HIL and G2 remain separately gated.
+   - **Boundary:** No firmware/schema/Flash layout/codepoint is authorized by this design document. `0x4A = NOT_APPROVED_WIRE`; `DEC-DIAG-01` wire approval, `DEC-DIAG-02` feasibility, `DEC-DIAG-04` implementation verification, `DEC-DIAG-06` wire allocation, physical HIL and G2 remain separately gated.
 
 #### DEC-DIAG-05 Design Requirements — Pre-Implementation Gate
 
@@ -559,7 +559,7 @@ In accordance with RFC 3610, reusing a $(K, N)$ pair under AES-CCM destroys mess
    - Under a new key, `FRAME_COUNTER = 0` is strictly safe.
    - *Residual Risk during Deep Sleep:* If session keys are preserved in RTC memory across Light/Deep Sleep to avoid re-joining, `FRAME_COUNTER` must also be preserved in RTC memory. An unhandled brownout resetting RTC memory without clearing session keys would create a catastrophic nonce reuse hazard.
 2. **Failure Mode 2: Retransmission / Retry:**
-   - For diagnostic frames, we propose a strict best-effort zero-retry policy.
+   - For future **approved** Diagnostic frames, the Owner has selected Best-Effort Zero Retry under `DEC-DIAG-04 Option A / OWNER_APPROVED_POLICY` (2026-11-07); RF TX remains forbidden until separate wire/schedule authorization.
    - If retries are ever enabled, RFC 3610 mandates that the node must re-transmit the **exact identical ciphertext and Nonce** buffered in memory. Re-encrypting mutated plaintext with the same `FRAME_COUNTER` is cryptographically fatal.
 3. **Failure Mode 3: Concurrent Frame Creation (FreeRTOS Concurrency):**
    - On a dual-core ESP32, an Event Task (producing `UP_EVENT`) and a Telemetry Task (producing `UP_HEALTH_REPLY` or `UP_DIAG_METRICS`) could execute concurrently.
