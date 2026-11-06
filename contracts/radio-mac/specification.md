@@ -188,13 +188,12 @@ Tuân thủ nghiêm ngặt các quyết định `DEC-SEC-01` .. `DEC-SEC-07` đ�
      $$(\text{gateway\_id}, \text{node\_id}, \text{session\_sel}, \text{frame\_counter}) \longrightarrow \text{event\_id}$$
 2. **Chính sách Tràn bộ nhớ đệm tại Node (`DEC-127-04` — Owner Phê duyệt 2026-11-06; Bổ chính MAC-01):**
    - Khi mạng mất kết nối kéo dài và hàng đợi NVS FIFO đầy tải, Node áp dụng chính sách **`RING_BUFFER_DROP_OLDEST`**: Ghi đè sự kiện cũ nhất để ưu tiên lưu giữ và truyền báo động mới nhất, đồng thời bắt buộc phải tăng và lưu trữ bền vững bộ đếm mất sự kiện `DROPPED_EVENT_COUNT` trong bộ nhớ NVS non-volatile.
-   - **Bổ chính MAC-01 (Kênh truyền tải số liệu mất mát — DEC-MH-08):**
+   - **Bổ chính MAC-01 (Kênh truyền tải số liệu mất mát — `DEC-MH-08`):**
      - Bản tin sức khỏe định kỳ `UP_HEALTH_REPLY` (0x44, 21B) đã được Owner phê duyệt (`DEC-MH-02`) có bố cục cố định và **không có trường truyền tải `DROPPED_EVENT_COUNT`** (trường `PENDING_COUNT: 1B` chỉ phản ánh số lượng sự kiện hiện đang nằm trong FIFO chưa được ACK, không phải bộ đếm tích lũy sự kiện bị mất).
-     - Việc truyền tải `DROPPED_EVENT_COUNT` lên Gateway/Backend qua sóng RF hiện được phân loại là **`OPEN_DECISION (DEC-MH-08) / NOT_IMPLEMENTED_ON_WIRE`**. Cấm tùy tiện sửa đổi bố cục 21B khi chưa có phê duyệt chính thức từ Owner.
-     - **Các phương án phiên bản hóa ứng viên (`DEC-MH-08`):**
-       - *Phương án 1 (Bản tin Chẩn đoán Riêng biệt — Khuyến nghị):* Giữ nguyên bản tin 21B `UP_HEALTH_REPLY` để tối ưu airtime (56.6ms tại SF7). Định nghĩa bản tin quản trị chẩn đoán riêng (ví dụ `UP_DIAG_METRICS`, mã `0x4A`, candidate) được truyền theo yêu cầu hoặc trong chu kỳ bảo trì, mang bộ đếm mất gói 32-bit, thống kê retry và điện áp pin.
-       - *Phương án 2 (Bản sửa đổi Bố cục Health trong tương lai):* Trình Owner phê duyệt phiên bản mới của bản tin Health (ví dụ 23B hoặc 25B bổ sung `DROPPED_COUNT: 2B/4B`). Đánh đổi: tăng thời gian chiếm sóng ToA và phá vỡ tính tương thích ngược với layout 21B đã đóng băng.
-       - *Phương án 3 (Cờ cảnh báo tràn trong STATUS_FLAGS):* Sử dụng 1 bit dự phòng trong `STATUS_FLAGS` (ví dụ Bit 4 `FLAG_HAS_DROPPED_EVENTS`) để báo hiệu có mất mát, kích hoạt Backend truy vấn chẩn đoán chi tiết sau đó mà không cần mở rộng frame 21B.
+     - **Chủ trương định hướng đã duyệt (`DEC-MH-08` — `OWNER_APPROVED_DIRECTION / PLANNED_NOT_IMPLEMENTED`):**
+       - Giữ nguyên 100% bản tin 21B `UP_HEALTH_REPLY` (`0x44`) để tối ưu thời gian chiếm sóng airtime (56.6ms tại SF7).
+       - Project Owner đã chính thức phê duyệt định hướng áp dụng **bản tin quản trị/chẩn đoán riêng biệt có phiên bản (separate versioned diagnostic/management message)** để báo cáo số liệu mất mát `DROPPED_EVENT_COUNT`, thống kê retry và điện áp pin.
+       - **Ranh giới thực thi:** Mã định danh `0x4A` (ví dụ `UP_DIAG_METRICS`) chỉ là mã loại gói tin ứng viên (candidate packet type only), chưa được phê duyệt hợp đồng chi tiết. **Tuyệt đối không phát hành, gán byte wire format, hoặc truyền nhận loại bản tin này trong phạm vi PR hiện tại.** Việc chuẩn hóa bố cục wire cho bản tin chẩn đoán sẽ được giao cho một Issue hợp đồng riêng biệt sau khi có phê duyệt từ Owner.
 
 ---
 
@@ -204,8 +203,9 @@ Tuân thủ nghiêm ngặt các quyết định `DEC-SEC-01` .. `DEC-SEC-07` đ�
    - Vận hành hệ thống MVP V1 được **giới hạn nghiêm ngặt ở SF7 và SF8**.
    - **Đối chiếu ToA khứ hồi hai chiều (Bổ chính TIM-01):**
      - Tại **SF7:** $\text{ToA}_{\text{EVENT}} (61.696\text{ms}) + \tau_{\text{turnaround}} (20\text{ms}) + \text{ToA}_{\text{ACK}} (51.456\text{ms}) \approx 133.152\text{ms} < 250\text{ms}$. Hoàn toàn bảo đảm hoàn thành an toàn trong khe 400ms và phong bì minh họa $[25, 245)\text{ms}$.
-     - Tại **SF8:** $\text{ToA}_{\text{EVENT}} (113.152\text{ms}) + \tau_{\text{turnaround}} (20\text{ms}) + \text{ToA}_{\text{ACK}} (102.912\text{ms}) \approx 236.064\text{ms} > 220\text{ms}$. Dù tổng ToA RF lý thuyết ($216.064\text{ms}$) vẫn nằm trong khe 400ms, nó vượt quá phong bì minh họa $[25, 245)\text{ms}$ và từng cửa sổ con 100ms. Phân bổ cửa sổ con cho SF8 được xử lý theo `DEC-127-06` (Candidate) trong `tdma-schedule.md` Mục 2.4.
-   - Các cấu hình SF9+ tạm thời không kích hoạt trên luồng dữ liệu thời gian thực; việc điều chỉnh độ dài khe 400ms sẽ được tái đánh giá sau khi có số liệu đo đạc vật lý từ Issue #169.
+     - Tại **SF8:** $\text{ToA}_{\text{EVENT}} (113.152\text{ms}) + \tau_{\text{turnaround}} (20\text{ms}) + \text{ToA}_{\text{ACK}} (102.912\text{ms}) \approx 236.064\text{ms} > 220\text{ms}$. Dù tổng ToA RF lý thuyết ($216.064\text{ms}$) vẫn nằm trong khe 400ms, nó vượt quá phong bì minh họa $[25, 245)\text{ms}$ và từng cửa sổ con 100ms.
+   - **Tham số hóa hình học khe (`DEC-127-06` — `OWNER_APPROVED_DIRECTION / NOT_HIL_VERIFIED`):** Thời gian khe TDMA không bị đóng băng cứng nhắc, mà tuân thủ mô hình tham số hóa được thẩm định tự động fail-closed. Bộ số ví dụ minh họa ($25+125+35+115+100=400\text{ms}$) chỉ là ví dụ ứng viên, không phải profile cố định.
+   - Các cấu hình SF9+ tạm thời không kích hoạt trên luồng dữ liệu thời gian thực; việc điều chỉnh độ dài khe sẽ được tái đánh giá sau khi có số liệu đo đạc vật lý từ Issue #169.
 2. **Độc lập Đo đạc Vật lý (#169):**
    - Mọi hằng số thời gian số học (ms) trong tài liệu này đều mang tính chất định danh biểu tượng (symbolic). Việc đóng băng chính thức các hằng số Guard Time và khe TDMA bị khóa (`BLOCKED`) chờ kết quả đo đạc thực tế từ Issue #169.
 

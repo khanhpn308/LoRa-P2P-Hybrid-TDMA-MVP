@@ -92,29 +92,23 @@ T_{\text{slot}} \ge W_{\text{lead}} + \text{ToA}_{\text{EVENT}} + \tau_{\text{tu
 
 - **Quy tắc Fail-Closed:** Nếu thông số $\tau_{\text{WAL\_GW}}$ (độ trễ ghi SQLite/WAL tại Gateway) chưa được đo đạc chính thức hoặc vượt quá $W_{\text{GAP}} - \tau_{\text{turnaround}}$, bộ thẩm định lịch **bắt buộc phải từ chối lịch (`FAIL_CLOSED`)**.
 
-### 2.4 Phương án Khắc phục Ứng viên (Candidate Solutions — Chờ Duyệt)
+### 2.4 Định hướng Kỹ thuật Được Duyệt & Phương án Ứng viên (DEC-127-06 & DEC-MH-07)
 
-Việc khắc phục các mâu thuẫn trên được đưa vào danh mục `OPEN_DECISION` / `CANDIDATE` (không tự ý thay đổi quyết định đã chốt `DEC-127-03` hay bố cục bản tin đã duyệt `DEC-MH-01`):
+Theo Quyết định Định hướng của Project Owner (2026-11-06, Issue #201 / PR #202):
 
-1. **Khắc phục TIM-01 (Static DATA Slot tại SF8 — DEC-127-06):**
-   - **Phương án A (Tái phân bổ cửa sổ con trong khe 400ms):**
-     Tổng thời gian ToA lý thuyết của SF8 là $113.152 + 102.912 = 216.064\text{ms}$. Trong khe 400ms, tổng biên an toàn còn lại là $400 - 216.064 = 183.936\text{ms}$.
-     *Đề xuất tái phân bổ ứng viên:*
-     - Leading Guard: $[0, 25)\text{ms}$ (25ms)
-     - `UP_EVENT` sub-window: $[25, 150)\text{ms}$ (125ms $\ge 113.152\text{ms}$)
-     - Gateway Turnaround & WAL: $[150, 185)\text{ms}$ (35ms $\ge 20\text{ms} + 15\text{ms}$)
-     - `DOWN_EVENT_ACK` sub-window: $[185, 300)\text{ms}$ (115ms $\ge 102.912\text{ms}$)
-     - Trailing Guard: $[300, 400)\text{ms}$ (100ms)
-   - **Phương án B (Giới hạn PHY Static DATA ở SF7):**
-     Khóa cố định các khe dữ liệu tĩnh ở SF7; SF8 chỉ sử dụng cho các profile khe mở rộng đặc biệt.
-   - **Phương án C (Nới rộng độ dài khe):**
-     Mở rộng $T_{\text{slot}}$ lên 500ms hoặc 600ms nếu độ trễ WAL tại Gateway đòi hỏi biên lớn hơn.
+1. **Khắc phục TIM-01 — Cấu trúc Hình học Khe DATA Tham số hóa (`DEC-127-06` — `OWNER_APPROVED_DIRECTION / NOT_HIL_VERIFIED`):**
+   - **Chủ trương được duyệt:** Giữ nguyên khả năng vận hành SF7 và SF8 cho hệ thống. Thời gian khe TDMA và các cửa sổ con **không bị đóng băng thành các hằng số số học cố định** ở giai đoạn này, mà được đặc tả dưới dạng **hệ thức tham số hóa được thẩm định tự động (parameterized, validator-checkable slot geometry)**.
+   - **Phân định trách nhiệm kiến trúc:**
+     - **Backend Go:** Lập kế hoạch phân bổ lịch, tham số hóa các cửa sổ con ($W_{\text{lead}}, W_{\text{UP\_EVENT}}, W_{\text{GAP}}, W_{\text{DOWN\_ACK}}, W_{\text{trail}}$) linh hoạt dựa trên cấu hình PHY thực tế (SF, BW, CR, preamble, payload) và phiên bản hóa lịch qua MQTT.
+     - **Gateway:** Thẩm định tính khả thi của lịch nhận được bằng hệ bất đẳng thức biểu tượng; từ chối fail-closed nếu thiếu tham số đo đạc ($\tau_{\text{WAL}}$) hoặc vi phạm ngân sách; phát thông báo đếm ngược $3 \to 2 \to 1$ có chữ ký Ed25519 qua Beacon; thực thi đóng ngắt TX/RX theo lịch.
+     - **Sensor Node:** Tuân thủ nghiêm ngặt lịch active; đánh giá 8 tầng bảo vệ fail-closed trước khi phát sóng.
+     - **Bảo lưu an toàn:** Giữ nguyên hàng rào đếm ngược 3 chu kỳ ($3 \to 2 \to 1$) và yêu cầu 100%-READY (`DEC-SEC-05`).
+   - **Ví dụ ứng viên (Candidate Example Only — Tuyệt đối không phải profile cố định):**
+     Ví dụ khe 400ms với phân bổ $25\text{ms} \text{ lead} + 125\text{ms } (\text{UP\_EVENT}) + 35\text{ms } (\text{GW Turnaround \& WAL}) + 115\text{ms } (\text{DOWN\_ACK}) + 100\text{ms} \text{ trail} = 400\text{ms}$ chỉ mang tính chất minh họa chứng minh tính khả thi về mặt số học lý thuyết cho SF8; **chưa được phê duyệt làm profile cố định**. Việc chốt hằng số bắt buộc chờ số liệu đo đạc thực tế từ Issue #169.
 
-2. **Khắc phục TIM-02 (Cửa sổ Beacon 80B tại SF8 — DEC-MH-07):**
-   - **Phương án A (Mở rộng cửa sổ Slot 0 trong Maintenance Superframe):**
-     Tăng độ dài Slot 0 lên 400ms (hoặc 500ms) trong chu kỳ Maintenance Superframe (~300s). Do chu kỳ bảo trì diễn ra rất thưa, tác động airtime lên Gateway là tối thiểu.
-   - **Phương án B (Khóa cấu hình PHY của Beacon ở SF7):**
-     Quy định riêng bản tin `DOWN_SYNC_BEACON` luôn phát tại SF7 ($\text{ToA} = 143.616\text{ms}$, vừa vặn trong 250ms). Nhược điểm: độ nhạy thu giảm ~2.5 dB so với SF8.
+2. **Khắc phục TIM-02 — Tham số hóa Cửa sổ Beacon 80B (`DEC-MH-07` — `OWNER_APPROVED_DIRECTION / NOT_HIL_VERIFIED`):**
+   - **Chủ trương được duyệt:** Giữ nguyên bố cục wire của gói tin đồng bộ `DOWN_SYNC_BEACON` (80B Ed25519, `DEC-MH-01`).
+   - **Tham số hóa cửa sổ Beacon:** Cửa sổ phát Beacon trong Maintenance Superframe được tham số hóa theo SF đang áp dụng. Cửa sổ 400ms tại SF8 là ví dụ ứng viên (candidate example), không phải hằng số đóng băng; tùy chọn phát Beacon cố định ở SF7 ($\text{ToA} = 143.616\text{ms}$) là phương án dự phòng ứng viên. Cần đánh giá ngân sách thời gian Maintenance Superframe (~300s) và đo đạc HIL thực địa tại Issue #169.
 
 ---
 
@@ -168,8 +162,8 @@ Trước khi bộ điều khiển radio chuyển chip SX1276 sang trạng thái 
    - **Đối chiếu ToA khứ hồi hai chiều:**
      - **Tại SF7:** $\text{ToA}_{\text{EVENT}} (61.696\text{ms}) + \tau_{\text{turnaround}} (20\text{ms}) + \text{ToA}_{\text{ACK}} (51.456\text{ms}) \approx 133.152\text{ms} < 250\text{ms}$. Hoàn toàn vừa vặn trong phong bì minh họa $[25, 245)\text{ms}$ (220ms) và khe 400ms.
      - **Tại SF8:** $\text{ToA}_{\text{EVENT}} (113.152\text{ms}) + \tau_{\text{turnaround}} (20\text{ms}) + \text{ToA}_{\text{ACK}} (102.912\text{ms}) \approx 236.064\text{ms} > 220\text{ms}$. Vượt quá phong bì $[25, 245)\text{ms}$, dù tổng ToA RF lý thuyết ($216.064\text{ms}$) vẫn nằm trong giới hạn khe 400ms (biên còn lại $183.936\text{ms}$).
-   - **Bổ chính:** Hình minh họa cửa sổ con cũ $100\text{ms} / 20\text{ms} / 100\text{ms}$ không áp dụng cho SF8; việc phân bổ lại cửa sổ con trong khe 400ms cho SF8 được đề xuất theo `DEC-127-06` (Candidate) và bắt buộc kiểm chứng thực tế tại Issue #169 trước khi đóng băng hằng số. Độ dài khe 400ms sẽ được tái đánh giá nếu độ trễ ghi WAL tại Gateway ($\tau_{\text{WAL}}$) vượt quá biên cho phép.
-   - Độ dài khe 400ms sẽ được tái đánh giá và điều chỉnh sau khi có kết quả đo đạc vật lý thực địa từ Issue #169.
+   - **Bổ chính (`DEC-127-06` — `OWNER_APPROVED_DIRECTION / NOT_HIL_VERIFIED`):** Hình minh họa cửa sổ con cũ $100\text{ms} / 20\text{ms} / 100\text{ms}$ không áp dụng cho SF8. Theo Quyết định Định hướng của Owner, cấu trúc hình học khe TDMA không đóng băng cứng nhắc ở hằng số 400ms hay bộ số cố định, mà được đặc tả dưới dạng hệ thức tham số hóa được thẩm định tự động fail-closed. Bộ số ví dụ minh họa ($25+125+35+115+100=400\text{ms}$) là hình minh họa ứng viên, không phải profile cố định. Việc chốt hằng số bắt buộc kiểm chứng thực tế tại Issue #169.
+   - Độ dài khe và các cửa sổ con sẽ được tái đánh giá và điều chỉnh sau khi có kết quả đo đạc vật lý thực địa từ Issue #169.
 2. **Khóa Hằng số Số học Chờ Bằng chứng Vật lý:**
    - Tuyệt đối cấm tuyên bố vượt qua cổng G1/G2 hoặc đóng băng các hằng số Guard Time số học trước khi hoàn tất đo đạc trên phần cứng thật tại Issue #169.
 

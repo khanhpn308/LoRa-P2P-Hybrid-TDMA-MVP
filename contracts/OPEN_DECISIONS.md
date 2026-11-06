@@ -2,10 +2,13 @@
 
 **Quy tắc phân loại trạng thái:**
 - `OWNER_APPROVED_DESIGN`: Thiết kế đã được Project Owner phê duyệt chính thức bằng văn bản/commit; làm cơ sở ràng buộc kiến trúc nhưng chưa đồng nghĩa với hoàn tất kiểm thử vật lý hay code production.
+- `OWNER_APPROVED_DIRECTION`: Chủ trương định hướng kỹ thuật đã được Project Owner phê duyệt chính thức (2026-11-06); xác lập nguyên tắc kiến trúc và tiêu chí thẩm định fail-closed nhưng **không đóng băng các hằng số số học cố định** hay gán byte wire khi chưa có đo đạc thực tế / hợp đồng riêng.
 - `CONFIRMED`: Chủ đích kiến trúc đã được xác nhận trong ADR hoặc baseline repo.
 - `CANDIDATE`: Đề xuất kỹ thuật đang chờ xem xét liên chức năng và phê duyệt từ Owner.
+- `PLANNED_NOT_IMPLEMENTED`: Đã được chấp thuận định hướng trong kiến trúc nhưng chưa cấp phát mã trên dây (wire codepoint) hoặc chưa triển khai mã nguồn trong phạm vi hợp đồng hiện tại.
 - `OPEN_DECISION`: Vấn đề kỹ thuật mở cần lựa chọn phương án trước khi đóng băng hợp đồng.
 - `BLOCKED`: Điểm nghẽn kỹ thuật bắt buộc phải có ADR mới hoặc bằng chứng đo đạc vật lý G1/G2 trước khi đóng băng.
+- `NOT_HIL_VERIFIED`: Chưa có bằng chứng đo đạc thực tế trên phần cứng thật (Issue #169).
 
 ---
 
@@ -38,9 +41,9 @@
 | **DEC-MH-05** | Đồng bộ chuyển lịch 3 chu kỳ | Phát cờ đếm ngược $3 \to 2 \to 1$ trong Beacon và yêu cầu 100% Node bị ảnh hưởng sẵn sàng trước khi cắt chuyển lịch active. | `CANDIDATE` (Đồng bộ với SEC-05) · GW / Backend |
 | **DEC-MH-06** | Rào chắn bán song công SX1276 | Thiết lập khoảng bảo vệ tối thiểu giữa RX và TX turnaround để tránh xung đột phần cứng khi radio đang nhận packet. | `CANDIDATE` (Chờ đo đạc #169) · Embedded / RF |
 | **DEC-127-05** | SLA ghi bền vững WAL tại Gateway | Xác định giới hạn mili-giây cho thao tác ghi SQLite/WAL tại Gateway trước khi phát `DOWN_EVENT_ACK` trên RF để cam kết 0% mất dữ liệu. | `OPEN_DECISION` · Gateway Engine / SQLite |
-| **DEC-127-06** | Tái phân bổ cửa sổ con trong Khe Tĩnh cho SF8 (TIM-01) | Cửa sổ con cũ $100\text{ms}/20\text{ms}/100\text{ms}$ và phong bì 220ms không đủ cho SF8. Đề xuất: Phương án A: Tái phân bổ trong khe 400ms (Lead 25ms, UP_EVENT 125ms, Turnaround/WAL 35ms, DOWN_ACK 115ms, Trailing 100ms); Phương án B: Giới hạn DATA slot ở SF7; Phương án C: Nới rộng slot lên 500ms. | `OPEN_DECISION` / `CANDIDATE` (Chờ đo đạc #169) · MAC Scheduler / RF |
-| **DEC-MH-07** | Cửa sổ phát Beacon 80B trong Maintenance Superframe (TIM-02) | ToA Beacon 80B Ed25519 tại SF8 là 256.512ms > cửa sổ 250ms. Đề xuất: Phương án A: Tăng Slot 0 lên 400ms trong Maintenance Superframe (~300s); Phương án B: Khóa PHY Beacon phát ở SF7 (ToA 143.616ms). Giữ nguyên bố cục wire Ed25519 80B (`DEC-MH-01`). | `OPEN_DECISION` · Gateway / MAC Scheduler |
-| **DEC-MH-08** | Cơ chế truyền tải số liệu mất mát `DROPPED_EVENT_COUNT` (MAC-01) | Bố cục 21B `UP_HEALTH_REPLY` (`DEC-MH-02`) không có trường cho `DROPPED_EVENT_COUNT`. Đề xuất: Phương án 1 (Khuyến nghị): Bản tin chẩn đoán riêng biệt (e.g. `UP_DIAG_METRICS`, 0x4A, candidate) truyền theo chu kỳ bảo trì, giữ nguyên 21B; Phương án 2: Phiên bản sửa đổi layout Health frame trong tương lai (cần Owner duyệt); Phương án 3: Bit cảnh báo trong `STATUS_FLAGS`. | `OPEN_DECISION` · MAC Protocol / Backend Go |
+| **DEC-127-06** | Tham số hóa hình học Khe Tĩnh DATA cho SF7 & SF8 (TIM-01) | Duy trì khả năng vận hành SF7/SF8. Quy định cấu trúc hình học khe DATA tĩnh là hệ thức tham số hóa được thẩm định tự động (`validator-checkable`) dựa trên PHY thực tế + ToA lý thuyết + trễ đo đạc thực tế (turnaround, WAL commit Gateway, jitter ngắt, clock drift, guards, airtime duty). Ví dụ 400ms ($25+125+35+115+100\text{ms}$) là **hình minh họa ứng viên (candidate example only)**, **tuyệt đối không phải profile cố định**. Backend lập lịch & quản lý phiên bản, Gateway thực thi, Node tuân thủ; duy trì xác thực đếm ngược $3 \to 2 \to 1$ và hàng rào 100%-READY. Bắt buộc fail-closed khi thiếu tham số hoặc vi phạm bất đẳng thức. | `OWNER_APPROVED_DIRECTION / NOT_HIL_VERIFIED` · Owner Phê duyệt (2026-11-06, Issue #201 / PR #202 Comment) |
+| **DEC-MH-07** | Tham số hóa Cửa sổ phát Beacon 80B trong Maintenance Superframe (TIM-02) | Giữ nguyên khung bản tin 80B Ed25519 đã duyệt (`DEC-MH-01`); **tham số hóa cửa sổ Beacon (parameterized Beacon window)** theo cấu hình PHY đang kích hoạt. Cửa sổ 400ms tại SF8 là ví dụ ứng viên, không cố định số học; tùy chọn khóa Beacon ở SF7 là phương án dự phòng ứng viên. Cần kiểm tra ngân sách thời gian Maintenance Superframe và đo đạc HIL #169. | `OWNER_APPROVED_DIRECTION / NOT_HIL_VERIFIED` · Owner Phê duyệt (2026-11-06, Issue #201 / PR #202 Comment) |
+| **DEC-MH-08** | Kênh truyền tải số liệu mất mát `DROPPED_EVENT_COUNT` của Node (MAC-01) | Giữ nguyên 100% bản tin `UP_HEALTH_REPLY` (`0x44`, 21B) hiện hành (`DEC-MH-02`) và duy trì bộ đếm bền vững `DROPPED_EVENT_COUNT` trong NVS flash của Node. Duyệt định hướng sử dụng **bản tin quản trị/chẩn đoán riêng biệt có phiên bản (separate versioned diagnostic/management message)** để báo cáo số liệu mất mát. Mã `0x4A` chỉ là mã loại gói tin ứng viên (candidate packet type only) chờ hợp đồng phân bổ riêng; **tuyệt đối không phát hành hoặc gán byte wire format trong PR này**. | `OWNER_APPROVED_DIRECTION` (Định hướng được duyệt) / `PLANNED_NOT_IMPLEMENTED` (Chưa triển khai trên wire) · Owner Phê duyệt (2026-11-06, Issue #201 / PR #202 Comment) |
 
 ---
 

@@ -275,7 +275,12 @@ def test_tim_01_symbolic_budget_passes_for_legacy_sf7_with_bounded_wal():
 
 
 def test_tim_01_symbolic_budget_candidate_rebalanced_sf8():
-    """Verify a proposed rebalanced candidate sub-window schedule for SF8 can pass validator."""
+    """Verify a proposed rebalanced candidate sub-window schedule for SF8 can pass validator.
+
+    DEC-127-06 (OWNER_APPROVED_DIRECTION / NOT_HIL_VERIFIED):
+    This profile is strictly a non-normative candidate example to demonstrate theoretical feasibility.
+    It is NOT an approved or frozen numeric profile; actual slot geometry requires #169 HIL measurement.
+    """
     # Proposed candidate sub-windows for SF8:
     # Lead guard: 25ms [0..25)
     # UP_EVENT: 125ms [25..150) (accommodates 113.152ms)
@@ -327,3 +332,28 @@ def test_mac_01_health_reply_21b_field_budget_incompatibility():
     # or defining a separate diagnostic wire format.
     dropped_counter_min_bytes = 2  # u16
     assert dropped_counter_min_bytes > remaining_bytes
+
+
+def test_mac_01_candidate_0x4a_packet_type_not_implemented_on_wire():
+    """Verify DEC-MH-08 (OWNER_APPROVED_DIRECTION / PLANNED_NOT_IMPLEMENTED):
+
+    Separate diagnostic/management message (candidate 0x4A) is not assigned or emitted
+    in the active V2 Wire Registry. The approved active wire codepoints remain strictly:
+    0x41 (UP_EVENT), 0x42 (DOWN_EVENT_ACK), 0x43 (DOWN_SYNC_BEACON), 0x44 (UP_HEALTH_REPLY),
+    0x45 (UP_JOIN_HELLO), 0x46 (DOWN_JOIN_GRANT), 0x47 (UP_JOIN_KEY_CONFIRM),
+    0x48 (DOWN_JOIN_FINISH), 0x49 (UP_JOIN_READY).
+    """
+    approved_active_v2_codepoints = {
+        0x41: "UP_EVENT",
+        0x42: "DOWN_EVENT_ACK",
+        0x43: "DOWN_SYNC_BEACON",
+        0x44: "UP_HEALTH_REPLY",
+        0x45: "UP_JOIN_HELLO",
+        0x46: "DOWN_JOIN_GRANT",
+        0x47: "UP_JOIN_KEY_CONFIRM",
+        0x48: "DOWN_JOIN_FINISH",
+        0x49: "UP_JOIN_READY",
+    }
+    candidate_mgmt_codepoint = 0x4A
+    # Assert candidate 0x4A is NOT in approved active wire codepoints
+    assert candidate_mgmt_codepoint not in approved_active_v2_codepoints
