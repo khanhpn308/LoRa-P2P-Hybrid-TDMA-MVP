@@ -1,9 +1,9 @@
 # LP2P V2 Join, Session Key & READY Security Test Matrix
 
-**Document ID:** `DOC-VERIF-V2-JOIN-CRYPTO-TEST-001`  
-**Status:** `DRAFT_FOR_OWNER_REVIEW` · `IMPLEMENTATION_READY=NO` · `G2=NOT_VERIFIED`  
-**Parent Tracking:** Issue #182 (Agent 3 Work Package), Parent Issue #127 (Migration Integration Gate), Umbrella Issue #125, Architecture Child Issue #126.  
-**Companion Dossier:** [V2 Join & Session Key Compatibility Decisions](v2-join-session-key-compatibility-decisions.md).  
+**Document ID:** `DOC-VERIF-V2-JOIN-CRYPTO-TEST-001`
+**Status:** `DRAFT_FOR_OWNER_REVIEW` · `IMPLEMENTATION_READY=NO` · `G2=NOT_VERIFIED`
+**Parent Tracking:** Issue #182 (Agent 3 Work Package), Parent Issue #127 (Migration Integration Gate), Umbrella Issue #125, Architecture Child Issue #126.
+**Companion Dossier:** [V2 Join & Session Key Compatibility Decisions](v2-join-session-key-compatibility-decisions.md).
 **Related Test Documents:**
 - [V2 Post-Join Activation Test Matrix (Issue #136)](join-v2-ready-tdma-activation-test-matrix.md)
 - [V2 Maintenance SF & Health Test Matrix (Issue #178)](v2-maintenance-beacon-health-test-matrix.md)

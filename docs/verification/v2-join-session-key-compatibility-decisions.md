@@ -1,10 +1,10 @@
 # LP2P V2 Join, X25519 Session Key Authority & READY Security Compatibility Decisions
 
-**Document ID:** `DOC-VERIF-V2-JOIN-CRYPTO-DEC-001`  
-**Status:** `DRAFT_FOR_OWNER_REVIEW` · `IMPLEMENTATION_READY=NO` · `G2=NOT_VERIFIED`  
-**Parent Tracking:** Issue #182 (Agent 3 Work Package), Parent Issue #127 (Migration Integration Gate), Umbrella Issue #125, Architecture Child Issue #126.  
-**Parallel Work Packages:** Agent 1 (#177, V2 Event DATA/ACK Compatibility Review), Agent 2 (#178, V2 Maintenance Superframe, Beacon & Health Compatibility).  
-**Downstream Verification Dependencies:** #173 (Go ↔ ESP-IDF mbedTLS AES-256-GCM / HMAC Interop Vectors), #174 (Mosquitto MQTT Broker Integration), #175 (ESP32 Gateway NVS Power-Loss HIL).  
+**Document ID:** `DOC-VERIF-V2-JOIN-CRYPTO-DEC-001`
+**Status:** `DRAFT_FOR_OWNER_REVIEW` · `IMPLEMENTATION_READY=NO` · `G2=NOT_VERIFIED`
+**Parent Tracking:** Issue #182 (Agent 3 Work Package), Parent Issue #127 (Migration Integration Gate), Umbrella Issue #125, Architecture Child Issue #126.
+**Parallel Work Packages:** Agent 1 (#177, V2 Event DATA/ACK Compatibility Review), Agent 2 (#178, V2 Maintenance Superframe, Beacon & Health Compatibility).
+**Downstream Verification Dependencies:** #173 (Go ↔ ESP-IDF mbedTLS AES-256-GCM / HMAC Interop Vectors), #174 (Mosquitto MQTT Broker Integration), #175 (ESP32 Gateway NVS Power-Loss HIL).
 **Related Documents:**
 - [V2 Post-Join Activation Design (Issue #136)](join-v2-ready-tdma-activation-design.md)
 - [V2 Post-Join Test Matrix (Issue #136)](join-v2-ready-tdma-activation-test-matrix.md)
@@ -212,7 +212,7 @@ To resolve this conflict without breaking V1 historical provenance, three mutual
 ### 4.3 Recommended Resolution & Decision Text
 
 > [!TIP]
-> **Coordinator Recommendation:** Adopt **Alternative B (V2 Local ECDH + Backend Authorization Contract)**.  
+> **Coordinator Recommendation:** Adopt **Alternative B (V2 Local ECDH + Backend Authorization Contract)**.
 > This preserves the cryptographic integrity of Owner-approved X25519 ECDH while providing the Backend with full operational authority over session admission, node activation, lease lifetimes, and revocation, without exposing data keys.
 
 #### Proposed Owner Decision Record (for Parent #127 & Contract Issue #128)
