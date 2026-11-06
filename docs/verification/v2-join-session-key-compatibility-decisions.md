@@ -1,7 +1,7 @@
 # LP2P V2 Join, X25519 Session Key Authority & READY Security Compatibility Decisions
 
 **Document ID:** `DOC-VERIF-V2-JOIN-CRYPTO-DEC-001`
-**Status:** `DRAFT_FOR_OWNER_REVIEW` · `IMPLEMENTATION_READY=NO` · `G2=NOT_VERIFIED`
+**Status:** `OWNER_APPROVED_DESIGN` (2026-11-06) · `IMPLEMENTATION_READY=NO` · `G2=NOT_VERIFIED`
 **Parent Tracking:** Issue #182 (Agent 3 Work Package), Parent Issue #127 (Migration Integration Gate), Umbrella Issue #125, Architecture Child Issue #126.
 **Parallel Work Packages:** Agent 1 (#177, V2 Event DATA/ACK Compatibility Review), Agent 2 (#178, V2 Maintenance Superframe, Beacon & Health Compatibility).
 **Downstream Verification Dependencies:** #173 (Go ↔ ESP-IDF mbedTLS AES-256-GCM / HMAC Interop Vectors), #174 (Mosquitto MQTT Broker Integration), #175 (ESP32 Gateway NVS Power-Loss HIL).
@@ -101,7 +101,7 @@ This section establishes the definitive repository trust boundary for all crypto
 | **Session PRK** $\text{PRK}_{\text{SESSION}}$ | 32B | Derives via HKDF-Extract(salt=$TH$, IKM=$Z$) | Derives via HKDF-Extract(salt=$TH$, IKM=$Z$) | **DOES NOT POSSESS** | HKDF-Extract with $TH$ and $Z$ | Node, Gateway | Root for all edge verification and unicast data session keys (`K_KC_UP`, `K_KC_DOWN`, `K_SESSION_ROOT`). | `OWNER_APPROVED_DESIGN` ([#127 C6630055809](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/127#issuecomment-6630055809)) |
 | **Uplink Confirm Key** $K_{\text{KC\_UP}}$ | 32B | Derives from $\text{PRK}_{\text{SESSION}}$ | Derives from $\text{PRK}_{\text{SESSION}}$ | **DOES NOT POSSESS** | HKDF-Expand("LP2P/V2/KC-UP") | Node, Gateway | Gateway verifies `GW_KC_TAG` in Confirm (8B) and `GW_READY_TAG` in READY (8B). | `OWNER_APPROVED_DESIGN` ([#127 C6630055809](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/127#issuecomment-6630055809)) |
 | **Downlink Finish Key** $K_{\text{KC\_DOWN}}$ | 32B | Derives from $\text{PRK}_{\text{SESSION}}$ | Derives from $\text{PRK}_{\text{SESSION}}$ | **DOES NOT POSSESS** | HKDF-Expand("LP2P/V2/KC-DOWN") | Gateway, Node | Node verifies `GW_FINISH_TAG` in `DOWN_JOIN_FINISH` (8B). | `OWNER_APPROVED_DESIGN` ([#127 C6630280648](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/127#issuecomment-6630280648)) |
-| **Backend Ready Key** $K_{\text{JREADY}}$ | 32B | Derives from $\text{PRK}_{\text{JOIN}}$ | **DOES NOT POSSESS** | Derives from $\text{PRK}_{\text{JOIN}}$ | HKDF-Expand("LP2P/V2/JOIN-READY") | Node, Backend | Backend verifies `BACKEND_READY_PROOF` in `UP_JOIN_READY` (16B). Gateway cannot forge. | `CANDIDATE_FOR_OWNER_DECISION` ([Issue #136 Doc](join-v2-ready-tdma-activation-design.md)) |
+| **Backend Ready Key** $K_{\text{JREADY}}$ | 32B | Derives from $\text{PRK}_{\text{JOIN}}$ | **DOES NOT POSSESS** | Derives from $\text{PRK}_{\text{JOIN}}$ | HKDF-Expand("LP2P/V2/JOIN-READY") | Node, Backend | Backend verifies `BACKEND_READY_PROOF` in `UP_JOIN_READY` (16B). Gateway cannot forge. | `OWNER_APPROVED_DESIGN` (2026-11-06 via DEC-SEC-03) |
 | **Session Root Key** $K_{\text{SESSION\_ROOT}}$ | 32B | Derives from $\text{PRK}_{\text{SESSION}}$ | Derives from $\text{PRK}_{\text{SESSION}}$ | **DOES NOT POSSESS** | HKDF-Expand("LP2P/V2/SESSION-ROOT")| Node, Gateway | Root key stored in `INSTALLED_INACTIVE` state until superframe activation boundary $K_{\text{target}}$. | `OWNER_APPROVED_DESIGN` ([#127 C6630055809](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/127#issuecomment-6630055809)) |
 | **Candidate Unicast Data Keys** ($K_{\text{ENC\_UP}}$, $K_{\text{ENC\_DN}}$, Nonce Prefix) | 16B/16B/8B | Derives from $K_{\text{SESSION\_ROOT}}$ | Derives from $K_{\text{SESSION\_ROOT}}$ | **DOES NOT POSSESS** | HKDF-Expand with direction labels | Node, Gateway | Used for AES-128-CCM encryption/tagging of `UP_EVENT` (0x41), `DOWN_EVENT_ACK` (0x42), `UP_HEALTH_REPLY` (0x44). | `CANDIDATE` (Agent 1 IF-REQ-01 / [#127 C6623475221](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/127#issuecomment-6623475221)) |
 
@@ -316,8 +316,8 @@ BACKEND_READY_PROOF16 = HMAC-SHA256(K_JREADY, M_BE_READY)[0..15]
 ---
 
 ### 5.3 Candidate Status & Governance
-- **Current Status:** `CANDIDATE_FOR_OWNER_DECISION`.
-- **Preemptive Lock Prohibition:** In accordance with AGENTS.md, this dossier **does NOT declare codepoint 0x49 or its byte layout frozen**. It proposes formal decision record `DEC-SEC-03` to parent Issue #127 for technical Owner review.
+- **Approval Status:** `OWNER_APPROVED_DESIGN` (2026-11-06).
+- **Owner Directive (2026-11-06):** The Project Owner reviewed and explicitly approved DEC-SEC-01 through DEC-SEC-07 ("tôi Duyệt các đề xuất DEC-SEC-01 .. DEC-SEC-07"). This upgrades candidate `UP_JOIN_READY` (0x49, 31B) and its dual-verifier architecture to `OWNER_APPROVED_DESIGN` for integration by parent Issue #127. It does NOT constitute automated G2 security pass, HIL verification, or production code authorization.
 
 ---
 
@@ -419,15 +419,19 @@ This section consolidates the formal decisions formulated by this dossier for su
 
 ### 7.1 Formally Numbered Security Decisions (`DEC-SEC-01` .. `DEC-SEC-07`)
 
-| Decision ID | Scope | Candidate Version | Source / Authority | Producer | Consumer | Dependencies | Proposed Rule | Explicit Owner Question | Downstream Test IDs |
-|:---|:---|:---:|:---|:---|:---|:---|:---|:---|:---|
-| **DEC-SEC-01** | Crypto Trust | Ephemeral ECDH Key Authority | V2 (#127 C6630055809) | Node & Gateway | Backend | RFC 7748 / X25519 | Backend possesses zero knowledge of $Z$ and edge data session keys. Edge keys are derived strictly at Node & Gateway. | Confirm that Backend shall not possess $Z$ or unicast session keys in V2. | `SEC-TM-01`, `SEC-TM-11`, `SEC-TM-12` |
-| **DEC-SEC-02** | MQTT Contract | V1/V2 MQTT Key Reconciliation | Issue #182 Dossier | Backend Join | Gateway MQTT | PR #123 Merged Schema | Retain PR #123 schema strictly for V1; adopt Alternative B (Session Binding Ticket) for V2 in follow-up #128. | Approve Alternative B architecture and separate V2 session-binding schema. | `SEC-TM-21`, `SEC-TM-22` |
-| **DEC-SEC-03** | Wire Codepoint | `UP_JOIN_READY` (0x49, 31B) | Issue #136 / #182 | Sensor Node | Gateway & Backend | Issue #127 Finish (0x48)| Adopt 31B layout for 0x49 with dual tags: `GW_READY_TAG` (8B) and `BACKEND_READY_PROOF` (16B). | Approve candidate 0x49 wire layout and dual-verifier model. | `SEC-TM-06`, `SEC-TM-07` |
-| **DEC-SEC-04** | Security Proof | Cryptographic Proof of Delivery | Issue #182 Dossier | Sensor Node | Backend Join | `DOWN_JOIN_FINISH` (0x48)| `BACKEND_READY_PROOF` must incorporate `FINISH31` and $TH$, proving Node received valid Finish. | Confirm that Backend requires cryptographic delivery proof before slot planning. | `SEC-TM-03`, `SEC-TM-04` |
-| **DEC-SEC-05** | State Machine | Inactive Key Fencing & 8-Fold Guard | Issue #136 / #182 | Node Radio MAC | Gateway Scheduler | TDMA Engine | Derived keys remain in `INSTALLED_INACTIVE` until boundary $K_{\text{target}}$; all 8 guards must pass. | Formalize the 8-fold fail-closed guard as mandatory firmware policy. | `SEC-TM-17`, `SEC-TM-18` |
-| **DEC-SEC-06** | Hardware / NVS | Monotonic Counter Rollback Guard | Issue #127 C6628167582 | Node NVS | Backend Registry | ESP32 eFuse / NVS | Node must commit incremented `JOIN_COUNTER` before transmitting Hello. Corrupt NVS halts radio. | Approve fail-closed policy on NVS counter read failure or rollback detection. | `SEC-TM-15`, `SEC-TM-16` |
-| **DEC-SEC-07** | Cryptography | All-Zero ECDH Rejection Policy | Issue #127 C6630055809 | Node & Gateway | Radio Crypto Driver | RFC 7748 Section 6.1 | If $\text{X25519}(\text{priv}, \text{pub}) == 0^{32}$, immediately terminate handshake and wipe state. | Reaffirm mandatory rejection of all-zero ECDH output points. | `SEC-TM-11`, `SEC-TM-12` |
+> [!IMPORTANT]
+> **Owner Directive (2026-11-06):** *"tôi Duyệt các đề xuất DEC-SEC-01 .. DEC-SEC-07"*.
+> Decisions DEC-SEC-01 through DEC-SEC-07 are upgraded from PROPOSED/CANDIDATE to **`OWNER_APPROVED_DESIGN` (2026-11-06)** at the design level. This establishes the authoritative architectural baseline for parent Issue #127 integration; it does NOT constitute automated G2 security pass, HIL verification, or production code authorization.
+
+| Decision ID | Scope | Candidate Version | Source / Authority | Producer | Consumer | Dependencies | Proposed Rule | Explicit Owner Question | Status / Authority | Downstream Test IDs |
+|:---|:---|:---:|:---|:---|:---|:---|:---|:---|:---:|:---|
+| **DEC-SEC-01** | Crypto Trust | Ephemeral ECDH Key Authority | V2 (#127 C6630055809) | Node & Gateway | Backend | RFC 7748 / X25519 | Backend possesses zero knowledge of $Z$ and edge data session keys. Edge keys are derived strictly at Node & Gateway. | Confirm that Backend shall not possess $Z$ or unicast session keys in V2. | `OWNER_APPROVED_DESIGN` (2026-11-06) | `SEC-TM-01`, `SEC-TM-11`, `SEC-TM-12` |
+| **DEC-SEC-02** | MQTT Contract | V1/V2 MQTT Key Reconciliation | Issue #182 Dossier | Backend Join | Gateway MQTT | PR #123 Merged Schema | Retain PR #123 schema strictly for V1; adopt Alternative B (Session Binding Ticket) for V2 in follow-up #128. | Approve Alternative B architecture and separate V2 session-binding schema. | `OWNER_APPROVED_DESIGN` (2026-11-06) | `SEC-TM-21`, `SEC-TM-22` |
+| **DEC-SEC-03** | Wire Codepoint | `UP_JOIN_READY` (0x49, 31B) | Issue #136 / #182 | Sensor Node | Gateway & Backend | Issue #127 Finish (0x48)| Adopt 31B layout for 0x49 with dual tags: `GW_READY_TAG` (8B) and `BACKEND_READY_PROOF` (16B). | Approve candidate 0x49 wire layout and dual-verifier model. | `OWNER_APPROVED_DESIGN` (2026-11-06) | `SEC-TM-06`, `SEC-TM-07` |
+| **DEC-SEC-04** | Security Proof | Cryptographic Proof of Delivery | Issue #182 Dossier | Sensor Node | Backend Join | `DOWN_JOIN_FINISH` (0x48)| `BACKEND_READY_PROOF` must incorporate `FINISH31` and $TH$, proving Node received valid Finish. | Confirm that Backend requires cryptographic delivery proof before slot planning. | `OWNER_APPROVED_DESIGN` (2026-11-06) | `SEC-TM-03`, `SEC-TM-04` |
+| **DEC-SEC-05** | State Machine | Inactive Key Fencing & 8-Fold Guard | Issue #136 / #182 | Node Radio MAC | Gateway Scheduler | TDMA Engine | Derived keys remain in `INSTALLED_INACTIVE` until boundary $K_{\text{target}}$; all 8 guards must pass. | Formalize the 8-fold fail-closed guard as mandatory firmware policy. | `OWNER_APPROVED_DESIGN` (2026-11-06) | `SEC-TM-17`, `SEC-TM-18` |
+| **DEC-SEC-06** | Hardware / NVS | Monotonic Counter Rollback Guard | Issue #127 C6628167582 | Node NVS | Backend Registry | ESP32 eFuse / NVS | Node must commit incremented `JOIN_COUNTER` before transmitting Hello. Corrupt NVS halts radio. | Approve fail-closed policy on NVS counter read failure or rollback detection. | `OWNER_APPROVED_DESIGN` (2026-11-06) | `SEC-TM-15`, `SEC-TM-16` |
+| **DEC-SEC-07** | Cryptography | All-Zero ECDH Rejection Policy | Issue #127 C6630055809 | Node & Gateway | Radio Crypto Driver | RFC 7748 Section 6.1 | If $\text{X25519}(\text{priv}, \text{pub}) == 0^{32}$, immediately terminate handshake and wipe state. | Reaffirm mandatory rejection of all-zero ECDH output points. | `OWNER_APPROVED_DESIGN` (2026-11-06) | `SEC-TM-11`, `SEC-TM-12` |
 
 ---
 

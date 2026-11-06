@@ -1,7 +1,7 @@
 # LP2P V2 Join, Session Key & READY Security Test Matrix
 
 **Document ID:** `DOC-VERIF-V2-JOIN-CRYPTO-TEST-001`
-**Status:** `DRAFT_FOR_OWNER_REVIEW` · `IMPLEMENTATION_READY=NO` · `G2=NOT_VERIFIED`
+**Status:** `OWNER_APPROVED_DESIGN` (2026-11-06) · `IMPLEMENTATION_READY=NO` · `G2=NOT_VERIFIED`
 **Parent Tracking:** Issue #182 (Agent 3 Work Package), Parent Issue #127 (Migration Integration Gate), Umbrella Issue #125, Architecture Child Issue #126.
 **Companion Dossier:** [V2 Join & Session Key Compatibility Decisions](v2-join-session-key-compatibility-decisions.md).
 **Related Test Documents:**
@@ -23,6 +23,7 @@ In strict adherence to **Owner Decision #137 (2026-11-04)** and project [AGENTS.
    - **Issue #173:** Cross-language Go ↔ ESP-IDF mbedTLS cryptographic golden vectors for HKDF, HMAC, and X25519.
    - **Issue #174:** Real Mosquitto 2.0 MQTT 5.0 broker integration verifying mTLS per-principal ACLs and topic authorization.
    - **Issue #175:** Real ESP32 Gateway NVS power-loss fault-injection HIL proving atomic key slot transitions.
+4. **Owner Approved Security Decisions (2026-11-06):** In accordance with the Owner Directive (*"tôi Duyệt các đề xuất DEC-SEC-01 .. DEC-SEC-07"*), the design-level decisions governing this matrix are locked as `OWNER_APPROVED_DESIGN`. All 22 test scenarios remain strictly in status `NOT_RUN` until executed on actual testbeds under #173, #174, #175.
 
 ---
 
