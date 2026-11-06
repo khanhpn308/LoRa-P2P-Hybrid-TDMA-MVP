@@ -1,229 +1,186 @@
-# ESP32-WROOM-32E + SX1276 RF/HIL Timing Bench Setup and Measurement Procedure
+# ESP32-WROOM-32E + SX1276 TDMA HIL Bench Setup and Measurement Procedure (LAB-SCOPE V2)
 
 ## Document Metadata
-- **Document Status:** `APPROVED_BENCH_PROCEDURE / PHYSICAL_EXECUTION_PENDING`
-- **Source Issue:** [Issue #169](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/169)
+- **Document Status:** `DRAFT_BENCH_PROCEDURE / LAB_SCOPE_V2 / PENDING_REVIEW`
+- **Source Issue:** [Issue #169 (LAB-SCOPE V2)](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/169)
 - **Baseline Authority:** Merged PR #202 (Commit `5ce67822e82edc6582879081ea0bd6ea79104b68`)
-- **Dependencies:** [#11](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/11), [#10](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/10), [#127](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/127), [#19](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/19), [#130](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/130), [#131](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/131)
-- **Architectural Authority:** [ADR-0001 (Hybrid TDMA)](../adr/0001-hybrid-tdma.md), [ADR-0003 (ESP-IDF v6.1)](../adr/0003-esp-idf-v6-1.md), [ADR-0004 (Timing Budget)](../adr/0004-theoretical-timing-guard-budget.md)
+- **Dependencies:** [#10](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/10), [#11](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/11), [#19](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/19), [#127](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/127), [#130](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/130), [#131](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/131), [#150](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/150), [#201](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/201), [#204](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/204)
 - **Target Hardware:** ESP32-WROOM-32E + Semtech SX1276 on PCB HW-001 ([pcb-hw001-pinmap.md](pcb-hw001-pinmap.md))
-- **Gate Classification:** Gate G1 (RF / Hardware), Gate G3 (Embedded Bring-up)
+- **Gate Classification:** Gate G1 (RF / Hardware), Gate G3 (Embedded Bring-up) — *LAB-Scope Verification only*
 
 ---
 
-## 1. Executive Summary & Purpose
+## 1. Executive Summary & LAB-SCOPE V2 Mandate
 
-This document provides the exhaustive, repeatable engineering procedure for conducting physical Hardware-in-the-Loop (HIL) timing measurements on the ESP32-WROOM-32E and Semtech SX1276 transceiver subsystem.
+Under **LAB-SCOPE V2** (Project Owner directive 2026-11-06), Issue #169 is rescoped to focus on **pragmatic small-lab multi-node TDMA functional HIL testing and calculated timing verification**.
 
-The objective is to gather empirical physical data required to resolve:
-1. **`DEC-127-06` (TIM-01):** Validating whether parameterized sub-windows within a 400ms TDMA Static DATA slot can reliably accommodate SF7 and SF8 operations with empirical Gateway WAL write latency ($\tau_{\text{WAL\_GW}}$), transceiver mode turnaround ($\tau_{\text{turnaround}}$), interrupt jitter ($\tau_{\text{jitter}}$), and oscillator drift ($\tau_{\text{drift}}$).
-2. **`DEC-MH-07` (TIM-02):** Validating whether the 80-byte Ed25519 `DOWN_SYNC_BEACON` can fit into a candidate 400ms Beacon window at SF8 or whether Beacon transmission must be restricted to SF7.
-3. **`DEC-127-05`:** Measuring actual SQLite WAL flush / NVS durable write commit latency on the Gateway hardware.
-
-> [!CAUTION]
-> **RF Safety Gate & Legal Transmission Rules:**
-> - Under no circumstances may RF power be transmitted on-air without written authorization from the Project Owner.
-> - Bench tests MUST be conducted using direct coaxial cabling with a minimum 30 dB RF attenuator terminated into a 50 $\Omega$ dummy load, or inside a calibrated RF shielded enclosure (Faraday box).
-> - Do not connect antennas during bench timing verification.
-> - Operating channel MUST default to VN920 Channel 0 (920.250 MHz) with transmit power set to the minimum test level (+2 dBm).
+### 1.1 Equipment Scope Rescoping
+- **No Specialized RF Equipment Required for LAB Closure:**
+  The acquisition or deployment of a Spectrum Analyzer, RF Power Meter, high-bandwidth RF Oscilloscope, VNA, or Temperature Chamber is **EXPLICITLY NOT REQUIRED** to complete the LAB acceptance criteria of Issue #169.
+- **Specialized Equipment Status:**
+  Any measurement requiring high-end RF instruments (radiated power, absolute frequency calibration, occupied bandwidth mask, harmonic emission, VSWR, and temperature chamber drift) is formally classified as **`DEFERRED / OUT_OF_SCOPE_FOR_LAB / NOT_VERIFIED`**.
+- **Core Objective:**
+  Demonstrate, using the actual hardware available in the lab, that the Gateway enforces schedule profiles and Sensor Nodes adhere to assigned TDMA slots without mutual transmission overlap in the DATA phase, and characterize observable software/digital latencies and synchronization holdover behavior.
 
 ---
 
-## 2. Bench Hardware, Instrumentation & Cabling Architecture
+## 2. Lab Hardware Bill of Materials & Equipment Constraints
 
-```text
- ┌────────────────────────────────────────────────────────────────────────┐
- │                           TEST BENCH TOPOLOGY                          │
- └────────────────────────────────────────────────────────────────────────┘
+Conforming to the equipment declared by the Project Owner:
 
-    [ Node ESP32 + SX1276 ]                       [ Gateway ESP32 + SX1276 ]
-   (PCB HW-001 Node Device)                     (PCB HW-001 Gateway Device)
-  ┌─────────────────────────┐                   ┌─────────────────────────┐
-  │   ESP32-WROOM-32E       │                   │   ESP32-WROOM-32E       │
-  │   SX1276 LoRa Radio     │                   │   SX1276 LoRa Radio     │
-  │   RF Port: SMA Female   │                   │   RF Port: SMA Female   │
-  └───────────┬─────────────┘                   └───────────┬─────────────┘
-              │                                             │
-              │ SMA Coax                                    │ SMA Coax
-              ▼                                             ▼
-       ┌──────────────┐                              ┌──────────────┐
-       │ 30dB / 50Ω   │                              │ 30dB / 50Ω   │
-       │ Attenuator   │                              │ Attenuator   │
-       └──────┬───────┘                              └──────┬───────┘
-              │                                             │
-              └─────────────── Direct Coaxial ──────────────┘
-                              (Conducted RF Link)
+| Equipment | Specification / State | Practical Lab Usage & Constraints |
+|---|---|---|
+| **Multiple PCB HW-001 Boards** | ESP32-WROOM-32E + SX1276 (mười mấy board) | Multi-node scaling: 1 Gateway + 1/4/9/10–15 Nodes. (Full 15 Nodes + 1 GW requires **16 functional boards**). |
+| **USB Logic Analyzer** | 24 MHz / 8-Channel (Cypress FX2 compatible) | Digital signals only: SPI NSS envelope, DIO0 edge, GPIO debug strobes, task jitter. **Does NOT measure RF waveform, power, or spectrum.** |
+| **Digital Multimeter** | HABOTEST HT118E | DC rail voltage verification ($3.30\text{ V}$), continuity, static DC current. **Cannot measure microsecond RF current transients.** |
+| **DC Bench Power Supply** | Nutatra 1505TD | Regulated DC power. **Safety rule: Supply via board regulator input; NEVER connect unregulated 5V/15V directly to 3V3 rail!** |
+| **Host Workstation** | PC Windows / ESP-IDF v6.1, Python, USB-UART | Firmware build/flashing, monitor, continuous JSONL UART stream capture, statistical analysis. |
+| **Specialized RF Instruments** | Spectrum Analyzer, RF Meter, VNA, Temp Chamber | **NOT AVAILABLE / DEFERRED**. Unmeasured RF parameters remain `NOT_VERIFIED`. |
 
-  [ Instrumented Logic Analyzer Probes (Saleae Logic Pro 8 @ 100 MS/s) ]
-  ├── Probe 0: Node DIO0 (GPIO26)           ── Edge-triggered TxDone/RxDone
-  ├── Probe 1: Node SPI SCK (GPIO5)          ── Bus clock activity
-  ├── Probe 2: Node SPI CS/NSS (GPIO18)      ── SPI transaction envelope
-  ├── Probe 3: Node Debug Marker (GPIO4)     ── Software timestamp latch marker
-  ├── Probe 4: Gateway DIO0 (GPIO26)        ── Gateway TxDone/RxDone
-  ├── Probe 5: Gateway SPI CS (GPIO18)       ── Gateway SPI transaction envelope
-  ├── Probe 6: Gateway WAL Marker (GPIO4)    ── WAL commit start/finish toggle
-  └── Probe 7: Shared Ref / Trigger (GPIO16) ── Cross-board sync reference
-```
-
-### 2.1 Hardware Bill of Materials
-1. **Target Devices (2 units):** Custom PCB revision HW-001 with ESP32-WROOM-32E (16MB Flash) and Semtech SX1276.
-2. **RF Cabling & Loads:**
-   - 2x 50 $\Omega$ SMA male-to-male coaxial patch cables (RG-316 or RG-142, $\le 1\text{m}$).
-   - 2x 30 dB / 2W / 50 $\Omega$ calibrated RF coaxial attenuators (DC–3 GHz).
-   - 1x 50 $\Omega$ RF terminator / dummy load.
-3. **Logic Analyzer:** Saleae Logic Pro 8 (or equivalent 8-channel analyzer capable of $\ge 100\text{ MS/s}$ with $\pm 2\text{ ppm}$ timebase accuracy).
-4. **Oscilloscope:** 4-channel digital storage oscilloscope ($\ge 100\text{ MHz}$ bandwidth, e.g., Rigol DS1054Z or Rohde & Schwarz RTM3004) with $10\times$ passive probes.
-5. **Power Supply:** Isolated dual-channel DC linear bench supply set to $3.30\text{ V} \pm 0.05\text{ V}$ with current limit set to $1.0\text{ A}$.
-6. **Host Computer:** Linux workstation with dual dedicated USB-to-UART bridge connections for continuous telemetry logging.
+### 2.1 24 MHz Logic Analyzer Capabilities and Sampling Limits
+- **Sampling Limit:** 24 MS/s nominal.
+- **Nyquist-Shannon Constraint:** To reliably reconstruct digital clock transitions, sampling rate should be $4\times$ to $5\times$ the signal frequency. A 24 MS/s analyzer **CANNOT reliably decode a 10 MHz or 8 MHz SPI clock** (only 2.4 to 3 samples per clock cycle, leading to pulse jitter and decoding artifacts).
+- **Measurement Strategy:**
+  1. **Protocol / Register Debugging:** When SPI transaction byte decoding is required, temporarily configure SPI clock to $\le 4\text{ MHz}$ (e.g., 2 MHz or 4 MHz). The timing report MUST explicitly label these results as a reduced-clock debug profile.
+  2. **Production 10 MHz SPI Envelope:** In standard 10 MHz operation, use the logic analyzer to sample **slower macro signals**: `NSS` chip select envelope (tens of $\mu$s), `DIO0` interrupt edge, and GPIO debug strobes.
+  3. Under no circumstances should the Logic Analyzer be treated as a direct RF measurement tool.
 
 ---
 
-## 3. PCB HW-001 Signal Map & Probe Attachment
+## 3. PCB HW-001 Signal Map & Strapping Pin Rules
 
 Conforming strictly to [pcb-hw001-pinmap.md](pcb-hw001-pinmap.md):
 
-| Signal Name | ESP32 GPIO | SX1276 Pin | Probe Assignment | Function & Timing Interest |
-|---|---:|---|---|---|
-| `LoRa_SCK` | **GPIO5** | SCK | Logic Ch 1 | SPI bus clock (10 MHz nominal). **Strapping pin MTDI: must idle LOW.** |
-| `LoRa_MISO` | **GPIO19** | MISO | Scope Ch 2 | Data from SX1276 to ESP32. |
-| `LoRa_MOSI` | **GPIO27** | MOSI | Scope Ch 3 | Data from ESP32 to SX1276. |
-| `LoRa_CS` | **GPIO18** | NSS | Logic Ch 2 | Active-low SPI select envelope. Measures register write duration. |
-| `LoRa_RST` | **GPIO23** | NRESET | Logic Ch 5 | Active-low reset pulse. Measures hardware reset recovery delay. |
-| `LoRa_DIO0` | **GPIO26** | DIO0 | Logic Ch 0 (Trigger) | Hardware interrupt line: `TxDone`, `RxDone`, or `CadDone`. |
-| `DEBUG_MARKER_1` | **GPIO4** | N/A | Logic Ch 3 / 6 | GPIO toggle in firmware at software dispatch, ISR enter, WAL commit. |
-| `DEBUG_MARKER_2` | **GPIO16** | N/A | Logic Ch 7 | Cross-board frame boundary synchronization strobe. |
+| SX1276 Net | ESP32 GPIO | Firmware Symbol | Direction | Electrical / Functional Constraints | Lab Attachment |
+|---|---:|---|---|---|---|
+| `LoRa_SCK` | **GPIO5** | `BOARD_LORA_SCK` | ESP32 $\rightarrow$ SX1276 | SPI Clock (Max 10 MHz). **Caution: Strapping Pin (SDIO Slave timing).** See §3.1. | Logic Ch 1 (Optional debug $\le 4\text{ MHz}$) |
+| `LoRa_MISO` | **GPIO19** | `BOARD_LORA_MISO` | SX1276 $\rightarrow$ ESP32 | SPI MISO. High-impedance when NSS is HIGH. | Logic Ch 4 |
+| `LoRa_MOSI` | **GPIO27** | `BOARD_LORA_MOSI` | ESP32 $\rightarrow$ SX1276 | SPI MOSI. Shifts data on SCK edge. | Logic Ch 3 |
+| `LoRa_CS` | **GPIO18** | `BOARD_LORA_CS` | ESP32 $\rightarrow$ SX1276 | Active-low SPI NSS. Measures transaction envelope. | Logic Ch 2 |
+| `LoRa_RST` | **GPIO23** | `BOARD_LORA_RST` | ESP32 $\rightarrow$ SX1276 | Active-low Reset pulse ($\ge 100\ \mu\text{s}$, hold $\ge 10\text{ ms}$). | Logic Ch 5 |
+| `LoRa_DIO0` | **GPIO26** | `BOARD_LORA_DIO0` | SX1276 $\rightarrow$ ESP32 | Hardware IRQ: `TxDone`, `RxDone`, or `CadDone`. | Logic Ch 0 (Primary Trigger) |
+| `DEBUG_MARKER_1` | **GPIO4** | N/A | ESP32 $\rightarrow$ Test | Software state toggle (dispatch start, ISR exit, durable commit). | Logic Ch 6 |
+| `DEBUG_MARKER_2` | **GPIO16** | N/A | ESP32 $\rightarrow$ Test | Multi-node slot synchronization strobe / task wake marker. | Logic Ch 7 |
 
+### 3.1 Strapping Pin Disambiguation (GPIO5 vs MTDI)
 > [!IMPORTANT]
-> **DIO1–DIO5 Disconnection Rule:**
-> Pins `DIO1` through `DIO5` are **NOT routed** on HW-001. No probe should be attached to unrouted transceiver pads, and firmware must rely on software timer supervision for RX timeouts.
+> **Correction of Legacy Documentation Error:**
+> - `GPIO5` is an ESP32 strapping pin that sets the **SDIO slave timing** bit at chip reset. It is **NOT** `MTDI`. (MTDI is `GPIO12`, which sets the `VDD_SDIO` flash voltage).
+> - Strapping pin states are sampled by the ESP32 hardware bootloader on the **rising edge of `CHIP_PU`** during power-on reset, long before FreeRTOS or the SPI master driver initializes.
+> - SPI Mode 0 ($CPOL=0, CPHA=0$) defines that `SCK` idles LOW **only when the SPI master peripheral is actively controlling the bus**. Do NOT conflate SPI Mode 0 bus idling with a hardware boot strapping requirement.
+> - Bench test fixtures and logic analyzer probe leads attached to `GPIO5` must have high input impedance and must not clamp or pull `GPIO5` to an invalid level during chip reset.
+
+### 3.2 Unrouted DIO1–DIO5 Pins
+- Pins `DIO1`, `DIO2`, `DIO3`, `DIO4`, and `DIO5` are **NOT routed** on PCB HW-001 (`GPIO_NUM_NC`).
+- `DIO1` (`RxTimeout`) is unrouted: firmware MUST rely on software host FreeRTOS timers for receive timeout supervision.
+- No test probes should be attached to floating or unrouted transceiver pads.
 
 ---
 
-## 4. Pre-Test Safety & Authorization Checklist
+## 4. Evidence Classification Taxonomy
 
-Before powering on or uploading test firmware, the test operator MUST check each box:
+In compliance with project data integrity policies, all logged timing and test data must use the following mutually exclusive categories:
 
-- [ ] **A1. Visual Inspection:** Verify PCB silkscreen reads `HW-001`. Confirm soldering of SX1276 crystal oscillator (32 MHz) and decoupling capacitors.
-- [ ] **A2. Strapping Pin Verification:** Verify with an oscilloscope that `GPIO5` is LOW ($< 0.4\text{ V}$) during ESP32 power-on reset. Ensure no external pull-up resistor is present on `GPIO5`.
-- [ ] **A3. Power Rail Check:** Measure $V_{\text{DD}}$ at SX1276 pin 3 and 30 with digital multimeter: verify $3.30\text{ V} \pm 0.05\text{ V}$.
-- [ ] **A4. RF Attenuator Continuity:** Verify 30 dB attenuator is securely fastened between SX1276 SMA and coaxial cable. Confirm 50 $\Omega$ impedance with DMM.
-- [ ] **A5. PA Path Identification:** Inspect PCB routing from SX1276 RF output pins: confirm whether trace connects to `PA_BOOST` (Pin 27) or `RFO_HF` (Pin 28). If trace is `PA_BOOST`, transmit power must never be set above $+14\text{ dBm}$ (target test power: $+2\text{ dBm}$).
-- [ ] **A6. Fail-Closed Default Configuration:** Ensure test configuration headers (`node_timing_config.h` and `gateway_timing_config.h`) have `rf_tx_enabled = false` until step-by-step authorization is complete.
-- [ ] **A7. Legal RF Jurisdiction:** Verify operating frequency is within 920.250–922.250 MHz (VN920 Channel 0: 920.250 MHz).
-- [ ] **A8. Human Authorization:** Project Owner signature obtained on test authorization record.
-
----
-
-## 5. Step-by-Step Measurement Protocols (M1 through M9)
-
-### 5.1 Protocol M1: TX Command Dispatch to TxDone IRQ
-- **Objective:** Measure total delay from software calling `sx1276_tx()` to `DIO0` rising edge (`TxDone`).
-- **Configuration:**
-  - SF7 and SF8, BW 125 kHz, CR 4/5 ($CR=1$), Preamble 8 symbols, Explicit Header, CRC ON.
-  - Payloads: 26B (`UP_EVENT`), 19B (`DOWN_EVENT_ACK`), 80B (`DOWN_SYNC_BEACON`), 21B (`UP_HEALTH_REPLY`).
-- **Procedure:**
-  1. Instrument Node firmware toggles `GPIO4` HIGH immediately before writing `RegOpMode = FSTX -> TX` via SPI.
-  2. Logic analyzer triggers on rising edge of `GPIO4`.
-  3. Latch timestamp of `GPIO4` rise ($T_{\text{cmd}}$), SPI CS falling/rising edge ($T_{\text{spi}}$), and `DIO0` rising edge ($T_{\text{irq}}$).
-  4. Repeat for $N = 1000$ iterations per condition.
-- **Derived Metrics:**
-  - $\Delta T_{\text{spi\_dispatch}} = T_{\text{spi}} - T_{\text{cmd}}$
-  - $\Delta T_{\text{total\_tx}} = T_{\text{irq}} - T_{\text{cmd}}$
-  - $\Delta T_{\text{on\_air}} = T_{\text{irq}} - T_{\text{spi\_end}}$ (Compare against theoretical ToA).
-
-### 5.2 Protocol M2: RxDone IRQ to Application Notification
-- **Objective:** Measure latency from SX1276 asserting `DIO0` (`RxDone`) to the application FreeRTOS task unblocking and acquiring the payload buffer.
-- **Procedure:**
-  1. In `dio0_gpio_isr_handler()`, toggle `GPIO16` HIGH at entry.
-  2. In `node_runner_task()`, toggle `GPIO16` LOW upon `xTaskNotifyWait()` unblocking.
-  3. Logic analyzer records pulse width on `GPIO16`.
-- **Target Bound:** $P99 < 50\ \mu\text{s}$.
-
-### 5.3 Protocol M3: Gateway Durable-Write Acceptance Latency before ACK
-- **Objective:** Measure real execution time of Gateway writing received `UP_EVENT` to SQLite WAL / NVS flash before dispatching `DOWN_EVENT_ACK`.
-- **Procedure:**
-  1. Gateway receives valid `UP_EVENT` via SX1276 driver.
-  2. Gateway sets `GPIO4` HIGH immediately before starting SQLite WAL insert transaction (`BEGIN IMMEDIATE; INSERT INTO events ...; COMMIT;`).
-  3. Gateway sets `GPIO4` LOW upon transaction completion.
-  4. Run across 1000 event insertions under baseline system load (MQTT broker active, logging enabled).
-- **Target Bound:** $\tau_{\text{WAL}} \le 15.0\text{ ms}$; reject if $> 35.0\text{ ms}$.
-
-### 5.4 Protocol M4: Transceiver Mode Turnaround ($\text{RX} \leftrightarrow \text{TX}$)
-- **Objective:** Measure SX1276 synthesizer settling and PLL lock time between Standby, RX, and TX modes.
-- **Procedure:**
-  1. Write `RegOpMode = STANDBY -> RXSINGLE` via SPI. Measure time until `RegOpMode` reads back active RX mode.
-  2. Write `RegOpMode = RX -> TX`. Measure delay from CS rise to RF output power ramp detected on oscilloscope probe.
-- **Target Bound:** $\tau_{\text{turnaround}} \le 20.0\text{ ms}$ (including FreeRTOS scheduling).
-
-### 5.5 Protocol M5: SPI Transaction and Task Scheduling Latency
-- **Objective:** Measure SPI transfer latency at 10 MHz vs 1 MHz for 80-byte Beacon read/write.
-- **Procedure:**
-  1. Logic analyzer measures `GPIO18` (CS) low duration during 80-byte FIFO burst read:
-     $$T_{\text{burst\_80B}} = (1\text{ address byte} + 80\text{ data bytes}) \times \frac{8\text{ bits}}{10\text{ MHz}} \approx 64.8\ \mu\text{s}$$
-  2. Measure FreeRTOS scheduler context switch jitter under varying CPU loads (0%, 50%, 90%).
-
-### 5.6 Protocol M6: Node Wake-Up, Hardware Reset and Radio Initialization
-- **Objective:** Measure latency from ESP32 deep-sleep RTC wake event to SX1276 entering active Standby mode.
-- **Procedure:**
-  1. Trigger Node wake-up via external button or RTC timer.
-  2. Oscilloscope monitors:
-     - Channel 1: ESP32 $V_{\text{DD33}}$ / boot strobe.
-     - Channel 2: `GPIO23` (`LoRa_RST`) active-low pulse (asserted for $\ge 150\ \mu\text{s}$, followed by $\ge 10\text{ ms}$ hold).
-     - Channel 3: `GPIO18` (CS) first configuration transaction.
-     - Channel 4: `GPIO26` (DIO0).
-- **Derived Metric:** Total boot wake-up latency $T_{\text{wake\_to\_standby}}$.
-
-### 5.7 Protocol M7: Clock Drift and Beacon Synchronization
-- **Objective:** Measure cumulative relative clock drift between Node and Gateway oscillators over holdover intervals of 10s, 60s, and 300s.
-- **Procedure:**
-  1. Both Node and Gateway connect to shared oscilloscope on `GPIO16` (pulse-per-second or pulse-at-slot-0).
-  2. Measure time offset $\Delta t_{\text{offset}}$ between Node strobe and Gateway strobe at $t = 10\text{ s}$, $t = 60\text{ s}$, and $t = 300\text{ s}$.
-  3. Calculate empirical PPM:
-     $$\text{PPM} = \frac{\Delta t_{\text{offset}}(\mu\text{s})}{T_{\text{interval}}(\text{s})}$$
-- **Pass Threshold:** Empirical drift $\le 20\text{ PPM}$ ($\le 6.0\text{ ms}$ over 300s holdover; well within the $25\text{ ms}$ holdover guard fence).
-
-### 5.8 Protocol M8: Guard Time Across Slot Boundaries
-- **Objective:** Verify empirical timing margins between consecutive Node DATA slots under maximum observed jitter and drift.
-- **Procedure:**
-  1. Run 2 Node boards transmitting in Slot 1 and Slot 2.
-  2. Logic analyzer records RF activity window (DIO0 `TxDone` of Node 1 to `TxStart` of Node 2).
-  3. Assert no overlap occurs under 1000 consecutive superframes.
-
-### 5.9 Protocol M9: Full Maintenance SYNC & Health Sequence
-- **Objective:** Execute full Maintenance Superframe: Gateway broadcasts 80B Beacon $\to$ Node synchronizes clock $\to$ Node transmits 21B Health Reply $\to$ Gateway receives Health Reply.
-- **Procedure:**
-  1. Configure Gateway to emit 80B Beacon at $t = 0$.
-  2. Verify Node synchronizes within $[0, 400)\text{ms}$.
-  3. In Slot 1, verify Node transmits 21B Health Reply within allocated window.
-  4. Verify Gateway logs successful reception with valid CCM-8 tag.
+1. **`CALCULATED_TOA`:** Pure mathematical Time-on-Air derived from Semtech SX1276 Rev. 7 §4.1.1.7 equations via `tests/hil/rf_timing/toa/sx1276_toa.py`.
+2. **`SOFTWARE_TIMESTAMP`:** Microsecond timestamp latched via `esp_timer_get_time()` on a single ESP32 microcontroller.
+3. **`HARDWARE_DIGITAL_CAPTURE`:** Digital transition timestamps latched via the 24 MHz USB Logic Analyzer (e.g. `DIO0` rising edge, `NSS` chip select pulse, debug GPIO toggles).
+4. **`ASSUMED_BOUND`:** Conservative engineering bounds for parameters not directly measured by lab instruments (e.g. assumed $\pm 20\text{ PPM}$ crystal scenario when installed crystal BOM is uncharacterized; assumed $20\text{ ms}$ turnaround bound; assumed $15\text{ ms}$ flash commit bound).
+5. **`HOST_SYNTHETIC`:** Deterministic synthetic fixtures generated for offline unit testing and host parser validation.
+6. **`RF_MEASURED`:** Calibrated external RF on-air waveform or power measurement. *(Currently classified as `NOT_VERIFIED` in this lab setup).*
+7. **`NOT_VERIFIED`:** Any parameter requiring instruments absent from the lab (e.g. conducted RF power, harmonic emissions, occupied bandwidth mask, VSWR, thermal drift).
 
 ---
 
-## 6. Data Logging, Manifest Generation and Integrity Handoff
+## 5. Gateway Durable Acceptance Semantics (ESP32 Reality vs Backend)
 
-1. **Host Collector Execution:**
-   ```bash
-   python3 tests/hil/rf_timing/host/host_collector.py \
-       --input /dev/ttyUSB0 \
-       --output-manifest docs/verification/evidence/manifest_trial_001.json \
-       --disallow-synthetic
-   ```
-2. **Statistical Analysis:**
-   ```bash
-   python3 tests/hil/rf_timing/analysis/timing_stats.py \
-       --manifest docs/verification/evidence/manifest_trial_001.json
-   ```
-3. **Artifact Integrity:**
-   - Every raw logic analyzer export (`.sal`), oscilloscope capture (`.csv` / `.wfm`), and UART stream (`.jsonl`) MUST have its SHA256 recorded in the manifest.
-   - Raw binary captures $\ge 50\text{ MB}$ must be archived in designated project object storage and referenced by immutable URI and SHA256 checksum.
+> [!NOTE]
+> **Architectural Separation:**
+> - The Go Modular Monolith backend and Linux Gateway Engine may utilize SQLite with Write-Ahead Logging (WAL).
+> - On the **ESP32 Gateway microcontroller**, SQLite is NOT present.
+> - On the ESP32, durable acceptance consists of **NVS flash commit** or **FreeRTOS queue serialization** before dispatching `DOWN_EVENT_ACK`.
+> - If Gateway firmware has not yet implemented flash persistence prior to ACK, durable acceptance latency must be reported as **`NOT_IMPLEMENTED / NOT_VERIFIED`** rather than assuming a hypothetical 15ms or 35ms WAL latency.
+
+---
+
+## 6. Ten-Step Transition Plan: From Mock to Multi-Node Real HIL
+
+```text
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │                   REAL HIL BRING-UP & EXECUTION PHASES                 │
+ └────────────────────────────────────────────────────────────────────────┘
+
+  [Phase 1: Hardware Preflight]
+    Step 1: Visual & Power Inspection (HT118E, Nutatra 1505TD @ 3.3V)
+    Step 2: SPI & RegVersion (0x12) Verification
+    Step 3: Real Radio Driver Adapter Integration (#10 API)
+    Step 4: RX Buffer Blocker Resolution (CONFIG_SX1276_HOST_RX_BUFFER_SIZE >= 128U)
+    Step 5: PA Path Identification & Safety Gate (PA_PATH=UNKNOWN => TX=OFF)
+
+  [Phase 2: Network Scaling & TDMA Scenarios]
+    Step 6: Scenario 1 — 1 Gateway + 1 Node Point-to-Point Baseline
+    Step 7: Scenario 2 — 1 Gateway + 4 Nodes Small Network Verification
+    Step 8: Scenario 3 — 1 Gateway + 9 Nodes Medium Network Verification
+    Step 9: Scenario 4 — 1 Gateway + 10-15 Nodes Full Network (when 16 boards available)
+
+  [Phase 3: Edge Cases & Recovery]
+    Step 10: Edge Cases — Simultaneous Alerts, Missed Beacons, Holdover, Reboot Recovery
+```
+
+### Step 1: Visual & Power Inspection per Board
+1. Inspect PCB silkscreen for `HW-001`. Check solder joints on ESP32 module, SX1276, and 32 MHz crystal.
+2. Measure $V_{\text{DD}}$ at SX1276 supply pins using the HABOTEST HT118E: verify $3.30\text{ V} \pm 0.05\text{ V}$.
+3. Verify that `GPIO5` is not pulled to an invalid state by external fixture wiring during power-on reset.
+
+### Step 2: SPI & RegVersion (0x12) Check
+1. Connect ESP32 to PC via USB-UART.
+2. Flash SPI test utility. Read register `0x42` (`RegVersion`).
+3. Assert that `RegVersion == 0x12`. If readback is `0x00` or `0xFF`, check SPI bus wiring (SCK, MOSI, MISO, CS) and reset line (`GPIO23`).
+
+### Step 3: Real Radio Driver Integration
+1. Switch `tests/hil/rf_timing/firmware/common/radio_adapter_mock.c` from mock mode to calling real SX1276 driver APIs from Issue #10 (`sx1276_init`, `sx1276_tx`, `sx1276_start_rx_single`, `sx1276_read_frame`).
+2. Log git commit SHA, build configuration, and board serial ID.
+
+### Step 4: RX Buffer Blocker Resolution
+1. Confirm that `CONFIG_SX1276_HOST_RX_BUFFER_SIZE` is increased to $\ge 128\text{U}$ in firmware build configuration (see Blocker details in [rf-hil-timing-verification-report.md](rf-hil-timing-verification-report.md)).
+2. Verify that 80-byte `DOWN_SYNC_BEACON` can be buffered without triggering `SX1276_RX_STATUS_REJECT_BUFFER_OVERFLOW`.
+
+### Step 5: PA Path Identification & Safety Gate
+1. Inspect RF trace from SX1276: determine whether `PA_BOOST` (Pin 27) or `RFO_HF` (Pin 28) is routed.
+2. If PA path is unknown, `rf_tx_enabled` must remain `false` (fail-closed).
+3. If confirmed, configure minimum test transmit power ($+2\text{ dBm}$) and ensure a 50 $\Omega$ SMA load or attenuator is attached.
+
+### Step 6: Scenario 1 — 1 Gateway + 1 Node Point-to-Point
+1. Gateway broadcasts Beacon in Slot 0.
+2. Node synchronizes, verifies Beacon Ed25519 signature / counter, and schedules `UP_EVENT` (26B) in Slot 1.
+3. Gateway receives `UP_EVENT` and replies with slotted `DOWN_EVENT_ACK` (19B).
+4. Capture `DIO0` rising edges on Logic Analyzer (Channels 0 and 4). Verify non-overlapping slot execution.
+
+### Step 7: Scenario 2 — 1 Gateway + 4 Nodes
+1. Configure 4 Nodes with slot indices 1, 2, 3, and 4.
+2. Gateway transmits Beacon, then listens across 4 consecutive DATA slots.
+3. Measure packet delivery ratio (PDR), roundtrip ACK latency, and assert zero observed slot overlap.
+
+### Step 8: Scenario 3 — 1 Gateway + 9 Nodes
+1. Scale network to 9 Nodes across 9 static DATA slots.
+2. Monitor cumulative clock drift across 10s superframe cycles.
+3. Verify that trailing guard bands prevent slot boundary collisions between adjacent nodes.
+
+### Step 9: Scenario 4 — 1 Gateway + 10–15 Nodes (when 16 boards available)
+1. Subject to physical board availability (requires 16 functional boards for 1 GW + 15 Nodes).
+2. Measure total active superframe time against 10s nominal period and verify node airtime compliance ($\le 1.0\%$ duty cycle).
+
+### Step 10: Edge Cases & Recovery Protocols
+1. **Simultaneous Alert Events:** Trigger simultaneous alert inputs on multiple nodes; verify that each node transmits only within its assigned static slot without channel contention.
+2. **Beacon Loss & Clock Holdover:** Inhibit Gateway Beacon transmission for 1, 2, and 3 cycles; verify that nodes maintain holdover timing for $N_{\text{MISSED}} \in \{1, 2\}$, and lock RF transmission fail-closed when $N_{\text{MISSED}} \ge 3$.
+3. **Power Reset / Reboot Recovery:** Reset node mid-cycle; verify it waits for the next valid Beacon before attempting transmission.
 
 ---
 
 ## 7. Review and Approval Sign-Off (Human Engineers)
 
-| Role | Name | Organization / Team | Signature / Disposition | Date |
+| Role | Name | Organization | Signature / Disposition | Date |
 |---|---|---|---|---|
-| **Hardware / RF Engineer** | TBD | HW Team | `PENDING_BENCH_TEST` | — |
-| **Embedded Firmware Engineer** | TBD | Firmware Team | `PENDING_BENCH_TEST` | — |
-| **System / Protocol Architect** | TBD | Systems Team | `PENDING_BENCH_TEST` | — |
+| **Hardware / RF Engineer** | TBD | Hardware Team | `PENDING_LAB_EXECUTION` | — |
+| **Embedded Firmware Engineer** | TBD | Firmware Team | `PENDING_LAB_EXECUTION` | — |
+| **System / Protocol Architect** | TBD | Architecture Team | `PENDING_LAB_EXECUTION` | — |
 | **Project Owner** | TBD | Owner | `AUTHORIZATION_PENDING` | — |

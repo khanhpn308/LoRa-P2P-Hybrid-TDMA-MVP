@@ -36,7 +36,7 @@ The following six nets form the locked physical interface between the ESP32-WROO
 
 | SX1276 Net | ESP32 GPIO | Firmware Symbol | Direction | Electrical / Functional Constraints | Disposition |
 |---|---:|---|---|---|---|
-| `LoRa_SCK` | **GPIO5** | `BOARD_LORA_SCK` | ESP32 $\rightarrow$ SX1276 | SPI Clock (Max 10 MHz). **Caution: ESP32 Strapping Pin (MTDI).** Must idle LOW in SPI Mode 0 and never bias strapping state during ESP32 reset. | **Locked HW-001** |
+| `LoRa_SCK` | **GPIO5** | `BOARD_LORA_SCK` | ESP32 $\rightarrow$ SX1276 | SPI Clock (Max 10 MHz). **Caution: ESP32 Strapping Pin (SDIO Slave timing, NOT MTDI).** When SPI master is active, Mode 0 idles LOW; external loads/probes must not perturb strapping during chip reset. | **Locked HW-001** |
 | `LoRa_MISO` | **GPIO19** | `BOARD_LORA_MISO` | SX1276 $\rightarrow$ ESP32 | SPI Master In / Slave Out. High-impedance when NSS is high. Data changes on falling edge of SCK. | **Locked HW-001** |
 | `LoRa_MOSI` | **GPIO27** | `BOARD_LORA_MOSI` | ESP32 $\rightarrow$ SX1276 | SPI Master Out / Slave In. Master shifts data on falling edge; SX1276 samples on rising edge. | **Locked HW-001** |
 | `LoRa_SS / CS / NSS`| **GPIO18** | `BOARD_LORA_CS` | ESP32 $\rightarrow$ SX1276 | Active-low SPI Chip Select. Held LOW exclusively during active SPI bus transaction. | **Locked HW-001** |
@@ -47,8 +47,8 @@ The following six nets form the locked physical interface between the ESP32-WROO
 
 1. **SCK and CS Must NOT Be Interchanged:**
    `SCK = GPIO5` and `CS = GPIO18`. Swapping these pins will cause bus failure and violate boot strapping conditions.
-2. **Strapping Pin Vulnerability (GPIO5 / MTDI):**
-   `GPIO5` is an ESP32 strapping pin that configures SDIO slave timing / boot voltage. The attached SX1276 clock line and pull resistors must not bias `GPIO5` during power-on or chip reset. Bus idling must be configured for SPI Mode 0 (CPOL=0, CPHA=0) where `SCK` idles LOW.
+2. **Strapping Pin Disambiguation (GPIO5 vs MTDI):**
+   `GPIO5` is an ESP32 strapping pin that configures SDIO slave timing (sampled at rising edge of `CHIP_PU`). It is **NOT** `MTDI` (which is `GPIO12` and controls `VDD_SDIO` voltage). Conflating `GPIO5` with `MTDI` is a legacy documentation error. Furthermore, SPI Mode 0 ($CPOL=0, CPHA=0$) defines the bus idle state as LOW only *after* firmware configures the SPI peripheral; it does not dictate hardware boot strapping. External probes or bench test fixtures must not clamp or bias `GPIO5` during power-on reset.
 3. **No Pin Multiplexing / Peripheral Re-use:**
    None of these six GPIOs (`GPIO5`, `GPIO18`, `GPIO19`, `GPIO23`, `GPIO26`, `GPIO27`) may be shared or re-assigned to pushbuttons, LEDs, sensors, UART, or other external devices.
 4. **SPI Host Controller Disambiguation:**
