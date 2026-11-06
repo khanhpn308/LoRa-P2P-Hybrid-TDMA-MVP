@@ -593,20 +593,20 @@ In accordance with RFC 3610, reusing a $(K, N)$ pair under AES-CCM destroys mess
 
 ### 7.1 DEC-DIAG-02: PA2 Separate Maintenance Diagnostic Slots — OWNER_PREFERRED_CONDITIONAL
 
-**Owner disposition (2026-11-07):** Prefer **PA2 / Option 2**, scheduling a **separate, authorized Diagnostic opportunity per Node in the Maintenance Superframe** while preserving Beacon, the existing individual Health slots, CTRL/Join and the unrelated Event-only DATA slots. This is **CONDITIONAL**, not a frozen schedule: **Backend Planner and Gateway validator must prove feasibility for 10–15 active Nodes** with all mandatory time and RF bounds. Until this is proven, \`DEC-DIAG-02 = OWNER_PREFERRED_CONDITIONAL / OPEN_FEASIBILITY_GATE / NOT_VERIFIED\`; no additional RF TX or schedule is authorized.
+**Owner disposition (2026-11-07):** Prefer **PA2 / Option 2**, scheduling a **separate, authorized Diagnostic opportunity per Node in the Maintenance Superframe** while preserving Beacon, the existing individual Health slots, CTRL/Join and the unrelated Event-only DATA slots. This is **CONDITIONAL**, not a frozen schedule: **Backend Planner and Gateway validator must prove feasibility for 10–15 active Nodes** with all mandatory time and RF bounds. Until this is proven, `DEC-DIAG-02 = OWNER_PREFERRED_CONDITIONAL / OPEN_FEASIBILITY_GATE / NOT_VERIFIED`; no additional RF TX or schedule is authorized.
 
 Proposed *logical* phases only (ordering/actual numeric time windows require formal schedule review):
 
-\`\`\`text
+```text
 MAINTENANCE: [BEACON] [HEALTH N1..N] [DIAGNOSTIC N1..N] [CTRL / JOIN]
              + validated inter-slot guards / wake / switching / clock drift
 N = 10..15 active Nodes in MVP capacity evaluation.
 DATA:        unchanged, Event-only static DATA slots with Event ACK.
-\`\`\`
+```
 
 For each N in 10..15 and each approved SF7/SF8 PHY/schedule profile, Backend and Gateway must agree on an authenticated, non-overlapping geometry satisfying at minimum:
 
-\`\`\`text
+```text
 T_maintenance_available >= W_beacon
                         + sum_i(W_health_i + W_diagnostic_i)
                         + W_ctrl
@@ -614,43 +614,43 @@ T_maintenance_available >= W_beacon
 
 W_diagnostic_i >= ToA(26B candidate, PHY_i)
                   + required wake/jitter/drift/turnaround/guards
-\`\`\`
+```
 
 These are **symbolic feasibility constraints**, not authorization to hardcode 300s Maintenance cadence, 400ms slots or arbitrary guard margins. Verify SX1276 half-duplex, Node RX/TX modes, Beacon/Join/CTRL capacity, authentication/active schedule, 3→2→1 / 100%-READY schedule activation, Event latency, battery/airtime budget and applicable region-specific RF rules (#179). Use measured timing evidence (#169), not host ToA alone.
 
-**Correct incremental airtime for PA2:** A *separate* new 26B Diagnostic TX costs its **full** calculated ToA of **61.696ms at SF7** or **113.152ms at SF8** (BW125kHz, CR4/5, preamble8, CRC on). At 15 Nodes that is **925.440ms at SF7** or **1,697.280ms at SF8** of additional pure TX airtime, *before* slot guards and transitions. The \`+5.120ms\` SF7 / \`+10.240ms\` SF8 increment versus 21B Health applies **only** to PA1 *replacement*, not to PA2 *addition*. No aggregate regulatory compliance is inferred.
+**Correct incremental airtime for PA2:** A *separate* new 26B Diagnostic TX costs its **full** calculated ToA of **61.696ms at SF7** or **113.152ms at SF8** (BW125kHz, CR4/5, preamble8, CRC on). At 15 Nodes that is **925.440ms at SF7** or **1,697.280ms at SF8** of additional pure TX airtime, *before* slot guards and transitions. The `+5.120ms` SF7 / `+10.240ms` SF8 increment versus 21B Health applies **only** to PA1 *replacement*, not to PA2 *addition*. No aggregate regulatory compliance is inferred.
 
 **Fail-closed:** If Backend Planner or Gateway validator cannot demonstrate feasibility (including 10–15 Node stress/worst case, authenticated timetable, required measured limits), **do not activate PA2 Diagnostic opportunities, do not schedule 0x4A, and keep existing Event/Health/Beacon/CTRL behavior unchanged**. PA3 low-rate Diagnostic superframes are a possible *future separate decision*, not an automatic fallback.
 
 | Option | Mechanism | Trade-off | Owner selection |
 |:---|:---|:---|:---|
-| PA1: Interleave Health / Diagnostic | Replace some Health transmissions; same per-Node slot | Can delay Health (~300s target to ~600s target). Suppressing Diagnostic whenever \`PENDING_COUNT>0\` can starve precisely when FIFO drops occur | NOT SELECTED |
+| PA1: Interleave Health / Diagnostic | Replace some Health transmissions; same per-Node slot | Can delay Health (~300s target to ~600s target). Suppressing Diagnostic whenever `PENDING_COUNT>0` can starve precisely when FIFO drops occur | NOT SELECTED |
 | **PA2: Separate Diagnostic slots** | Preserve Health, add dedicated Diagnostic TX opportunity per Node | Additional N slots, full additional per-Node airtime and wake/energy budget | **OWNER_PREFERRED_CONDITIONAL / OPEN_FEASIBILITY_GATE** |
 | PA3: Low-rate Diagnostic SF | Separate, less frequent diagnostic-specific cycle (historical ~3600s idea) | May limit airtime but still costs schedule capacity and control transitions | NOT SELECTED; separate future approval required |
 | PA4: CTRL contention | Unscheduled Diagnostic in shared control window | Contradicts deterministic no-contention Diagnostic rights | REJECTED |
 
 ### 7.2 DEC-DIAG-04: Diagnostic Best-Effort / Zero MAC Retries — OWNER_APPROVED_POLICY
 
-**Owner decision (2026-11-07): Option A SELECTED**, status \`OWNER_APPROVED_POLICY / IMPLEMENTATION_NOT_VERIFIED\`.
+**Owner decision (2026-11-07): Option A SELECTED**, status `OWNER_APPROVED_POLICY / IMPLEMENTATION_NOT_VERIFIED`.
 
-- One **new snapshot** (current committed \`DROPPED_EVENT_COUNT\`, \`DIAG_FLAGS\`, \`BATTERY_MV\`, echoed \`MAINT_SEQ\`) may be created **only** for an approved, authenticated, available Diagnostic slot. The slot/0x4A gates must still pass.
-- **No Diagnostic-specific ACK, no retransmission of a lost Diagnostic and no Diagnostic use of DATA slots.** If no authorized slot, valid key or safe timing exists, skip the Diagnostic RF transmission. On a later authorized opportunity, take a **new observation with fresh \`FRAME_COUNTER\` / AES-CCM nonce**, not a retry of the old frame.
+- One **new snapshot** (current committed `DROPPED_EVENT_COUNT`, `DIAG_FLAGS`, `BATTERY_MV`, echoed `MAINT_SEQ`) may be created **only** for an approved, authenticated, available Diagnostic slot. The slot/0x4A gates must still pass.
+- **No Diagnostic-specific ACK, no retransmission of a lost Diagnostic and no Diagnostic use of DATA slots.** If no authorized slot, valid key or safe timing exists, skip the Diagnostic RF transmission. On a later authorized opportunity, take a **new observation with fresh `FRAME_COUNTER` / AES-CCM nonce**, not a retry of the old frame.
 - Cumulative drops may be derived from two verified, continuous reports even if intermediate Diagnostic frames are missed. Never equate failed Diagnostic delivery with a dropped Event. Counter continuity/session/rollover remain independently validated.
-- \`DIAG_FLAGS\` and \`BATTERY_MV\` are snapshots and **transient faults may not reach Gateway**. Latching/clear rules, voltage validity and monitoring expectations remain \`OPEN_DESIGN_REVIEW\`; Zero Retry is not a delivery guarantee.
-- **Strict scope:** \`UP_EVENT\` / \`DOWN_EVENT_ACK\` retain existing durable FIFO, ACK and own-slot retry behavior; \`UP_HEALTH_REPLY\` remains 21B unchanged.
+- `DIAG_FLAGS` and `BATTERY_MV` are snapshots and **transient faults may not reach Gateway**. Latching/clear rules, voltage validity and monitoring expectations remain `OPEN_DESIGN_REVIEW`; Zero Retry is not a delivery guarantee.
+- **Strict scope:** `UP_EVENT` / `DOWN_EVENT_ACK` retain existing durable FIFO, ACK and own-slot retry behavior; `UP_HEALTH_REPLY` remains 21B unchanged.
 
 ### 7.3 DEC-DIAG-06: Hold Candidate 0x4A Until Gate G2 — OWNER_APPROVED_DIRECTION
 
-**Owner decision (2026-11-07): Option B SELECTED**, status \`OWNER_APPROVED_DIRECTION / NOT_APPROVED_WIRE\`.
+**Owner decision (2026-11-07): Option B SELECTED**, status `OWNER_APPROVED_DIRECTION / NOT_APPROVED_WIRE`.
 
-- \`0x4A\` / \`UP_DIAG_METRICS\` remains **candidate only**, not allocated to the active V2 Radio MAC registry. Current approved codepoints \`0x41..0x49\` are unchanged. No parser, RF sender, wire length/offset freeze, MQTT schema or new crypto domain is authorized here.
+- `0x4A` / `UP_DIAG_METRICS` remains **candidate only**, not allocated to the active V2 Radio MAC registry. Current approved codepoints `0x41..0x49` are unchanged. No parser, RF sender, wire length/offset freeze, MQTT schema or new crypto domain is authorized here.
 - Formal owner-approved versioned wire-contract decision at Gate G2 remains necessary. **No automatic opcode allocation merely because PA2 was preferred, Zero Retry approved, or G2 tests passed.**
 - Preconditions for future allocation: complete 26B candidate format/flag bit semantics/voltage measurement rules, authenticated session and nonce behavior, proven PA2 schedule or a separately approved alternative, Node storage/HIL evidence, compatibility/Golden Vectors/negative tests and cross-layer MQTT/Backend review (#127/#128/#130/#131/#132/#169/#173/#179).
 
 ### 7.4 Overall MAC Priority & Qualification
 
 - Static DATA Event transmissions and authorized ACK remain highest-priority application traffic; Beacon, Health and CTRL/Join retain their reserved Maintenance functions. Diagnostic must never displace these or use unauthorized contention.
-- Backend plans and versions schedules; Gateway validates and executes; Node checks active schedule/authorization. **All additional Diagnostic timing remains \`NOT_VERIFIED\`** pending tests and real hardware evidence.
+- Backend plans and versions schedules; Gateway validates and executes; Node checks active schedule/authorization. **All additional Diagnostic timing remains `NOT_VERIFIED`** pending tests and real hardware evidence.
 - RF regulatory duty cycle, channel, power and airtime requirements for the **actual deployment region** must be verified in #179; a generic 1% VN920 limit is not assumed here.
 
 ---
@@ -729,16 +729,16 @@ All tests below require approved scoped implementation or host mocks; this dossi
 
 | Test ID | Stimulus | Expected behavior / proof required | Owner |
 |:---|:---|:---|:---|
-| \`TM-DIAG-29\` | Model 10 active Nodes, SF7 and SF8; Beacon + 10 Health + 10 separate Diagnostic + CTRL + all guards | Backend Planner and Gateway validator independently accept only a feasible, versioned schedule with full extra Diagnostic airtime and no overlap | #19/#130/#131/#169 |
-| \`TM-DIAG-30\` | Model 15 active Nodes, worst-case verified timing/drift/wake/half-duplex/schedule cutover | All 15 Health and 15 Diagnostic opportunities plus Beacon/CTRL/guards fit, or schedule is rejected fail-closed | #19/#130/#131/#169 |
-| \`TM-DIAG-31\` | Missing measurement, overfull Maintenance capacity, incorrect SF8 or insufficient RF airtime budget | Fail-closed without enabling Diagnostic, preserve Event/Health/Beacon/CTRL, log failure provenance | #19/#131/#169/#179 |
-| \`TM-DIAG-32\` | Pending Event FIFO nonempty, urgent Event, Health fault, JOIN/READY and Beacon during proposed PA2 | No suppressed Health, no unauthorized DATA/CTRL use, no starvation condition tied to \`PENDING_COUNT\` | #130/#131 |
-| \`TM-DIAG-33\` | Loss of a Diagnostic uplink and later authorized Diagnostic opportunity | Zero Diagnostic ACK and no retry of old packet; next snapshot uses fresh \`FRAME_COUNTER\`, current counter/status and qualified Backend delta | #130/#131/#132 |
-| \`TM-DIAG-34\` | Short-lived Diagnostic flag or voltage excursion between best-effort snapshots | Limitations observable; no claim of guaranteed delivery; latching/validity policy flagged for review | #130/#131 |
-| \`TM-DIAG-35\` | Attempt to parse/build/register/transmit \`0x4A\` on current main contract | Reject as \`NOT_APPROVED_WIRE\`; no active opcode or unintended RF emission; actual G2 requires explicit Owner action | #127/#130 |
-| \`TM-DIAG-36\` | Calculate PA2 full extra 26B Diagnostic airtime for 10–15 Nodes at SF7/SF8, then compare measured HIL timing | Include **61.696ms / 113.152ms per extra transmission** plus guards, transitions, full schedule airtime and legal RF constraints; fail if invalid | #19/#169/#179 |
+| `TM-DIAG-29` | Model 10 active Nodes, SF7 and SF8; Beacon + 10 Health + 10 separate Diagnostic + CTRL + all guards | Backend Planner and Gateway validator independently accept only a feasible, versioned schedule with full extra Diagnostic airtime and no overlap | #19/#130/#131/#169 |
+| `TM-DIAG-30` | Model 15 active Nodes, worst-case verified timing/drift/wake/half-duplex/schedule cutover | All 15 Health and 15 Diagnostic opportunities plus Beacon/CTRL/guards fit, or schedule is rejected fail-closed | #19/#130/#131/#169 |
+| `TM-DIAG-31` | Missing measurement, overfull Maintenance capacity, incorrect SF8 or insufficient RF airtime budget | Fail-closed without enabling Diagnostic, preserve Event/Health/Beacon/CTRL, log failure provenance | #19/#131/#169/#179 |
+| `TM-DIAG-32` | Pending Event FIFO nonempty, urgent Event, Health fault, JOIN/READY and Beacon during proposed PA2 | No suppressed Health, no unauthorized DATA/CTRL use, no starvation condition tied to `PENDING_COUNT` | #130/#131 |
+| `TM-DIAG-33` | Loss of a Diagnostic uplink and later authorized Diagnostic opportunity | Zero Diagnostic ACK and no retry of old packet; next snapshot uses fresh `FRAME_COUNTER`, current counter/status and qualified Backend delta | #130/#131/#132 |
+| `TM-DIAG-34` | Short-lived Diagnostic flag or voltage excursion between best-effort snapshots | Limitations observable; no claim of guaranteed delivery; latching/validity policy flagged for review | #130/#131 |
+| `TM-DIAG-35` | Attempt to parse/build/register/transmit `0x4A` on current main contract | Reject as `NOT_APPROVED_WIRE`; no active opcode or unintended RF emission; actual G2 requires explicit Owner action | #127/#130 |
+| `TM-DIAG-36` | Calculate PA2 full extra 26B Diagnostic airtime for 10–15 Nodes at SF7/SF8, then compare measured HIL timing | Include **61.696ms / 113.152ms per extra transmission** plus guards, transitions, full schedule airtime and legal RF constraints; fail if invalid | #19/#169/#179 |
 
-**Acceptance:** \`TM-DIAG-29..36\` are \`DESIGNED / NOT_RUN\`; passing host models does not prove RF/HIL, legal compliance or authorize \`0x4A\`.
+**Acceptance:** `TM-DIAG-29..36` are `DESIGNED / NOT_RUN`; passing host models does not prove RF/HIL, legal compliance or authorize `0x4A`.
 
 ---
 
