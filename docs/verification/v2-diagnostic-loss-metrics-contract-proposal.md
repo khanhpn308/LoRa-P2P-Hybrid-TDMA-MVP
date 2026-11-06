@@ -171,18 +171,25 @@ The Backend storage and ingest layer must handle duplicate packets, out-of-order
 |                             BACKEND TIME-SERIES INGEST ARCHITECTURE                               |
 +---------------------------------------------------------------------------------------------------+
 
-  Incoming MQTT Packet ---> Ingest Deduplication:
-                            UNIQUE (gateway_id, node_id, session_sel, frame_counter)
-                            ON CONFLICT DO NOTHING
-                                     │
-                                     ▼
-                            Append-Only Time-Series Ledger:
-                            INSERT INTO node_diagnostic_reports (...)
-                                     │
-                                     ▼
-                            Monotonic Sequence Alignment & Delta Evaluation:
-                            Order reports by canonical sequence (session_sel, frame_counter, maint_seq)
+  Incoming authenticated report --> Verify Node/session provenance at Gateway
+                                      (rejoin/rekey history, key epoch, frame-counter domain)
+                                      │
+                                      ▼
+                            Candidate Backend dedup identity (NOT approved SQL):
+                            (gateway_id, node_id, authenticated_session_instance,
+                             direction, frame_counter)
+                            No verified non-reused session-instance binding?
+                            --> QUARANTINE / SESSION_PROVENANCE_UNVERIFIED
+                                      │
+                                      ▼
+                            Append-only reports with raw values and evidence
+                                      │
+                                      ▼
+                            Evaluate ordering/deltas ONLY inside verified
+                            identity/generation and durable-counter epoch
 ```
+
+**Identity and ordering prerequisite — PROPOSED / OPEN_DECISION:** In the approved Radio MAC V2 specification, `SESSION_SEL` is a reusable key-slot selector (`0`/`1`), **not** a monotonic session-generation identifier. Its value can repeat after rejoin/rekey. The candidate dedup identity above requires a **non-reused, authenticated session-instance/key-generation binding** derived from authoritative Join/Gateway records. No such new RF field, approved Backend dedup schema or MQTT field is established by this document. `FRAME_COUNTER` is interpretable only within a verified cryptographic counter domain; `MAINT_SEQ` may wrap, and Gateway receive time alone is not proof of origin order. Do **not** sort by `(session_sel, frame_counter, maint_seq)` across sessions. If provenance or order is uncertain, preserve raw evidence and mark `UNKNOWN / SESSION_PROVENANCE_UNVERIFIED` (no synthetic delta). Coordinate #127/#128/#131/#117 approval before implementation.
 
 #### Mathematically Defensible Modular Rollover Derivation
 Let:
@@ -191,6 +198,8 @@ Let:
 - $C_{\text{curr}} \in [0, W - 1]$ be the current received counter value observed at timestamp $t_{\text{curr}}$.
 - $\Delta T = t_{\text{curr}} - t_{\text{prev}} > 0$ be the verified elapsed time in seconds between reports, established from an authoritative time source (Gateway UTC clock or Maintenance Superframe sequence cadence).
 - $R_{\text{max}} > 0$ be the verified maximum possible physical drop rate (drops/second) that the sensor node hardware and firmware task queue can physically generate.
+
+**Applicability:** The modulo calculation below applies only when both observations are proven to represent the same durable counter and a verified elapsed interval/order. A key-slot change neither proves nor disproves durable-counter continuity. On reset, unverified identity, reuse of an unknown session generation, counter epoch mismatch or uncertain time bounds, return `UNKNOWN / DISCONTINUITY_CAUSE_NOT_VERIFIED` instead of applying the congruence as if continuity were known.
 
 The true physical drop increment $\Delta C \in \mathbb{Z}_{\ge 0}$ must simultaneously satisfy two constraints:
 
@@ -220,16 +229,16 @@ Let $\mathcal{K} = \{ k \in \mathbb{Z} \mid k \ge 0 \text{ and } k_{\text{min}} 
   Multiple integers $k \in \mathcal{K}$ are feasible (e.g., both $k=1$ and $k=2$ satisfy rate bounds because $\Delta T$ was too long).
   - **Strict Non-Invention Principle:** The Backend **must NOT assume $k=1$ or invent an arbitrary cumulative loss total**.
   - Action: Return `UNKNOWN / AMBIGUOUS_MULTI_WRAP`. Flag an audit warning. Establish $C_{\text{curr}}$ as the new reference baseline for subsequent intervals.
-- **Rule 3 (Infeasible Solution / Discontinuity, $|\mathcal{K}| = 0$):**
-  No non-negative integer $k$ satisfies physical bounds ($R_{\text{max}} \Delta T$ is strictly smaller than the minimum modular step to reach $C_{\text{curr}}$).
-  - This mathematically proves an unannounced reset, flash wipe, firmware reflash, or node identity collision.
-  - Action: Return `DISCONTINUOUS / UNVERIFIED`. Flag `DIAG_METRIC_DISCONTINUITY`. Record $C_{\text{curr}}$ as the new baseline. Do NOT add $C_{\text{curr}}$ to cumulative loss.
+- **Rule 3 (Infeasible Under Model / Discontinuity, $|\mathcal{K}| = 0$):**
+  No nonnegative $k$ satisfies the assumed modular congruence and rate/time bounds. This demonstrates **inconsistency with the model assumptions**, not a proven reset, flash wipe, reflash or identity collision.
+  - Possible causes include source/epoch mismatch, counter reset or corruption, a wrong $R_{\text{max}}$, incorrect timestamps or ordering, or a broken counter persistence assumption; the cause remains **NOT_VERIFIED**.
+  - Action: `DISCONTINUITY / CAUSE_NOT_VERIFIED`. Preserve the raw report and alert, set this interval's delta to `UNKNOWN`, and establish a fresh baseline only after identity and observation validation. Never synthesize a new loss total.
 - **Rule 4 (Duplicates & Out-of-Order Handling):**
-  - Duplicates ($C_{\text{curr}} = C_{\text{prev}}$ with identical `FRAME_COUNTER`): De-duplicated at ingest (`ON CONFLICT DO NOTHING`); $\Delta_{\text{loss}} = 0$.
-  - Out-of-order packets: Positioned in chronological order within the append-only ledger; deltas are computed between canonically adjacent reports.
-- **Rule 5 (Session Identifier Reuse):**
-  - If `SESSION_SEL` increments, $C_{\text{curr}}$ remains monotonic for device-lifetime counters ($C_{\text{curr}} \ge C_{\text{prev}}$). If an unverified decrease occurs across sessions, Rule 3 applies.
-
+  - Duplicate detection needs the **same authenticated session instance and counter domain**, not merely matching `SESSION_SEL` and `FRAME_COUNTER`; conflicting authenticated content must be investigated. The candidate identity is **not an approved SQL UNIQUE constraint**. Equal counters across distinct sessions are not automatically duplicates.
+  - Keep late/out-of-order reports as append-only evidence. Deltas can be computed only where identity, time and counter order are independently validated; any downstream recomputation must be idempotent, traceable and bounded. Where order is ambiguous, leave delta `UNKNOWN`.
+- **Rule 5 (Key-Slot Reuse, Rejoin and Durable-Counter Continuity):**
+  - `SESSION_SEL` (`0` or `1`) can be reused, does not encode a generation and is not a chronological ordering key. A flip of `SESSION_SEL` does **not** guarantee counter monotonicity, reset or a new generation.
+  - A durable drop counter can decrease numerically due to a legitimate modulo rollover across sessions. A decrease can also indicate reset/corruption or an invalid identity binding. Apply Rules 1–2 only to a verified continuous counter and authorized identity; otherwise mark `UNKNOWN / SESSION_PROVENANCE_UNVERIFIED` or Rule 3. No new session field or wire behavior is approved by this design.
 #### Mathematical Examples (Modulus $W = 65,536$, Verified $R_{\text{max}} = 5.0\text{ drops/s}$)
 
 - **Example 1: Unambiguous Single Rollover ($|\mathcal{K}| = 1, k=1$):**
@@ -252,7 +261,7 @@ Let $\mathcal{K} = \{ k \in \mathbb{Z} \mid k \ge 0 \text{ and } k_{\text{min}} 
   - Solution set: $\mathcal{K} = \{1, 2, 3\} \implies |\mathcal{K}| = 3 > 1$.
   - Result: Backend flags `AMBIGUOUS_MULTI_WRAP`. $\Delta_{\text{loss}} = \text{UNKNOWN}$. Zero synthetic loss invented.
 
-- **Example 3: Discontinuity / Reset ($|\mathcal{K}| = 0$):**
+- **Example 3: Out-of-Model Discontinuity (Cause Unverified, $|\mathcal{K}| = 0$):**
   - $C_{\text{prev}} = 50,000$, $C_{\text{curr}} = 100$, $\Delta T = 10\text{ s}$.
   - Upper rate bound: $R_{\text{max}} \times \Delta T = 5.0 \times 10 = 50\text{ drops}$.
   - Testing $k$:
@@ -260,7 +269,7 @@ Let $\mathcal{K} = \{ k \in \mathbb{Z} \mid k \ge 0 \text{ and } k_{\text{min}} 
     - For $k = 1$: $\Delta C = -49,900 + 65,536 = 15,636 > 50$ (infeasible).
     - For $k \ge 2$: $\Delta C > 15,636 > 50$ (infeasible).
   - Solution set: $\mathcal{K} = \emptyset \implies |\mathcal{K}| = 0$.
-  - Result: Backend flags `DIAG_METRIC_DISCONTINUITY`. $\Delta_{\text{loss}} = \text{DISCONTINUOUS / UNVERIFIED}$. Baseline reset to $100$. No phantom drops added.
+  - Result: Backend flags `DIAG_METRIC_DISCONTINUITY` with `CAUSE_NOT_VERIFIED`. The observations do not fit the assumed physical bounds, but **do not prove** a Node reset. $\Delta_{\text{loss}} = \text{UNKNOWN}$. Preserve evidence and establish $100$ as a new baseline only after source/provenance checks; no phantom drops are added.
 
 > [!NOTE]
 > This mathematical derivation governs design specifications for Issue #18 / #132. It is an analytical formulation and does **not** constitute proof that Backend logic has been implemented or tested.
