@@ -16,8 +16,11 @@ from tests.hil.rf_timing.analysis.timing_stats import (
 from tests.hil.rf_timing.analysis.guard_budget_calculator import (
     GuardBudgetInputs,
     SlotFeasibilityInput,
+    V2SlotTimingConfig,
     calculate_guard_budget,
     calculate_slot_feasibility,
+    validate_v2_beacon_window,
+    validate_v2_data_slot_timing,
 )
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "host" / "fixtures"
@@ -181,3 +184,102 @@ def test_slot_feasibility_duty_cycle_violation():
     assert res.is_feasible is False
     assert res.rejection_reason is not None
     assert "Duty cycle violation" in res.rejection_reason
+
+
+def test_v2_slot_budget_fails_closed_when_wal_unbounded():
+    """Verify V2 slot validator fails closed when Gateway WAL commit latency is unknown."""
+    cfg = V2SlotTimingConfig(
+        sf=7,
+        slot_duration_ms=400.0,
+        guard_lead_ms=25.0,
+        event_window_ms=100.0,
+        gap_turnaround_ms=20.0,
+        ack_window_ms=100.0,
+        guard_trail_ms=155.0,
+        wal_latency_ms=None,
+    )
+    res = validate_v2_data_slot_timing(cfg)
+    assert not res.is_valid
+    assert res.status == "FAIL_CLOSED"
+    assert "WAL write latency is unknown" in res.reason
+
+
+def test_v2_slot_budget_rejects_legacy_sf8_subwindows():
+    """Verify V2 slot validator rejects legacy 100ms sub-windows at SF8 (TIM-01)."""
+    cfg = V2SlotTimingConfig(
+        sf=8,
+        slot_duration_ms=400.0,
+        guard_lead_ms=25.0,
+        event_window_ms=100.0,  # Legacy 100ms < 113.152ms
+        gap_turnaround_ms=20.0,
+        ack_window_ms=100.0,
+        guard_trail_ms=155.0,
+        wal_latency_ms=10.0,
+    )
+    res = validate_v2_data_slot_timing(cfg)
+    assert not res.is_valid
+    assert res.status == "REJECT_EVENT_OVERRUN"
+    assert "113.152ms" in res.reason
+
+
+def test_v2_slot_budget_passes_for_legacy_sf7_with_bounded_wal():
+    """Verify V2 slot validator passes for SF7 with bounded WAL latency under legacy sub-windows."""
+    cfg = V2SlotTimingConfig(
+        sf=7,
+        slot_duration_ms=400.0,
+        guard_lead_ms=25.0,
+        event_window_ms=100.0,
+        gap_turnaround_ms=20.0,
+        ack_window_ms=100.0,
+        guard_trail_ms=155.0,
+        wal_latency_ms=10.0,
+    )
+    res = validate_v2_data_slot_timing(cfg)
+    assert res.is_valid
+    assert res.status == "PASS"
+    assert res.slack_margin_ms == 0.0
+
+
+def test_v2_slot_budget_passes_candidate_rebalanced_sf8():
+    """Verify V2 slot validator passes candidate rebalanced sub-windows for SF8 (DEC-127-06)."""
+    cfg = V2SlotTimingConfig(
+        sf=8,
+        slot_duration_ms=400.0,
+        guard_lead_ms=25.0,
+        event_window_ms=125.0,
+        gap_turnaround_ms=35.0,
+        ack_window_ms=115.0,
+        guard_trail_ms=100.0,
+        wal_latency_ms=15.0,
+    )
+    res = validate_v2_data_slot_timing(cfg)
+    assert res.is_valid
+    assert res.status == "PASS"
+    assert res.slack_margin_ms == 0.0
+
+
+def test_v2_beacon_window_sf8_overrun():
+    """Verify 80B Ed25519 Beacon at SF8 overruns legacy 250ms window (TIM-02)."""
+    is_feasible, reason, toa_ms, margin_ms = validate_v2_beacon_window(sf=8, beacon_window_ms=250.0)
+    assert not is_feasible
+    assert toa_ms == 256.512
+    assert margin_ms == -6.512
+    assert "REJECT_BEACON_OVERRUN" in reason
+
+
+def test_v2_beacon_window_sf7_passes():
+    """Verify 80B Ed25519 Beacon at SF7 fits within 250ms window."""
+    is_feasible, reason, toa_ms, margin_ms = validate_v2_beacon_window(sf=7, beacon_window_ms=250.0)
+    assert is_feasible
+    assert toa_ms == 143.616
+    assert margin_ms == 106.384
+    assert "PASS" in reason
+
+
+def test_v2_beacon_window_sf8_passes_400ms_candidate():
+    """Verify 80B Ed25519 Beacon at SF8 fits within proposed 400ms candidate window (DEC-MH-07)."""
+    is_feasible, reason, toa_ms, margin_ms = validate_v2_beacon_window(sf=8, beacon_window_ms=400.0)
+    assert is_feasible
+    assert toa_ms == 256.512
+    assert margin_ms == 143.488
+    assert "PASS" in reason

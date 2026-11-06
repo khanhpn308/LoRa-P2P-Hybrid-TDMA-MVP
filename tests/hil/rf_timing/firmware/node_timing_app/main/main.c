@@ -119,7 +119,7 @@ static void node_logger_task(void *pvParameters)
 static void node_runner_task(void *pvParameters)
 {
     (void)pvParameters;
-    uint8_t dummy_payload[64];
+    uint8_t dummy_payload[128];
     memset(dummy_payload, 0xAA, sizeof(dummy_payload));
 
     /* Initialize radio configuration */
@@ -162,7 +162,7 @@ static void node_runner_task(void *pvParameters)
                 }
 
                 /* 3. Transition to RxSingle for slotted Gateway ACK */
-                log_event(TIMING_EVT_RX_CMD, 8, 0, 0, 0);
+                log_event(TIMING_EVT_RX_CMD, V2_LEN_DOWN_EVENT_ACK, 0, 0, 0);
                 s_diagnostics.rx_cmd_count++;
                 timing_rx_packet_t ack_pkt;
                 int rx_err = timing_radio_read_frame(&ack_pkt, 50U);

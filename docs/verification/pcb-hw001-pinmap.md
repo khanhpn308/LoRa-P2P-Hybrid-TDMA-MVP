@@ -36,7 +36,7 @@ The following six nets form the locked physical interface between the ESP32-WROO
 
 | SX1276 Net | ESP32 GPIO | Firmware Symbol | Direction | Electrical / Functional Constraints | Disposition |
 |---|---:|---|---|---|---|
-| `LoRa_SCK` | **GPIO5** | `BOARD_LORA_SCK` | ESP32 $\rightarrow$ SX1276 | SPI Clock (Max 10 MHz). **Caution: ESP32 Strapping Pin (MTDI).** Must idle LOW in SPI Mode 0 and never bias strapping state during ESP32 reset. | **Locked HW-001** |
+| `LoRa_SCK` | **GPIO5** | `BOARD_LORA_SCK` | ESP32 $\rightarrow$ SX1276 | SPI Clock (Max 10 MHz). **Caution: ESP32 Strapping Pin (SDIO Slave timing, NOT MTDI).** When SPI master is active, Mode 0 idles LOW; external loads/probes must not perturb strapping during chip reset. | **Locked HW-001** |
 | `LoRa_MISO` | **GPIO19** | `BOARD_LORA_MISO` | SX1276 $\rightarrow$ ESP32 | SPI Master In / Slave Out. High-impedance when NSS is high. Data changes on falling edge of SCK. | **Locked HW-001** |
 | `LoRa_MOSI` | **GPIO27** | `BOARD_LORA_MOSI` | ESP32 $\rightarrow$ SX1276 | SPI Master Out / Slave In. Master shifts data on falling edge; SX1276 samples on rising edge. | **Locked HW-001** |
 | `LoRa_SS / CS / NSS`| **GPIO18** | `BOARD_LORA_CS` | ESP32 $\rightarrow$ SX1276 | Active-low SPI Chip Select. Held LOW exclusively during active SPI bus transaction. | **Locked HW-001** |
@@ -47,8 +47,8 @@ The following six nets form the locked physical interface between the ESP32-WROO
 
 1. **SCK and CS Must NOT Be Interchanged:**
    `SCK = GPIO5` and `CS = GPIO18`. Swapping these pins will cause bus failure and violate boot strapping conditions.
-2. **Strapping Pin Vulnerability (GPIO5 / MTDI):**
-   `GPIO5` is an ESP32 strapping pin that configures SDIO slave timing / boot voltage. The attached SX1276 clock line and pull resistors must not bias `GPIO5` during power-on or chip reset. Bus idling must be configured for SPI Mode 0 (CPOL=0, CPHA=0) where `SCK` idles LOW.
+2. **Strapping Pin Disambiguation (GPIO5 vs MTDI):**
+   `GPIO5` is an ESP32 strapping pin that configures SDIO slave timing (sampled at rising edge of `CHIP_PU`). It is **NOT** `MTDI` (which is `GPIO12` and controls `VDD_SDIO` voltage). Conflating `GPIO5` with `MTDI` is a legacy documentation error. Furthermore, SPI Mode 0 ($CPOL=0, CPHA=0$) defines the bus idle state as LOW only *after* firmware configures the SPI peripheral; it does not dictate hardware boot strapping. External probes or bench test fixtures must not clamp or bias `GPIO5` during power-on reset.
 3. **No Pin Multiplexing / Peripheral Re-use:**
    None of these six GPIOs (`GPIO5`, `GPIO18`, `GPIO19`, `GPIO23`, `GPIO26`, `GPIO27`) may be shared or re-assigned to pushbuttons, LEDs, sensors, UART, or other external devices.
 4. **SPI Host Controller Disambiguation:**
@@ -123,15 +123,19 @@ For the button to wake the ESP32-WROOM-32E from Deep-Sleep (`esp_sleep_enable_ex
 - The button electrical circuit, active state (active-high vs. active-low), external filtering capacitor, hardware debounce latch, and RTC wake loop handling remain `NOT_VERIFIED`.
 
 ### 5.3 TDMA Transmission Protocol Invariant (#125, #131)
-Under the Hybrid TDMA architecture:
+Under the Owner-approved Event-only Static TDMA architecture (PR #202 baseline, `contracts/radio-mac/tdma-schedule.md`):
+
 1. **No Autonomous Radio Transmission on Wake:**
-   Waking up via button press must **NEVER** trigger an immediate or unscheduled LoRa RF transmission.
-2. **Event Queueing:**
-   Upon waking from Deep-sleep via RTC button interrupt, the node firmware must:
-   - Perform hardware debounce and button state validation.
-   - Increment the local persistent event counter.
-   - Enqueue the event payload into local memory/RTC storage.
-   - Await the Gateway's next scheduled TDMA Beacon / Uplink Slot assigned to this Node, or use the contention-based CSMA/CA slot strictly according to TDMA protocol rules.
+   Waking up via button press / RTC interrupt must **NEVER** trigger an immediate, autonomous, or unscheduled LoRa RF transmission.
+2. **Event Queueing & Static DATA Slot TX:**
+   Upon waking from Deep-Sleep via RTC button interrupt, the Node firmware must:
+   - Perform hardware debounce and button electrical state validation.
+   - Increment the local persistent event counter / sequence number.
+   - Enqueue the event payload into local persistent FIFO / RTC storage.
+   - Transmit `UP_EVENT` **exclusively within the Node's assigned Static DATA Slot** in the active TDMA superframe.
+   - **No Contention Access for Normal Events:** Node must NOT use PCSS, CAD backoff, or Priority Contention slots for normal event reporting. *(Historical note: Any legacy instruction referencing a "contention-based CSMA/CA slot" is formally `SUPERSEDED / NON_NORMATIVE` per Owner decision 2026-11-04 abolishing PCSS in favor of Event-only Static TDMA).*
+   - **Join/Recovery/Maintenance Transmissions:** Join, recovery, and health replies may only use explicit transmission opportunities authorized by the active normative contract (`UP_JOIN_HELLO` in Join slot, `UP_HEALTH_REPLY` in assigned Maintenance slot).
+   - **Fail-Closed on Desynchronization:** If the Node loses Beacon synchronization ($N_{\text{MISSED}} \ge 3$) or possesses an invalid/expired TDMA schedule, RF transmission is immediately locked: `FAIL_CLOSED`.
    - Unscheduled transmissions violate airtime budgets, cause packet collisions, and break deterministic TDMA scheduling.
 
 ---

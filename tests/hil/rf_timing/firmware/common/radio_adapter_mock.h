@@ -30,8 +30,10 @@ typedef struct {
     int8_t tx_power_dbm;    /**< Target: +2 dBm */
 } timing_radio_config_t;
 
+#define TIMING_MAX_PAYLOAD_LEN 128U
+
 typedef struct {
-    uint8_t payload[64];
+    uint8_t payload[TIMING_MAX_PAYLOAD_LEN]; /**< Accommodates V2 DOWN_SYNC_BEACON (80 bytes) */
     uint8_t length;
     int16_t rssi_dbm;
     int8_t snr_db;

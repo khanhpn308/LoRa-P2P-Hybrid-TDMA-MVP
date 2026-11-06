@@ -12,9 +12,20 @@
 #define NODE_DEVICE_ID              "NODE_HIL_01"
 #define NODE_TIMING_ITERATIONS      50U
 
-/* Payload test suite sizes */
+/* Normative V2 Packet Payload Lengths (PR #202 / Issue #169) */
+#define V2_LEN_DOWN_EVENT_ACK       19U
+#define V2_LEN_UP_HEALTH_REPLY      21U
+#define V2_LEN_UP_EVENT             26U
+#define V2_LEN_DOWN_SYNC_BEACON     80U
+
+/* Payload test suite sizes: exact V2 packet lengths */
 #define NODE_PAYLOAD_SIZE_COUNT     4U
-static const uint8_t NODE_PAYLOAD_SIZES[NODE_PAYLOAD_SIZE_COUNT] = {12U, 24U, 32U, 48U};
+static const uint8_t NODE_PAYLOAD_SIZES[NODE_PAYLOAD_SIZE_COUNT] = {
+    V2_LEN_DOWN_EVENT_ACK,   /* 19B */
+    V2_LEN_UP_HEALTH_REPLY,  /* 21B */
+    V2_LEN_UP_EVENT,         /* 26B */
+    V2_LEN_DOWN_SYNC_BEACON  /* 80B */
+};
 
 /* Spreading Factors evaluated */
 #define NODE_SF_COUNT               2U

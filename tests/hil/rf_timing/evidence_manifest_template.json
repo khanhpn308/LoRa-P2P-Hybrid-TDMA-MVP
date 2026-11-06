@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SX1276 Multi-Node TDMA HIL Manifest (LAB-SCOPE V2)",
+  "version": "2.0.0",
+  "description": "Verifiable trial run record and raw evidence manifest for multi-node TDMA HIL testing and calculated timing under Issue #169 LAB-SCOPE V2.",
+  "provenance_requirement": "Strict separation between CALCULATED_TOA, HOST_SYNTHETIC, SOFTWARE_TIMESTAMP, HARDWARE_DIGITAL_CAPTURE, ASSUMED_BOUND, RF_MEASURED, and NOT_VERIFIED.",
+  "trial_metadata": {
+    "trial_id": "TRIAL-20261106-HW001-SF7-LAB-V2-001",
+    "issue_reference": "https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/169",
+    "git_commit": "15d82cd58aaabfb980ddfcbc601b57c755464dfe",
+    "esp_idf_version": "v6.1-dev",
+    "timestamp_utc": "2026-11-06T00:00:00Z",
+    "operator_name": "TBD (Human Hardware/RF Engineer)",
+    "rf_authorization_reference": "TBD (Owner RF Safety Sign-off)"
+  },
+  "hardware_environment": {
+    "node_board_revision": "PCB-HW-001",
+    "gateway_board_revision": "PCB-HW-001",
+    "transceiver_silicon": "Semtech SX1276 (Expected RegVersion 0x12)",
+    "mcu_silicon": "ESP32-WROOM-32E (ESP-IDF v6.1)",
+    "pa_path_verified": "UNVERIFIED (Requires physical board trace check: RFO_HF vs PA_BOOST)",
+    "tx_power_target_dbm": 2,
+    "frequency_hz": 920250000,
+    "channel_index": 0,
+    "rf_environment": "Direct SMA Coaxial with 50-ohm Attenuator / Load (Conducted)"
+  },
+  "instrumentation": {
+    "logic_analyzer": {
+      "model": "USB Logic Analyzer 24 MHz / 8CH (Cypress FX2 compatible)",
+      "sampling_rate_sps": 24000000,
+      "sampling_limitations": "24 MS/s nominal cannot decode 10 MHz SPI clock; SPI debug configured at <= 4 MHz; standard operation samples NSS envelope, DIO0, and GPIO debug strobes",
+      "voltage_threshold_v": 3.3,
+      "channels": {
+        "ch0": "GPIO26 (DIO0_IRQ / TxDone / RxDone)",
+        "ch1": "GPIO5 (LoRa_SCK - Debug mode <= 4 MHz)",
+        "ch2": "GPIO18 (LoRa_CS / NSS Transaction Envelope)",
+        "ch3": "GPIO27 (LoRa_MOSI)",
+        "ch4": "GPIO19 (LoRa_MISO)",
+        "ch5": "GPIO23 (LoRa_RST)",
+        "ch6": "GPIO4 (Debug / State Transition Marker)",
+        "ch7": "GPIO16 (Debug / Slot Sync Strobe)"
+      }
+    },
+    "multimeter": {
+      "model": "HABOTEST HT118E",
+      "measurements": "DC Supply Voltage (3.30V), Continuity, Static DC Current"
+    },
+    "power_supply": {
+      "model": "Nutatra 1505TD DC Power Supply",
+      "voltage_setting_v": 3.3,
+      "current_limit_a": 1.0,
+      "safety_rule": "Connected to board regulator input; never connect unregulated supply directly to 3V3 rail"
+    },
+    "workstation": {
+      "os": "Windows PC",
+      "framework": "ESP-IDF v6.1 / Python 3.12",
+      "telemetry": "USB-to-UART Serial Logging"
+    },
+    "specialized_rf_instruments": {
+      "spectrum_analyzer": "DEFERRED / OUT_OF_SCOPE_FOR_LAB",
+      "rf_power_meter": "DEFERRED / OUT_OF_SCOPE_FOR_LAB",
+      "rf_oscilloscope": "DEFERRED / OUT_OF_SCOPE_FOR_LAB",
+      "vna": "DEFERRED / OUT_OF_SCOPE_FOR_LAB",
+      "temperature_chamber": "DEFERRED / OUT_OF_SCOPE_FOR_LAB"
+    }
+  },
+  "phy_configuration": {
+    "bandwidth_hz": 125000,
+    "coding_rate": 1,
+    "preamble_symbols": 8,
+    "explicit_header": true,
+    "crc_on": true,
+    "sync_word": "0x12",
+    "spreading_factor": 7
+  },
+  "measured_scenarios": [
+    {
+      "scenario_id": "M1_TX_CMD_TO_TXDONE",
+      "description": "TX command dispatch to DIO0 rising edge (TxDone)",
+      "target_packet": "UP_EVENT (26B)",
+      "evidence_class": "HARDWARE_DIGITAL_CAPTURE",
+      "theoretical_toa_us": 61696.0,
+      "status": "LAB_HIL_NOT_RUN"
+    },
+    {
+      "scenario_id": "M2_RXDONE_TO_APP_NOTIFY",
+      "description": "DIO0 rising edge (RxDone) to FreeRTOS task unblock and buffer handoff",
+      "target_packet": "DOWN_EVENT_ACK (19B)",
+      "evidence_class": "HARDWARE_DIGITAL_CAPTURE",
+      "status": "LAB_HIL_NOT_RUN"
+    },
+    {
+      "scenario_id": "M3_GATEWAY_DURABLE_ACCEPT_LATENCY",
+      "description": "Gateway durable acceptance (NVS / queue commit) before sending Event ACK",
+      "target_packet": "UP_EVENT (26B) Acceptance",
+      "evidence_class": "SOFTWARE_TIMESTAMP",
+      "budget_bound_ms": 35.0,
+      "status": "NOT_IMPLEMENTED_IN_GATEWAY_APP / NOT_VERIFIED"
+    },
+    {
+      "scenario_id": "M4_RX_TX_MODE_TURNAROUND",
+      "description": "SX1276 mode transition between RX and TX (digital envelope & FreeRTOS scheduling)",
+      "target_packet": "N/A",
+      "evidence_class": "HARDWARE_DIGITAL_CAPTURE",
+      "assumed_bound_ms": 20.0,
+      "status": "LAB_HIL_NOT_RUN"
+    },
+    {
+      "scenario_id": "M5_SPI_AND_ISR_LATENCY",
+      "description": "SPI transfer duration for packet read/write and ISR latency",
+      "target_packet": "80B Beacon Read SPI",
+      "evidence_class": "HARDWARE_DIGITAL_CAPTURE",
+      "status": "LAB_HIL_NOT_RUN"
+    },
+    {
+      "scenario_id": "M6_NODE_DEEP_SLEEP_WAKE_INIT",
+      "description": "Node deep-sleep wakeup, SX1276 hardware reset pulse, register plan reload",
+      "target_packet": "Cold wake to radio STANDBY",
+      "evidence_class": "HARDWARE_DIGITAL_CAPTURE",
+      "status": "LAB_HIL_NOT_RUN"
+    },
+    {
+      "scenario_id": "M7_CLOCK_DRIFT_AND_BEACON_SYNC",
+      "description": "Relative clock drift across boards on shared Logic Analyzer over 10s, 60s, and 300s holdover",
+      "target_packet": "DOWN_SYNC_BEACON (80B)",
+      "evidence_class": "HARDWARE_DIGITAL_CAPTURE",
+      "assumed_scenario_ppm": 20.0,
+      "status": "LAB_HIL_NOT_RUN"
+    },
+    {
+      "scenario_id": "M8_GUARD_TIME_SLOT_BOUNDARIES",
+      "description": "Observed slot overlap across multi-node boundaries under actual traffic",
+      "target_packet": "Multi-Node DATA Slots",
+      "evidence_class": "HARDWARE_DIGITAL_CAPTURE",
+      "candidate_lead_guard_ms": 25.0,
+      "candidate_trail_guard_ms": 100.0,
+      "status": "LAB_HIL_NOT_RUN"
+    },
+    {
+      "scenario_id": "M9_MAINTENANCE_SYNC_HEALTH_SEQUENCE",
+      "description": "Full maintenance superframe execution (80B Beacon TX -> Sync Latch -> 21B Health Reply)",
+      "target_packet": "80B Beacon + 21B Health Reply",
+      "evidence_class": "HARDWARE_DIGITAL_CAPTURE",
+      "status": "BLOCKED_BY_RX_BUFFER_64U"
+    }
+  ],
+  "raw_evidence_files": [
+    {
+      "file_name": "trial_001_logic_trace.sal",
+      "file_path": "docs/verification/evidence/trial_001_logic_trace.sal",
+      "file_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "bytes": 0,
+      "description": "24 MHz USB logic analyzer raw 8-channel capture (pending physical bench run)"
+    },
+    {
+      "file_name": "trial_001_uart_stream.jsonl",
+      "file_path": "docs/verification/evidence/trial_001_uart_stream.jsonl",
+      "file_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "bytes": 0,
+      "description": "Continuous UART JSONL log stream from Node and Gateway runners"
+    }
+  ],
+  "validation_verdict": {
+    "status": "BENCH_PREPARATION_COMPLETE / LAB_HIL_NOT_RUN / RF_MEASURED_NOT_VERIFIED / READY_FOR_HUMAN_REVIEW",
+    "rationale": "Preparation package is complete for LAB-SCOPE V2. Physical boards were not connected during this turn. Specialized RF equipment is deferred out-of-scope for lab. Awaiting physical bench execution by human operator.",
+    "gate_classification": "Gate G1 / G3 NOT_VERIFIED (LAB-Scope Verification only)"
+  }
+}
