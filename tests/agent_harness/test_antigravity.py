@@ -377,6 +377,47 @@ class ScopedRuleReportTests(unittest.TestCase):
                 invoke("Review scoped rules", pathlib.Path(tmp), pathlib.Path(tmp) / "schema.json",
                        120, PATHS, self.rules, self.selection, self.inventory)
 
+    def test_timeout_differentiation_host_vs_provider(self):
+        """Differentiate Host subprocess watchdog timeout vs AGY provider print-timeout."""
+        # 1. Host watchdog TimeoutExpired
+        with tempfile.TemporaryDirectory() as tmp, patch(
+                "adapters.antigravity.subprocess.run",
+                side_effect=subprocess.TimeoutExpired("agy", 150)):
+            with self.assertRaises(AuditError) as ctx:
+                invoke("Review", pathlib.Path(tmp), pathlib.Path(tmp) / "schema.json", 120, PATHS)
+            self.assertIn("Host subprocess timeout expired after 150s", str(ctx.exception))
+
+        # 2. Provider-side print-timeout in stderr with non-zero exit
+        with tempfile.TemporaryDirectory() as tmp, patch(
+                "adapters.antigravity.subprocess.run",
+                return_value=subprocess.CompletedProcess([], 1, "", "Error: turn timeout reached")):
+            with self.assertRaises(AuditError) as ctx:
+                invoke("Review", pathlib.Path(tmp), pathlib.Path(tmp) / "schema.json", 120, PATHS)
+            self.assertIn("agy print-timeout expired", str(ctx.exception))
+
+        # 3. Provider-side envelope status indicating timeout
+        env_timeout = json.dumps({"status": "TIMEOUT", "error": "print timeout expired"})
+        with tempfile.TemporaryDirectory() as tmp, patch(
+                "adapters.antigravity.subprocess.run",
+                return_value=subprocess.CompletedProcess([], 0, env_timeout, "")):
+            with self.assertRaises(AuditError) as ctx:
+                invoke("Review", pathlib.Path(tmp), pathlib.Path(tmp) / "schema.json", 120, PATHS)
+            self.assertIn("agy print-timeout expired", str(ctx.exception))
+
+        # 4. Check that --print-timeout 120s and host_timeout=150 are correctly passed
+        payload = json.dumps({"status": "SUCCESS", "structured_output": good()})
+        with tempfile.TemporaryDirectory() as tmp, patch(
+                "adapters.antigravity.subprocess.run",
+                return_value=subprocess.CompletedProcess([], 0, payload, "")) as mock_run:
+            invoke("Review", pathlib.Path(tmp), pathlib.Path(tmp) / "schema.json", 120, PATHS)
+            mock_run.assert_called_once()
+            call_kwargs = mock_run.call_args.kwargs
+            call_args = mock_run.call_args.args[0]
+            self.assertEqual(call_kwargs["timeout"], 150)
+            self.assertIn("--print-timeout", call_args)
+            idx = call_args.index("--print-timeout")
+            self.assertEqual(call_args[idx + 1], "120s")
+
 
 if __name__ == "__main__":
     unittest.main()

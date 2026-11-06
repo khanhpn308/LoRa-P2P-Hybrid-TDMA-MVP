@@ -235,3 +235,49 @@ When executing `Nghiệm thu PR #142`, automated gates PR-01 to PR-08 completed 
   - Evaluation Command: `python3 scripts/agent_harness/pr_review.py --pr 142 --candidate-repo /tmp/pr-142-clean --auditor-report /tmp/harness-evidence-pr-142/auditor_report.json --evidence-dir /tmp/harness-evidence-pr-142`
   - Exit Code: `0`
   - Verdict: `🟢 READY FOR HUMAN REVIEW` (All 8 gates evaluated; `ready_to_merge = false` preserved).
+
+---
+
+## 7. Bounded Rule-ID Batching, Timeout Differentiation & Scalability Dossier (Issue #195)
+
+### 7.1 Diagnostic Analysis (PR #185 Audit Timeout)
+- **Observed Behavior:** Review of PR #185 (`tdma_common`) timed out at 300s (and 600s repeat attempt) with `subprocess.TimeoutExpired` in `antigravity.invoke`.
+- **Root Cause Analysis:**
+  1. **Schema & Generation Explosion:** 97 C standards rules selected by Host routing (#137). Enforcing `minItems=97, maxItems=97` in `scoped_schema` required generating ~24 KB of strict structured JSON tokens. A single model turn exceeded the 300s subprocess budget.
+  2. **Timeout Conflation:** Python `run_bounded(timeout=300)` had an identical timeout to AGY `--print-timeout 5m`. The Host watchdog killed the process before AGY could exit gracefully and emit structured timeout envelopes.
+  3. **Fallback Incompleteness:** The exception fallback omitted `base_sha`, `head_sha`, and `diff_sha256`, triggering spurious snapshot binding blockers alongside `AUDIT-SPAWN`.
+
+### 7.2 Implementation Architecture
+- **Two-Dimensional Bounded Batching (`pr_review.py`):**
+  - Diff batches via `partition_diff_batches` (`MAX_BATCH_DIFF_BYTES = 60_000`).
+  - Rule batches via `partition_rule_batches` (`MAX_BATCH_RULES = 25`). 97 rules are partitioned into 4 deterministic slices (25, 25, 25, 22).
+  - Two-dimensional grid execution schedules audit jobs $(d, r)$ with closed schemas tailored to the exact subset of rules and files.
+  - Manifest generation: Each job writes `auditor_batch_manifest_<job_id>.json` freezing snapshot hashes, assigned rule hashes, scoped files, and evidence inventory.
+- **Timeout Differentiation (`antigravity.py`):**
+  - Set `HOST_TIMEOUT_GRACE_SECONDS = 30`.
+  - AGY provider `--print-timeout` set to `f"{timeout}s"`.
+  - Host subprocess watchdog set to `timeout + 30`.
+  - Clean error classification: distinguishes `agy print-timeout expired` from `Host subprocess timeout expired`.
+- **Transient Retry & Safe Snapshot Resume:**
+  - `is_transient_error`: Classifies transient timeouts/5xx vs permanent permission denials/schema tampering.
+  - Bounded retry (max 1 retry) records failure artifact `auditor_failure_<job_id>_attempt_<n>.json`.
+  - Monotonic total budget deadline (`total_budget`): prevents indefinite execution across batches.
+  - Safe resume: completed batch reports matching snapshot `base_sha`, `head_sha`, `diff_sha256`, and `selection_sha256` are reused from disk; any drift invalidates cache.
+- **Inconclusive Status Preservation (`pr_review_policy.py`):**
+  - Uncompleted infrastructure failures set `status: INCONCLUSIVE`.
+  - `dimensions["AI_REVIEW_PASS"] = NOT_VERIFIED` (cleanly separated from substantive code `FAIL`).
+  - Gate PR-04 adds blocker and verdict is `BLOCKED`.
+
+### 7.3 Verification Test Suite Outcome
+- **Total Test Count:** **351** automated tests passing cleanly in `tests/agent_harness/`.
+- **Key Test Coverage:**
+  - Positive 97-rule audit aggregation with 4 batches yielding 1 validated PASS report (`test_aggregate_batch_reports_97_rules_pass`).
+  - Missing rule batch fails closed with `AUDIT-RULE-COVERAGE-MISMATCH`.
+  - Corrupted rule row hash fails closed with `AUDIT-RULE-HASH-MISMATCH`.
+  - Passing rule without evidence fails closed with `AUDIT-EVIDENCE-MISSING`.
+  - Snapshot drift across batches fails closed with `AUDIT-SNAPSHOT-MISMATCH`.
+  - Contradictory rule status across batches overrides to `FAIL`.
+  - Safe resume reuses verified batch reports and detects snapshot drift.
+  - Bounded transient retry preserves failure artifact and succeeds.
+  - Non-transient errors (permission denial) fail immediately without retry.
+  - Timeout differentiation verified for Host watchdog vs provider print-timeout.

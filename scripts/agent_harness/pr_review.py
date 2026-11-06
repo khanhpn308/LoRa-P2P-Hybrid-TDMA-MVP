@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from typing import Any
 
 # Local harness imports
@@ -332,6 +333,19 @@ def build_evidence_inventory(
     return inventory
 
 
+def split_diff_by_file(cumulative_diff: str) -> dict[str, str]:
+    """Split unified git diff into per-file diff chunks keyed by filename."""
+    file_diffs: dict[str, str] = {}
+    pattern = re.compile(r"(?m)^diff --git a/(.*?) b/(.*)$")
+    matches = list(pattern.finditer(cumulative_diff))
+    for i, m in enumerate(matches):
+        start = m.start()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(cumulative_diff)
+        fname = m.group(2)
+        file_diffs[fname] = cumulative_diff[start:end]
+    return file_diffs
+
+
 def partition_diff_batches(
     files: list[dict[str, Any]],
     overall_diff_hash: str,
@@ -351,17 +365,29 @@ def partition_diff_batches(
     sorted_files = sorted(files, key=lambda x: x.get("filename", ""))
     file_diff_map: list[tuple[str, str]] = []
 
+    cum_file_diffs: dict[str, str] = {}
+    if cumulative_diff:
+        cum_file_diffs = split_diff_by_file(cumulative_diff)
+
     for f in sorted_files:
         fname = f.get("filename", "")
-        patch = f.get("patch", "")
-        status = f.get("status", "modified")
-        if patch:
-            fdiff = f"diff --git a/{fname} b/{fname}\n--- a/{fname}\n+++ b/{fname}\n{patch}\n"
-        elif f.get("is_binary"):
-            fdiff = f"diff --git a/{fname} b/{fname}\nBinary files differ\n"
+        if fname in cum_file_diffs:
+            fdiff = cum_file_diffs[fname]
         else:
-            fdiff = f"diff --git a/{fname} b/{fname}\n# Empty, binary, or unchanged file ({status})\n"
+            patch = f.get("patch", "")
+            status = f.get("status", "modified")
+            if patch:
+                fdiff = f"diff --git a/{fname} b/{fname}\n--- a/{fname}\n+++ b/{fname}\n{patch}\n"
+            elif f.get("is_binary"):
+                fdiff = f"diff --git a/{fname} b/{fname}\nBinary files differ\n"
+            else:
+                fdiff = f"diff --git a/{fname} b/{fname}\n# Empty, binary, or unchanged file ({status})\n"
         file_diff_map.append((fname, fdiff))
+
+    covered_files = {fname for fname, _ in file_diff_map}
+    for fname in sorted(cum_file_diffs.keys()):
+        if fname not in covered_files:
+            file_diff_map.append((fname, cum_file_diffs[fname]))
 
     if not file_diff_map:
         diff_text = cumulative_diff or ""
@@ -477,17 +503,90 @@ def partition_diff_batches(
     return batches
 
 
+MAX_BATCH_RULES = 25
+
+
+def partition_rule_batches(
+    rules: list[dict[str, Any]],
+    selection_sha256: str | None = None,
+    max_rules_per_batch: int = MAX_BATCH_RULES,
+) -> list[dict[str, Any]]:
+    """Partition Host-selected Rule IDs into bounded batches preserving complete coverage.
+
+    Each batch contains:
+    - batch_index: int (1-based)
+    - total_batches: int
+    - batch_rules: list[dict[str, Any]] (rules slice)
+    - batch_rule_ids: list[str] (rule IDs in this batch)
+    - batch_rule_count: int
+    - total_rule_count: int
+    - selection_sha256: str (overall selection SHA256)
+    """
+    if not rules:
+        return [{
+            "batch_index": 1,
+            "total_batches": 1,
+            "batch_rules": [],
+            "batch_rule_ids": [],
+            "batch_rule_count": 0,
+            "total_rule_count": 0,
+            "selection_sha256": selection_sha256 or "NONE",
+        }]
+
+    if max_rules_per_batch < 1:
+        max_rules_per_batch = MAX_BATCH_RULES
+
+    rule_chunks = [
+        rules[i : i + max_rules_per_batch]
+        for i in range(0, len(rules), max_rules_per_batch)
+    ]
+    tot = len(rule_chunks)
+    batches = []
+    for idx, chunk in enumerate(rule_chunks, start=1):
+        chunk_ids = [
+            r.get("rule_id", "") if isinstance(r, dict) else str(r)
+            for r in chunk
+        ]
+        batches.append({
+            "batch_index": idx,
+            "total_batches": tot,
+            "batch_rules": chunk,
+            "batch_rule_ids": chunk_ids,
+            "batch_rule_count": len(chunk),
+            "total_rule_count": len(rules),
+            "selection_sha256": selection_sha256 or "NONE",
+        })
+    return batches
+
+
+def is_transient_error(exc: Exception) -> bool:
+    """Classify transient infrastructure errors eligible for bounded retry."""
+    msg = str(exc).lower()
+    if any(k in msg for k in ("permission denied", "denial", "approval required", "not permitted", "untrusted", "tamper", "oversized", "credential")):
+        return False
+    if isinstance(exc, subprocess.TimeoutExpired):
+        return True
+    if "timeout" in msg or "timed out" in msg:
+        return True
+    if any(k in msg for k in ("rate limit", "503", "502", "504", "connection reset", "temporary failure")):
+        return True
+    return False
+
+
 def build_auditor_prompt(
     pr_data: dict[str, Any],
     rule_selection: dict[str, Any] | None,
     evidence_inventory: dict[str, str],
     cumulative_diff: str,
     batch_info: dict[str, Any] | None = None,
+    rule_batch_info: dict[str, Any] | None = None,
     max_unbatched_bytes: int = MAX_BATCH_DIFF_BYTES,
 ) -> str:
     """Build bounded read-only prompt for independent Auditor without silent truncation."""
     required_paths = sorted({f.get("filename", "") for f in pr_data.get("files", [])})
-    rules = rule_selection.get("rules", []) if rule_selection else []
+    rules = rule_batch_info.get("batch_rules", []) if rule_batch_info else (
+        rule_selection.get("rules", []) if rule_selection else []
+    )
     sel_sha = rule_selection.get("selection_sha256", "NONE") if rule_selection else "NONE"
 
     # Enforce no silent truncation
@@ -510,7 +609,7 @@ def build_auditor_prompt(
 
     evidence_lines = [f"- {p}: sha256={h}" for p, h in sorted(evidence_inventory.items())]
 
-    if batch_info:
+    if batch_info and batch_info.get("total_batches", 1) > 1:
         batch_idx = batch_info.get("batch_index", 1)
         tot_batches = batch_info.get("total_batches", 1)
         b_sha = batch_info.get("batch_diff_sha256", "")
@@ -525,8 +624,19 @@ Batch Reviewed Scope ({len(scope_files)} files):
         scope_rule = f'"reviewed_scope" MUST be the exact list of {len(scope_files)} batch files above.'
     else:
         batch_section = ""
-        scope_files = required_paths
-        scope_rule = f'"reviewed_scope" MUST be the exact list of {len(required_paths)} changed files above.'
+        scope_files = sorted(batch_info.get("batch_files", required_paths)) if batch_info else required_paths
+        scope_rule = f'"reviewed_scope" MUST be the exact list of {len(scope_files)} files above.'
+
+    if rule_batch_info and rule_batch_info.get("total_batches", 1) > 1:
+        r_idx = rule_batch_info.get("batch_index", 1)
+        r_tot = rule_batch_info.get("total_batches", 1)
+        r_count = rule_batch_info.get("batch_rule_count", len(rules))
+        r_tot_count = rule_batch_info.get("total_rule_count", len(rules))
+        rule_batch_section = f"Rule Batch Mode: Part {r_idx} of {r_tot} ({r_count} of {r_tot_count} rules)\n"
+        rule_eval_instruction = f'5. In "rule_results", you must evaluate each of the {r_count} assigned Rule IDs above for Part {r_idx} of {r_tot}:'
+    else:
+        rule_batch_section = ""
+        rule_eval_instruction = '5. In "rule_results", you must evaluate each applicable Rule ID:'
 
     prompt = f"""You are a fresh, independent, read-only code and compliance Auditor.
 Your audit is strictly read-only: do NOT make edits or self-approve.
@@ -540,8 +650,7 @@ Head SHA: {pr_data.get('head_sha')}
 
 Mandatory PR Scope ({len(required_paths)} files):
 {json.dumps(required_paths, indent=2)}
-{batch_section}
-Host Selection SHA256:
+{batch_section}{rule_batch_section}Host Selection SHA256:
 {sel_sha}
 
 Applicable Scoped Rule IDs ({len(rules)} rules):
@@ -560,7 +669,7 @@ Instructions:
 2. Root keys must be: "status", "findings", "limitations", "reviewed_scope", and when rules are selected: "selection_sha256", "rule_results".
 3. {scope_rule}
 4. "selection_sha256" MUST be exactly "{sel_sha}".
-5. In "rule_results", you must evaluate each applicable Rule ID:
+{rule_eval_instruction}
    - "rule_id": string
    - "rule_sha256": string (must match Host hash)
    - "status": "PASS" | "FAIL" | "NOT_RUN" | "NOT_VERIFIED" | "WAIVED_WITH_REASON"
@@ -637,7 +746,33 @@ def aggregate_batch_reports(
     seen_finding_keys: set[tuple[str, str, int, str, str]] = set()
     rule_results_map: dict[str, dict[str, Any]] = {}
 
-    for rep in batch_reports:
+    for idx, rep in enumerate(batch_reports, start=1):
+        # Validate snapshot binding per batch report
+        b_base = rep.get("base_sha")
+        b_head = rep.get("head_sha")
+        if expected_base_sha and b_base and b_base != expected_base_sha:
+            err_msg = f"Batch report {idx} base_sha ({b_base[:8]}) does not match expected ({expected_base_sha[:8]})"
+            return {
+                "status": "FAIL",
+                "findings": [{"severity": "CRITICAL", "file": "audit", "line": 1, "rule": "AUDIT-SNAPSHOT-MISMATCH", "explanation": err_msg, "fix": "Re-run all batches on current snapshot."}],
+                "limitations": [err_msg],
+                "reviewed_scope": sorted(all_reviewed),
+                "base_sha": expected_base_sha,
+                "head_sha": expected_head_sha,
+                "diff_sha256": expected_diff_sha256,
+            }
+        if expected_head_sha and b_head and b_head != expected_head_sha:
+            err_msg = f"Batch report {idx} head_sha ({b_head[:8]}) does not match expected ({expected_head_sha[:8]})"
+            return {
+                "status": "FAIL",
+                "findings": [{"severity": "CRITICAL", "file": "audit", "line": 1, "rule": "AUDIT-SNAPSHOT-MISMATCH", "explanation": err_msg, "fix": "Re-run all batches on current snapshot."}],
+                "limitations": [err_msg],
+                "reviewed_scope": sorted(all_reviewed),
+                "base_sha": expected_base_sha,
+                "head_sha": expected_head_sha,
+                "diff_sha256": expected_diff_sha256,
+            }
+
         all_reviewed.update(rep.get("reviewed_scope", []))
         if "hunks" in rep and isinstance(rep["hunks"], list):
             all_reported_hunks.update(rep["hunks"])
@@ -728,9 +863,87 @@ def aggregate_batch_reports(
             "diff_sha256": expected_diff_sha256,
         }
 
+    # 4. Mandatory Rule ID coverage and evidence verification if rules selected
+    if rule_selection and rule_selection.get("rules"):
+        req_rules = rule_selection["rules"]
+        expected_rule_map = {
+            (r["rule_id"] if isinstance(r, dict) else str(r)): r
+            for r in req_rules
+        }
+        missing_rule_ids = set(expected_rule_map.keys()) - set(rule_results_map.keys())
+        if missing_rule_ids:
+            err_msg = (
+                f"Rule coverage mismatch: expected {len(expected_rule_map)} rules, "
+                f"missing evaluations for {len(missing_rule_ids)} rules: {sorted(missing_rule_ids)[:5]}."
+            )
+            return {
+                "status": "FAIL",
+                "findings": [
+                    {
+                        "severity": "CRITICAL",
+                        "file": "audit",
+                        "line": 1,
+                        "rule": "AUDIT-RULE-COVERAGE-MISMATCH",
+                        "explanation": err_msg,
+                        "fix": "Ensure all required Rule IDs are evaluated across rule batches.",
+                    }
+                ],
+                "limitations": [err_msg],
+                "reviewed_scope": sorted(all_reviewed),
+                "base_sha": expected_base_sha,
+                "head_sha": expected_head_sha,
+                "diff_sha256": expected_diff_sha256,
+            }
+
+        # Validate rule row hashes and evidence presence
+        for rid, rr in rule_results_map.items():
+            rule_def = expected_rule_map.get(rid)
+            if isinstance(rule_def, dict) and "rule_sha256" in rule_def:
+                exp_hash = rule_def["rule_sha256"]
+                actual_hash = rr.get("rule_sha256")
+                if exp_hash and actual_hash != exp_hash:
+                    err_msg = f"Rule hash mismatch for {rid}: expected {exp_hash[:8]}, got {str(actual_hash)[:8]}"
+                    return {
+                        "status": "FAIL",
+                        "findings": [{
+                            "severity": "CRITICAL",
+                            "file": "audit",
+                            "line": 1,
+                            "rule": "AUDIT-RULE-HASH-MISMATCH",
+                            "explanation": err_msg,
+                            "fix": "Re-run Auditor with valid Host rule definitions.",
+                        }],
+                        "limitations": [err_msg],
+                        "reviewed_scope": sorted(all_reviewed),
+                        "base_sha": expected_base_sha,
+                        "head_sha": expected_head_sha,
+                        "diff_sha256": expected_diff_sha256,
+                    }
+            if rr.get("status") == "PASS" and not rr.get("evidence"):
+                err_msg = f"Rule {rid} evaluated as PASS without supporting evidence"
+                return {
+                    "status": "FAIL",
+                    "findings": [{
+                        "severity": "CRITICAL",
+                        "file": "audit",
+                        "line": 1,
+                        "rule": "AUDIT-EVIDENCE-MISSING",
+                        "explanation": err_msg,
+                        "fix": "Provide valid evidence receipt references for passing rules.",
+                    }],
+                    "limitations": [err_msg],
+                    "reviewed_scope": sorted(all_reviewed),
+                    "base_sha": expected_base_sha,
+                    "head_sha": expected_head_sha,
+                    "diff_sha256": expected_diff_sha256,
+                }
+
     # Determine aggregated status
     has_critical = any(f.get("severity") in ("CRITICAL", "HIGH", "P0", "P1") for f in all_findings)
-    any_fail = any(rep.get("status") == "FAIL" for rep in batch_reports)
+    any_fail = (
+        any(rep.get("status") == "FAIL" for rep in batch_reports)
+        or any(r.get("status") == "FAIL" for r in rule_results_map.values())
+    )
     any_inconclusive = any(rep.get("status") == "INCONCLUSIVE" for rep in batch_reports)
 
     if has_critical or any_fail or all_findings:
@@ -754,10 +967,10 @@ def aggregate_batch_reports(
     if expected_diff_sha256:
         agg["diff_sha256"] = expected_diff_sha256
 
-    has_rules = bool(rule_selection and rule_selection.get("rules") and rule_selection.get("selection_sha256"))
-    if has_rules:
+    if rule_results_map:
+        agg["rule_results"] = sorted(rule_results_map.values(), key=lambda r: r.get("rule_id", ""))
+    if rule_selection and rule_selection.get("selection_sha256"):
         agg["selection_sha256"] = rule_selection["selection_sha256"]
-        agg["rule_results"] = list(rule_results_map.values())
 
     return agg
 
@@ -770,8 +983,11 @@ def run_auto_audit(
     evidence_dir: Path,
     timeout: int = 300,
     max_batch_bytes: int = MAX_BATCH_DIFF_BYTES,
+    max_batch_rules: int = MAX_BATCH_RULES,
+    max_retries: int = 1,
+    total_budget: int | None = None,
 ) -> dict[str, Any]:
-    """Spawn fresh independent Auditor in sandbox with full-diff batching and coverage checks."""
+    """Spawn fresh independent Auditor in sandbox with two-dimensional (diff x rule) batching, manifests, and retry."""
     if not antigravity:
         raise PRReviewError("antigravity adapter not available; cannot spawn Auditor")
 
@@ -780,56 +996,205 @@ def run_auto_audit(
 
     required_paths = {f.get("filename", "") for f in pr_data.get("files", [])}
     has_rules = bool(rule_selection and rule_selection.get("rules") and rule_selection.get("selection_sha256"))
-    required_rules = rule_selection.get("rules") if has_rules else None
-    sel_sha = rule_selection.get("selection_sha256") if has_rules else None
+    all_rules = rule_selection.get("rules", []) if has_rules else []
+    sel_sha = rule_selection.get("selection_sha256", "NONE") if has_rules else "NONE"
     target_inventory = evidence_inventory if has_rules else None
     schema_path = Path(__file__).resolve().parent / "adapters" / "audit.schema.json"
 
     evidence_dir.mkdir(parents=True, exist_ok=True)
-
     diff_hash = evidence_inventory.get("diff.patch", "")
-    batches = partition_diff_batches(
+
+    # 1. Partition diff batches
+    diff_batches = partition_diff_batches(
         pr_data.get("files", []),
         overall_diff_hash=diff_hash,
         cumulative_diff=cumulative_diff,
         max_batch_bytes=max_batch_bytes,
     )
 
+    # 2. Partition rule batches
+    rule_batches = partition_rule_batches(
+        all_rules,
+        selection_sha256=sel_sha,
+        max_rules_per_batch=max_batch_rules,
+    )
+
+    # 3. Build execution job grid (diff x rule)
+    jobs: list[dict[str, Any]] = []
+    diff_count = len(diff_batches)
+    rule_count = len(rule_batches)
+    for d_idx, d_batch in enumerate(diff_batches, start=1):
+        for r_idx, r_batch in enumerate(rule_batches, start=1):
+            if diff_count == 1 and rule_count == 1:
+                job_id = "batch_1"
+            elif diff_count == 1:
+                job_id = f"rule_batch_{r_idx}"
+            elif rule_count == 1:
+                job_id = f"diff_batch_{d_idx}"
+            else:
+                job_id = f"batch_d{d_idx}_r{r_idx}"
+            jobs.append({
+                "job_id": job_id,
+                "diff_batch": d_batch,
+                "rule_batch": r_batch,
+                "diff_index": d_idx,
+                "diff_total": diff_count,
+                "rule_index": r_idx,
+                "rule_total": rule_count,
+            })
+
+    # Total budget management
+    calc_total_budget = total_budget if total_budget is not None else max(timeout * len(jobs), 300)
+    start_time = time.monotonic()
+    deadline = start_time + calc_total_budget
+
     batch_reports: list[dict[str, Any]] = []
 
-    for batch in batches:
-        b_idx = batch["batch_index"]
-        b_total = batch["total_batches"]
-        b_files = set(batch["batch_files"])
-        b_diff = batch["batch_diff"]
+    for job in jobs:
+        job_id = job["job_id"]
+        d_batch = job["diff_batch"]
+        r_batch = job["rule_batch"]
+        b_files = set(d_batch["batch_files"])
+        b_diff = d_batch["batch_diff"]
+        b_rules = r_batch["batch_rules"]
+        b_rule_ids = r_batch["batch_rule_ids"]
+        b_diff_sha = d_batch["batch_diff_sha256"]
 
+        # Check total run budget
+        remaining_budget = deadline - time.monotonic()
+        if remaining_budget < 15:
+            raise PRReviewError(
+                f"Total audit budget of {calc_total_budget}s exhausted before job '{job_id}' (remaining: {remaining_budget:.1f}s)"
+            )
+        job_timeout = min(timeout, int(remaining_budget))
+
+        # Write Host-generated batch manifest
+        manifest_file = evidence_dir / f"auditor_batch_manifest_{job_id}.json"
+        manifest_data = {
+            "batch_id": job_id,
+            "base_sha": pr_data.get("base_sha"),
+            "head_sha": pr_data.get("head_sha"),
+            "diff_sha256": b_diff_sha,
+            "overall_diff_sha256": diff_hash,
+            "selection_sha256": sel_sha,
+            "scoped_files": sorted(b_files),
+            "assigned_rule_ids": b_rule_ids,
+            "assigned_rule_hashes": {
+                (r.get("rule_id", "") if isinstance(r, dict) else str(r)):
+                (r.get("rule_sha256", "") if isinstance(r, dict) else "")
+                for r in b_rules
+            },
+            "evidence_inventory_hashes": dict(evidence_inventory),
+        }
+        manifest_file.write_text(json.dumps(manifest_data, indent=2, sort_keys=True), encoding="utf-8")
+
+        # Check Safe Resume / Restart for immutable snapshot
+        report_file = evidence_dir / f"auditor_report_{job_id}.json"
+        receipt_file = evidence_dir / f"auditor_receipt_{job_id}.json"
+        resumed = False
+        if report_file.is_file() and receipt_file.is_file():
+            try:
+                receipt = json.loads(receipt_file.read_text(encoding="utf-8"))
+                existing_report = json.loads(report_file.read_text(encoding="utf-8"))
+                # Snapshot matching checks
+                if (
+                    receipt.get("base_sha") == pr_data.get("base_sha")
+                    and receipt.get("head_sha") == pr_data.get("head_sha")
+                    and receipt.get("diff_sha256") == b_diff_sha
+                    and receipt.get("selection_sha256") == sel_sha
+                    and receipt.get("rule_ids") == b_rule_ids
+                    and set(receipt.get("files", [])) == b_files
+                ):
+                    # Validate existing report via antigravity.check_report
+                    clean_report = {
+                        k: v for k, v in existing_report.items()
+                        if k in ("status", "findings", "limitations", "reviewed_scope", "selection_sha256", "rule_results")
+                    }
+                    antigravity.check_report(
+                        clean_report,
+                        required_paths=b_files,
+                        required_rules=b_rules if has_rules else None,
+                        selection_sha256=sel_sha if has_rules else None,
+                        evidence_inventory=target_inventory,
+                    )
+                    batch_reports.append(existing_report)
+                    resumed = True
+            except Exception:
+                resumed = False
+
+        if resumed:
+            continue
+
+        # Build Auditor prompt
         prompt = build_auditor_prompt(
-            pr_data,
-            rule_selection,
-            evidence_inventory,
-            b_diff,
-            batch_info=batch if b_total > 1 else None,
+            pr_data=pr_data,
+            rule_selection=rule_selection,
+            evidence_inventory=evidence_inventory,
+            cumulative_diff=b_diff,
+            batch_info=d_batch if diff_count > 1 else None,
+            rule_batch_info=r_batch if rule_count > 1 else None,
             max_unbatched_bytes=max_batch_bytes,
         )
-
-        prompt_file = evidence_dir / (f"auditor_prompt_batch_{b_idx}.txt" if b_total > 1 else "auditor_prompt.txt")
+        prompt_file = evidence_dir / f"auditor_prompt_{job_id}.txt"
         prompt_file.write_text(prompt, encoding="utf-8")
 
-        batch_report = antigravity.invoke(
-            prompt=prompt,
-            snapshot=evidence_dir,
-            schema=schema_path,
-            timeout=timeout,
-            required_paths=b_files if b_total > 1 else required_paths,
-            required_rules=required_rules,
-            selection_sha256=sel_sha,
-            evidence_inventory=target_inventory,
-        )
-        if b_total > 1:
-            batch_report_file = evidence_dir / f"auditor_report_batch_{b_idx}.json"
-            batch_report_file.write_text(json.dumps(batch_report, indent=2, sort_keys=True), encoding="utf-8")
+        # Invoke Auditor with bounded retry for transient infrastructure errors
+        batch_report = None
+        for attempt in range(1, 1 + max_retries + 1):
+            try:
+                batch_report = antigravity.invoke(
+                    prompt=prompt,
+                    snapshot=evidence_dir,
+                    schema=schema_path,
+                    timeout=job_timeout,
+                    required_paths=b_files,
+                    required_rules=b_rules if has_rules else None,
+                    selection_sha256=sel_sha if has_rules else None,
+                    evidence_inventory=target_inventory,
+                )
+                break
+            except Exception as exc:
+                if is_transient_error(exc) and attempt <= max_retries:
+                    # Save failure artifact
+                    fail_file = evidence_dir / f"auditor_failure_{job_id}_attempt_{attempt}.json"
+                    fail_file.write_text(
+                        json.dumps({
+                            "batch_id": job_id,
+                            "attempt": attempt,
+                            "error": str(exc),
+                            "timestamp": time.time(),
+                        }, indent=2),
+                        encoding="utf-8",
+                    )
+                    if deadline - time.monotonic() < 15:
+                        raise PRReviewError(
+                            f"Audit budget exhausted during retry of job '{job_id}': {exc}"
+                        ) from exc
+                    continue
+                raise
+
+        # Attach snapshot bindings to batch report and save
+        batch_report["base_sha"] = pr_data.get("base_sha")
+        batch_report["head_sha"] = pr_data.get("head_sha")
+        batch_report["diff_sha256"] = b_diff_sha
+        report_file.write_text(json.dumps(batch_report, indent=2, sort_keys=True), encoding="utf-8")
+
+        # Save batch receipt
+        receipt_data = {
+            "batch_id": job_id,
+            "base_sha": pr_data.get("base_sha"),
+            "head_sha": pr_data.get("head_sha"),
+            "diff_sha256": b_diff_sha,
+            "selection_sha256": sel_sha,
+            "rule_ids": b_rule_ids,
+            "files": sorted(b_files),
+            "status": batch_report.get("status"),
+            "report_sha256": hashlib.sha256(json.dumps(batch_report, sort_keys=True).encode()).hexdigest(),
+        }
+        receipt_file.write_text(json.dumps(receipt_data, indent=2, sort_keys=True), encoding="utf-8")
         batch_reports.append(batch_report)
 
+    # 4. Aggregate all batch reports into one final report
     final_report = aggregate_batch_reports(
         batch_reports=batch_reports,
         required_paths=required_paths,
@@ -837,12 +1202,13 @@ def run_auto_audit(
         expected_head_sha=pr_data.get("head_sha"),
         expected_diff_sha256=diff_hash,
         rule_selection=rule_selection,
-        expected_batches_count=len(batches),
+        expected_batches_count=len(jobs),
     )
 
-    report_file = evidence_dir / "auditor_report.json"
-    report_file.write_text(json.dumps(final_report, indent=2, sort_keys=True), encoding="utf-8")
+    final_report_file = evidence_dir / "auditor_report.json"
+    final_report_file.write_text(json.dumps(final_report, indent=2, sort_keys=True), encoding="utf-8")
     return final_report
+
 
 
 def validate_and_load_auditor_report(
@@ -1437,6 +1803,8 @@ def run_pr_review(args: argparse.Namespace) -> int:
         try:
             target_evidence_dir = evidence_dir or Path(tempfile.mkdtemp(prefix=f"harness-evidence-pr{pr_number or 0}-"))
             audit_timeout = getattr(args, "audit_timeout", 300)
+            max_batch_rules = getattr(args, "max_batch_rules", MAX_BATCH_RULES)
+            audit_total_budget = getattr(args, "audit_total_budget", None)
             auditor_report = run_auto_audit(
                 pr_data=pr_data,
                 rule_selection=rule_selection,
@@ -1444,11 +1812,13 @@ def run_pr_review(args: argparse.Namespace) -> int:
                 cumulative_diff=cumulative_diff,
                 evidence_dir=target_evidence_dir,
                 timeout=audit_timeout,
+                max_batch_rules=max_batch_rules,
+                total_budget=audit_total_budget,
             )
         except Exception as exc:
             required_paths = sorted({f.get("filename", "") for f in pr_data.get("files", [])})
             auditor_report = {
-                "status": "FAIL",
+                "status": "INCONCLUSIVE",
                 "findings": [
                     {
                         "severity": "CRITICAL",
@@ -1461,6 +1831,9 @@ def run_pr_review(args: argparse.Namespace) -> int:
                 ],
                 "limitations": [f"Auto-audit spawn failure: {exc}"],
                 "reviewed_scope": required_paths,
+                "base_sha": pr_data.get("base_sha"),
+                "head_sha": pr_data.get("head_sha"),
+                "diff_sha256": overall_diff_hash or evidence_inventory.get("diff.patch"),
             }
     elif fixture_auditor_report:
         auditor_report = fixture_auditor_report
@@ -1561,7 +1934,9 @@ def main() -> int:
     parser.add_argument("--fixture", help="Path to synthetic PR fixture JSON (for offline validation)")
     parser.add_argument("--auditor-report", help="Path to external Auditor report JSON")
     parser.add_argument("--auto-audit", action="store_true", help="Automatically spawn fresh independent Auditor via agy sandbox")
-    parser.add_argument("--audit-timeout", type=int, default=300, help="Timeout in seconds for Auditor auto-spawn (default: 300)")
+    parser.add_argument("--audit-timeout", type=int, default=300, help="Timeout in seconds for Auditor auto-spawn per batch (default: 300)")
+    parser.add_argument("--max-batch-rules", type=int, default=MAX_BATCH_RULES, help=f"Maximum Rule IDs per audit batch (default: {MAX_BATCH_RULES})")
+    parser.add_argument("--audit-total-budget", type=int, default=None, help="Total monotonic time budget in seconds across all audit batches")
     parser.add_argument("--evidence-dir", help="Directory for external evidence storage (outside candidate worktree)")
     parser.add_argument("--export-auditor-context", help="Path to write frozen auditor context JSON")
     parser.add_argument("--output-json", help="Path to write structured JSON evaluation output")
