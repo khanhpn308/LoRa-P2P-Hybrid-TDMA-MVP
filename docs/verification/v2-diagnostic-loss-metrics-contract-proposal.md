@@ -521,7 +521,13 @@ Under assumed theoretical guards:
 2. **Session Key Derivation:** Authenticated and encrypted using $K_{\text{SESSION\_UP}}$ derived from the V2 Ephemeral X25519 ECDH handshake (`0x45`..`0x48`).
 3. **Cipher Suite:** AES-128-CCM ($M=8$, $L=2$, $N=13$) per NIST SP 800-38C and RFC 3610.
 
-### 6.2 Frame Counter Domain Safety Analysis & OPEN_DECISION Status
+### 6.2 Shared Uplink Frame Counter — Owner-Approved Design Direction / Implementation NOT_VERIFIED
+
+**Owner direction (2026-11-07; `DEC-DIAG-03 Option A`):** Use a **shared `FRAME_COUNTER` namespace per authenticated **uplink session/key instance** for new `UP_EVENT` (0x41), `UP_HEALTH_REPLY` (0x44) and a separately approved future Diagnostic frame (candidate `0x4A`). This is **`OWNER_APPROVED_DIRECTION` ONLY**, not approval of any diagnostic wire codepoint, packet format, key derivation change, FreeRTOS API, firmware implementation or RF transmission. It does not change the existing downlink `K_SESSION_DOWN` counter domain or the current V2 registry.
+
+**Responsibility:** MAC Security must serialize/reserve a unique counter and bind it to one authenticated `(session_key_instance, direction)` before AES-CCM encryption. Event/Health/Diagnostic producers submit bounded logical frame requests, never self-assign counters. The SX1276 Radio Owner already serializes radio operations, but its existence **does not prove** a MAC Security counter allocator has been implemented. The implementation owner (#131) must document exactly one allocator, ownership/locking, exhaustion handling, and rejoin lifecycle; #173/#130 supply contract/security tests and #169/#175 relevant HIL evidence.
+
+
 
 $$N = \text{SESSION\_NONCE\_PREFIX}_{\text{UP}}[0..7] \parallel 0\text{x}01 \parallel \text{FRAME\_COUNTER}[0..3]$$
 
@@ -543,7 +549,23 @@ In accordance with RFC 3610, reusing a $(K, N)$ pair under AES-CCM destroys mess
    - If `FRAME_COUNTER` is committed to flash/RTC and the write fails silently, counter rollbacks could occur upon subsequent wakes.
 
 > [!WARNING]
-> **Open Decision Disposition:** Because conclusive mathematical proof of frame counter safety under all concurrency, RTC sleep, and persistence failure paths requires verified firmware code and HIL bench testing, the Unified Frame Counter Domain cannot be declared unconditionally closed. It is formally classified as **`PROPOSED / OPEN_DECISION` (`DEC-DIAG-03`)** pending security review.
+> **DEC-DIAG-03 governance:** Option A is `OWNER_APPROVED_DIRECTION` (2026-11-07). **Implementation readiness remains `NOT_VERIFIED`**. Security review, code/contract inspection and the applicable tests below are mandatory before enabling Diagnostic TX. These tests do not authorize candidate `0x4A`; `DEC-DIAG-06` remains `NOT_APPROVED_WIRE`. Exact allocator algorithm, key/session lifecycle and verification evidence are **not yet approved/implemented**.
+
+### 6.3 Shared-Counter Security Requirements & Evidence Gates (DESIGN ONLY)
+
+| Requirement | Design rule / acceptance condition | Owner / evidence |
+|:---|:---|:---|
+| `SEC-DIAG-C01` — Single allocator | One logical MAC Security counter allocator per authenticated uplink key instance issues distinct values to **all new Event, Health and future Diagnostic frames**, including requests from concurrent FreeRTOS tasks. Only one authority may reserve/commit counters; no direct producer `++counter` path. | #131 implementation review; #130 concurrency test |
+| `SEC-DIAG-C02` — Pair uniqueness | Every **new encryption of distinct plaintext/AAD under a given key** uses a previously unused CCM nonce. The nonce domain is `SESSION_NONCE_PREFIX[8] || 0x01 || FRAME_COUNTER[4]`. No per-packet-type reset or independent Event/Health/Diagnostic counter under `K_SESSION_UP`. Skipping a reserved counter is permitted; assigning it twice to different frames is not. | #173 crypto test and audit |
+| `SEC-DIAG-C03` — Retry identity | Retry of an existing Event must transmit **byte-for-byte the same immutable authenticated frame**, with original counter/nonce; never change Event value, flags, AAD, payload, or CCM tag under that nonce. A genuinely new Event uses a fresh counter. The Diagnostic retransmission policy remains `DEC-DIAG-04 OPEN_DECISION`. | #131/#130 duplicate & ACK-loss tests |
+| `SEC-DIAG-C04` — Reboot / brownout fail-closed | After reboot with lost volatile keys/counter, **do not transmit under the previous key**; perform fully authenticated new Join and verify fresh key/nonce-prefix binding before allocating a new counter. Do not assume a successful NVS/RTC write or fresh key without evidence. If the key/counter provenance is uncertain, block RF TX and rejoin/recover via approved design. | #131 implementation and #175 power-loss tests |
+| `SEC-DIAG-C05` — Sleep / retained keys | The approved design keeps ephemeral session secrets in volatile ownership; **no new RTC-retained-key mode is authorized**. If a retained-key path is ever proposed, it requires a separate approved atomic key/counter epoch recovery protocol; simply persisting a counter in RTC RAM does not prove crash safety. | #127 security decision, #131/#175 tests |
+| `SEC-DIAG-C06` — Exhaustion / rekey | Stop issuing counters before any reserved/forbidden value or 32-bit wrap in the active session; rekey by authenticated Join with verified fresh cryptographic context, or fail-closed. Adopt the exact allowed range from the versioned V2 contract after conflict check; do not silently freeze numeric rollover policy here. | #127/#173/#131 tests |
+| `SEC-DIAG-C07` — Gateway session binding | Gateway replay state is scoped to authenticated **key/session instance, Node identity, direction** and the counter; `SESSION_SEL` (0/1) alone does **not** identify a globally unique session generation. A rejoin using the same selector must not reuse stale replay acceptance state or collide with an old session. Backend receives only verified provenance, never `K_SESSION_UP`. | #127/#128/#131 contract review |
+| `SEC-DIAG-C08` — Lost ACK & duplicate delivery | Gateway must reject a duplicate as a *new Event* but preserve the approved **idempotent ACK recovery** path for an already durably accepted Event; otherwise ACK loss can trap an Event in Node FIFO. Treat exact ciphertext retry differently from fresh counter allocation. | #131/#130 integration tests |
+| `SEC-DIAG-C09` — No early wire implementation | Current production registry remains `0x41..0x49`; `0x4A = NOT_APPROVED_WIRE`. Shared counter guidance applies to a **future approved** Diagnostic uplink only; no new parser, MQTT schema, DB key or RF scheduling is granted by this section. | #127 Gate G2 / #204 design review |
+
+**Evidence standard:** Static reasoning, documentation and passing existing baseline contract tests alone do **not** establish nonce uniqueness under task races, brownout or reset. Record actual test commands, commit SHA, toolchain/configuration, failure injections and HIL evidence separately; until then `SECURITY_NOT_VERIFIED / G2_NOT_VERIFIED`.
 
 ---
 
@@ -611,17 +633,32 @@ Under Health Slot Interleaving, even Maintenance epochs transmit `UP_HEALTH_REPL
 | **TM-DIAG-11** | Backend Idempotency | MQTT broker redelivers identical diagnostic JSON payload twice due to QoS 1 reconnect. | Backend Ingest deduplicates via `(gateway_id, event_id)` or unique constraint on `(node_id, observed_at)`. | Backend Test | #18 / #132 |
 | **TM-DIAG-12** | Flash Saturation Stress| High-frequency alert storm generating 100 drops/second for 10 minutes. | Batched dirty-commit absorbs writes; NVS wear-leveling prevents sector exhaustion; MCU heap remains bounded. | Soak / Sim | #130 / #131 |
 
+### 9.1 DEC-DIAG-03 Mandatory Security Test Plan (NOT_EXECUTED)
+
+| Test ID | Stimulus / failure injection | Expected invariant (PASS requires direct evidence) | Tier / owner |
+|:---|:---|:---|:---|
+| `TM-DIAG-13` | Dual-core FreeRTOS tasks concurrently enqueue Event, Health and candidate Diagnostic logical requests; force task preemption around counter reservation. | All *new* frames under the same `K_SESSION_UP` have unique nonces; one serialized allocator; zero race/counter duplicates. Current `0x4A` TX remains disabled. | Unit/Stress; #131/#130 |
+| `TM-DIAG-14` | Event is transmitted, ACK lost; Node retries the same Event in a later authorized DATA slot. | Identical wire bytes and nonce reused **only for exact same frame**, Gateway dedupes the Event and can recover the ACK without double storage or FIFO deadlock. | Contract/Integration/HIL; #131/#130 |
+| `TM-DIAG-15` | Power cut during counter reservation, frame creation, and immediately after TX; repeat with reboot. | No new distinct ciphertext is encrypted/transmitted under a previously used `(Key, Nonce)`; Node fails closed and rejoins when provenance is uncertain. | Fault injection/HIL; #175/#131 |
+| `TM-DIAG-16` | Enter sleep/wake; separately attempt an unauthorized retention path with stale RTC counter and old key. | Approved volatile-key path requires safe fresh Join after key loss. Unsupported retained-key rollback cannot permit TX; no retention mechanism silently approved. | Firmware/HIL; #131/#175 |
+| `TM-DIAG-17` | Exercise last allowed counter values, wrap attempt and failed rekey. | No counter wrap under a live key; rekey or radio TX lockout before a forbidden value; old session cannot be reused accidentally. | Crypto/Boundary; #173/#131 |
+| `TM-DIAG-18` | Alternate `SESSION_SEL` 0/1, rejoin/rekey multiple times, reuse selector and present stale packet/counter from earlier key instance. | Gateway binds replay state to authenticated session instance, not bare selector; stale replay rejected, fresh authenticated session accepted. | Security/Integration; #127/#131 |
+| `TM-DIAG-19` | Force allocator queue saturation, task cancellation, encryption failure, and delayed TX; inject a second packet type request. | Ownership is race-safe; no counter is reassigned to a different frame; correct fail-closed/error path; buffers remain bounded. | Unit/Fuzz/Stress; #131/#130 |
+| `TM-DIAG-20` | Try to build/parse/transmit candidate `0x4A` before owner-approved versioned wire contract. | Active implementation rejects `0x4A` as unallocated; tests of logical counter scheduling use mocks only; G2 not promoted by test results. | Contract/Negative; #127/#130 |
+
+**Required artifacts before implementation authorization:** Reviewed allocator/call graph; key/session lifecycle and immutable-retry specification; Golden Vectors showing nonce composition and cross-packet uniqueness; unit/contract/integration results for the above scenarios; brownout/sleep HIL data when corresponding implementation paths exist. All eight test cases are **DESIGNED / NOT_RUN** here.
+
 ---
 
 ## 10. Open Decision Register for Owner Review (Deliverable 8)
 
-**DEC-DIAG-01 field-selection subset is `OWNER_APPROVED_FIELD_SELECTION` (2026-11-07)**: keep `DROPPED_EVENT_COUNT`, `DIAG_FLAGS` and `BATTERY_MV` (and `MAINT_SEQ` echo); omit both TX statistics fields. **All six full implementation/wire decisions remain `PROPOSED / OPEN_DECISION`**, including DEC-DIAG-01 frame layout and codepoint. No wire allocations are made, `0x4A` remains strictly `NOT_APPROVED_WIRE`, and the approved 21B `UP_HEALTH_REPLY` frame remains 100% frozen:
+**DEC-DIAG-01 field-selection subset is `OWNER_APPROVED_FIELD_SELECTION` (2026-11-07)**: keep `DROPPED_EVENT_COUNT`, `DIAG_FLAGS` and `BATTERY_MV` (and `MAINT_SEQ` echo); omit both TX statistics fields. **DEC-DIAG-03 Option A is `OWNER_APPROVED_DIRECTION / IMPLEMENTATION_NOT_VERIFIED` (2026-11-07); remaining implementation and wire decisions are open**, including DEC-DIAG-01 frame layout and codepoint. No wire allocations are made, `0x4A` remains strictly `NOT_APPROVED_WIRE`, and the approved 21B `UP_HEALTH_REPLY` frame remains 100% frozen:
 
 | Decision ID | Summary of Issue | Options Considered | Status & Proposed Disposition | Impacted Teams |
 |:---|:---|:---|:---|:---|
 | **DEC-DIAG-01** | Wire Layout Selection for Diagnostic Message | **Option A:** Candidate 1 Compact 23B (historical, includes TX_UNACKED).<br>**Option B:** Candidate 2 Extended 29B (historical, includes TX_ATTEMPT/TX_UNACKED).<br>**Option C:** Candidate 3 TLV 29B/33B (historical).<br>**Option D:** **Candidate 4 Reduced MVP 26B** (4B MAINT_SEQ, 4B DROPPED_EVENT_COUNT, 1B DIAG_FLAGS, 2B BATTERY_MV; no TX statistics). | `PROPOSED / OPEN_DECISION` — Owner **approves field inclusion** of `DROPPED_EVENT_COUNT`, `DIAG_FLAGS`, `BATTERY_MV` (plus `MAINT_SEQ` sequence echo) and **exclusion** of `TX_ATTEMPT_COUNT` / `TX_UNACKED_COUNT` from Diagnostic MVP; **Option D's 26B wire length, offsets, bit meanings and transport remain `PROPOSED / OPEN_WIRE_DECISION`**, requiring contract/security/hardware review before implementation. | MAC / Security / Firmware |
 | **DEC-DIAG-02** | TDMA Transmission Opportunity | **Option 1:** Interleave with Health Reply (alternating cadence, ~600s health interval).<br>**Option 2:** Expand Maintenance Superframe ($+N$ slots).<br>**Option 3:** Low-frequency periodic diagnostic superframe (~3600s). | `PROPOSED / OPEN_DECISION` — Propose Option 1 with dynamic health override, balancing zero additional slot allocations against halved health frequency. | MAC Scheduler / Gateway |
-| **DEC-DIAG-03** | Frame Counter Domain Binding | **Option A:** Shared `FRAME_COUNTER` under $K_{\text{SESSION\_UP}}$ across Event, Health, and Diag.<br>**Option B:** Dedicated derived subkey $K_{\text{DIAG\_UP}}$ with independent counter. | `PROPOSED / OPEN_DECISION` — Propose Option A subject to formal FreeRTOS concurrency mutex verification and RTC sleep persistence audit. | Security / Crypto |
+| **DEC-DIAG-03** | Frame Counter Domain Binding | **Option A (OWNER SELECTED DESIGN DIRECTION):** Shared `FRAME_COUNTER` under $K_{\text{SESSION\_UP}}$ across newly encrypted Event, Health and future-approved Diagnostic frames, scoped to the authenticated uplink session/key instance.<br>**Option B (NOT SELECTED):** Dedicated derived subkey $K_{\text{DIAG\_UP}}$ with independent counter. | **`OWNER_APPROVED_DIRECTION` (2026-11-07) / `IMPLEMENTATION_NOT_VERIFIED`** — Option A selected; complete `SEC-DIAG-C01..C09` and `TM-DIAG-13..20` security evidence before implementation. No wire approval, no crypto/firmware contract change, `G2=NOT_VERIFIED`. | Security / Crypto / Firmware / HIL |
 | **DEC-DIAG-04** | Retransmission Policy | **Option A:** Best-effort unacknowledged (zero MAC retries).<br>**Option B:** Bounded retry in next maintenance superframe.<br>**Option C:** Dedicated downlink diagnostic ACK. | `PROPOSED / OPEN_DECISION` — Propose Option A (Best-Effort Zero Retries) to eliminate RF clutter and preserve airtime margins. | Radio MAC / Firmware |
 | **DEC-DIAG-05** | NVS Persistence Strategy & FIFO Atomicity | **Option A:** Compound metadata record commit.<br>**Option B:** Slot-synchronized dirty-commit.<br>**Option C:** Boot recovery reconciliation. (Brownout ISR flash write prohibited). | `PROPOSED / OPEN_DECISION` — FIFO/NVS transaction atomicity and durability remain `NOT_VERIFIED pending HIL #175 and firmware queue architecture #131`. | Node Firmware / HIL |
 | **DEC-DIAG-06** | Wire Codepoint Assignment Boundary | **Option A:** Allocate candidate `0x4A` (`UP_DIAG_METRICS`) formally in Wire Registry.<br>**Option B:** Maintain `0x4A` as candidate; freeze wire allocation at Gate G2. | `PROPOSED / OPEN_DECISION` — Propose Option B (`NOT_APPROVED_WIRE`), strictly upholding `DEC-MH-08` policy until formal Owner wire allocation. | Project Owner / G2 Gate |
@@ -635,7 +672,7 @@ Under Health Slot Interleaving, even Maintenance epochs transmit `UP_HEALTH_REPL
 - [x] **AC-2 (Candidate Designs):** Specifies at least two complete candidate designs with bitfields and wire diagrams (Candidate 1 historical 23B, Candidate 2 historical 29B, Candidate 3 historical TLV 29B/33B, Candidate 4 Reduced MVP proposed primary 26B (Section 4)).
 - [x] **AC-3 (Trade-off & Airtime Analysis):** Compares physical LoRa ToA at SF7 and SF8, evaluates slot budget feasibility as `THEORETICAL_MODEL / ASSUMED_GUARDS_ONLY`, and analyzes byte efficiencies (Section 5).
 - [x] **AC-4 (Field & Semantic Mapping):** Details mathematically bounded modular rollover logic, reboot recovery, batching wear-leveling, and idempotency (Section 3).
-- [x] **AC-5 (Security & Replay Analysis):** Evaluates AES-128-CCM nonce uniqueness, shared frame counter domain failure modes, and epoch binding (Section 6).
+- [x] **AC-5 (Security & Replay Analysis):** Evaluates AES-128-CCM nonce uniqueness, shared frame counter domain failure modes, and epoch binding (Section 6). Owner approved `DEC-DIAG-03 Option A` **direction only**; the `SEC-DIAG-C01..C09` conditions and `TM-DIAG-13..20` tests are DESIGN / NOT_RUN and no implementation security acceptance is claimed.
 - [x] **AC-6 (Cross-Layer Impact Matrix):** Produces non-authorizing cross-layer impact matrix distinguishing approved scope from future potential impact across #131, #128, #18/#132, #130, #169, #127, #117 (Section 8).
 - [x] **AC-7 (Negative Test Matrix):** Formulates 12-case negative test suite covering overflow, replay, tampering, desync, and idempotency (Section 9).
 - [x] **AC-8 (Open Decision Register):** Formulates 6 formal decision candidates marked `PROPOSED / OPEN_DECISION` (Section 10).
@@ -643,6 +680,6 @@ Under Health Slot Interleaving, even Maintenance epochs transmit `UP_HEALTH_REPL
 
 ### 11.2 Status on Completion
 In accordance with the Definition of Done:
-- **Operational Status:** `DESIGN_REMEDIATED / READY_FOR_HUMAN_REVIEW / OWNER_WIRE_APPROVAL_PENDING`
+- **Operational Status:** `DESIGN_REMEDIATED / READY_FOR_HUMAN_REVIEW / OWNER_WIRE_APPROVAL_PENDING` (DEC-DIAG-03 Option A `OWNER_APPROVED_DIRECTION`; security implementation `NOT_VERIFIED`)
 - **G2 Gate Status:** `NOT_VERIFIED` (pending physical HIL timing #169 and formal Owner wire allocation).
 - **Existing Baseline Test Evidence:** Execution of `tests/contract/test_radio_mac_timing_consistency.py` verifies baseline contract invariants (0x41..0x49 active codepoints, 0x4A not implemented on wire, 21B budget saturated). It does **NOT** establish implementation PASS, RF/HIL PASS, or cross-layer integration PASS.
