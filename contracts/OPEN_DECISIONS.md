@@ -2,10 +2,13 @@
 
 **Quy tắc phân loại trạng thái:**
 - `OWNER_APPROVED_DESIGN`: Thiết kế đã được Project Owner phê duyệt chính thức bằng văn bản/commit; làm cơ sở ràng buộc kiến trúc nhưng chưa đồng nghĩa với hoàn tất kiểm thử vật lý hay code production.
+- `OWNER_APPROVED_DIRECTION`: Chủ trương định hướng kỹ thuật đã được Project Owner phê duyệt chính thức (2026-11-06); xác lập nguyên tắc kiến trúc và tiêu chí thẩm định fail-closed nhưng **không đóng băng các hằng số số học cố định** hay gán byte wire khi chưa có đo đạc thực tế / hợp đồng riêng.
 - `CONFIRMED`: Chủ đích kiến trúc đã được xác nhận trong ADR hoặc baseline repo.
 - `CANDIDATE`: Đề xuất kỹ thuật đang chờ xem xét liên chức năng và phê duyệt từ Owner.
+- `PLANNED_NOT_IMPLEMENTED`: Đã được chấp thuận định hướng trong kiến trúc nhưng chưa cấp phát mã trên dây (wire codepoint) hoặc chưa triển khai mã nguồn trong phạm vi hợp đồng hiện tại.
 - `OPEN_DECISION`: Vấn đề kỹ thuật mở cần lựa chọn phương án trước khi đóng băng hợp đồng.
 - `BLOCKED`: Điểm nghẽn kỹ thuật bắt buộc phải có ADR mới hoặc bằng chứng đo đạc vật lý G1/G2 trước khi đóng băng.
+- `NOT_HIL_VERIFIED`: Chưa có bằng chứng đo đạc thực tế trên phần cứng thật (Issue #169).
 
 ---
 
@@ -22,10 +25,10 @@
 | **DEC-SEC-07** | Cryptography | Tuân thủ triệt để RFC 7748 Section 6.1: Nếu $\text{X25519}(\text{priv}, \text{pub}) == 0^{32}$, Node và Gateway lập tức hủy phiên và xóa sạch trạng thái mật mã. | `OWNER_APPROVED_DESIGN` · Owner Phê duyệt (2026-11-06, Commit `f5dd608`) |
 | **DEC-127-01** | Wire Codepoint | Phê duyệt chính thức mã bản tin sự kiện `UP_EVENT` (`0x41`, 26B) và xác nhận sự kiện tức thì `DOWN_EVENT_ACK` (`0x42`, 19B) theo thiết kế PR #189. | `OWNER_APPROVED_DESIGN` · Owner Phê duyệt (2026-11-06) |
 | **DEC-127-02** | Cryptography | Chốt độ dài thẻ xác thực AES-128-CCM cho dữ liệu ứng dụng là **8 byte ($M=8$)** nhằm tối ưu hóa thời gian chiếm dụng sóng RF airtime. | `OWNER_APPROVED_DESIGN` · Owner Phê duyệt (2026-11-06) |
-| **DEC-127-03** | RF PHY / TDMA | Áp dụng **Lựa chọn A: Giới hạn vận hành hệ thống MVP V1 chỉ ở SF7 và SF8** (ToA khứ hồi bảo đảm dưới 250ms, an toàn tuyệt đối trong khe 400ms). Độ dài khe 400ms sẽ được tái đánh giá sau khi có số liệu đo đạc vật lý từ #169. | `OWNER_APPROVED_DESIGN` · Owner Phê duyệt (2026-11-06) |
-| **DEC-127-04** | Node Policy | Khi hàng đợi sự kiện NVS FIFO của Node đầy tải do mất kết nối kéo dài, áp dụng chính sách **`RING_BUFFER_DROP_OLDEST`** (ghi đè sự kiện cũ nhất để ưu tiên cảnh báo mới nhất). | `OWNER_APPROVED_DESIGN` · Owner Phê duyệt (2026-11-06) |
-| **DEC-MH-01** | Wire Codepoint | Phê duyệt chính thức mã bản tin đồng bộ mạng `DOWN_SYNC_BEACON` (`0x43`, 80B) mang chữ ký số Ed25519 (64B) theo thiết kế PR #190. | `OWNER_APPROVED_DESIGN` · Owner Phê duyệt (2026-11-06) |
-| **DEC-MH-02** | Wire Codepoint | Phê duyệt chính thức mã bản tin sức khỏe định kỳ `UP_HEALTH_REPLY` (`0x44`, 21B, AES-128-CCM) theo thiết kế PR #190. | `OWNER_APPROVED_DESIGN` · Owner Phê duyệt (2026-11-06) |
+| **DEC-127-03** | RF PHY / TDMA | Áp dụng **Lựa chọn A: Giới hạn vận hành hệ thống MVP V1 chỉ ở SF7 và SF8** (nguyên tắc khe 400ms). *Bổ chính #201:* Hình minh họa cửa sổ con $100\text{ms}/20\text{ms}/100\text{ms}$ và phong bì 220ms không hợp lệ cho SF8 (ToA Event 113.152ms, ACK 102.912ms). Việc tái phân bổ cửa sổ con cho SF8 trong khe 400ms được theo dõi dưới `DEC-127-06`. | `OWNER_APPROVED_DESIGN` · Owner Phê duyệt (2026-11-06) |
+| **DEC-127-04** | Node Policy | Khi hàng đợi sự kiện NVS FIFO của Node đầy tải do mất kết nối kéo dài, áp dụng chính sách **`RING_BUFFER_DROP_OLDEST`** (ghi đè sự kiện cũ nhất để ưu tiên cảnh báo mới nhất). Bắt buộc lưu bền vững `DROPPED_EVENT_COUNT` trong NVS. | `OWNER_APPROVED_DESIGN` · Owner Phê duyệt (2026-11-06) |
+| **DEC-MH-01** | Wire Codepoint | Phê duyệt chính thức mã bản tin đồng bộ mạng `DOWN_SYNC_BEACON` (`0x43`, 80B) mang chữ ký số Ed25519 (64B) theo thiết kế PR #190. Bố cục wire được đóng băng an toàn. | `OWNER_APPROVED_DESIGN` · Owner Phê duyệt (2026-11-06) |
+| **DEC-MH-02** | Wire Codepoint | Phê duyệt chính thức mã bản tin sức khỏe định kỳ `UP_HEALTH_REPLY` (`0x44`, 21B, AES-128-CCM) theo thiết kế PR #190. *Bổ chính #201:* Khẳng định ngân sách 21B không có trường cho `DROPPED_EVENT_COUNT`; kênh truyền tải số liệu mất gói theo dõi dưới `DEC-MH-08`. | `OWNER_APPROVED_DESIGN` · Owner Phê duyệt (2026-11-06) |
 
 ---
 
@@ -38,6 +41,9 @@
 | **DEC-MH-05** | Đồng bộ chuyển lịch 3 chu kỳ | Phát cờ đếm ngược $3 \to 2 \to 1$ trong Beacon và yêu cầu 100% Node bị ảnh hưởng sẵn sàng trước khi cắt chuyển lịch active. | `CANDIDATE` (Đồng bộ với SEC-05) · GW / Backend |
 | **DEC-MH-06** | Rào chắn bán song công SX1276 | Thiết lập khoảng bảo vệ tối thiểu giữa RX và TX turnaround để tránh xung đột phần cứng khi radio đang nhận packet. | `CANDIDATE` (Chờ đo đạc #169) · Embedded / RF |
 | **DEC-127-05** | SLA ghi bền vững WAL tại Gateway | Xác định giới hạn mili-giây cho thao tác ghi SQLite/WAL tại Gateway trước khi phát `DOWN_EVENT_ACK` trên RF để cam kết 0% mất dữ liệu. | `OPEN_DECISION` · Gateway Engine / SQLite |
+| **DEC-127-06** | Tham số hóa hình học Khe Tĩnh DATA cho SF7 & SF8 (TIM-01) | Duy trì khả năng vận hành SF7/SF8. Quy định cấu trúc hình học khe DATA tĩnh là hệ thức tham số hóa được thẩm định tự động (`validator-checkable`) dựa trên PHY thực tế + ToA lý thuyết + trễ đo đạc thực tế (turnaround, WAL commit Gateway, jitter ngắt, clock drift, guards, airtime duty). Ví dụ 400ms ($25+125+35+115+100\text{ms}$) là **hình minh họa ứng viên (candidate example only)**, **tuyệt đối không phải profile cố định**. Backend lập lịch & quản lý phiên bản, Gateway thực thi, Node tuân thủ; duy trì xác thực đếm ngược $3 \to 2 \to 1$ và hàng rào 100%-READY. Bắt buộc fail-closed khi thiếu tham số hoặc vi phạm bất đẳng thức. | `OWNER_APPROVED_DIRECTION / NOT_HIL_VERIFIED` · Owner Phê duyệt (2026-11-06, Issue #201 / PR #202 Comment) |
+| **DEC-MH-07** | Tham số hóa Cửa sổ phát Beacon 80B trong Maintenance Superframe (TIM-02) | Giữ nguyên khung bản tin 80B Ed25519 đã duyệt (`DEC-MH-01`); **tham số hóa cửa sổ Beacon (parameterized Beacon window)** theo cấu hình PHY đang kích hoạt. Cửa sổ 400ms tại SF8 là ví dụ ứng viên, không cố định số học; tùy chọn khóa Beacon ở SF7 là phương án dự phòng ứng viên. Cần kiểm tra ngân sách thời gian Maintenance Superframe và đo đạc HIL #169. | `OWNER_APPROVED_DIRECTION / NOT_HIL_VERIFIED` · Owner Phê duyệt (2026-11-06, Issue #201 / PR #202 Comment) |
+| **DEC-MH-08** | Kênh truyền tải số liệu mất mát `DROPPED_EVENT_COUNT` của Node (MAC-01) | Giữ nguyên 100% bản tin `UP_HEALTH_REPLY` (`0x44`, 21B) hiện hành (`DEC-MH-02`) và duy trì bộ đếm bền vững `DROPPED_EVENT_COUNT` trong NVS flash của Node. Duyệt định hướng sử dụng **bản tin quản trị/chẩn đoán riêng biệt có phiên bản (separate versioned diagnostic/management message)** để báo cáo số liệu mất mát. Mã `0x4A` chỉ là mã loại gói tin ứng viên (candidate packet type only) chờ hợp đồng phân bổ riêng; **tuyệt đối không phát hành hoặc gán byte wire format trong PR này**. | `OWNER_APPROVED_DIRECTION` (Định hướng được duyệt) / `PLANNED_NOT_IMPLEMENTED` (Chưa triển khai trên wire) · Owner Phê duyệt (2026-11-06, Issue #201 / PR #202 Comment) |
 
 ---
 
