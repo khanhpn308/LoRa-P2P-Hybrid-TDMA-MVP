@@ -26,7 +26,7 @@ Under **Owner Decision `DEC-MH-08`** (ratified in Issue #201 / PR #202), the Pro
 In strict accordance with project authority (`AGENTS.md`, `contracts/OPEN_DECISIONS.md`, and Issue #204 acceptance criteria):
 - **Design-Only Scope:** This document is an architectural and contract design proposal. It authorizes **zero** production code changes, **zero** modifications to frozen V2 Radio MAC contracts, and **zero** live RF transmissions.
 - **Uncompromised `UP_HEALTH_REPLY` (0x44):** The 21-byte layout of `UP_HEALTH_REPLY` remains 100% frozen. No fields are redefined, truncated, or overloaded.
-- **Strict Data Semantics:** `PENDING_COUNT` is volatile queue depth; `DROPPED_EVENT_COUNT` is durable cumulative dropped event count maintained in NVS flash.
+- **Strict Data Semantics:** `PENDING_COUNT` is volatile queue depth; `DROPPED_EVENT_COUNT` is durable cumulative dropped event count maintained in NVS flash, with actual durability guarantees subject to verification.
 - **Separate Versioned Message:** Diagnostic metrics must be carried in a separately versioned management message.
 - **Candidate Status of `0x4A`:** Codepoint `0x4A` (symbolically designated `UP_DIAG_METRICS`) is strictly `NOT_APPROVED_WIRE` (candidate packet type only), pending Owner wire approval.
 - **Zero RF Chaos:** No unscheduled transmissions, no priority contention (PCSS), no CAD backoff, and no periodic application business telemetry are permitted.
@@ -38,7 +38,7 @@ In strict accordance with project authority (`AGENTS.md`, `contracts/OPEN_DECISI
 
 | Requirement ID | Domain | Requirement Statement & Authority Source | Verification Gate |
 |:---|:---|:---|:---|
-| **REQ-DIAG-01** | Semantics | Node must maintain `DROPPED_EVENT_COUNT` as a durable cumulative counter incremented strictly upon FIFO drop events (`RING_BUFFER_DROP_OLDEST` under `DEC-127-04`). | Gate G2 / Firmware Unit |
+| **REQ-DIAG-01** | Semantics | Node must maintain `DROPPED_EVENT_COUNT` as a durable cumulative counter incremented strictly upon FIFO drop events (`RING_BUFFER_DROP_OLDEST` under `DEC-127-04`). Durability across crashes remains subject to HIL fault injection (#175). | Gate G2 / Firmware Unit (#131, #175) |
 | **REQ-DIAG-02** | Framing | `UP_HEALTH_REPLY` (0x44, 21B) must not be altered, expanded, or bit-stuffed (`DEC-MH-02`, `DEC-MH-08`). | Gate G2 / Contract Assert |
 | **REQ-DIAG-03** | Framing | Diagnostic metrics must be encapsulated within a distinct, versioned Unicast uplink message following the standard V2 7-byte Unicast Header format (`DEC-127-01`, `DEC-SEC-01`). | Gate G2 / Wire Codec |
 | **REQ-DIAG-04** | Security | Diagnostic uplinks must be authenticated and encrypted using AES-128-CCM ($M=8$, $L=2$, Nonce=13B) with the active session key $K_{\text{SESSION\_UP}}$ (`DEC-SEC-01`, `DEC-127-02`). | Gate G2 / Crypto Golden Vector |
@@ -104,7 +104,7 @@ Under the approved architecture ([ADR-0001](../adr/0001-hybrid-tdma.md), `DEC-12
   - *Advantage:* Saves 1 byte over the air.
   - *Disadvantage:* Loss of sub-10mV resolution; requires non-standard decompression logic in Gateway/Backend.
 
-### 3.4 Counter Persistence, NVS Transaction Ordering & Power-Loss Windows
+### 3.4 NVS Counter / FIFO Crash Consistency & Transaction Atomicity Analysis
 
 #### Technical Analysis of Flash Writes and Brownout Prohibition
 > [!CAUTION]
@@ -114,31 +114,53 @@ Under the approved architecture ([ADR-0001](../adr/0001-hybrid-tdma.md), `DEC-12
 > - Attempting flash writes when $V_{\text{DD}}$ drops below the flash chip minimum operating voltage ($2.7\text{ V}$) results in partial bit programming, sector corruption, or unrecoverable NVS filesystem panics. Furthermore, ESP-IDF SPI flash drivers disable the cache and use mutexes that cannot be executed from an ISR context.
 > - Consequently, flash writes in a brownout ISR are **forbidden** unless backed by empirical hardware bench evidence with calibrated supercapacitors and power-fail early-warning circuitry.
 
+#### Power Failure at Transaction Boundaries
+A naive three-step mutation sequence:
+$$\text{Step 1: Commit } \text{DROPPED\_EVENT\_COUNT} \to \text{Step 2: Advance FIFO drop pointer} \to \text{Step 3: Insert new Event}$$
+exhibits critical failure modes when power collapses across boundaries:
+
 ```
-+---------------------------------------------------------------------------------------------------+
-|                        NVS TRANSACTION ORDERING & POWER-LOSS VULNERABILITY                        |
-+---------------------------------------------------------------------------------------------------+
+  +-------------------------------------------------------------------------------------------------+
+  |                             TRANSACTION BOUNDARY FAILURE ANALYSIS                               |
+  +-------------------------------------------------------------------------------------------------+
 
-  Model A: Transaction-Ordered Synchronous Commit (NOT_VERIFIED pending HIL #175)
-    FIFO Full Alert Arrives ---> Step 1: Execute NVS Write/Commit for DROPPED_EVENT_COUNT
-                                 Step 2: On NVS Success, advance FIFO ring buffer drop pointer
-                                 Step 3: Insert new event into FIFO
-    - Note on Power Loss: Absolute zero-power-loss window cannot be guaranteed without HIL proof;
-      if power fails mid-SPI transaction, in-flight NVS entry is invalidated by CRC, reverting
-      counter to last fully committed state on reboot.
-    - Trade-off: Flash write latency (~2-5ms) in event drop path; relies on ESP-IDF wear-leveling.
+  Boundary 0 -> 1: Power loss during Step 1 (SPI Flash write of DROPPED_EVENT_COUNT)
+    - Flash State: In-flight NVS record has invalid CRC; discarded on next boot.
+    - FIFO State: Unmodified. Oldest event retained.
+    - Result: Clean rollback to previous committed counter value.
 
-  Model B: Slot-Synchronized Flush (Bounded Vulnerability Window)
-    Drops increment RAM counter ---> TDMA Slot Wake-up ---> Commit dirty counter to NVS ---> Sleep
-    |<------------------- Bounded Vulnerability Window (T_batch) ------------------>|
-    - If power collapses during T_batch, up to K uncommitted drops in RAM are lost.
-    - Upon reboot, counter resumes from last committed NVS value without corruption.
+  Boundary 1 -> 2: Power loss AFTER Step 1 finishes, BEFORE Step 2 advances FIFO drop pointer
+    - Flash State: DROPPED_EVENT_COUNT committed as (C_prev + 1).
+    - FIFO State: Drop pointer NOT advanced; oldest event remains in FIFO.
+    - Result: PHANTOM DROP INCREMENT. The durable drop counter incremented, but no event was dropped
+      from the queue. Upon reboot, the old event might trigger another drop attempt, double-counting.
+
+  Boundary 2 -> 3: Power loss AFTER Step 2 finishes, BEFORE Step 3 inserts new replacement Event
+    - Flash State: DROPPED_EVENT_COUNT committed as (C_prev + 1).
+    - FIFO State: Oldest event dropped; new event lost before commit.
+    - Result: Queue depth drops from 255 to 254; new alarm lost without queue preservation.
+
+  Reverse Order (Step 2 before Step 1: Advance FIFO drop pointer before NVS Commit):
+    - Power loss between Step 2 and Step 1: Event was dropped from FIFO, but NVS counter was NOT updated.
+    - Result: UNACCOUNTED EVENT DROP. Actual event was permanently discarded without loss recording.
 ```
 
-#### Transaction Ordering & Atomicity Requirements
-1. **Transaction Ordering Rule:** The increment of `DROPPED_EVENT_COUNT` in NVS must strictly precede the advancement of the FIFO tail pointer (`RING_BUFFER_DROP_OLDEST`). If the flash write fails, the drop must fail closed or record an uncommitted drop flag.
-2. **Flash Wear Reality:** ESP-IDF NVS uses log-structured key-value append operations across pages. Writing a 32-bit integer appends a 32-byte record rather than erasing a sector. With typical 16–32 KB NVS partitions, thousands of writes are distributed across pages. Furthermore, FIFO saturation occurs only during prolonged network outages, not continuously in normal operation.
-3. **Formal Gating Prerequisite:** Both Model A and Model B durability guarantees remain **`NOT_VERIFIED pending HIL power-loss fault-injection tests (Issue #175)`**.
+#### Evaluation of Crash-Consistent Transaction Options
+To avoid phantom increments or uncounted drops without introducing unreviewed flash partition architectures:
+
+1. **Volatile RAM Queue vs Durable Flash FIFO:**
+   - *Volatile RAM Queue:* If the event FIFO is maintained in volatile SRAM, any power loss completely clears all pending queue items. Persisting `DROPPED_EVENT_COUNT` in NVS preserves cumulative historical drops, but cannot reconcile uncommitted RAM states across power cycles.
+   - *Durable Flash FIFO:* If the FIFO itself resides in flash storage, the drop pointer and the cumulative drop counter exist in separate storage structures. Achieving atomicity across them requires a coordinated recovery protocol.
+2. **Crash-Consistency Architectures (Candidate Design Options):**
+   - *Option 1 (Compound Metadata Record):* Bundle the FIFO read/write pointers and `DROPPED_EVENT_COUNT` into a single combined C struct committed via a single atomic `nvs_set_blob()` operation. Atomicity is inherited from ESP-IDF NVS entry CRC.
+   - *Option 2 (Intent Journal / WAL):* Log an intent record (`PENDING_DROP { old_event_ref, target_count }`) prior to queue pointer advancement, committing final state upon queue update completion.
+   - *Option 3 (Recovery Reconciliation on Boot):* At boot initialization, scan the persistent FIFO sequence IDs (`EVENT_REF`) against the last committed `DROPPED_EVENT_COUNT` and unacknowledged transmit records to detect and reconcile any partial-transaction gaps.
+3. **Formal Architectural Disposition:**
+   - Because standard ESP-IDF NVS does not natively provide multi-key two-phase transactions, and because defining custom flash sector layouts or journal schemas is outside the authorized scope of this Radio MAC proposal, the exact firmware crash-consistency mechanism is **NOT CLOSED** by this document.
+   - **Status:** **`OPEN_DECISION / NOT_VERIFIED`** (`DEC-DIAG-05`).
+   - Implementation ownership is delegated to **Issue #131** (Node/Gateway firmware queue architecture), and empirical power-loss validation is delegated to **Issue #175** (HIL power-loss fault injection). Zero-loss or atomic durability cannot be claimed without physical HIL proof.
+
+---
 
 ### 3.5 Qualified Backend Ingest, Monotonic Deduplication & Rollover Handling
 
@@ -162,28 +184,86 @@ The Backend storage and ingest layer must handle duplicate packets, out-of-order
                             Order reports by canonical sequence (session_sel, frame_counter, maint_seq)
 ```
 
-#### Qualified Delta, Rollover & Discontinuity Rules
-Let $R_k$ be the current report with counter $C_k$, and $R_{k-1}$ be the immediately preceding sequential report with counter $C_{k-1}$:
+#### Mathematically Defensible Modular Rollover Derivation
+Let:
+- $W \in \{2^{16}, 2^{32}\}$ be the counter modulus ($W = 65,536$ for 16-bit `uint16_t`, $W = 4,294,967,296$ for 32-bit `uint32_t`).
+- $C_{\text{prev}} \in [0, W - 1]$ be the previous verified counter value observed at timestamp $t_{\text{prev}}$.
+- $C_{\text{curr}} \in [0, W - 1]$ be the current received counter value observed at timestamp $t_{\text{curr}}$.
+- $\Delta T = t_{\text{curr}} - t_{\text{prev}} > 0$ be the verified elapsed time in seconds between reports, established from an authoritative time source (Gateway UTC clock or Maintenance Superframe sequence cadence).
+- $R_{\text{max}} > 0$ be the verified maximum possible physical drop rate (drops/second) that the sensor node hardware and firmware task queue can physically generate.
 
-1. **Rule 1 (Monotonic Progress, $C_k \ge C_{k-1}$):**
-   $$\Delta_{\text{loss}} = C_k - C_{k-1}$$
-   Durable dropped event increment is recorded cleanly.
-2. **Rule 2 (Qualified Integer Rollover):**
-   If counter width is $W$ ($2^{16}$ for Candidate 1, $2^{32}$ for Candidate 2) and $C_k < C_{k-1}$:
-   - **Candidate 2 (32-bit):** Rollover requires $4.29 \times 10^9$ drops ($\sim 13.6$ years at 10 drops/s continuous). A counter decrease in Candidate 2 is treated as an abnormal reset unless elapsed operating time and loss rates mathematically support multi-year rollover.
-   - **Candidate 1 (16-bit):** Single rollover ($65,536$) occurs in 36.4 hours at 0.5 drops/s. Rollover delta $\Delta_{\text{loss}} = (W - C_{k-1}) + C_k$ is accepted **only if** elapsed offline time $\Delta T$ is bounded such that multi-wrap is mathematically impossible ($\Delta T < 2 \times T_{\text{min\_wrap}}$) AND $C_{k-1} > (W - \text{MARGIN}_{\text{wrap}})$.
-   - **Multi-Wrap Ambiguity:** If the elapsed offline duration allows more than one possible wrap-around, calculating a single wrap would invent false totals. Under multi-wrap ambiguity, the system flags `AMBIGUOUS_MULTI_WRAP`, sets the delta to `UNKNOWN`, and establishes $C_k$ as the new baseline.
-3. **Rule 3 (Counter Discontinuity / Reset / Flash Wipe / Identity Reuse):**
-   If $C_k < C_{k-1}$ and rollover conditions are not met:
-   - This indicates a hardware reset with flash wipe, firmware reflash, or node identity collision.
-   - **Strict Non-Invention Principle:** The Backend **must NOT assume rollover or invent synthetic loss totals**.
-   - Action: Flag a `DIAG_METRIC_DISCONTINUITY` audit record in the database. Establish $C_k$ as the new baseline ($C_{\text{baseline}} = C_k$). Mark the interval delta as `DISCONTINUOUS / UNVERIFIED`.
-4. **Rule 4 (Out-of-Order Delivery & Offline Buffer Replay):**
-   - Because all records are ingested into an append-only time-series ledger, out-of-order packets are placed in their proper sequential position by `(session_sel, frame_counter)`. Interval deltas are computed across the canonical sequence, completely preventing phantom spikes.
-5. **Rule 5 (Session Change Handoff):**
-   - When a Node re-joins (`SESSION_SEL` increments), `FRAME_COUNTER` resets to $0$.
-   - Since `DROPPED_EVENT_COUNT` is a **device-lifetime durable counter** stored in NVS, $C_k$ remains monotonic across session changes ($C_{\text{new\_session}} \ge C_{\text{old\_session}}$).
-   - If an NVS wipe accompanied the re-join, Rule 3 applies.
+The true physical drop increment $\Delta C \in \mathbb{Z}_{\ge 0}$ must simultaneously satisfy two constraints:
+
+1. **Modular Congruence Constraint:**
+   $$C_{\text{curr}} \equiv C_{\text{prev}} + \Delta C \pmod W \implies \Delta C = (C_{\text{curr}} - C_{\text{prev}}) + k \cdot W \quad \text{for } k \in \mathbb{Z}$$
+
+2. **Physical Rate Bounding Constraint:**
+   The increment cannot be negative, nor can it exceed the physical upper limit over elapsed time $\Delta T$:
+   $$0 \le \Delta C \le R_{\text{max}} \times \Delta T$$
+
+Substituting $\Delta C$:
+$$0 \le (C_{\text{curr}} - C_{\text{prev}}) + k \cdot W \le R_{\text{max}} \times \Delta T$$
+
+Solving for integer wrap count $k$:
+$$k_{\text{min}} = \left\lceil \frac{C_{\text{prev}} - C_{\text{curr}}}{W} \right\rceil \le k \le \left\lfloor \frac{R_{\text{max}} \times \Delta T - (C_{\text{curr}} - C_{\text{prev}})}{W} \right\rfloor = k_{\text{max}}$$
+
+Let $\mathcal{K} = \{ k \in \mathbb{Z} \mid k \ge 0 \text{ and } k_{\text{min}} \le k \le k_{\text{max}} \}$ be the set of physically and mathematically feasible wrap counts.
+
+#### Formal Ingest Rules
+- **Rule 1 (Unique Integer Solution, $|\mathcal{K}| = 1$):**
+  Exactly one integer $k^* \in \mathcal{K}$ satisfies both modular congruence and physical rate limits:
+  $$\Delta_{\text{loss}} = (C_{\text{curr}} - C_{\text{prev}}) + k^* \cdot W$$
+  - If $k^* = 0$: Normal monotonic advance without rollover ($\Delta_{\text{loss}} = C_{\text{curr}} - C_{\text{prev}}$).
+  - If $k^* = 1$: Unambiguous single rollover ($\Delta_{\text{loss}} = W - C_{\text{prev}} + C_{\text{curr}}$).
+  - Definite loss delta is accepted and recorded.
+- **Rule 2 (Ambiguous Multi-Wrap Solution, $|\mathcal{K}| > 1$):**
+  Multiple integers $k \in \mathcal{K}$ are feasible (e.g., both $k=1$ and $k=2$ satisfy rate bounds because $\Delta T$ was too long).
+  - **Strict Non-Invention Principle:** The Backend **must NOT assume $k=1$ or invent an arbitrary cumulative loss total**.
+  - Action: Return `UNKNOWN / AMBIGUOUS_MULTI_WRAP`. Flag an audit warning. Establish $C_{\text{curr}}$ as the new reference baseline for subsequent intervals.
+- **Rule 3 (Infeasible Solution / Discontinuity, $|\mathcal{K}| = 0$):**
+  No non-negative integer $k$ satisfies physical bounds ($R_{\text{max}} \Delta T$ is strictly smaller than the minimum modular step to reach $C_{\text{curr}}$).
+  - This mathematically proves an unannounced reset, flash wipe, firmware reflash, or node identity collision.
+  - Action: Return `DISCONTINUOUS / UNVERIFIED`. Flag `DIAG_METRIC_DISCONTINUITY`. Record $C_{\text{curr}}$ as the new baseline. Do NOT add $C_{\text{curr}}$ to cumulative loss.
+- **Rule 4 (Duplicates & Out-of-Order Handling):**
+  - Duplicates ($C_{\text{curr}} = C_{\text{prev}}$ with identical `FRAME_COUNTER`): De-duplicated at ingest (`ON CONFLICT DO NOTHING`); $\Delta_{\text{loss}} = 0$.
+  - Out-of-order packets: Positioned in chronological order within the append-only ledger; deltas are computed between canonically adjacent reports.
+- **Rule 5 (Session Identifier Reuse):**
+  - If `SESSION_SEL` increments, $C_{\text{curr}}$ remains monotonic for device-lifetime counters ($C_{\text{curr}} \ge C_{\text{prev}}$). If an unverified decrease occurs across sessions, Rule 3 applies.
+
+#### Mathematical Examples (Modulus $W = 65,536$, Verified $R_{\text{max}} = 5.0\text{ drops/s}$)
+
+- **Example 1: Unambiguous Single Rollover ($|\mathcal{K}| = 1, k=1$):**
+  - $C_{\text{prev}} = 65,500$, $C_{\text{curr}} = 120$, $\Delta T = 60\text{ s}$.
+  - Upper rate bound: $R_{\text{max}} \times \Delta T = 5.0 \times 60 = 300\text{ drops}$.
+  - Testing $k$:
+    - For $k = 0$: $\Delta C = 120 - 65,500 = -65,380 < 0$ (infeasible).
+    - For $k = 1$: $\Delta C = -65,380 + 65,536 = 156\text{ drops}$. Since $0 \le 156 \le 300$, $k=1$ is feasible.
+    - For $k = 2$: $\Delta C = -65,380 + 131,072 = 65,692 > 300$ (infeasible).
+  - Solution set: $\mathcal{K} = \{1\} \implies |\mathcal{K}| = 1$.
+  - Result: $\Delta_{\text{loss}} = 156\text{ drops}$. Unambiguous rollover confirmed.
+
+- **Example 2: Ambiguous Multi-Wrap ($|\mathcal{K}| > 1$):**
+  - $C_{\text{prev}} = 65,500$, $C_{\text{curr}} = 120$, $\Delta T = 40,000\text{ s}$ ($\sim 11.1\text{ hours}$).
+  - Upper rate bound: $R_{\text{max}} \times \Delta T = 5.0 \times 40,000 = 200,000\text{ drops}$.
+  - Testing $k$:
+    - For $k = 1$: $\Delta C = 156 \le 200,000$ (feasible).
+    - For $k = 2$: $\Delta C = 65,692 \le 200,000$ (feasible).
+    - For $k = 3$: $\Delta C = 131,228 \le 200,000$ (feasible).
+  - Solution set: $\mathcal{K} = \{1, 2, 3\} \implies |\mathcal{K}| = 3 > 1$.
+  - Result: Backend flags `AMBIGUOUS_MULTI_WRAP`. $\Delta_{\text{loss}} = \text{UNKNOWN}$. Zero synthetic loss invented.
+
+- **Example 3: Discontinuity / Reset ($|\mathcal{K}| = 0$):**
+  - $C_{\text{prev}} = 50,000$, $C_{\text{curr}} = 100$, $\Delta T = 10\text{ s}$.
+  - Upper rate bound: $R_{\text{max}} \times \Delta T = 5.0 \times 10 = 50\text{ drops}$.
+  - Testing $k$:
+    - For $k = 0$: $\Delta C = 100 - 50,000 = -49,900 < 0$ (infeasible).
+    - For $k = 1$: $\Delta C = -49,900 + 65,536 = 15,636 > 50$ (infeasible).
+    - For $k \ge 2$: $\Delta C > 15,636 > 50$ (infeasible).
+  - Solution set: $\mathcal{K} = \emptyset \implies |\mathcal{K}| = 0$.
+  - Result: Backend flags `DIAG_METRIC_DISCONTINUITY`. $\Delta_{\text{loss}} = \text{DISCONTINUOUS / UNVERIFIED}$. Baseline reset to $100$. No phantom drops added.
+
+> [!NOTE]
+> This mathematical derivation governs design specifications for Issue #18 / #132. It is an analytical formulation and does **not** constitute proof that Backend logic has been implemented or tested.
 
 ---
 
@@ -231,7 +311,7 @@ Consists of the standard 7-byte V2 Unicast Header (Plaintext AAD), an 8-byte enc
 | 3..6 | `FRAME_COUNTER` | 4B | `uint32_t` BE | Strictly increasing per-session counter. Anti-replay protection. |
 | **7..14**| **Encrypted Payload** | **8B** | **Ciphertext** | **AES-128-CTR encrypted plaintext payload.** |
 | 7..10 | `MAINT_SEQ` | 4B | `uint32_t` BE | Echo of current Maintenance Superframe sequence counter from Beacon. |
-| 11..12 | `DROPPED_EVENT_COUNT` | 2B | `uint16_t` BE | Cumulative dropped events count ($0..65535$). |
+| 11..12 | `DROPPED_EVENT_COUNT` | 2B | `uint16_t` BE | Cumulative dropped events count ($0..65535$). Subject to multi-wrap analysis. |
 | 13 | `TX_UNACKED_COUNT` | 1B | `uint8_t` | MAC transmission attempts in DATA slots ending without ACK ($0..255$). |
 | 14 | `BATTERY_RAW` | 1B | `uint8_t` | Compressed voltage: $V = 1800 + (\text{val} \times 10)\text{ mV}$ ($1.80\text{V} - 4.35\text{V}$). |
 | **15..22**| **CCM Tag** | **8B** | `byte[8]` | **AES-128-CCM-8 authentication tag ($M=8, L=2$).** |
@@ -281,7 +361,7 @@ Consists of the standard 7-byte V2 Unicast Header, a 14-byte encrypted payload, 
 | 3..6 | `FRAME_COUNTER` | 4B | `uint32_t` BE | Strictly increasing per-session counter. Anti-replay protection. |
 | **7..20**| **Encrypted Payload** | **14B** | **Ciphertext** | **AES-128-CTR encrypted plaintext payload.** |
 | 7..10 | `MAINT_SEQ` | 4B | `uint32_t` BE | Echo of current Maintenance Superframe sequence counter from Beacon. |
-| 11..14 | `DROPPED_EVENT_COUNT` | 4B | `uint32_t` BE | Full 32-bit cumulative dropped events count ($0..4,294,967,295$). |
+| 11..14 | `DROPPED_EVENT_COUNT` | 4B | `uint32_t` BE | Full 32-bit cumulative dropped events count ($0..4,294,967,295$). Multi-year wrap immunity. |
 | 15..16 | `TX_ATTEMPT_COUNT` | 2B | `uint16_t` BE | Total RF transmission attempts since session start ($0..65535$). |
 | 17 | `TX_UNACKED_COUNT` | 1B | `uint8_t` | Total MAC slot transmissions ending without ACK ($0..255$). |
 | 18 | `DIAG_FLAGS` | 1B | `uint8_t` bitmask | Bit 0: NVS Wear Warning.<br>Bit 1: RTC Drift Warning.<br>Bit 2: Brownout Detected.<br>Bit 3: Sensor Comm Failure.<br>Bits 4..7: Reserved (`0`). |
@@ -445,16 +525,20 @@ Under Health Slot Interleaving, even Maintenance epochs transmit `UP_HEALTH_REPL
 
 ## 8. Cross-Layer Interface Impact Matrix (Deliverable 6)
 
-| Target Component | Work Package / Issue | Layer | Specific Impact & Contract Changes | Prerequisites & Dependencies |
-|:---|:---|:---|:---|:---|
-| **Node Firmware** | Issue #131 | Embedded C | Implement NVS batched persistence for `DROPPED_EVENT_COUNT`; integrate retry and ADC battery drivers; implement frame builder for candidate 0x4A. | `RING_BUFFER_DROP_OLDEST` (#131), ADC driver. |
-| **Gateway Radio Engine** | Issue #131 | Embedded C / Go | Add parser for candidate 0x4A; verify AES-128-CCM tag; extract loss metrics; dispatch to internal MQTT client. | Radio MAC codec, AES-CCM engine. |
-| **MQTT Contracts** | Issue #128 | Contract / Schema | Add topic `iot/v1/gw/{gateway_id}/uplink/diagnostics` and corresponding JSON Schema `node-diagnostics.schema.json`; or extend `status.schema.json`. | Issue #128 schema baseline. |
-| **Backend Storage** | Issue #18 / #132 | Backend Go | Create PostgreSQL migration for `node_loss_metrics` table; implement append-only time-series ledger with canonical sequence ordering and rollover disambiguation. | PostgreSQL migrations (#18). |
-| **Simulator & QA** | Issue #130 | Test Automation | Develop Python simulation scenarios injecting buffer saturation, packet drops, multi-wrap ambiguity, and reboot sequences to verify loss reporting. | MAC specification baseline. |
-| **HIL Timing Sign-off** | Issue #169 | Hardware RF | Measure physical ToA on calibrated oscilloscope for 23B/29B/33B at SF7/SF8; measure SPI FIFO transfer latency on ESP32-WROOM-32E. | Calibrated hardware bench (#169). |
-| **Radio MAC Authority**| Issue #127 | Governance | Formally integrate approved candidate layout into `contracts/radio-mac/specification.md` upon Owner review. | Issue #204 Owner sign-off. |
-| **Cross-Layer Sync** | Issue #117 | Architecture | Ensure end-to-end consistency from Node NVS counter $\to$ Gateway wire parser $\to$ MQTT payload $\to$ DB record. | Complete child package execution. |
+> [!IMPORTANT]
+> **Governance & Non-Authorization Boundary:**
+> This matrix documents downstream technical coordination interfaces and planning dependencies only. **It does NOT authorize production implementation, code modifications, topic creation, database migrations, or RF frame transmission/reception.** All diagnostic wire codepoints, schemas, and firmware additions remain strictly `BLOCKED_ON_OWNER_WIRE_APPROVAL` and `NOT_IMPLEMENTED`.
+
+| Target Component | Coordinating Reference | Current Layer | CURRENT_APPROVED_SCOPE (Baseline Merged) | Potential Implementation Impact — AFTER Owner-Approved Versioned Contract | Architectural Disposition |
+|:---|:---|:---:|:---|:---|:---:|
+| **Node Firmware** | Issue #131 | Embedded C | `UP_HEALTH_REPLY` (`0x44`, 21B); `PENDING_COUNT` reporting; `RING_BUFFER_DROP_OLDEST` in NVS. | Would incorporate frame builder for approved diagnostic layout; would wire battery ADC driver and retry counter; would implement NVS persistence per `DEC-DIAG-05`. | `BLOCKED_ON_OWNER_WIRE_APPROVAL`<br>`NOT_IMPLEMENTED`<br>`NOT_VERIFIED` |
+| **Gateway Radio Engine** | Issue #131 | Embedded C / Go | Active codepoints `0x41`..`0x49`; AES-128-CCM verification; local TDMA execution. | Would add parser and validation logic for approved diagnostic opcode; would forward verified metrics to internal MQTT client. | `BLOCKED_ON_OWNER_WIRE_APPROVAL`<br>`NOT_IMPLEMENTED`<br>`NOT_VERIFIED` |
+| **MQTT Contracts** | Issue #128 | Contract Schema | Topics in `contracts/mqtt/topics.md`; JSON Schemas for alert, status, schedule. | Would define versioned topic (e.g. `uplink/diagnostics`) and JSON Schema (`node-diagnostics.schema.json`) following Owner schema approval. | `BLOCKED_ON_OWNER_WIRE_APPROVAL`<br>`NOT_IMPLEMENTED`<br>`NOT_VERIFIED` |
+| **Backend Storage** | Issue #18 / #132 | Backend Go / SQL | PostgreSQL event deduplication; schedule planning; zero-knowledge session key handling. | Would prepare SQL migration for `node_loss_metrics` table; would implement sequence-anchored ledger ingest and qualified modular rollover disambiguation. | `BLOCKED_ON_OWNER_WIRE_APPROVAL`<br>`NOT_IMPLEMENTED`<br>`NOT_VERIFIED` |
+| **Simulator & QA** | Issue #130 | Test Automation | Event-only TDMA schedule simulation; join protocol test harnesses. | Would add simulation test cases for FIFO saturation, modular rollover disambiguation, multi-wrap detection, and crash recovery. | `BLOCKED_ON_OWNER_WIRE_APPROVAL`<br>`NOT_IMPLEMENTED`<br>`NOT_VERIFIED` |
+| **Physical RF & Timing** | Issue #169 | Hardware RF / HIL | Symbolic ToA models; unverified guard intervals; HIL measurement framework. | Would measure conducted/radiated ToA on calibrated oscilloscope for 23B/29B/33B at SF7/SF8; would measure SPI turnaround and verify slot envelopes. | `BLOCKED_ON_OWNER_WIRE_APPROVAL`<br>`NOT_IMPLEMENTED`<br>`NOT_VERIFIED` |
+| **Radio MAC Authority** | Issue #127 | Governance Gate G2 | `contracts/radio-mac/specification.md` (v0.2.0-DRAFT); approved codepoints `0x41`..`0x49`. | Would integrate approved diagnostic wire layout into specification upon formal Owner decision. | `BLOCKED_ON_OWNER_WIRE_APPROVAL`<br>`NOT_IMPLEMENTED`<br>`NOT_VERIFIED` |
+| **Cross-Layer Alignment** | Issue #117 | Monorepo Sync | Architecture alignment across components; ensures contract traceability. | Would verify end-to-end trace from Node NVS counter $\to$ Gateway wire parser $\to$ MQTT payload $\to$ DB record after multi-team sign-off. | `BLOCKED_ON_OWNER_WIRE_APPROVAL`<br>`NOT_IMPLEMENTED`<br>`NOT_VERIFIED` |
 
 ---
 
@@ -487,7 +571,7 @@ All decisions below are formally submitted as **`PROPOSED / OPEN_DECISION`** for
 | **DEC-DIAG-02** | TDMA Transmission Opportunity | **Option 1:** Interleave with Health Reply (alternating cadence, ~600s health interval).<br>**Option 2:** Expand Maintenance Superframe ($+N$ slots).<br>**Option 3:** Low-frequency periodic diagnostic superframe (~3600s). | `PROPOSED / OPEN_DECISION` — Propose Option 1 with dynamic health override, balancing zero additional slot allocations against halved health frequency. | MAC Scheduler / Gateway |
 | **DEC-DIAG-03** | Frame Counter Domain Binding | **Option A:** Shared `FRAME_COUNTER` under $K_{\text{SESSION\_UP}}$ across Event, Health, and Diag.<br>**Option B:** Dedicated derived subkey $K_{\text{DIAG\_UP}}$ with independent counter. | `PROPOSED / OPEN_DECISION` — Propose Option A subject to formal FreeRTOS concurrency mutex verification and RTC sleep persistence audit. | Security / Crypto |
 | **DEC-DIAG-04** | Retransmission Policy | **Option A:** Best-effort unacknowledged (zero MAC retries).<br>**Option B:** Bounded retry in next maintenance superframe.<br>**Option C:** Dedicated downlink diagnostic ACK. | `PROPOSED / OPEN_DECISION` — Propose Option A (Best-Effort Zero Retries) to eliminate RF clutter and preserve airtime margins. | Radio MAC / Firmware |
-| **DEC-DIAG-05** | NVS Persistence Strategy | **Option A:** Synchronous commit on every FIFO drop.<br>**Option B:** Batched dirty-commit with deterministic flush before TDMA sleep. (Brownout ISR flash write prohibited). | `PROPOSED / OPEN_DECISION` — Propose Option B to balance SPI NOR flash endurance against power-loss exposure window. (Durability remains `NOT_VERIFIED pending HIL #175`). | Node Firmware |
+| **DEC-DIAG-05** | NVS Persistence Strategy & FIFO Atomicity | **Option A:** Compound metadata record commit.<br>**Option B:** Slot-synchronized dirty-commit.<br>**Option C:** Boot recovery reconciliation. (Brownout ISR flash write prohibited). | `PROPOSED / OPEN_DECISION` — FIFO/NVS transaction atomicity and durability remain `NOT_VERIFIED pending HIL #175 and firmware queue architecture #131`. | Node Firmware / HIL |
 | **DEC-DIAG-06** | Wire Codepoint Assignment Boundary | **Option A:** Allocate candidate `0x4A` (`UP_DIAG_METRICS`) formally in Wire Registry.<br>**Option B:** Maintain `0x4A` as candidate; freeze wire allocation at Gate G2. | `PROPOSED / OPEN_DECISION` — Propose Option B (`NOT_APPROVED_WIRE`), strictly upholding `DEC-MH-08` policy until formal Owner wire allocation. | Project Owner / G2 Gate |
 
 ---
@@ -495,18 +579,18 @@ All decisions below are formally submitted as **`PROPOSED / OPEN_DECISION`** for
 ## 11. Traceability & Acceptance Disposition
 
 ### 11.1 Acceptance Criteria Traceability Matrix
-- [x] **AC-1 (Source-Bound Boundaries):** Preserves `UP_HEALTH_REPLY` (0x44, 21B); defines `PENDING_COUNT` as volatile FIFO depth and `DROPPED_EVENT_COUNT` as durable cumulative loss counter in NVS (Section 1 & 3).
+- [x] **AC-1 (Source-Bound Boundaries):** Preserves `UP_HEALTH_REPLY` (0x44, 21B); defines `PENDING_COUNT` as volatile FIFO depth and `DROPPED_EVENT_COUNT` as cumulative loss counter in NVS, with atomicity qualified (Section 1 & 3).
 - [x] **AC-2 (Candidate Designs):** Specifies at least two complete candidate designs with bitfields and wire diagrams (Candidate 1 Compact 23B, Candidate 2 Extended 29B, Candidate 3 TLV 29B/33B, Section 4).
 - [x] **AC-3 (Trade-off & Airtime Analysis):** Compares physical LoRa ToA at SF7 and SF8, evaluates slot budget feasibility as `THEORETICAL_MODEL / ASSUMED_GUARDS_ONLY`, and analyzes byte efficiencies (Section 5).
-- [x] **AC-4 (Field & Semantic Mapping):** Details counter rollover, reboot recovery, batching wear-leveling, and idempotency (Section 3).
+- [x] **AC-4 (Field & Semantic Mapping):** Details mathematically bounded modular rollover logic, reboot recovery, batching wear-leveling, and idempotency (Section 3).
 - [x] **AC-5 (Security & Replay Analysis):** Evaluates AES-128-CCM nonce uniqueness, shared frame counter domain failure modes, and epoch binding (Section 6).
-- [x] **AC-6 (Cross-Layer Impact Matrix):** Produces detailed cross-layer impact matrix spanning #131, #128, #18/#132, #130, #169, #127, #117 (Section 8).
+- [x] **AC-6 (Cross-Layer Impact Matrix):** Produces non-authorizing cross-layer impact matrix distinguishing approved scope from future potential impact across #131, #128, #18/#132, #130, #169, #127, #117 (Section 8).
 - [x] **AC-7 (Negative Test Matrix):** Formulates 12-case negative test suite covering overflow, replay, tampering, desync, and idempotency (Section 9).
 - [x] **AC-8 (Open Decision Register):** Formulates 6 formal decision candidates marked `PROPOSED / OPEN_DECISION` (Section 10).
 - [x] **AC-9 (Allowed Path Integrity):** Strictly confined to `docs/verification/v2-diagnostic-loss-metrics-contract-proposal.md`. Production contracts, ADRs, schemas, and code remain 100% read-only.
 
 ### 11.2 Status on Completion
 In accordance with the Definition of Done:
-- **Operational Status:** `DESIGN_PROPOSED / OWNER_WIRE_APPROVAL_PENDING`
+- **Operational Status:** `DESIGN_REMEDIATED / READY_FOR_HUMAN_REVIEW / OWNER_WIRE_APPROVAL_PENDING`
 - **G2 Gate Status:** `NOT_VERIFIED` (pending physical HIL timing #169 and formal Owner wire allocation).
 - **Existing Baseline Test Evidence:** Execution of `tests/contract/test_radio_mac_timing_consistency.py` verifies baseline contract invariants (0x41..0x49 active codepoints, 0x4A not implemented on wire, 21B budget saturated). It does **NOT** establish implementation PASS, RF/HIL PASS, or cross-layer integration PASS.
