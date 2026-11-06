@@ -480,6 +480,10 @@ def eval_pr04_correctness(
         if report_status == "PASS" and (findings or limitations):
             blockers.append("Auditor report status PASS cannot carry findings or limitations.")
 
+        if report_status == "INCONCLUSIVE":
+            reasons = limitations or [f.get("explanation", "") for f in findings] or ["Auditor execution inconclusive or incomplete"]
+            blockers.append(f"Independent Auditor report inconclusive: {reasons[0]}")
+
         p0_p1 = [find for find in findings if find.get("severity") in ("P0", "P1", "CRITICAL", "HIGH")]
         if p0_p1:
             desc = ", ".join(f"{item.get('rule', item.get('rule_id', 'BUG'))}: {item.get('explanation', item.get('detail', ''))[:80]}" for item in p0_p1[:3])
@@ -831,7 +835,12 @@ def evaluate_pr_policy(
                 all_blockers.append("Credential or private key detected in auditor report output.")
                 ai_review_pass = "FAIL"
             else:
-                ai_review_pass = "PASS" if auditor_report.get("status") == "PASS" else "FAIL"
+                if auditor_report.get("status") == "PASS":
+                    ai_review_pass = "PASS"
+                elif auditor_report.get("status") == "INCONCLUSIVE":
+                    ai_review_pass = "NOT_VERIFIED"
+                else:
+                    ai_review_pass = "FAIL"
 
     # Human approval status
     valid_approvals = [

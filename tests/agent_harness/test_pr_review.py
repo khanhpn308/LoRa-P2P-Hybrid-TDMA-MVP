@@ -1336,6 +1336,504 @@ class AutoSpawnAuditorRegressionTests(unittest.TestCase):
         self.assertIn("Hunk coverage mismatch: expected 2 hunks, missing 1", res["findings"][0]["explanation"])
 
 
+class AuditorRuleBatchingAndScalabilityTests(unittest.TestCase):
+    """Tests for two-dimensional batching, timeout differentiation, retry, and safe resume (Issue #195)."""
+
+    def setUp(self):
+        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.evidence_dir = Path(self.tmp_dir.name)
+        self.base_sha = "0" * 40
+        self.head_sha = "1" * 40
+        self.receipt_sha = hashlib.sha256(b"receipt").hexdigest()
+        self.sel_sha = hashlib.sha256(b"selection").hexdigest()
+        self.evidence_inventory = {
+            "diff.patch": self.receipt_sha,
+            "check_runs.json": "c" * 64,
+        }
+        self.pr_data = {
+            "number": 185,
+            "title": "feat(firmware): tdma_common",
+            "author": "khanh",
+            "base_sha": self.base_sha,
+            "head_sha": self.head_sha,
+            "files": [
+                {"filename": "firmware/tdma_common.c", "status": "modified", "patch": "+int tdma_init();"},
+                {"filename": "firmware/tdma_common.h", "status": "modified", "patch": "+void tdma_step();"},
+            ],
+        }
+        # Generate 97 rules
+        self.rules_97 = [
+            {
+                "rule_id": f"C-{i:03d}",
+                "rule_sha256": hashlib.sha256(f"rule_{i}".encode()).hexdigest(),
+                "title": f"Rule C {i}",
+                "component": "C",
+            }
+            for i in range(1, 98)
+        ]
+        self.rule_selection_97 = {
+            "source": "verified_host",
+            "selection_sha256": self.sel_sha,
+            "rules": self.rules_97,
+            "selected_ids": [r["rule_id"] for r in self.rules_97],
+            "rule_count": 97,
+        }
+
+    def tearDown(self):
+        self.tmp_dir.cleanup()
+
+    def test_split_diff_by_file(self):
+        diff_text = (
+            "diff --git a/firmware/a.c b/firmware/a.c\n"
+            "--- a/firmware/a.c\n"
+            "+++ b/firmware/a.c\n"
+            "@@ -1,1 +1,2 @@\n"
+            "+void a();\n"
+            "diff --git a/firmware/b.c b/firmware/b.c\n"
+            "--- a/firmware/b.c\n"
+            "+++ b/firmware/b.c\n"
+            "@@ -1,1 +1,2 @@\n"
+            "+void b();\n"
+        )
+        splits = pr_review.split_diff_by_file(diff_text)
+        self.assertIn("firmware/a.c", splits)
+        self.assertIn("firmware/b.c", splits)
+        self.assertIn("+void a();", splits["firmware/a.c"])
+        self.assertIn("+void b();", splits["firmware/b.c"])
+
+    def test_partition_rule_batches(self):
+        # Empty
+        b0 = pr_review.partition_rule_batches([])
+        self.assertEqual(len(b0), 1)
+        self.assertEqual(b0[0]["batch_rule_count"], 0)
+
+        # 97 rules chunked into 25 per batch -> 4 batches
+        batches = pr_review.partition_rule_batches(self.rules_97, selection_sha256=self.sel_sha, max_rules_per_batch=25)
+        self.assertEqual(len(batches), 4)
+        self.assertEqual(batches[0]["batch_rule_count"], 25)
+        self.assertEqual(batches[1]["batch_rule_count"], 25)
+        self.assertEqual(batches[2]["batch_rule_count"], 25)
+        self.assertEqual(batches[3]["batch_rule_count"], 22)
+        self.assertEqual(batches[0]["batch_index"], 1)
+        self.assertEqual(batches[0]["total_batches"], 4)
+        self.assertEqual(batches[3]["batch_index"], 4)
+        self.assertEqual(batches[0]["selection_sha256"], self.sel_sha)
+
+    def test_aggregate_batch_reports_97_rules_pass(self):
+        """Positive test: 97 rules partitioned across 4 batches aggregate to 1 validated PASS report."""
+        rule_batches = pr_review.partition_rule_batches(self.rules_97, selection_sha256=self.sel_sha, max_rules_per_batch=25)
+        batch_reports = []
+        paths = ["firmware/tdma_common.c", "firmware/tdma_common.h"]
+
+        for rb in rule_batches:
+            rresults = [
+                {
+                    "rule_id": r["rule_id"],
+                    "rule_sha256": r["rule_sha256"],
+                    "status": "PASS",
+                    "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": self.receipt_sha}],
+                    "reason": f"Evaluated {r['rule_id']} successfully.",
+                }
+                for r in rb["batch_rules"]
+            ]
+            batch_reports.append({
+                "status": "PASS",
+                "findings": [],
+                "limitations": [],
+                "reviewed_scope": paths,
+                "base_sha": self.base_sha,
+                "head_sha": self.head_sha,
+                "diff_sha256": self.receipt_sha,
+                "selection_sha256": self.sel_sha,
+                "rule_results": rresults,
+            })
+
+        final_rep = pr_review.aggregate_batch_reports(
+            batch_reports=batch_reports,
+            required_paths=set(paths),
+            expected_base_sha=self.base_sha,
+            expected_head_sha=self.head_sha,
+            expected_diff_sha256=self.receipt_sha,
+            rule_selection=self.rule_selection_97,
+            expected_batches_count=4,
+        )
+
+        self.assertEqual(final_rep["status"], "PASS")
+        self.assertEqual(len(final_rep["findings"]), 0)
+        self.assertEqual(len(final_rep["limitations"]), 0)
+        self.assertEqual(len(final_rep["rule_results"]), 97)
+        self.assertEqual(final_rep["base_sha"], self.base_sha)
+        self.assertEqual(final_rep["head_sha"], self.head_sha)
+        self.assertEqual(final_rep["diff_sha256"], self.receipt_sha)
+
+    def test_aggregate_batch_reports_missing_rules_fails_closed(self):
+        """Mixed coverage: omitting 1 rule batch fails closed with AUDIT-RULE-COVERAGE-MISMATCH."""
+        rule_batches = pr_review.partition_rule_batches(self.rules_97, selection_sha256=self.sel_sha, max_rules_per_batch=25)
+        paths = ["firmware/tdma_common.c", "firmware/tdma_common.h"]
+        # Provide only first 3 batches (missing batch 4: 22 rules)
+        batch_reports = []
+        for rb in rule_batches[:3]:
+            rresults = [
+                {
+                    "rule_id": r["rule_id"],
+                    "rule_sha256": r["rule_sha256"],
+                    "status": "PASS",
+                    "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": self.receipt_sha}],
+                    "reason": "OK",
+                }
+                for r in rb["batch_rules"]
+            ]
+            batch_reports.append({
+                "status": "PASS",
+                "findings": [],
+                "limitations": [],
+                "reviewed_scope": paths,
+                "base_sha": self.base_sha,
+                "head_sha": self.head_sha,
+                "diff_sha256": self.receipt_sha,
+                "selection_sha256": self.sel_sha,
+                "rule_results": rresults,
+            })
+
+        final_rep = pr_review.aggregate_batch_reports(
+            batch_reports=batch_reports,
+            required_paths=set(paths),
+            expected_base_sha=self.base_sha,
+            expected_head_sha=self.head_sha,
+            expected_diff_sha256=self.receipt_sha,
+            rule_selection=self.rule_selection_97,
+        )
+
+        self.assertEqual(final_rep["status"], "FAIL")
+        self.assertEqual(final_rep["findings"][0]["rule"], "AUDIT-RULE-COVERAGE-MISMATCH")
+        self.assertIn("missing evaluations for 22 rules", final_rep["findings"][0]["explanation"])
+
+    def test_aggregate_batch_reports_rule_hash_mismatch_fails_closed(self):
+        """Negative test: corrupted rule row hash fails closed with AUDIT-RULE-HASH-MISMATCH."""
+        paths = ["firmware/tdma_common.c", "firmware/tdma_common.h"]
+        report = {
+            "status": "PASS",
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": paths,
+            "base_sha": self.base_sha,
+            "head_sha": self.head_sha,
+            "diff_sha256": self.receipt_sha,
+            "selection_sha256": self.sel_sha,
+            "rule_results": [{
+                "rule_id": "C-001",
+                "rule_sha256": "wrong_hash_" + "0" * 53,
+                "status": "PASS",
+                "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": self.receipt_sha}],
+                "reason": "OK",
+            }],
+        }
+        final_rep = pr_review.aggregate_batch_reports(
+            batch_reports=[report],
+            required_paths=set(paths),
+            expected_base_sha=self.base_sha,
+            expected_head_sha=self.head_sha,
+            expected_diff_sha256=self.receipt_sha,
+            rule_selection={"rules": [self.rules_97[0]]},
+            expected_batches_count=1,
+        )
+        self.assertEqual(final_rep["status"], "FAIL")
+        self.assertEqual(final_rep["findings"][0]["rule"], "AUDIT-RULE-HASH-MISMATCH")
+
+    def test_aggregate_batch_reports_passing_rule_without_evidence_fails_closed(self):
+        """Negative test: rule PASS without evidence fails closed with AUDIT-EVIDENCE-MISSING."""
+        paths = ["firmware/tdma_common.c", "firmware/tdma_common.h"]
+        report = {
+            "status": "PASS",
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": paths,
+            "base_sha": self.base_sha,
+            "head_sha": self.head_sha,
+            "diff_sha256": self.receipt_sha,
+            "selection_sha256": self.sel_sha,
+            "rule_results": [{
+                "rule_id": "C-001",
+                "rule_sha256": self.rules_97[0]["rule_sha256"],
+                "status": "PASS",
+                "evidence": [],  # Empty evidence!
+                "reason": "OK",
+            }],
+        }
+        final_rep = pr_review.aggregate_batch_reports(
+            batch_reports=[report],
+            required_paths=set(paths),
+            expected_base_sha=self.base_sha,
+            expected_head_sha=self.head_sha,
+            expected_diff_sha256=self.receipt_sha,
+            rule_selection={"rules": [self.rules_97[0]]},
+            expected_batches_count=1,
+        )
+        self.assertEqual(final_rep["status"], "FAIL")
+        self.assertEqual(final_rep["findings"][0]["rule"], "AUDIT-EVIDENCE-MISSING")
+
+    def test_aggregate_batch_reports_snapshot_drift_fails_closed(self):
+        """Negative test: batch report with mismatched head_sha fails closed."""
+        paths = ["firmware/tdma_common.c", "firmware/tdma_common.h"]
+        report = {
+            "status": "PASS",
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": paths,
+            "base_sha": self.base_sha,
+            "head_sha": "drifted_head_" + "2" * 27,
+            "diff_sha256": self.receipt_sha,
+            "selection_sha256": self.sel_sha,
+            "rule_results": [],
+        }
+        final_rep = pr_review.aggregate_batch_reports(
+            batch_reports=[report],
+            required_paths=set(paths),
+            expected_base_sha=self.base_sha,
+            expected_head_sha=self.head_sha,
+            expected_diff_sha256=self.receipt_sha,
+            rule_selection=None,
+            expected_batches_count=1,
+        )
+        self.assertEqual(final_rep["status"], "FAIL")
+        self.assertEqual(final_rep["findings"][0]["rule"], "AUDIT-SNAPSHOT-MISMATCH")
+
+    def test_aggregate_batch_reports_contradictory_rule_status_overrides_to_fail(self):
+        """Mixed coverage: FAIL in one batch overrides PASS in another batch."""
+        paths = ["firmware/tdma_common.c", "firmware/tdma_common.h"]
+        r1 = self.rules_97[0]
+        rep1 = {
+            "status": "PASS",
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": paths,
+            "base_sha": self.base_sha,
+            "head_sha": self.head_sha,
+            "diff_sha256": self.receipt_sha,
+            "selection_sha256": self.sel_sha,
+            "rule_results": [{
+                "rule_id": r1["rule_id"],
+                "rule_sha256": r1["rule_sha256"],
+                "status": "PASS",
+                "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": self.receipt_sha}],
+                "reason": "OK in part 1",
+            }],
+        }
+        rep2 = {
+            "status": "FAIL",
+            "findings": [{
+                "severity": "CRITICAL",
+                "file": "firmware/tdma_common.c",
+                "line": 10,
+                "rule": r1["rule_id"],
+                "explanation": "Buffer overflow detected in part 2",
+                "fix": "Add bounds check",
+            }],
+            "limitations": [],
+            "reviewed_scope": paths,
+            "base_sha": self.base_sha,
+            "head_sha": self.head_sha,
+            "diff_sha256": self.receipt_sha,
+            "selection_sha256": self.sel_sha,
+            "rule_results": [{
+                "rule_id": r1["rule_id"],
+                "rule_sha256": r1["rule_sha256"],
+                "status": "FAIL",
+                "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": self.receipt_sha}],
+                "reason": "Buffer overflow",
+            }],
+        }
+        final_rep = pr_review.aggregate_batch_reports(
+            batch_reports=[rep1, rep2],
+            required_paths=set(paths),
+            expected_base_sha=self.base_sha,
+            expected_head_sha=self.head_sha,
+            expected_diff_sha256=self.receipt_sha,
+            rule_selection={"rules": [r1]},
+            expected_batches_count=2,
+        )
+        self.assertEqual(final_rep["status"], "FAIL")
+        self.assertEqual(len(final_rep["findings"]), 1)
+        self.assertEqual(final_rep["rule_results"][0]["status"], "FAIL")
+
+    @patch("shutil.which", return_value="/usr/local/bin/agy")
+    def test_run_auto_audit_safe_resume(self, mock_which):
+        """Retry/resume: valid existing batch report and receipt are reused on identical snapshot."""
+        invocations = []
+
+        def mock_invoke(**kwargs):
+            invocations.append(kwargs)
+            req_rules = kwargs.get("required_rules") or []
+            return {
+                "status": "PASS",
+                "findings": [],
+                "limitations": [],
+                "reviewed_scope": sorted(kwargs["required_paths"]),
+                "selection_sha256": kwargs.get("selection_sha256", "NONE"),
+                "rule_results": [
+                    {
+                        "rule_id": r["rule_id"],
+                        "rule_sha256": r["rule_sha256"],
+                        "status": "PASS",
+                        "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": self.receipt_sha}],
+                        "reason": "OK",
+                    }
+                    for r in req_rules
+                ],
+            }
+
+        with patch("adapters.antigravity.invoke", side_effect=mock_invoke):
+            # First run: 2 rules, max_batch_rules=1 -> 2 batches
+            rules_2 = self.rules_97[:2]
+            sel = {"rules": rules_2, "selection_sha256": self.sel_sha}
+            rep1 = pr_review.run_auto_audit(
+                pr_data=self.pr_data,
+                rule_selection=sel,
+                evidence_inventory=self.evidence_inventory,
+                cumulative_diff="diff --git a/firmware/tdma_common.c b/firmware/tdma_common.c\n+void tdma();\n",
+                evidence_dir=self.evidence_dir,
+                timeout=60,
+                max_batch_rules=1,
+            )
+            self.assertEqual(rep1["status"], "PASS")
+            self.assertEqual(len(invocations), 2)
+
+            # Second run with exact same parameters -> resume skips invoke!
+            invocations.clear()
+            rep2 = pr_review.run_auto_audit(
+                pr_data=self.pr_data,
+                rule_selection=sel,
+                evidence_inventory=self.evidence_inventory,
+                cumulative_diff="diff --git a/firmware/tdma_common.c b/firmware/tdma_common.c\n+void tdma();\n",
+                evidence_dir=self.evidence_dir,
+                timeout=60,
+                max_batch_rules=1,
+            )
+            self.assertEqual(rep2["status"], "PASS")
+            self.assertEqual(len(invocations), 0)  # Reused from disk!
+
+            # Third run with drifted head_sha -> invalidates cache and invokes again!
+            drifted_pr = dict(self.pr_data, head_sha="2" * 40)
+            rep3 = pr_review.run_auto_audit(
+                pr_data=drifted_pr,
+                rule_selection=sel,
+                evidence_inventory=self.evidence_inventory,
+                cumulative_diff="diff --git a/firmware/tdma_common.c b/firmware/tdma_common.c\n+void tdma();\n",
+                evidence_dir=self.evidence_dir,
+                timeout=60,
+                max_batch_rules=1,
+            )
+            self.assertEqual(rep3["status"], "PASS")
+            self.assertEqual(len(invocations), 2)
+
+    @patch("shutil.which", return_value="/usr/local/bin/agy")
+    def test_run_auto_audit_bounded_retry_transient_error(self, mock_which):
+        """Retry/resume: transient timeout error triggers bounded retry and records failure artifact."""
+        attempts = 0
+
+        def mock_invoke_flaky(**kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise pr_review.antigravity.AuditError("agy print-timeout expired: turn limit")
+            req_rules = kwargs.get("required_rules") or []
+            return {
+                "status": "PASS",
+                "findings": [],
+                "limitations": [],
+                "reviewed_scope": sorted(kwargs["required_paths"]),
+                "selection_sha256": kwargs.get("selection_sha256", "NONE"),
+                "rule_results": [
+                    {
+                        "rule_id": r["rule_id"],
+                        "rule_sha256": r["rule_sha256"],
+                        "status": "PASS",
+                        "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": self.receipt_sha}],
+                        "reason": "OK after retry",
+                    }
+                    for r in req_rules
+                ],
+            }
+
+        with patch("adapters.antigravity.invoke", side_effect=mock_invoke_flaky):
+            rep = pr_review.run_auto_audit(
+                pr_data=self.pr_data,
+                rule_selection={"rules": [self.rules_97[0]], "selection_sha256": self.sel_sha},
+                evidence_inventory=self.evidence_inventory,
+                cumulative_diff="diff --git a/firmware/tdma_common.c b/firmware/tdma_common.c\n+void tdma();\n",
+                evidence_dir=self.evidence_dir,
+                timeout=60,
+                max_retries=1,
+            )
+            self.assertEqual(rep["status"], "PASS")
+            self.assertEqual(attempts, 2)
+            # Verify failure artifact exists
+            fail_artifact = self.evidence_dir / "auditor_failure_batch_1_attempt_1.json"
+            self.assertTrue(fail_artifact.is_file())
+            fail_data = json.loads(fail_artifact.read_text())
+            self.assertEqual(fail_data["attempt"], 1)
+            self.assertIn("print-timeout expired", fail_data["error"])
+
+    @patch("shutil.which", return_value="/usr/local/bin/agy")
+    def test_run_auto_audit_non_transient_error_no_retry(self, mock_which):
+        """Non-transient error (permission denial) fails immediately without retry."""
+        attempts = 0
+
+        def mock_invoke_denial(**kwargs):
+            nonlocal attempts
+            attempts += 1
+            raise pr_review.antigravity.AuditError("permission denied: tool not permitted")
+
+        with patch("adapters.antigravity.invoke", side_effect=mock_invoke_denial):
+            with self.assertRaises(pr_review.antigravity.AuditError):
+                pr_review.run_auto_audit(
+                    pr_data=self.pr_data,
+                    rule_selection={"rules": [self.rules_97[0]], "selection_sha256": self.sel_sha},
+                    evidence_inventory=self.evidence_inventory,
+                    cumulative_diff="diff --git a/firmware/tdma_common.c b/firmware/tdma_common.c\n+void tdma();\n",
+                    evidence_dir=self.evidence_dir,
+                    timeout=60,
+                    max_retries=1,
+                )
+            self.assertEqual(attempts, 1)  # No second attempt
+
+    def test_policy_evaluation_inconclusive_status(self):
+        """Inconclusive auditor status yields AI_REVIEW_PASS=NOT_VERIFIED and HostVerdict=BLOCKED."""
+        auditor_report = {
+            "status": "INCONCLUSIVE",
+            "findings": [{
+                "severity": "CRITICAL",
+                "file": "audit",
+                "line": 1,
+                "rule": "AUDIT-SPAWN",
+                "explanation": "Independent Auditor auto-spawn failed: agy print-timeout expired",
+                "fix": "Re-run Auditor",
+            }],
+            "limitations": ["Auto-audit spawn failure: agy print-timeout expired"],
+            "reviewed_scope": ["firmware/tdma_common.c", "firmware/tdma_common.h"],
+            "base_sha": self.base_sha,
+            "head_sha": self.head_sha,
+            "diff_sha256": self.receipt_sha,
+        }
+        eval_res = policy.evaluate_pr_policy(
+            pr_data=self.pr_data,
+            linked_issue={"number": 181, "state": "OPEN"},
+            allowed_paths=["firmware/tdma_common.c", "firmware/tdma_common.h"],
+            codeowners_content="* @khanh",
+            rule_selection={"standards": ["C"], "rules": []},
+            auditor_report=auditor_report,
+            check_runs=[{"name": "ci", "status": "completed", "conclusion": "success"}],
+            hil_receipt={"status": "PASS"},
+            head_sha_at_start=self.head_sha,
+            head_sha_at_end=self.head_sha,
+            base_sha_at_start=self.base_sha,
+            base_sha_at_end=self.base_sha,
+        )
+        self.assertEqual(eval_res["dimensions"]["AI_REVIEW_PASS"], "NOT_VERIFIED")
+        self.assertEqual(eval_res["verdict"], "BLOCKED")
+        self.assertTrue(any("Independent Auditor report inconclusive" in b for b in eval_res["blockers"]))
+
+
 
 class PRReviewCLITests(unittest.TestCase):
     """End-to-end CLI execution tests."""
