@@ -1367,5 +1367,151 @@ class PRReviewCLITests(unittest.TestCase):
         self.assertIn("Hardware-in-the-Loop (HIL) test receipt absent", out)
 
 
+class RuleBatchingAndTimeoutTests(unittest.TestCase):
+    """Regression tests for Issue #194: Rule batching and timeout differentiation."""
+
+    def test_partition_rule_batches_full_coverage(self):
+        """97 rules partitioned with max 25 per batch produce 4 batches with complete coverage."""
+        rules = [
+            {"rule_id": f"R-{i:03d}", "rule_sha256": "a" * 64, "title": f"Rule {i}"}
+            for i in range(1, 98)
+        ]
+        sel_sha = "f" * 64
+        batches = pr_review.partition_rule_batches(rules, selection_sha256=sel_sha, max_rules_per_batch=25)
+        self.assertEqual(len(batches), 4)
+        self.assertEqual(batches[0]["batch_rule_count"], 25)
+        self.assertEqual(batches[1]["batch_rule_count"], 25)
+        self.assertEqual(batches[2]["batch_rule_count"], 25)
+        self.assertEqual(batches[3]["batch_rule_count"], 22)
+
+        # Complete coverage verification
+        covered_ids = []
+        for idx, b in enumerate(batches, start=1):
+            self.assertEqual(b["batch_index"], idx)
+            self.assertEqual(b["total_batches"], 4)
+            self.assertEqual(b["selection_sha256"], sel_sha)
+            self.assertEqual(b["total_rule_count"], 97)
+            covered_ids.extend(b["batch_rule_ids"])
+
+        expected_ids = [f"R-{i:03d}" for i in range(1, 98)]
+        self.assertEqual(covered_ids, expected_ids)
+
+    def test_partition_rule_batches_empty(self):
+        """Empty rules produce 1 batch with 0 rules."""
+        batches = pr_review.partition_rule_batches([], selection_sha256="NONE")
+        self.assertEqual(len(batches), 1)
+        self.assertEqual(batches[0]["batch_rule_count"], 0)
+        self.assertEqual(batches[0]["batch_rules"], [])
+
+    def test_aggregate_batch_reports_combines_rule_batches(self):
+        """Aggregating batch reports across rule batches aggregates all rule results with snapshot binding."""
+        required_paths = {"firmware/a.c"}
+        evidence_inv = {"diff.patch": "1" * 64}
+        rules = [
+            {"rule_id": f"R-{i:03d}", "rule_sha256": "a" * 64}
+            for i in range(1, 5)
+        ]
+        rule_selection = {
+            "rules": rules,
+            "selection_sha256": "s" * 64,
+        }
+
+        # 2 rule batch reports: Batch 1 covers R-001, R-002; Batch 2 covers R-003, R-004
+        report_1 = {
+            "status": "PASS",
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["firmware/a.c"],
+            "selection_sha256": "s" * 64,
+            "rule_results": [
+                {"rule_id": "R-001", "rule_sha256": "a" * 64, "status": "PASS", "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": "1" * 64}], "reason": "ok"},
+                {"rule_id": "R-002", "rule_sha256": "a" * 64, "status": "PASS", "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": "1" * 64}], "reason": "ok"},
+            ],
+        }
+        report_2 = {
+            "status": "PASS",
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["firmware/a.c"],
+            "selection_sha256": "s" * 64,
+            "rule_results": [
+                {"rule_id": "R-003", "rule_sha256": "a" * 64, "status": "PASS", "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": "1" * 64}], "reason": "ok"},
+                {"rule_id": "R-004", "rule_sha256": "a" * 64, "status": "PASS", "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": "1" * 64}], "reason": "ok"},
+            ],
+        }
+
+        agg = pr_review.aggregate_batch_reports(
+            batch_reports=[report_1, report_2],
+            required_paths=required_paths,
+            expected_base_sha="b" * 40,
+            expected_head_sha="h" * 40,
+            expected_diff_sha256="1" * 64,
+            rule_selection=rule_selection,
+            expected_batches_count=2,
+        )
+        self.assertEqual(agg["status"], "PASS")
+        self.assertEqual(len(agg["rule_results"]), 4)
+        self.assertEqual([r["rule_id"] for r in agg["rule_results"]], ["R-001", "R-002", "R-003", "R-004"])
+        self.assertEqual(agg["base_sha"], "b" * 40)
+        self.assertEqual(agg["head_sha"], "h" * 40)
+        self.assertEqual(agg["diff_sha256"], "1" * 64)
+        self.assertEqual(agg["selection_sha256"], "s" * 64)
+
+    def test_aggregate_batch_reports_detects_missing_rule_coverage(self):
+        """Omission of a rule batch triggers AUDIT-RULE-COVERAGE-MISMATCH."""
+        required_paths = {"firmware/a.c"}
+        rules = [
+            {"rule_id": f"R-{i:03d}", "rule_sha256": "a" * 64}
+            for i in range(1, 5)
+        ]
+        rule_selection = {
+            "rules": rules,
+            "selection_sha256": "s" * 64,
+        }
+
+        # Only batch 1 is provided; R-003 and R-004 are omitted
+        report_1 = {
+            "status": "PASS",
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["firmware/a.c"],
+            "selection_sha256": "s" * 64,
+            "rule_results": [
+                {"rule_id": "R-001", "rule_sha256": "a" * 64, "status": "PASS", "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": "1" * 64}], "reason": "ok"},
+                {"rule_id": "R-002", "rule_sha256": "a" * 64, "status": "PASS", "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": "1" * 64}], "reason": "ok"},
+            ],
+        }
+
+        agg = pr_review.aggregate_batch_reports(
+            batch_reports=[report_1],
+            required_paths=required_paths,
+            rule_selection=rule_selection,
+        )
+        self.assertEqual(agg["status"], "FAIL")
+        self.assertEqual(agg["findings"][0]["rule"], "AUDIT-RULE-COVERAGE-MISMATCH")
+        self.assertIn("R-003", agg["findings"][0]["explanation"])
+
+    def test_build_auditor_prompt_rule_batch_header(self):
+        """build_auditor_prompt includes Rule Batch Mode header when rule_batch_info is passed."""
+        pr_data = {"number": 185, "title": "test", "author": "dev", "base_sha": "b" * 40, "head_sha": "h" * 40, "files": [{"filename": "firmware/a.c"}]}
+        rules = [{"rule_id": "R-001", "rule_sha256": "a" * 64}]
+        rb = {
+            "batch_index": 2,
+            "total_batches": 4,
+            "batch_rules": rules,
+            "batch_rule_count": 1,
+            "total_rule_count": 4,
+        }
+        prompt = pr_review.build_auditor_prompt(
+            pr_data=pr_data,
+            rule_selection={"rules": rules, "selection_sha256": "s" * 64},
+            evidence_inventory={"diff.patch": "1" * 64},
+            cumulative_diff="diff --git a/firmware/a.c b/firmware/a.c\n",
+            rule_batch_info=rb,
+        )
+        self.assertIn("Rule Batch Mode: Part 2 of 4 (1 of 4 rules in this batch)", prompt)
+        self.assertIn("Applicable Scoped Rule IDs (1 rules in this batch):", prompt)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -31,6 +31,7 @@ _MAX_ENVELOPE_BYTES = 160_000
 _RULE_KEYS = frozenset(("rule_id", "rule_sha256", "status", "evidence", "reason"))
 _RULE_STATES = {"PASS", "FAIL", "NOT_RUN", "NOT_VERIFIED", "WAIVED_WITH_REASON"}
 _HASH = re.compile(r"[0-9a-f]{64}")
+HOST_TIMEOUT_GRACE_SECONDS = 30
 
 
 def _safe_report_bytes(raw: bytes, structured=False) -> None:
@@ -215,6 +216,9 @@ def parse_result(exit_code: int, stdout: str, stderr: str,
                  required_paths: set[str], required_rules=None,
                  selection_sha256=None, evidence_inventory=None) -> dict:
     if exit_code != 0:
+        err_hint = stderr.strip() or stdout.strip()
+        if any(k in err_hint.lower() for k in ("timeout", "timed out", "time out", "deadline")):
+            raise AuditError(f"agy print-timeout expired: {err_hint[:200]}")
         raise AuditError(f"agy exited {exit_code}")
     if not isinstance(stderr, str) or DENIAL.search(stderr):
         raise AuditError("agy reported a permission denial")
@@ -231,10 +235,20 @@ def parse_result(exit_code: int, stdout: str, stderr: str,
         if isinstance(exc, AuditError):
             raise
         raise AuditError("agy stdout is not a JSON envelope") from exc
-    if not isinstance(envelope, dict) or envelope.get("status") != "SUCCESS":
-        raise AuditError("agy terminal status is not SUCCESS")
+    if not isinstance(envelope, dict):
+        raise AuditError("agy envelope is not a dictionary")
+    if envelope.get("status") != "SUCCESS":
+        st = envelope.get("status", "UNKNOWN")
+        err = str(envelope.get("error", ""))
+        combined = f"{st} {err}".lower()
+        if any(k in combined for k in ("timeout", "timed out", "time out", "deadline")):
+            raise AuditError(f"agy print-timeout expired: status={st}")
+        raise AuditError(f"agy terminal status is not SUCCESS ({st})")
     if envelope.get("error"):
-        raise AuditError("agy envelope contains error")
+        err = str(envelope.get("error"))
+        if any(k in err.lower() for k in ("timeout", "timed out", "time out", "deadline")):
+            raise AuditError(f"agy print-timeout expired: {err[:200]}")
+        raise AuditError(f"agy envelope contains error: {err[:200]}")
     if not isinstance(envelope.get("structured_output"), dict):
         raise AuditError("agy structured_output missing")
     return check_report(envelope["structured_output"], required_paths, required_rules,
@@ -246,18 +260,24 @@ def invoke(prompt: str, snapshot: Path, schema: Path, timeout: int,
            selection_sha256=None, evidence_inventory=None,
            effort: str = "low") -> dict:
     """Run only in an operator-provisioned sandbox. This is NOT a VM boundary."""
+    print_timeout = f"{max(1, timeout // 60)}m" if timeout >= 60 and timeout % 60 == 0 else f"{max(1, timeout)}s"
     args = ["agy", "--sandbox", "-p", prompt, "--output-format", "json",
             "--effort", effort,
-            "--json-schema", str(schema), "--print-timeout", f"{max(1, timeout // 60)}m"]
+            "--json-schema", str(schema), "--print-timeout", print_timeout]
+    host_timeout = timeout + HOST_TIMEOUT_GRACE_SECONDS
     try:
         with tempfile.TemporaryDirectory(prefix="harness-audit-schema-") as directory:
             if required_rules is not None:
                 scoped = Path(directory) / "audit.schema.json"
                 scoped.write_text(json.dumps(scoped_schema(required_rules, selection_sha256, required_paths)))
                 args[args.index("--json-schema") + 1] = str(scoped)
-            result = run_bounded(args, cwd=snapshot, timeout=timeout)
-    except (subprocess.TimeoutExpired, OSError, UnicodeError) as exc:
-        raise AuditError(f"agy unavailable or timed out: {type(exc).__name__}") from exc
+            result = run_bounded(args, cwd=snapshot, timeout=host_timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise AuditError(
+            f"Host subprocess timeout expired after {host_timeout}s: process did not terminate within grace period"
+        ) from exc
+    except (OSError, UnicodeError) as exc:
+        raise AuditError(f"agy unavailable or execution error: {type(exc).__name__}: {exc}") from exc
     if len(result.stdout.encode("utf-8")) > 160_000:
         raise AuditError("agy envelope exceeds the maximum size")
     return parse_result(result.returncode, result.stdout, result.stderr, required_paths,

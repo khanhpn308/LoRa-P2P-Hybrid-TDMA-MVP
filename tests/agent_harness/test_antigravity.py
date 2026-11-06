@@ -377,6 +377,25 @@ class ScopedRuleReportTests(unittest.TestCase):
                 invoke("Review scoped rules", pathlib.Path(tmp), pathlib.Path(tmp) / "schema.json",
                        120, PATHS, self.rules, self.selection, self.inventory)
 
+    def test_parse_result_agy_timeout_differentiation(self):
+        """AGY internal print-timeout in status/error/stderr is distinguished from standard error."""
+        with self.assertRaises(AuditError) as ctx:
+            parse_result(1, "", "Command timed out after 300s", PATHS)
+        self.assertIn("agy print-timeout expired", str(ctx.exception))
+
+        with self.assertRaises(AuditError) as ctx:
+            parse_result(0, json.dumps({"status": "TIMEOUT", "error": "turn timeout expired"}), "", PATHS)
+        self.assertIn("agy print-timeout expired", str(ctx.exception))
+
+    def test_invoke_host_subprocess_timeout_grace_period(self):
+        """Host subprocess timeout is timeout + HOST_TIMEOUT_GRACE_SECONDS and raises clear error on TimeoutExpired."""
+        with tempfile.TemporaryDirectory() as tmp, patch(
+                "adapters.antigravity.subprocess.run",
+                side_effect=subprocess.TimeoutExpired(cmd=["agy"], timeout=330)):
+            with self.assertRaises(AuditError) as ctx:
+                invoke("prompt", pathlib.Path(tmp), pathlib.Path(tmp) / "schema.json", 300, PATHS)
+            self.assertIn("Host subprocess timeout expired after 330s", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
