@@ -3,7 +3,7 @@
 **Document ID:** `DOC-VERIF-V2-DIAG-METRICS-001`  
 **Status:** `DESIGN_PROPOSED / OWNER_WIRE_APPROVAL_PENDING` · `IMPLEMENTATION_READY=NO` · `G2=NOT_VERIFIED`  
 **Owner Decision Reference:** `DEC-MH-08` (Approved Technical Direction / Planned Not Implemented)  
-**Parent Tracking:** Issue #204 (V2 Diagnostic Loss Metrics Design)  
+**Parent Tracking:** Issue #204 (V2 Diagnostic Loss Metrics Design), PR #205  
 **Cross-Issue References:** #127 (G2 Radio MAC Contract Gate), #201 / Merged PR #202 (Timing & Health Consistency Disposition), #128 (MQTT/API Contracts), #131 (Node/Gateway Firmware Execution), #18 / #132 (Backend Go Storage & Ingest), #130 (Simulator & Test Automation), #169 (Physical RF Timing & HIL Measurement Sign-off), #117 (Cross-Layer Verification)  
 **Owning Authorities:** Radio MAC Architecture, Security Architecture, Gateway & Node Firmware, Backend Go Ingest  
 
@@ -30,7 +30,7 @@ In strict accordance with project authority (`AGENTS.md`, `contracts/OPEN_DECISI
 - **Separate Versioned Message:** Diagnostic metrics must be carried in a separately versioned management message.
 - **Candidate Status of `0x4A`:** Codepoint `0x4A` (symbolically designated `UP_DIAG_METRICS`) is strictly a **proposal candidate**, pending Owner wire approval.
 - **Zero RF Chaos:** No unscheduled transmissions, no priority contention (PCSS), no CAD backoff, and no periodic application business telemetry are permitted.
-- **All Numeric Timing is Symbolic:** All slot durations, guard intervals, holdover limits, and cadence periods are non-normative engineering targets, blocked on physical Hardware-in-the-Loop (HIL) sign-off under **Issue #169**.
+- **All Numeric Timing is Symbolic & Unverified:** All slot durations (400 ms candidate example), guard intervals, holdover limits, and cadence periods are non-normative engineering targets, qualified as `THEORETICAL_MODEL / ASSUMED_GUARDS_ONLY` and blocked on physical Hardware-in-the-Loop (HIL) sign-off under **Issue #169**.
 
 ---
 
@@ -88,68 +88,100 @@ In strict accordance with project authority (`AGENTS.md`, `contracts/OPEN_DECISI
    - **Alignment & Microcontroller Cost:** Native 32-bit register on ESP32; zero byte-packing penalty in RAM/NVS; natural alignment for big-endian wire serialisation.
    - **Byte Cost Delta:** Only 2 bytes more than `uint16_t`.
 
-### 3.2 Retry Statistics Semantics
-Industrial link degradation often causes packet drops before FIFO exhaustion. Capturing retry behavior enables predictive link maintenance:
-- **`TX_ATTEMPT_COUNT` (16-bit or 8-bit):** Total number of RF transmission bursts attempted by the MAC layer.
-- **`TX_FAIL_COUNT` (8-bit or 16-bit):** Number of events that reached the maximum MAC retry limit without receiving a `DOWN_EVENT_ACK` (if the node implements drop-after-retry).
-- **Semantics Distinction:** In the current V2 baseline, events remain in the FIFO until acknowledged or overwritten by `RING_BUFFER_DROP_OLDEST`. Therefore, tracking transmission retries per epoch indicates channel contention or fading margin.
+### 3.2 Retry Statistics Semantics Reconciled with Event Retention
+Under the approved architecture ([ADR-0001](../adr/0001-hybrid-tdma.md), `DEC-127-04`, and `specification.md` Section 5.2):
+- **Event Retention Guarantee:** Sensor events are **retained in the FIFO until acknowledged** by `DOWN_EVENT_ACK` (0x42) or overwritten when the FIFO is 100% full (`RING_BUFFER_DROP_OLDEST`).
+- **No Discard on Retry Exhaustion:** There is **no** MAC policy where an event is discarded simply because a retry attempt counter expired. Such an event remains in the FIFO and is retransmitted in subsequent assigned static DATA slots.
+- **Field Semantics:**
+  - `TX_ATTEMPT_COUNT` (16-bit unsigned, BE): Cumulative count of physical LoRa transmission bursts initiated by the MAC layer for application data events.
+  - `TX_UNACKED_COUNT` (8-bit or 16-bit unsigned): Count of transmission cycles that concluded without receiving a valid `DOWN_EVENT_ACK` within the slot turnaround window. This directly measures channel loss and RF fading without implying event deletion.
+  - Event loss is **exclusively** tracked by `DROPPED_EVENT_COUNT` when buffer saturation occurs.
 
 ### 3.3 Battery Metrics Semantics
 - **`BATTERY_MV` (16-bit unsigned, millivolts):** Direct ADC calibrated voltage ($0..5000\text{ mV}$).
   - *Advantage:* Absolute physical measurement; immune to battery discharge curve interpretation errors on edge nodes; allows Backend to apply chemistry-specific state-of-charge (SoC) curves (e.g. LiSOCl2 vs LiFePO4).
-- **`BATTERY_PCT_RAW` (8-bit compressed):** Linear encoding $V_{\text{mv}} = 1800 + (\text{val} \times 10)$ covering $1.80\text{V} - 4.35\text{V}$ in $10\text{ mV}$ steps.
+- **`BATTERY_RAW` (8-bit compressed):** Linear encoding $V_{\text{mv}} = 1800 + (\text{val} \times 10)$ covering $1.80\text{V} - 4.35\text{V}$ in $10\text{ mV}$ steps.
   - *Advantage:* Saves 1 byte over the air.
   - *Disadvantage:* Loss of sub-10mV resolution; requires non-standard decompression logic in Gateway/Backend.
 
-### 3.4 Counter Rollover, Reset, and Persistence Lifecycle
-The relationship between volatile memory, NVS flash, reboots, and Join sessions governs data integrity:
+### 3.4 Counter Persistence, NVS Wear-Leveling & Power-Loss Windows
+
+#### Technical Analysis of Flash Writes and Brownout Prohibition
+> [!CAUTION]
+> **Prohibition of Flash Commits in Brownout ISR:** Proposing synchronous NOR flash writes inside a brownout interrupt service routine (ISR) without dedicated hardware energy storage is **strictly rejected**.
+> - In ESP-IDF, SPI NOR flash programming/erase operations require multi-millisecond hold times ($T_{\text{prog}} \sim 0.5 - 3.0\text{ ms}$, $T_{\text{erase}} \sim 20 - 100\text{ ms}$) and draw peak currents of $30 - 50\text{ mA}$.
+> - During a brownout event on typical decoupled power rails ($C_{\text{decouple}} \le 100\text{ }\mu\text{F}$), the rail voltage collapses within tens to hundreds of microseconds.
+> - Attempting flash writes when $V_{\text{DD}}$ drops below the flash chip minimum operating voltage ($2.7\text{ V}$) results in partial bit programming, sector corruption, or unrecoverable NVS filesystem panics. Furthermore, ESP-IDF SPI flash drivers disable the cache and use mutexes that cannot be executed from an ISR context.
+> - Consequently, flash writes in a brownout ISR are **forbidden** unless backed by empirical hardware bench evidence with calibrated supercapacitors and power-fail early-warning circuitry.
 
 ```
 +---------------------------------------------------------------------------------------------------+
-|                                 NODE COUNTER LIFECYCLE STATE MACHINE                              |
+|                            NVS PERSISTENCE & POWER-LOSS VULNERABILITY                             |
 +---------------------------------------------------------------------------------------------------+
 
-     [Factory Provision]  --> NVS DROPPED_EVENT_COUNT = 0
+  Scenario A: Synchronous Commit per Drop (Zero Power-Loss Window)
+    Event Drop Triggered ---> NVS Write (2-5ms) ---> NVS Commit Done ---> Event Processed
+    - Power-loss vulnerability window: 0 ms (Zero loss of drop count on sudden power cut).
+    - Trade-off: Write latency on drop path; reliance on ESP-IDF log-structured wear-leveling.
+
+  Scenario B: Batched Dirty-Commit on Superframe Wake / Slot Exit (Bounded Vulnerability Window)
+    Drops in RAM [Count: +K] ---> Slot Wake-up ---> NVS Flush Dirty Count ---> Radio Sleep
+    |<------------------- Bounded Vulnerability Window (T_batch) ------------------>|
+    - If power is cut during T_batch, at most K uncommitted drops are lost from RAM.
+    - Upon reboot, counter resumes from last committed NVS value (no forward jump or corruption).
+```
+
+#### Durability vs Wear-Leveling Reconciliation
+1. **ESP-IDF NVS Architecture:** The ESP-IDF NVS library does not rewrite whole sectors on every key-value update. It uses a log-structured page architecture: writing a 32-bit `uint32_t` key appends a compact 32-byte entry to an active page. With a standard 16 KB or 32 KB NVS partition, thousands of counter updates are naturally distributed across flash pages before an erase cycle is required.
+2. **Event Arrival Rate Reality:** In an Event-Only architecture, physical alarms are edge-triggered and rate-limited. Saturated FIFO drops (`RING_BUFFER_DROP_OLDEST`) occur only during prolonged outages, not at hundreds of Hz continuously in production.
+3. **Proposed Persistence Policies (for Owner Review):**
+   - **Policy 1 (Synchronous Append on Saturated Drop):** Directly commit `DROPPED_EVENT_COUNT` on each `RING_BUFFER_DROP_OLDEST` occurrence. Provides 100% strict durability with zero power-loss vulnerability window.
+   - **Policy 2 (Slot-Synchronized Flush):** Update counter in RAM upon FIFO drop; synchronously flush to NVS at deterministic TDMA boundaries (e.g. before entering light/deep sleep at the end of the Node's allocated slot). Bounded vulnerability window $\tau \le T_{\text{SUPERFRAME}}$.
+
+### 3.5 Principled Backend Ingest & Monotonic Deduplication Design
+
+The Backend storage and ingest layer must handle duplicate packets, out-of-order deliveries, integer rollovers, node reboots, and session changes **without inventing lost-event totals or introducing phantom spikes**:
+
+```
++---------------------------------------------------------------------------------------------------+
+|                             BACKEND TIME-SERIES INGEST ARCHITECTURE                               |
++---------------------------------------------------------------------------------------------------+
+
+  Incoming MQTT Packet ---> Ingest Deduplication:
+                            UNIQUE (gateway_id, node_id, session_sel, frame_counter)
+                            ON CONFLICT DO NOTHING
                                      │
                                      ▼
-        +---------------------------------------------------------+
-        |                 ACTIVE RUNTIME OPERATION                |
-        | - RAM: High-speed cached drop counter                   |
-        | - Event dropped -> Increment RAM counter                |
-        | - Periodic / Event-driven flush -> Commit to NVS Flash  |
-        +---------------------------------------------------------+
-                    │                                 │
-     (Power Loss / Reboot)               (Session Re-Join / ECDH)
-                    │                                 │
-                    ▼                                 ▼
-        +-----------------------+         +-------------------------------+
-        |   CRASH RECOVERY      |         |      SESSION ROTATION         |
-        | - Read NVS counter    |         | - Derive new K_SESSION_UP     |
-        | - Resume without reset|         | - Reset FRAME_COUNTER = 0     |
-        | - Monotonicity PRESERVED|       | - DROPPED_EVENT_COUNT persists|
-        +-----------------------+         +-------------------------------+
+                            Append-Only Time-Series Ledger:
+                            INSERT INTO node_diagnostic_reports (...)
+                                     │
+                                     ▼
+                            Monotonic Sequence Alignment & Delta Evaluation:
+                            Order reports by canonical sequence (session_sel, frame_counter, maint_seq)
 ```
 
-1. **NVS Wear-Leveling Strategy:**
-   - ESP32 SPI NOR flash allows $\sim 100,000$ write/erase cycles per sector. Committing `DROPPED_EVENT_COUNT` synchronously on every single event drop during an avalanche could wear out flash sectors rapidly.
-   - **Recommended Rule:** Implement a **batched dirty-commit policy**: Maintain `DROPPED_EVENT_COUNT` in RAM; commit to NVS upon:
-     - (a) A fixed drop increment threshold (e.g., every 16 dropped events), OR
-     - (b) Immediately prior to entering Deep Sleep between TDMA frames, OR
-     - (c) Right before constructing a diagnostic uplink frame, OR
-     - (d) Brownout detector interrupt (ESP32 RTC brownout ISR).
-2. **Persistence Across Reboots:**
-   - `DROPPED_EVENT_COUNT` is a **device-lifetime cumulative metric**. It **must NOT** reset to zero upon software reset, watchdog reset, or battery brownout.
-3. **Behavior Across Session Re-Joins:**
-   - Re-running the Join protocol (`0x45`..`0x48`) rotates ephemeral keys ($Z \to K_{\text{SESSION\_UP}}$) and resets `FRAME_COUNTER` to $0$.
-   - `DROPPED_EVENT_COUNT` **must remain continuous across Join sessions**. The Backend detects session changes via `SESSION_SEL` and maintains both cumulative device loss and session-specific loss.
+#### Delta & Anomaly Evaluation Rules
+Let $R_k$ be the current report with counter $C_k$, and $R_{k-1}$ be the immediately preceding sequential report with counter $C_{k-1}$:
 
-### 3.5 Reporting & Idempotency Semantics
-- **At Gateway:** The Gateway receives the diagnostic frame, validates the AES-128-CCM tag and monotonic `FRAME_COUNTER`, extracts the plaintext loss metrics, and forwards them to Backend via MQTT topic `iot/v1/gw/{gateway_id}/uplink/diagnostics` (or extended status).
-- **At Backend:**
-  - Duplicate MQTT deliveries (due to QoS 1 retries) are de-duplicated via `event_id = gateway_id:gateway_epoch:event_seq`.
-  - For storage in PostgreSQL, the backend compares received `dropped_event_count` ($C_{\text{curr}}$) with the previous recorded value ($C_{\text{prev}}$):
-    $$\Delta_{\text{loss}} = \begin{cases} C_{\text{curr}} - C_{\text{prev}}, & \text{if } C_{\text{curr}} \ge C_{\text{prev}} \\ C_{\text{curr}}, & \text{if } C_{\text{curr}} < C_{\text{prev}} \text{ (Anomaly: Flash Wiped / Rollover)} \end{cases}$$
-  - This guarantees that metric rates (drops/hour) remain mathematically accurate even when packets are delayed or delivered out of order.
+1. **Rule 1 (Monotonic Progress, $C_k \ge C_{k-1}$):**
+   $$\Delta_{\text{loss}} = C_k - C_{k-1}$$
+   Durable dropped event increment is recorded cleanly.
+2. **Rule 2 (Legitimate Integer Rollover):**
+   If counter width is $W$ ($2^{16}$ for Candidate 1, $2^{32}$ for Candidate 2) and $C_k < C_{k-1}$:
+   - Check if $C_{k-1}$ was near saturation: $C_{k-1} > (W - \text{MARGIN}_{\text{wrap}})$.
+   - Calculate wrapped delta:
+     $$\Delta_{\text{loss}} = (W - C_{k-1}) + C_k$$
+3. **Rule 3 (Counter Discontinuity / Flash Reset / Unexplained Decrease):**
+   If $C_k < C_{k-1}$ and $C_{k-1}$ was **not** near saturation:
+   - This indicates a hardware reset with flash wipe, firmware reflash, or node identity collision.
+   - **Strict Rule: Zero Synthetic Guessing.** The Backend **must NOT** invent lost-event numbers or add $C_k$ to cumulative loss.
+   - Action: Flag a `DIAG_METRIC_DISCONTINUITY` audit record in the database. Establish $C_k$ as the new baseline ($C_{\text{baseline}} = C_k$). Mark the interval delta as `DISCONTINUOUS / UNVERIFIED`.
+4. **Rule 4 (Out-of-Order Delivery & Offline Buffer Replay):**
+   - Because all records are ingested into an append-only time-series ledger, out-of-order packets are placed in their proper sequential position by `(session_sel, frame_counter)`. Interval deltas are computed across the canonical sequence, completely preventing phantom spikes.
+5. **Rule 5 (Session Change Handoff):**
+   - When a Node re-joins (`SESSION_SEL` increments), `FRAME_COUNTER` resets to $0$.
+   - Since `DROPPED_EVENT_COUNT` is a **device-lifetime durable counter** stored in NVS, $C_k$ remains monotonic across session changes ($C_{\text{new\_session}} \ge C_{\text{old\_session}}$).
+   - If an NVS wipe accompanied the re-join, Rule 3 applies.
 
 ---
 
@@ -158,7 +190,7 @@ The relationship between volatile memory, NVS flash, reboots, and Join sessions 
 We propose three distinct candidate designs representing different architectural trade-offs:
 - **Candidate 1 (Compact 23-Byte):** Minimal airtime overhead, optimal for low-duty industrial nodes.
 - **Candidate 2 (Extended 29-Byte):** Comprehensive metrics, full 32-bit precision, optimal for predictive maintenance.
-- **Candidate 3 (TLV Multiplexed 27-Byte):** Future-proof modularity, extensible sub-typing.
+- **Candidate 3 (TLV Multiplexed 29-Byte / 33-Byte):** Future-proof modularity, extensible sub-typing.
 
 ### 4.1 Candidate 1: Compact Diagnostic Frame (`UP_DIAG_METRICS_COMPACT`)
 
@@ -178,7 +210,7 @@ Consists of the standard 7-byte V2 Unicast Header (Plaintext AAD), an 8-byte enc
 |                           MAINT_SEQ                           |
 |                      (4 Bytes, uint32 BE)                     |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|      DROPPED_EVENT_COUNT      | TX_FAIL_COUNT |  BATTERY_RAW  |
+|      DROPPED_EVENT_COUNT      |TX_UNACKED_CNT |  BATTERY_RAW  |
 |      (2 Bytes, uint16 BE)     |   (1 Byte)    |   (1 Byte)    |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                                                               |
@@ -198,7 +230,7 @@ Consists of the standard 7-byte V2 Unicast Header (Plaintext AAD), an 8-byte enc
 | **7..14**| **Encrypted Payload** | **8B** | **Ciphertext** | **AES-128-CTR encrypted plaintext payload.** |
 | 7..10 | `MAINT_SEQ` | 4B | `uint32_t` BE | Echo of current Maintenance Superframe sequence counter from Beacon. |
 | 11..12 | `DROPPED_EVENT_COUNT` | 2B | `uint16_t` BE | Cumulative dropped events count ($0..65535$). |
-| 13 | `TX_FAIL_COUNT` | 1B | `uint8_t` | MAC transmission failure count in current epoch ($0..255$). |
+| 13 | `TX_UNACKED_COUNT` | 1B | `uint8_t` | MAC transmission attempts in DATA slots ending without ACK ($0..255$). |
 | 14 | `BATTERY_RAW` | 1B | `uint8_t` | Compressed voltage: $V = 1800 + (\text{val} \times 10)\text{ mV}$ ($1.80\text{V} - 4.35\text{V}$). |
 | **15..22**| **CCM Tag** | **8B** | `byte[8]` | **AES-128-CCM-8 authentication tag ($M=8, L=2$).** |
 
@@ -225,7 +257,7 @@ Consists of the standard 7-byte V2 Unicast Header, a 14-byte encrypted payload, 
 |                      DROPPED_EVENT_COUNT                      |
 |                      (4 Bytes, uint32 BE)                     |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|       TX_ATTEMPT_COUNT        | TX_FAIL_COUNT |  DIAG_FLAGS   |
+|       TX_ATTEMPT_COUNT        |TX_UNACKED_CNT |  DIAG_FLAGS   |
 |      (2 Bytes, uint16 BE)     |   (1 Byte)    |   (1 Byte)    |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |          BATTERY_MV           |                               |
@@ -249,7 +281,7 @@ Consists of the standard 7-byte V2 Unicast Header, a 14-byte encrypted payload, 
 | 7..10 | `MAINT_SEQ` | 4B | `uint32_t` BE | Echo of current Maintenance Superframe sequence counter from Beacon. |
 | 11..14 | `DROPPED_EVENT_COUNT` | 4B | `uint32_t` BE | Full 32-bit cumulative dropped events count ($0..4,294,967,295$). |
 | 15..16 | `TX_ATTEMPT_COUNT` | 2B | `uint16_t` BE | Total RF transmission attempts since session start ($0..65535$). |
-| 17 | `TX_FAIL_COUNT` | 1B | `uint8_t` | Total unacknowledged events discarded after retry exhaustion ($0..255$). |
+| 17 | `TX_UNACKED_COUNT` | 1B | `uint8_t` | Total MAC slot transmissions ending without ACK ($0..255$). |
 | 18 | `DIAG_FLAGS` | 1B | `uint8_t` bitmask | Bit 0: NVS Wear Warning.<br>Bit 1: RTC Drift Warning.<br>Bit 2: Brownout Detected.<br>Bit 3: Sensor Comm Failure.<br>Bits 4..7: Reserved (`0`). |
 | 19..20 | `BATTERY_MV` | 2B | `uint16_t` BE | Direct ADC millivolt reading ($0..5000\text{ mV}$). |
 | **21..28**| **CCM Tag** | **8B** | `byte[8]` | **AES-128-CCM-8 authentication tag ($M=8, L=2$).** |
@@ -258,10 +290,18 @@ Consists of the standard 7-byte V2 Unicast Header, a 14-byte encrypted payload, 
 
 ### 4.3 Candidate 3: TLV-Multiplexed Management Frame (`UP_MGMT_TLV`)
 
-#### Wire Format Overview (27 Bytes Nominal)
-Consists of standard 7-byte Unicast Header, 12-byte encrypted TLV payload, and 8-byte AES-128-CCM authentication tag.
+#### Recalculated Wire Format Breakdown
+A TLV architecture permits dynamic inclusion of metric blocks. Each TLV block consumes $1\text{B Tag} + 1\text{B Length} + V\text{ Bytes Value}$.
+
+- **Common Header:** 7 Bytes (Plaintext AAD).
+- **Mandatory Sequence Echo:** `MAINT_SEQ` (4 Bytes).
+- **TLV Block 1 (Loss Metrics, Tag `0x01`):** Tag (1B) + Length (1B: `0x04`) + `DROPPED_EVENT_COUNT` (4B) = **6 Bytes**.
+- **TLV Block 2 (Battery Metrics, Tag `0x02`):** Tag (1B) + Length (1B: `0x02`) + `BATTERY_MV` (2B) = **4 Bytes**.
+- **Optional TLV Block 3 (Retry Metrics, Tag `0x03`):** Tag (1B) + Length (1B: `0x02`) + `TX_ATTEMPT` (1B) + `TX_UNACKED` (1B) = **4 Bytes**.
+- **Authentication Tag:** AES-128-CCM Tag = **8 Bytes**.
 
 ```
+Candidate 3A (Minimal TLV: Loss + Battery) — 29 Bytes Total:
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |   Unicast Header (7B)         | MAINT_SEQ (4B)                |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -269,12 +309,13 @@ Consists of standard 7-byte Unicast Header, 12-byte encrypted TLV payload, and 8
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 | Tag: 0x02 | Len: 2 | BATTERY_MV (2B) | CCM Tag (8B)           |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-```
+Total Plaintext = 4 (MAINT_SEQ) + 6 (TLV1) + 4 (TLV2) = 14 Bytes.
+Total Wire = 7 (Header) + 14 (Plaintext) + 8 (Tag) = 29 Bytes.
 
-- Tag `0x01` (Loss Metrics): Length 4B (`DROPPED_EVENT_COUNT:4B`).
-- Tag `0x02` (Battery Metrics): Length 2B (`BATTERY_MV:2B`).
-- Tag `0x03` (Retry Metrics): Length 2B (`TX_ATTEMPT:1B`, `TX_FAIL:1B`).
-- *Trade-off:* High extensibility; however, parser complexity increases firmware code size on microcontrollers and introduces malformed length parsing attack surfaces.
+Candidate 3B (Full TLV: Loss + Battery + Retries) — 33 Bytes Total:
+Total Plaintext = 4 (MAINT_SEQ) + 6 (TLV1) + 4 (TLV2) + 4 (TLV3) = 18 Bytes.
+Total Wire = 7 (Header) + 18 (Plaintext) + 8 (Tag) = 33 Bytes.
+```
 
 ---
 
@@ -296,134 +337,106 @@ T_{\text{preamble}} &= (N_{\text{preamble}} + 4.25) \times T_{\text{sym}} \\
 \text{ToA} &= T_{\text{preamble}} + (\text{PayloadSymbNb} \times T_{\text{sym}})
 \end{aligned}$$
 
-#### Exact Physical ToA Comparison Table
+#### Recalculated Physical ToA Comparison Table
 | Message Profile | Total Wire Bytes | SF7 ToA (ms) | SF8 ToA (ms) | Delta vs Health 21B (SF7) | Delta vs Health 21B (SF8) |
 |:---|:---:|:---:|:---:|:---:|:---:|
 | `UP_HEALTH_REPLY` (Baseline, 0x44) | **21 B** | **56.576 ms** | **102.912 ms** | Baseline ($0.0\text{ ms}$) | Baseline ($0.0\text{ ms}$) |
 | **Candidate 1 (Compact)** | **23 B** | **61.696 ms** | **113.152 ms** | $+5.120\text{ ms}$ ($+9.0\%$) | $+10.240\text{ ms}$ ($+9.9\%$) |
-| **Candidate 3 (TLV Nominal)** | **27 B** | **66.816 ms** | **123.392 ms** | $+10.240\text{ ms}$ ($+18.1\%$) | $+20.480\text{ ms}$ ($+19.9\%$) |
-| **Candidate 2 (Extended)** | **29 B** | **71.936 ms** | **123.392 ms** | $+15.360\text{ ms}$ ($+27.1\%$) | $+20.480\text{ ms}$ ($+19.9\%$) |
+| **Candidate 2 (Extended)** | **29 B** | **66.816 ms** | **123.392 ms** | $+10.240\text{ ms}$ ($+18.1\%$) | $+20.480\text{ ms}$ ($+19.9\%$) |
+| **Candidate 3A (Minimal TLV)** | **29 B** | **66.816 ms** | **123.392 ms** | $+10.240\text{ ms}$ ($+18.1\%$) | $+20.480\text{ ms}$ ($+19.9\%$) |
+| **Candidate 3B (Full TLV)** | **33 B** | **71.936 ms** | **133.632 ms** | $+15.360\text{ ms}$ ($+27.1\%$) | $+30.720\text{ ms}$ ($+29.8\%$) |
 | `UP_EVENT` (Reference, 0x41) | **26 B** | **61.696 ms** | **113.152 ms** | $+5.120\text{ ms}$ | $+10.240\text{ ms}$ |
 
 > [!NOTE]
-> At SF8, Candidate 2 (29B) and Candidate 3 (27B) produce identical ToA ($123.392\text{ ms}$) because LoRa symbol block quantization rounds up both payload lengths into the exact same 4-symbol codeword boundary.
+> LoRa symbol quantization: At SF7, payloads from 27B through 29B require exactly 53 symbols ($66.816\text{ ms}$). At SF8, payloads from 27B through 29B require 48 symbols ($123.392\text{ ms}$). Thus, Candidate 2 (29B) achieves identical ToA to 27B while providing native 32-bit drop count and direct millivolts.
 
-### 5.2 Slot Budget & Feasibility Analysis within TDMA Slot
-Under `DEC-127-06` (parameterized slot geometry, candidate example 400 ms slot), we evaluate whether Candidate 1 (23B) and Candidate 2 (29B) can fit safely within a single uplink transmission window:
+### 5.2 Theoretical Slot Budget & Qualification Statement
+Under `DEC-127-06`, slot timing is parameterized. The candidate 400 ms slot profile is strictly a **non-normative theoretical example**.
 
-$$\text{Margin} = T_{\text{SLOT}} - T_{\text{LEAD\_GUARD}} - \text{ToA}_{\text{DIAG}} - T_{\text{TRAILING\_GUARD}}$$
+> [!IMPORTANT]
+> **Qualification of 400 ms Feasibility:**
+> All headroom margins calculated below are **`THEORETICAL_MODEL / ASSUMED_GUARDS_ONLY`**. They rely on unverified symbolic assumptions ($T_{\text{LEAD\_GUARD}} = 25\text{ ms}$, $T_{\text{TRAILING\_GUARD}} = 50\text{ ms}$) and **`NOT_VERIFIED`** pending physical oscilloscope and HIL bench sign-off under **Issue #169**.
 
-Assuming candidate symbolic guards ($T_{\text{LEAD\_GUARD}} = 25\text{ ms}$, $T_{\text{TRAILING\_GUARD}} = 50\text{ ms}$):
-- **Candidate 1 at SF7:** $400 - 25 - 61.696 - 50 = 263.304\text{ ms}$ available margin.
-- **Candidate 1 at SF8:** $400 - 25 - 113.152 - 50 = 211.848\text{ ms}$ available margin.
-- **Candidate 2 at SF7:** $400 - 25 - 71.936 - 50 = 253.064\text{ ms}$ available margin.
-- **Candidate 2 at SF8:** $400 - 25 - 123.392 - 50 = 201.608\text{ ms}$ available margin.
-
-**Conclusion:** Both Candidate 1 and Candidate 2 easily fit within the candidate 400 ms slot envelope with $>200\text{ ms}$ of idle headroom. Neither causes transceiver overlap or slot boundary violation.
+Under assumed theoretical guards:
+- **Candidate 1 (23B) at SF7:** $400 - 25 - 61.696 - 50 = 263.304\text{ ms}$ (Theoretical Margin).
+- **Candidate 1 (23B) at SF8:** $400 - 25 - 113.152 - 50 = 211.848\text{ ms}$ (Theoretical Margin).
+- **Candidate 2 (29B) at SF7:** $400 - 25 - 66.816 - 50 = 258.184\text{ ms}$ (Theoretical Margin).
+- **Candidate 2 (29B) at SF8:** $400 - 25 - 123.392 - 50 = 201.608\text{ ms}$ (Theoretical Margin).
+- **Candidate 3B (33B) at SF7:** $400 - 25 - 71.936 - 50 = 253.064\text{ ms}$ (Theoretical Margin).
+- **Candidate 3B (33B) at SF8:** $400 - 25 - 133.632 - 50 = 191.368\text{ ms}$ (Theoretical Margin).
 
 ### 5.3 Comparative Trade-Off Matrix
 
-| Evaluation Dimension | Candidate 1 (Compact 23B) | Candidate 2 (Extended 29B) | Candidate 3 (TLV 27B) | Architectural Recommendation |
-|:---|:---|:---|:---|:---|
-| **Wire Size** | **23 Bytes** | 29 Bytes | 27 Bytes | Candidate 1 is most compact. |
-| **ToA at SF7** | **61.696 ms** | 71.936 ms | 66.816 ms | Candidate 1 saves 10.2 ms airtime. |
-| **ToA at SF8** | **113.152 ms** | 123.392 ms | 123.392 ms | Candidate 1 saves 10.2 ms airtime. |
-| **Counter Range** | 16-bit ($65,535$) | **32-bit ($4.29\times 10^9$)** | 32-bit ($4.29\times 10^9$) | **Candidate 2 eliminates rollover risk.** |
-| **Battery Accuracy** | 8-bit ($10\text{ mV}$ step) | **16-bit ($1\text{ mV}$ direct ADC)**| 16-bit ($1\text{ mV}$ direct ADC)| Candidate 2 provides true physical ADC value. |
-| **Link Telemetry** | Fail count only | **Attempts + Fails + Flags**| Optional sub-tags | Candidate 2 enables predictive diagnostics. |
-| **Parser Complexity** | Fixed offset (O(1)) | Fixed offset (O(1)) | Dynamic Loop (O(N)) | Candidate 1 and 2 avoid parsing bugs. |
-| **Extensibility** | Low | Moderate | **High** | Candidate 3 is most extensible. |
+| Evaluation Dimension | Candidate 1 (Compact 23B) | Candidate 2 (Extended 29B) | Candidate 3A (Min TLV 29B) | Candidate 3B (Full TLV 33B) | Architectural Assessment |
+|:---|:---:|:---:|:---:|:---:|:---|
+| **Wire Size** | **23 Bytes** | 29 Bytes | 29 Bytes | 33 Bytes | Candidate 1 is smallest. |
+| **ToA SF7 (ms)** | **61.696 ms** | 66.816 ms | 66.816 ms | 71.936 ms | Candidate 1 saves 5.1 ms. |
+| **ToA SF8 (ms)** | **113.152 ms** | 123.392 ms | 123.392 ms | 133.632 ms | Candidate 1 saves 10.2 ms. |
+| **Counter Range** | 16-bit ($65,535$) | **32-bit ($4.29\times 10^9$)**| **32-bit ($4.29\times 10^9$)**| **32-bit ($4.29\times 10^9$)**| 32-bit eliminates rollover risk. |
+| **Battery Field** | 8-bit ($10\text{ mV}$) | **16-bit ($1\text{ mV}$ direct)**| **16-bit ($1\text{ mV}$ direct)**| **16-bit ($1\text{ mV}$ direct)**| 16-bit avoids quantization. |
+| **Link Metrics** | `TX_UNACKED` | `TX_ATTEMPT` + `UNACKED` | None | `TX_ATTEMPT` + `UNACKED` | Full telemetry on Cand 2/3B. |
+| **Parser Overhead**| Fixed $O(1)$ | Fixed $O(1)$ | Dynamic loop $O(N)$ | Dynamic loop $O(N)$ | Fixed offset eliminates parser bugs. |
+| **G2 Recommendation**| Viable fallback | **Proposed Primary** | High complexity | Highest airtime penalty | Submit to Owner for decision. |
 
 ---
 
 ## 6. Security and Replay Analysis (Deliverable 5)
 
 ### 6.1 Cryptographic Trust Boundaries (`DEC-SEC-01` .. `DEC-SEC-07`)
-The proposed diagnostic message maintains strict fidelity to the approved V2 security architecture:
-1. **Zero-Knowledge Backend (`DEC-SEC-01`):** The Backend Go server does not know or receive the ephemeral shared secret $Z$ or session keys $K_{\text{SESSION\_UP}}$. AES-128-CCM verification is terminated exclusively at the Gateway edge.
-2. **Session Key Derivation:** The message is authenticated using the pairwise directional session key $K_{\text{SESSION\_UP}}$ derived from the V2 Ephemeral X25519 ECDH handshake (`0x45`..`0x48`).
-3. **Cipher Suite:** AES-128-CCM according to NIST SP 800-38C and RFC 3610:
-   - Cipher: AES with 128-bit key.
-   - Authentication Tag Length ($M$): **8 Bytes** (64 bits), providing $2^{-64}$ forgery resistance (`DEC-127-02`).
-   - Length Field Size ($L$): **2 Bytes** (sufficient for payloads $\le 65,535$ bytes).
-   - Nonce Size ($N$): **13 Bytes** ($15 - L = 13$).
+1. **Zero-Knowledge Backend (`DEC-SEC-01`):** The Backend Go server does not possess $Z$ or $K_{\text{SESSION\_UP}}$. AES-128-CCM verification terminates strictly at the Gateway edge.
+2. **Session Key Derivation:** Authenticated and encrypted using $K_{\text{SESSION\_UP}}$ derived from the V2 Ephemeral X25519 ECDH handshake (`0x45`..`0x48`).
+3. **Cipher Suite:** AES-128-CCM ($M=8$, $L=2$, $N=13$) per NIST SP 800-38C and RFC 3610.
 
-### 6.2 Nonce Construction & Frame Counter Domain Architecture
-In accordance with RFC 3610 Section 2.3, a key-nonce pair $(K, N)$ must **never** be used more than once.
+### 6.2 Frame Counter Domain Safety Analysis & OPEN_DECISION Status
 
 $$N = \text{SESSION\_NONCE\_PREFIX}_{\text{UP}}[0..7] \parallel 0\text{x}01 \parallel \text{FRAME\_COUNTER}[0..3]$$
-- $\text{SESSION\_NONCE\_PREFIX}_{\text{UP}}$: 8 bytes derived from $Z$ via HKDF during Join.
-- Direction byte: $0\text{x}01$ explicitly designates **UPLINK**.
-- `FRAME_COUNTER`: 4-byte big-endian unsigned integer.
 
-#### Nonce Reuse Prevention: Shared vs Dedicated Frame Counter
-We evaluate two alternative counter domain models:
+In accordance with RFC 3610, reusing a $(K, N)$ pair under AES-CCM destroys message confidentiality and authenticity. We evaluate the proposed **Unified Frame Counter Domain** across all critical operational failure modes:
 
-```
-Option A: Unified Frame Counter Domain (Recommended)
-  K_SESSION_UP:
-     UP_EVENT (0x41)        --> Uses FRAME_COUNTER = k
-     UP_HEALTH_REPLY (0x44) --> Uses FRAME_COUNTER = k + 1
-     UP_DIAG_METRICS (0x4A) --> Uses FRAME_COUNTER = k + 2
-  --> Single monotonic counter per session. Nonce reuse mathematically impossible.
+1. **Failure Mode 1: Node Reboot & Power Loss:**
+   - Under `DEC-SEC-01` and `DEC-SEC-05`, ephemeral session keys ($K_{\text{SESSION\_UP}}$) are held strictly in **volatile RAM**.
+   - Upon reboot, volatile session keys are destroyed. The Node cannot transmit until executing a new V2 Join handshake (`0x45`..`0x48`), which derives a brand-new $K_{\text{SESSION\_UP}}$ from a new ECDH secret $Z$, increments persistent `JOIN_COUNTER` in NVS (`DEC-SEC-06`), and resets `FRAME_COUNTER` to $0$.
+   - Under a new key, `FRAME_COUNTER = 0` is strictly safe.
+   - *Residual Risk during Deep Sleep:* If session keys are preserved in RTC memory across Light/Deep Sleep to avoid re-joining, `FRAME_COUNTER` must also be preserved in RTC memory. An unhandled brownout resetting RTC memory without clearing session keys would create a catastrophic nonce reuse hazard.
+2. **Failure Mode 2: Retransmission / Retry:**
+   - For diagnostic frames, we propose a strict best-effort zero-retry policy.
+   - If retries are ever enabled, RFC 3610 mandates that the node must re-transmit the **exact identical ciphertext and Nonce** buffered in memory. Re-encrypting mutated plaintext with the same `FRAME_COUNTER` is cryptographically fatal.
+3. **Failure Mode 3: Concurrent Frame Creation (FreeRTOS Concurrency):**
+   - On a dual-core ESP32, an Event Task (producing `UP_EVENT`) and a Telemetry Task (producing `UP_HEALTH_REPLY` or `UP_DIAG_METRICS`) could execute concurrently.
+   - Grabbing `FRAME_COUNTER` without strict synchronization creates a race condition where two distinct messages could be encrypted with the identical Nonce.
+   - Proving safety requires: (a) Single Radio Owner task architecture, or (b) Thread-safe atomic fetch-and-add (`atomic_fetch_add`) with mutex-serialized encryption.
+4. **Failure Mode 4: Persistence Failure of Frame Counter:**
+   - If `FRAME_COUNTER` is committed to flash/RTC and the write fails silently, counter rollbacks could occur upon subsequent wakes.
 
-Option B: Split Subkey / Independent Counter Domain
-  K_SESSION_UP (Data):      --> UP_EVENT (0x41)        [DATA_FRAME_COUNTER]
-  K_SESSION_DIAG (Derived): --> UP_DIAG_METRICS (0x4A) [DIAG_FRAME_COUNTER]
-  --> Requires secondary HKDF expansion and double tracking in Gateway state table.
-```
-
-- **Analysis & Decision:** **Option A (Unified Frame Counter Domain)** is strongly recommended.
-  - Sharing `FRAME_COUNTER` across all uplink message types (`UP_EVENT`, `UP_HEALTH_REPLY`, and `UP_DIAG_METRICS`) under $K_{\text{SESSION\_UP}}$ strictly guarantees nonce uniqueness without requiring extra key derivation, extra state machines, or extra NVS storage slots.
-  - The Gateway maintains a single `LAST_RX_FRAME_COUNTER[NODE_ID]` high-water mark. Any received frame with `FRAME_COUNTER` $\le \text{LAST\_RX}$ is immediately rejected.
-
-### 6.3 Epoch-Binding & Replay Defense
-To prevent delayed replay attacks (where an adversary records an authentic diagnostic frame and replays it hours or days later):
-1. **Primary Defense (`FRAME_COUNTER`):** Replayed frames are discarded by Gateway sliding high-water mark verification.
-2. **Secondary Defense (`MAINT_SEQ` Echo):** The plaintext payload carries the 4-byte `MAINT_SEQ` echoed from the current Maintenance Superframe Beacon. If the received `MAINT_SEQ` does not match the active maintenance sequence counter within acceptable drift ($\pm 1$), the Gateway flags a freshness violation.
+> [!WARNING]
+> **Open Decision Disposition:** Because conclusive mathematical proof of frame counter safety under all concurrency, RTC sleep, and persistence failure paths requires verified firmware code and HIL bench testing, the Unified Frame Counter Domain cannot be declared unconditionally closed. It is formally classified as **`PROPOSED / OPEN_DECISION` (`DEC-DIAG-03`)** pending security review.
 
 ---
 
 ## 7. RF and TDMA Integration (Analysis C)
 
-### 7.1 Transmission Opportunity Models within TDMA Superframe
-We evaluate four architectural opportunities for scheduling diagnostic message transmissions:
+### 7.1 Transmission Opportunities & Health Frequency Trade-Off
+We evaluate four potential scheduling models for diagnostic metrics:
 
-```
-+---------------------------------------------------------------------------------------------------+
-|                            TDMA DIAGNOSTIC TRANSMISSION OPPORTUNITIES                             |
-+---------------------------------------------------------------------------------------------------+
+#### Rigorous Re-Evaluation of Opportunity 1 (Health Slot Interleaving)
+Under Health Slot Interleaving, even Maintenance epochs transmit `UP_HEALTH_REPLY` (0x44) and odd epochs transmit `UP_DIAG_METRICS` (0x4A cand.):
+- **Slot Allocation Count:** Unchanged. The schedule table allocates the same 1 slot per node in $SF_{\text{MAINT}}$.
+- **Airtime Impact:** In odd epochs, airtime increases from 56.576 ms (Health 21B) to 66.816 ms (Cand 2 29B) at SF7 ($+10.24\text{ ms}$, $+18.1\%$), and from 102.912 ms to 123.392 ms at SF8 ($+20.48\text{ ms}$, $+19.9\%$).
+- **Health Reporting Latency Penalty:** **Health reporting frequency is halved.** The interval between consecutive `UP_HEALTH_REPLY` transmissions increases from **~300 s to ~600 s** (nominal 10 minutes).
+  - *Operational Consequence:* Critical health flags (`STATUS_FLAGS:1B` reporting hardware faults, low battery, or clock drift) and volatile queue depth (`PENDING_COUNT:1B`) are delayed by up to 10 minutes.
+  - *Dynamic Health Override Mitigation:* If `STATUS_FLAGS != 0` or `PENDING_COUNT > 0`, the Node suppresses diagnostic transmission and forces `UP_HEALTH_REPLY` until healthy.
 
-Opportunity 1: Health Slot Interleaving (Recommended)
-  Epoch K (Maint SF):   Slot 1: N1 HEALTH (0x44)  | Slot 2: N2 HEALTH (0x44)  | ...
-  Epoch K+1 (Maint SF): Slot 1: N1 DIAG (0x4A)    | Slot 2: N2 DIAG (0x4A)    | ...
-  --> Zero new RF slots; alternating reporting cadence (~600s interval).
-
-Opportunity 2: Expanded Maintenance Superframe
-  Epoch K (Maint SF):   Slot 1: N1 HEALTH (0x44)  | Slot 2: N1 DIAG (0x4A)    | Slot 3: N2 HEALTH ...
-  --> Doubles Maintenance SF length; doubles Gateway RX active duty cycle.
-
-Opportunity 3: Dedicated Low-Frequency Diagnostic Superframe
-  Every 1 Hour:         Inject SF_DIAG carrying diagnostic slots for all nodes.
-  --> Clean separation; requires Backend scheduler versioning complexity.
-
-Opportunity 4: Contention Window Slot N+1
-  Shared Access:        Nodes contend for Slot N+1 using slotted ALOHA.
-  --> Violates zero-contention deterministic architecture; collision risk.
-```
-
-#### Detailed Comparison of Opportunities
-| Transmission Opportunity | Airtime Overhead | Gateway RX Duty Cycle | Latency to Report Loss | Determinism | Recommended Disposition |
+#### Comparative Opportunity Table
+| Opportunity | Slot Allocation Count | Transmit Airtime Delta | Health Reporting Interval | Determinism | Status for Owner Review |
 |:---|:---:|:---:|:---:|:---:|:---|
-| **Opp 1: Health Slot Interleaving** | **None (0% increase)** | **Preserved** | ~600 seconds | **100% Deterministic** | **RECOMMENDED (Primary)** |
-| **Opp 2: Expanded Maint SF** | High ($+100\%$ slots) | Doubled in Maint SF | ~300 seconds | 100% Deterministic | Viable Alternative |
-| **Opp 3: Low-Freq Diag SF** | Low (amortized) | Negligible | ~3600 seconds | 100% Deterministic | Complex Scheduling |
-| **Opp 4: Contention Slot N+1**| Unpredictable | Elevated | Variable | Non-Deterministic | **REJECTED (Violates V2)** |
+| **Opp 1: Health Interleaving** | **Unchanged (1 slot/node)** | $+10.2\text{ ms}$ (SF7 on odd) | **Doubled (~600 s)** | 100% Deterministic | `PROPOSED / OPEN_DECISION` |
+| **Opp 2: Expanded Maint SF** | Doubled ($+N$ slots) | $+10.2\text{ ms}$ (every epoch) | Unchanged (~300 s) | 100% Deterministic | `PROPOSED / OPEN_DECISION` |
+| **Opp 3: Multi-Epoch Diag SF** | Unchanged on normal | Normal SF unchanged | Unchanged (~300 s) | 100% Deterministic | `PROPOSED / OPEN_DECISION` |
+| **Opp 4: Contention Slot N+1** | Unchanged | Variable contention | Unchanged (~300 s) | Non-Deterministic | **REJECTED (Violates V2)** |
 
 ### 7.2 Priority and Anti-Starvation Rules
-1. **Absolute Event Priority:** Emergency events (`UP_EVENT` 0x41) use normal DATA superframes. Diagnostic reporting is confined strictly to Maintenance Superframes and **never** consumes or delays DATA slots.
-2. **Health vs Diagnostic Priority in Interleaved Mode:** If a node experiences an active health warning (`STATUS_FLAGS != 0`), it may dynamically suppress diagnostic reporting and force transmission of `UP_HEALTH_REPLY` during its allocated slot until the health condition clears.
-3. **Zero RF Spam / Best-Effort Delivery:** Diagnostic messages are unacknowledged at the MAC layer. If a diagnostic frame is lost to RF fading, the Node **must not retry** in subsequent DATA slots. It simply updates its local counters and transmits freshest metrics at the next scheduled diagnostic epoch.
+1. **Absolute Event Priority:** Emergency events (`UP_EVENT` 0x41) strictly own DATA slots. Diagnostics are confined strictly to Maintenance Superframes and **never** consume or delay DATA slots.
+2. **Best-Effort Zero-Retry Delivery:** Diagnostic frames are unacknowledged at the MAC layer. If a diagnostic frame is lost to RF fading, the Node **must not retry** in subsequent DATA slots, completely avoiding RF clutter.
 
 ---
 
@@ -434,7 +447,7 @@ Opportunity 4: Contention Window Slot N+1
 | **Node Firmware** | Issue #131 | Embedded C | Implement NVS batched persistence for `DROPPED_EVENT_COUNT`; integrate retry and ADC battery drivers; implement frame builder for candidate 0x4A. | `RING_BUFFER_DROP_OLDEST` (#131), ADC driver. |
 | **Gateway Radio Engine** | Issue #131 | Embedded C / Go | Add parser for candidate 0x4A; verify AES-128-CCM tag; extract loss metrics; dispatch to internal MQTT client. | Radio MAC codec, AES-CCM engine. |
 | **MQTT Contracts** | Issue #128 | Contract / Schema | Add topic `iot/v1/gw/{gateway_id}/uplink/diagnostics` and corresponding JSON Schema `node-diagnostics.schema.json`; or extend `status.schema.json`. | Issue #128 schema baseline. |
-| **Backend Storage** | Issue #18 / #132 | Backend Go | Create PostgreSQL migration for `node_loss_metrics` table; implement idempotent deduplication by `(gateway_id, node_id, session_sel, frame_counter)`. | PostgreSQL migrations (#18). |
+| **Backend Storage** | Issue #18 / #132 | Backend Go | Create PostgreSQL migration for `node_loss_metrics` table; implement append-only time-series ledger with canonical sequence ordering. | PostgreSQL migrations (#18). |
 | **Simulator & QA** | Issue #130 | Test Automation | Develop Python simulation scenarios injecting buffer saturation, packet drops, and reboot sequences to verify loss reporting. | MAC specification baseline. |
 | **HIL Timing Sign-off** | Issue #169 | Hardware RF | Measure physical ToA on calibrated oscilloscope for 23B/29B at SF7/SF8; measure SPI FIFO transfer latency on ESP32-WROOM-32E. | Calibrated hardware bench (#169). |
 | **Radio MAC Authority**| Issue #127 | Governance | Formally integrate approved candidate layout into `contracts/radio-mac/specification.md` upon Owner review. | Issue #204 Owner sign-off. |
@@ -446,7 +459,7 @@ Opportunity 4: Contention Window Slot N+1
 
 | Test ID | Test Category | Stimulus & Trigger Condition | Expected System Behavior & Invariant | Verification Tier | Tracking Owner |
 |:---|:---|:---|:---|:---:|:---:|
-| **TM-DIAG-01** | Counter Overflow | Node FIFO saturated with $>65,535$ dropped events on Candidate 1 (16-bit) or $>4.29\times 10^9$ on Candidate 2 (32-bit). | Counter rolls over gracefully without firmware crash or integer trap. Backend detects rollover via delta heuristic without corrupting total loss ledger. | Unit / Sim | #130 / #131 |
+| **TM-DIAG-01** | Counter Overflow | Node FIFO saturated with $>65,535$ drops (Cand 1, 16-bit) or $>4.29\times 10^9$ (Cand 2, 32-bit). | Counter rolls over gracefully without firmware crash or integer trap. Backend calculates wrapped delta via Rule 2 without data corruption. | Unit / Sim | #130 / #131 |
 | **TM-DIAG-02** | Crash & Reboot | Power cut to Node during active event dropping; Node restarts and re-reads NVS flash. | Node recovers last committed `DROPPED_EVENT_COUNT` from NVS. Counter does not reset to zero. Monotonicity preserved. | HIL / Fault Injection | #175 / #131 |
 | **TM-DIAG-03** | Duplicate Delivery | Gateway receives duplicate RF transmission (e.g. reflection or re-trigger) with identical `FRAME_COUNTER`. | Gateway rejects duplicate at MAC layer (`FRAME_COUNTER <= LAST_RX`). Zero redundant MQTT publishes. | Sim / Integration | #130 / #131 |
 | **TM-DIAG-04** | Replay Attack | Malicious actor replays valid diagnostic packet from previous superframe. | Gateway detects expired `FRAME_COUNTER` and discards packet. Security log recorded. | Security / Sim | #182 / #130 |
@@ -463,16 +476,16 @@ Opportunity 4: Contention Window Slot N+1
 
 ## 10. Open Decision Register for Owner Review (Deliverable 8)
 
-The following formal decision candidates are submitted for Project Owner consideration and direction under Issue #204:
+All decisions below are formally submitted as **`PROPOSED / OPEN_DECISION`** for Project Owner review. No wire allocations are made, and the approved 21B `UP_HEALTH_REPLY` frame remains 100% frozen:
 
-| Decision ID | Summary of Issue | Options Considered | Recommended Technical Disposition | Impacted Teams |
+| Decision ID | Summary of Issue | Options Considered | Status & Proposed Disposition | Impacted Teams |
 |:---|:---|:---|:---|:---|
-| **DEC-DIAG-01** | Wire Layout Selection for Diagnostic Message | **Option A:** Candidate 1 Compact (23B, 16-bit drop counter, 61.7ms SF7).<br>**Option B:** Candidate 2 Extended (29B, 32-bit drop counter, 71.9ms SF7).<br>**Option C:** Candidate 3 TLV Multiplexed (27B nominal). | **Adopt Option B (Candidate 2 Extended, 29B):** The 32-bit counter eliminates multi-day rollover risk during severe industrial outages. The $10.2\text{ ms}$ airtime difference is fully absorbed within the candidate 400 ms slot. | MAC / Security / Firmware |
-| **DEC-DIAG-02** | TDMA Transmission Opportunity | **Option 1:** Interleave with Health Reply in Maintenance Superframe (alternating cadence, ~600s).<br>**Option 2:** Expand Maintenance Superframe with dedicated diagnostic slots.<br>**Option 3:** Periodic hourly diagnostic superframe. | **Adopt Option 1 (Interleaved Cadence):** Adds zero RF slots to the TDMA timeline; preserves the existing superframe duration; provides ample reporting frequency for slow-changing loss counters. | MAC Scheduler / Gateway |
-| **DEC-DIAG-03** | Frame Counter Domain Binding | **Option A:** Shared `FRAME_COUNTER` under $K_{\text{SESSION\_UP}}$ across Event, Health, and Diag.<br>**Option B:** Dedicated derived subkey $K_{\text{DIAG\_UP}}$ with independent counter. | **Adopt Option A (Shared Counter Domain):** Strictly complies with NIST SP 800-38C nonce-uniqueness rules without key derivation or dual-state tracking overhead. | Security / Crypto |
-| **DEC-DIAG-04** | Retransmission Policy | **Option A:** Best-effort unacknowledged (zero MAC retries).<br>**Option B:** Bounded retry in next maintenance superframe.<br>**Option C:** Dedicated downlink diagnostic ACK. | **Adopt Option A (Best-Effort Zero Retries):** Diagnostic metrics are cumulative and non-urgent. If a packet is lost, subsequent epochs carry latest totals without RF spam. | Radio MAC / Firmware |
-| **DEC-DIAG-05** | NVS Persistence Strategy | **Option A:** Synchronous commit on every FIFO drop.<br>**Option B:** Batched dirty-commit to RAM with flush prior to deep sleep / transmission. | **Adopt Option B (Batched Dirty-Commit):** Protects SPI flash from premature wearout during event storms while guaranteeing persistence before radio sleep. | Node Firmware |
-| **DEC-DIAG-06** | Wire Codepoint Assignment | **Option A:** Allocate candidate `0x4A` (`UP_DIAG_METRICS`) formally in Wire Registry.<br>**Option B:** Maintain `0x4A` as candidate; freeze wire allocation at Gate G2. | **Adopt Option B (Maintain Candidate Status):** Conforms strictly to `DEC-MH-08` policy until Owner formalizes multi-team wire approval. | Project Owner / G2 Gate |
+| **DEC-DIAG-01** | Wire Layout Selection for Diagnostic Message | **Option A:** Candidate 1 Compact (23B, 16-bit drop counter, 61.7ms SF7).<br>**Option B:** Candidate 2 Extended (29B, 32-bit drop counter, 66.8ms SF7).<br>**Option C:** Candidate 3 TLV Multiplexed (29B/33B). | `PROPOSED / OPEN_DECISION` — Propose Option B (Candidate 2 Extended, 29B) due to 32-bit rollover immunity and direct ADC millivolts with only $+10.2\text{ ms}$ ToA delta at SF7. | MAC / Security / Firmware |
+| **DEC-DIAG-02** | TDMA Transmission Opportunity | **Option 1:** Interleave with Health Reply (alternating cadence, ~600s health interval).<br>**Option 2:** Expand Maintenance Superframe ($+N$ slots).<br>**Option 3:** Low-frequency periodic diagnostic superframe (~3600s). | `PROPOSED / OPEN_DECISION` — Propose Option 1 with dynamic health override, balancing zero additional slot allocations against halved health frequency. | MAC Scheduler / Gateway |
+| **DEC-DIAG-03** | Frame Counter Domain Binding | **Option A:** Shared `FRAME_COUNTER` under $K_{\text{SESSION\_UP}}$ across Event, Health, and Diag.<br>**Option B:** Dedicated derived subkey $K_{\text{DIAG\_UP}}$ with independent counter. | `PROPOSED / OPEN_DECISION` — Propose Option A subject to formal FreeRTOS concurrency mutex verification and RTC sleep persistence audit. | Security / Crypto |
+| **DEC-DIAG-04** | Retransmission Policy | **Option A:** Best-effort unacknowledged (zero MAC retries).<br>**Option B:** Bounded retry in next maintenance superframe.<br>**Option C:** Dedicated downlink diagnostic ACK. | `PROPOSED / OPEN_DECISION` — Propose Option A (Best-Effort Zero Retries) to eliminate RF clutter and preserve airtime margins. | Radio MAC / Firmware |
+| **DEC-DIAG-05** | NVS Persistence Strategy | **Option A:** Synchronous commit on every FIFO drop.<br>**Option B:** Batched dirty-commit with deterministic flush before TDMA sleep. (Brownout ISR flash write prohibited). | `PROPOSED / OPEN_DECISION` — Propose Option B to balance SPI NOR flash endurance against power-loss exposure window. | Node Firmware |
+| **DEC-DIAG-06** | Wire Codepoint Assignment Boundary | **Option A:** Allocate candidate `0x4A` (`UP_DIAG_METRICS`) formally in Wire Registry.<br>**Option B:** Maintain `0x4A` as candidate; freeze wire allocation at Gate G2. | `PROPOSED / OPEN_DECISION` — Propose Option B, strictly upholding `DEC-MH-08` policy until formal Owner wire allocation. | Project Owner / G2 Gate |
 
 ---
 
@@ -480,14 +493,14 @@ The following formal decision candidates are submitted for Project Owner conside
 
 ### 11.1 Acceptance Criteria Traceability Matrix
 - [x] **AC-1 (Source-Bound Boundaries):** Preserves `UP_HEALTH_REPLY` (0x44, 21B); defines `PENDING_COUNT` as volatile FIFO depth and `DROPPED_EVENT_COUNT` as durable cumulative loss counter in NVS (Section 1 & 3).
-- [x] **AC-2 (Candidate Designs):** Specifies at least two complete candidate designs with bitfields and wire diagrams (Candidate 1 Compact 23B and Candidate 2 Extended 29B, Section 4).
-- [x] **AC-3 (Trade-off & Airtime Analysis):** Compares physical LoRa ToA at SF7 and SF8, evaluates slot budget feasibility, and analyzes byte efficiencies (Section 5).
+- [x] **AC-2 (Candidate Designs):** Specifies at least two complete candidate designs with bitfields and wire diagrams (Candidate 1 Compact 23B, Candidate 2 Extended 29B, Candidate 3 TLV 29B/33B, Section 4).
+- [x] **AC-3 (Trade-off & Airtime Analysis):** Compares physical LoRa ToA at SF7 and SF8, evaluates slot budget feasibility as `THEORETICAL_MODEL / ASSUMED_GUARDS_ONLY`, and analyzes byte efficiencies (Section 5).
 - [x] **AC-4 (Field & Semantic Mapping):** Details counter rollover, reboot recovery, batching wear-leveling, and idempotency (Section 3).
-- [x] **AC-5 (Security & Replay Analysis):** Evaluates AES-128-CCM nonce uniqueness, shared frame counter domain, and epoch binding (Section 6).
+- [x] **AC-5 (Security & Replay Analysis):** Evaluates AES-128-CCM nonce uniqueness, shared frame counter domain failure modes, and epoch binding (Section 6).
 - [x] **AC-6 (Cross-Layer Impact Matrix):** Produces detailed cross-layer impact matrix spanning #131, #128, #18/#132, #130, #169, #127, #117 (Section 8).
 - [x] **AC-7 (Negative Test Matrix):** Formulates 12-case negative test suite covering overflow, replay, tampering, desync, and idempotency (Section 9).
-- [x] **AC-8 (Open Decision Register):** Formulates 6 formal decision candidates with options, trade-offs, and recommended technical dispositions (Section 10).
-- [x] **AC-9 (Allowed Path Integrity):** Strictly confined to new document `docs/verification/v2-diagnostic-loss-metrics-contract-proposal.md`. Production contracts, ADRs, schemas, and code remain 100% read-only.
+- [x] **AC-8 (Open Decision Register):** Formulates 6 formal decision candidates marked `PROPOSED / OPEN_DECISION` (Section 10).
+- [x] **AC-9 (Allowed Path Integrity):** Strictly confined to `docs/verification/v2-diagnostic-loss-metrics-contract-proposal.md`. Production contracts, ADRs, schemas, and code remain 100% read-only.
 
 ### 11.2 Status on Completion
 In accordance with the Definition of Done:
