@@ -102,9 +102,9 @@ Theo Quyết định Định hướng của Project Owner (2026-11-06, Issue #20
      - **Backend Go:** Lập kế hoạch phân bổ lịch, tham số hóa các cửa sổ con ($W_{\text{lead}}, W_{\text{UP\_EVENT}}, W_{\text{GAP}}, W_{\text{DOWN\_ACK}}, W_{\text{trail}}$) linh hoạt dựa trên cấu hình PHY thực tế (SF, BW, CR, preamble, payload) và phiên bản hóa lịch qua MQTT.
      - **Gateway:** Thẩm định tính khả thi của lịch nhận được bằng hệ bất đẳng thức biểu tượng; từ chối fail-closed nếu thiếu tham số đo đạc ($\tau_{\text{WAL}}$) hoặc vi phạm ngân sách; phát thông báo đếm ngược $3 \to 2 \to 1$ có chữ ký Ed25519 qua Beacon; thực thi đóng ngắt TX/RX theo lịch.
      - **Sensor Node:** Tuân thủ nghiêm ngặt lịch active; đánh giá 8 tầng bảo vệ fail-closed trước khi phát sóng.
-     - **Bảo lưu an toàn:** Giữ nguyên hàng rào đếm ngược 3 chu kỳ ($3 \to 2 \to 1$) và yêu cầu 100%-READY (`DEC-SEC-05`).
+     - **Bảo lưu an toàn:** Giữ nguyên hàng rào đếm ngược 3 chu kỳ ($3 \to 2 \to 1$) và yêu cầu 100%-READY (`DEC-SEC-05` cho rào chắn khóa; quy tắc quyết định kích hoạt lịch theo dõi dưới `DEC-MH-05`, trạng thái `CANDIDATE / BLOCKED_FOR_OWNER_DECISION`).
    - **Ví dụ ứng viên (Candidate Example Only — Tuyệt đối không phải profile cố định):**
-     Ví dụ khe 400ms với phân bổ $25\text{ms} \text{ lead} + 125\text{ms } (\text{UP\_EVENT}) + 35\text{ms } (\text{GW Turnaround \& WAL}) + 115\text{ms } (\text{DOWN\_ACK}) + 100\text{ms} \text{ trail} = 400\text{ms}$ chỉ mang tính chất minh họa chứng minh tính khả thi về mặt số học lý thuyết cho SF8; **chưa được phê duyệt làm profile cố định**. Việc chốt hằng số bắt buộc chờ số liệu đo đạc thực tế từ Issue #169.
+     Ví dụ khe 400ms với phân bổ $25\text{ms} \text{ lead} + 125\text{ms } (\text{UP\_EVENT}) + 35\text{ms } (\text{GW Turnaround \& WAL}) + 115\text{ms } (\text{DOWN\_ACK}) + 100\text{ms} \text{ trail} = 400\text{ms}$ chỉ mang tính chất minh họa chứng minh tính khả thi về mặt số học lý thuyết cho SF8; **chưa được phê duyệt làm profile cố định**. Tính toán ToA lý thuyết không cấu thành bằng chứng khả thi thời gian end-to-end; việc chốt hằng số bắt buộc chờ số liệu đo đạc thực tế từ Issue #169.
 
 2. **Khắc phục TIM-02 — Tham số hóa Cửa sổ Beacon 80B (`DEC-MH-07` — `OWNER_APPROVED_DIRECTION / NOT_HIL_VERIFIED`):**
    - **Chủ trương được duyệt:** Giữ nguyên bố cục wire của gói tin đồng bộ `DOWN_SYNC_BEACON` (80B Ed25519, `DEC-MH-01`).
@@ -121,6 +121,7 @@ Nhằm triệt tiêu tuyệt đối nguy cơ phát sóng sai khe gây xung độ
 - Node tuyệt đối **CẤM** phát dữ liệu sự kiện (`UP_EVENT`) dưới bộ khóa mới cho đến khi bước qua ranh giới superframe kích hoạt $K_{\text{target}}$ được Gateway chỉ định.
 
 ### 3.2 Rào chắn 2: Đếm ngược Thông báo Lịch 3 chu kỳ (Fence 2 — $3 \to 2 \to 1$ Horizon)
+*(Quy tắc quyết định kích hoạt lịch theo dõi dưới `DEC-MH-05` — `CANDIDATE / BLOCKED_FOR_OWNER_DECISION` chờ Owner phê duyệt chính thức; phối hợp cùng rào chắn khóa `DEC-SEC-05` đã được Owner phê duyệt)*
 - Khi Gateway nhận được lịch TDMA mới từ Backend hoặc cần kích hoạt phiên của Node mới, Gateway chọn mốc superframe kích hoạt $K_{\text{target}} \ge K_{\text{current}} + 3$.
 - Gateway phát thông báo chuyển đổi lịch thông qua cờ đếm ngược trong `DOWN_SYNC_BEACON`:
   - Superframe $K$: Cờ `COUNTDOWN = 3`
@@ -160,8 +161,8 @@ Trước khi bộ điều khiển radio chuyển chip SX1276 sang trạng thái 
 1. **Giới hạn Vận hành MVP V1 (DEC-127-03 Lựa chọn A — Owner Phê duyệt 2026-11-06; Bổ chính TIM-01/TIM-02):**
    - Toàn bộ luồng vận hành dữ liệu thời gian thực của MVP V1 **giới hạn nghiêm ngặt ở SF7 và SF8**.
    - **Đối chiếu ToA khứ hồi hai chiều:**
-     - **Tại SF7:** $\text{ToA}_{\text{EVENT}} (61.696\text{ms}) + \tau_{\text{turnaround}} (20\text{ms}) + \text{ToA}_{\text{ACK}} (51.456\text{ms}) \approx 133.152\text{ms} < 250\text{ms}$. Hoàn toàn vừa vặn trong phong bì minh họa $[25, 245)\text{ms}$ (220ms) và khe 400ms.
-     - **Tại SF8:** $\text{ToA}_{\text{EVENT}} (113.152\text{ms}) + \tau_{\text{turnaround}} (20\text{ms}) + \text{ToA}_{\text{ACK}} (102.912\text{ms}) \approx 236.064\text{ms} > 220\text{ms}$. Vượt quá phong bì $[25, 245)\text{ms}$, dù tổng ToA RF lý thuyết ($216.064\text{ms}$) vẫn nằm trong giới hạn khe 400ms (biên còn lại $183.936\text{ms}$).
+     - **Tại SF7:** $\text{ToA}_{\text{EVENT}} (61.696\text{ms}) + \tau_{\text{turnaround}} (20\text{ms}) + \text{ToA}_{\text{ACK}} (51.456\text{ms}) \approx 133.152\text{ms} < 250\text{ms}$ (về mặt giải tích lý thuyết với giả định $\tau_{\text{turnaround}} = 20\text{ms}$, nằm trong phong bì minh họa $[25, 245)\text{ms}$ của ví dụ ứng viên khe 400ms). Tính toán ToA lý thuyết **không cấu thành bằng chứng khả thi thời gian end-to-end**; việc bảo đảm an toàn thời gian thực tế phụ thuộc vào độ trễ ghi WAL tại Gateway ($\tau_{\text{WAL}}$), thời gian chuyển mạch transceiver thực tế, jitter ngắt, trôi dạt đồng hồ và khoảng bảo vệ đo đạc thực tế từ Issue #169.
+     - **Tại SF8:** $\text{ToA}_{\text{EVENT}} (113.152\text{ms}) + \tau_{\text{turnaround}} (20\text{ms}) + \text{ToA}_{\text{ACK}} (102.912\text{ms}) \approx 236.064\text{ms} > 220\text{ms}$. Vượt quá phong bì $[25, 245)\text{ms}$, dù tổng ToA RF lý thuyết ($216.064\text{ms}$) về mặt số học nhỏ hơn độ dài ví dụ ứng viên 400ms (biên còn lại $183.936\text{ms}$).
    - **Bổ chính (`DEC-127-06` — `OWNER_APPROVED_DIRECTION / NOT_HIL_VERIFIED`):** Hình minh họa cửa sổ con cũ $100\text{ms} / 20\text{ms} / 100\text{ms}$ không áp dụng cho SF8. Theo Quyết định Định hướng của Owner, cấu trúc hình học khe TDMA không đóng băng cứng nhắc ở hằng số 400ms hay bộ số cố định, mà được đặc tả dưới dạng hệ thức tham số hóa được thẩm định tự động fail-closed. Bộ số ví dụ minh họa ($25+125+35+115+100=400\text{ms}$) là hình minh họa ứng viên, không phải profile cố định. Việc chốt hằng số bắt buộc kiểm chứng thực tế tại Issue #169.
    - Độ dài khe và các cửa sổ con sẽ được tái đánh giá và điều chỉnh sau khi có kết quả đo đạc vật lý thực địa từ Issue #169.
 2. **Khóa Hằng số Số học Chờ Bằng chứng Vật lý:**

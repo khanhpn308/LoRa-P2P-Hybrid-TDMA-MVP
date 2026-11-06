@@ -202,8 +202,8 @@ Tuân thủ nghiêm ngặt các quyết định `DEC-SEC-01` .. `DEC-SEC-07` đ�
 1. **Giới hạn Spreading Factor cho MVP V1 (`DEC-127-03` Lựa chọn A — Owner Phê duyệt 2026-11-06; Bổ chính TIM-01/TIM-02):**
    - Vận hành hệ thống MVP V1 được **giới hạn nghiêm ngặt ở SF7 và SF8**.
    - **Đối chiếu ToA khứ hồi hai chiều (Bổ chính TIM-01):**
-     - Tại **SF7:** $\text{ToA}_{\text{EVENT}} (61.696\text{ms}) + \tau_{\text{turnaround}} (20\text{ms}) + \text{ToA}_{\text{ACK}} (51.456\text{ms}) \approx 133.152\text{ms} < 250\text{ms}$. Hoàn toàn bảo đảm hoàn thành an toàn trong khe 400ms và phong bì minh họa $[25, 245)\text{ms}$.
-     - Tại **SF8:** $\text{ToA}_{\text{EVENT}} (113.152\text{ms}) + \tau_{\text{turnaround}} (20\text{ms}) + \text{ToA}_{\text{ACK}} (102.912\text{ms}) \approx 236.064\text{ms} > 220\text{ms}$. Dù tổng ToA RF lý thuyết ($216.064\text{ms}$) vẫn nằm trong khe 400ms, nó vượt quá phong bì minh họa $[25, 245)\text{ms}$ và từng cửa sổ con 100ms.
+     - Tại **SF7:** $\text{ToA}_{\text{EVENT}} (61.696\text{ms}) + \tau_{\text{turnaround}} (20\text{ms}) + \text{ToA}_{\text{ACK}} (51.456\text{ms}) \approx 133.152\text{ms} < 250\text{ms}$ (về mặt giải tích lý thuyết với giả định $\tau_{\text{turnaround}} = 20\text{ms}$, nằm trong phong bì minh họa $[25, 245)\text{ms}$ của ví dụ ứng viên 400ms). Tính toán ToA lý thuyết **không cấu thành bằng chứng khả thi thời gian end-to-end**; việc bảo đảm an toàn thời gian thực tế phụ thuộc vào độ trễ ghi bền vững WAL tại Gateway, thời gian chuyển mạch transceiver thực tế, jitter ngắt, trôi dạt đồng hồ và khoảng bảo vệ đo đạc thực tế từ Issue #169.
+     - Tại **SF8:** $\text{ToA}_{\text{EVENT}} (113.152\text{ms}) + \tau_{\text{turnaround}} (20\text{ms}) + \text{ToA}_{\text{ACK}} (102.912\text{ms}) \approx 236.064\text{ms} > 220\text{ms}$. Dù tổng ToA RF lý thuyết ($216.064\text{ms}$) về mặt số học nhỏ hơn độ dài ví dụ ứng viên 400ms, nó vượt quá phong bì minh họa $[25, 245)\text{ms}$ và từng cửa sổ con 100ms.
    - **Tham số hóa hình học khe (`DEC-127-06` — `OWNER_APPROVED_DIRECTION / NOT_HIL_VERIFIED`):** Thời gian khe TDMA không bị đóng băng cứng nhắc, mà tuân thủ mô hình tham số hóa được thẩm định tự động fail-closed. Bộ số ví dụ minh họa ($25+125+35+115+100=400\text{ms}$) chỉ là ví dụ ứng viên, không phải profile cố định.
    - Các cấu hình SF9+ tạm thời không kích hoạt trên luồng dữ liệu thời gian thực; việc điều chỉnh độ dài khe sẽ được tái đánh giá sau khi có số liệu đo đạc vật lý từ Issue #169.
 2. **Độc lập Đo đạc Vật lý (#169):**
@@ -217,7 +217,7 @@ Tuân thủ nghiêm ngặt các quyết định `DEC-SEC-01` .. `DEC-SEC-07` đ�
 - [x] Phê duyệt mã bản tin và bố cục gói tin Join V2 (0x45..0x48) và Post-Join (0x49).
 - [x] Phê duyệt bộ quyết định an ninh mật mã `DEC-SEC-01` .. `DEC-SEC-07`.
 - [x] Phê duyệt mã bản tin `UP_EVENT` (0x41), `DOWN_EVENT_ACK` (0x42), `DOWN_SYNC_BEACON` (0x43), `UP_HEALTH_REPLY` (0x44).
-- [x] Phê duyệt giới hạn SF7/SF8 cho khe 400ms và chính sách hàng đợi `RING_BUFFER_DROP_OLDEST`.
+- [x] Phê duyệt giới hạn SF7/SF8 (`DEC-127-03`; khe 400ms là ví dụ ứng viên thiết kế, không phải profile đóng băng sản xuất theo `DEC-127-06`) và chính sách hàng đợi `RING_BUFFER_DROP_OLDEST` (`DEC-127-04`).
 - [ ] Hoàn thành kiểm tra chéo Golden Vectors Go $\leftrightarrow$ ESP-IDF mbedTLS (Issue #173) $\to$ **NOT_VERIFIED**.
 - [ ] Hoàn thành kiểm tra phân quyền ACL broker Mosquitto mTLS (Issue #174) $\to$ **NOT_VERIFIED**.
 - [ ] Hoàn thành kiểm thử xung đột nguồn Gateway NVS HIL (Issue #175) $\to$ **NOT_VERIFIED**.
