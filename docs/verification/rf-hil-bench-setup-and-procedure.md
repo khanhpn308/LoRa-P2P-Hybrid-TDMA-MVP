@@ -91,14 +91,17 @@ In compliance with project data integrity policies, all logged timing and test d
 
 ---
 
-## 5. Gateway Durable Acceptance Semantics (ESP32 Reality vs Backend)
+## 5. Gateway Durable Acceptance Semantics (ESP32 Reality vs Backend Architecture)
 
-> [!NOTE]
-> **Architectural Separation:**
-> - The Go Modular Monolith backend and Linux Gateway Engine may utilize SQLite with Write-Ahead Logging (WAL).
-> - On the **ESP32 Gateway microcontroller**, SQLite is NOT present.
-> - On the ESP32, durable acceptance consists of **NVS flash commit** or **FreeRTOS queue serialization** before dispatching `DOWN_EVENT_ACK`.
-> - If Gateway firmware has not yet implemented flash persistence prior to ACK, durable acceptance latency must be reported as **`NOT_IMPLEMENTED / NOT_VERIFIED`** rather than assuming a hypothetical 15ms or 35ms WAL latency.
+> [!IMPORTANT]
+> **Durable Acceptance Disambiguation & Storage Tier Separation:**
+> 1. **Volatile FreeRTOS Queue Serialization:** In-memory queueing (`xQueueSend`) between FreeRTOS tasks executes in RAM with minimal latency ($\le 100\ \mu\text{s}$). However, it is **strictly volatile** and provides zero durability across unexpected power loss or reset. FreeRTOS queue serialization **MUST NOT** be equated with durable acceptance.
+> 2. **ESP32 Non-Volatile Flash Persistence (NVS / Raw Flash):** Non-volatile flash writes on ESP32 persist events across power cycles, but introduce wear-leveling overhead and erase/write tail latencies (typically $5\text{–}30\text{ ms}$). This mechanism is **NOT implemented** in current ESP32 Gateway firmware (`firmware/gateway_master/main/main.c`).
+> 3. **Host / Linux Gateway Engine SQLite WAL:** Embedded SQLite in WAL mode on a Linux host engine or PostgreSQL on Backend Go Monolith can achieve durable commits with fsync/WAL checkpoints. However, SQLite does NOT run directly on the bare-metal ESP32 microcontroller.
+> 4. **Contract vs Implementation Conflict (`CONTRACT_IMPLEMENTATION_CONFLICT / NOT_VERIFIED`):**
+>    - `contracts/radio-mac/specification.md` line 20 and `DEC-127-05` require the Gateway to durably commit incoming `UP_EVENT` payloads before emitting `DOWN_EVENT_ACK` (0x42) over RF to ensure 0% data loss.
+>    - Because current Gateway firmware is a scaffold with neither SQLite nor NVS persistence implemented before ACK, durable acceptance latency $\tau_{\text{accept}}$ cannot be assumed as $15\text{ms}$ or $35\text{ms}$ PASS.
+>    - This architectural discrepancy is formally classified as **`CONTRACT_IMPLEMENTATION_CONFLICT / NOT_VERIFIED`** and handed off to downstream Issues #127 (Contract SLA / Slot Budget clarification) and #131 (Gateway firmware durable storage implementation). PR #207 does not alter the Radio MAC contract or invent an unverified storage architecture.
 
 ---
 
@@ -144,10 +147,11 @@ In compliance with project data integrity policies, all logged timing and test d
 1. Confirm that `CONFIG_SX1276_HOST_RX_BUFFER_SIZE` is increased to $\ge 128\text{U}$ in firmware build configuration (see Blocker details in [rf-hil-timing-verification-report.md](rf-hil-timing-verification-report.md)).
 2. Verify that 80-byte `DOWN_SYNC_BEACON` can be buffered without triggering `SX1276_RX_STATUS_REJECT_BUFFER_OVERFLOW`.
 
-### Step 5: PA Path Identification & Safety Gate
-1. Inspect RF trace from SX1276: determine whether `PA_BOOST` (Pin 27) or `RFO_HF` (Pin 28) is routed.
-2. If PA path is unknown, `rf_tx_enabled` must remain `false` (fail-closed).
-3. If confirmed, configure minimum test transmit power ($+2\text{ dBm}$) and ensure a 50 $\Omega$ SMA load or attenuator is attached.
+### Step 5: PA Path Identification & RF Safety Gate
+1. **PA Trace Verification:** Inspect RF circuit traces from SX1276 silicon pads to determine whether `PA_BOOST` (Pin 27) or `RFO_HF` (Pin 28) is routed on PCB HW-001. If the PA routing is unverified, `rf_tx_enabled` must remain `false` (fail-closed).
+2. **Matched Load / Attenuator Requirement:** A properly matched antenna or calibrated 50 $\Omega$ SMA RF dummy load / inline attenuator must be securely attached to the RF port before any transmission. Never key or enable the transmitter into an open or unterminated connector.
+3. **Explicit Power and Channel Authorization:** Operating channel frequency (e.g. VN920 regulatory plan), transmit power level, and legal/regulatory compliance must be explicitly reviewed and authorized in writing by the Project Owner / RF Specialist.
+4. **No Defaulted Values:** The bench procedure must **NOT** assume or default to $+2\text{ dBm}$ or 921.4 MHz (or any specific power/channel) as pre-approved for LAB execution. Transmit power and frequency parameters must be injected only from an authorized test configuration after written sign-off.
 
 ### Step 6: Scenario 1 — 1 Gateway + 1 Node Point-to-Point
 1. Gateway broadcasts Beacon in Slot 0.

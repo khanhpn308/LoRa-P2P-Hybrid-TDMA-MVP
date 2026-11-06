@@ -123,15 +123,19 @@ For the button to wake the ESP32-WROOM-32E from Deep-Sleep (`esp_sleep_enable_ex
 - The button electrical circuit, active state (active-high vs. active-low), external filtering capacitor, hardware debounce latch, and RTC wake loop handling remain `NOT_VERIFIED`.
 
 ### 5.3 TDMA Transmission Protocol Invariant (#125, #131)
-Under the Hybrid TDMA architecture:
+Under the Owner-approved Event-only Static TDMA architecture (PR #202 baseline, `contracts/radio-mac/tdma-schedule.md`):
+
 1. **No Autonomous Radio Transmission on Wake:**
-   Waking up via button press must **NEVER** trigger an immediate or unscheduled LoRa RF transmission.
-2. **Event Queueing:**
-   Upon waking from Deep-sleep via RTC button interrupt, the node firmware must:
-   - Perform hardware debounce and button state validation.
-   - Increment the local persistent event counter.
-   - Enqueue the event payload into local memory/RTC storage.
-   - Await the Gateway's next scheduled TDMA Beacon / Uplink Slot assigned to this Node, or use the contention-based CSMA/CA slot strictly according to TDMA protocol rules.
+   Waking up via button press / RTC interrupt must **NEVER** trigger an immediate, autonomous, or unscheduled LoRa RF transmission.
+2. **Event Queueing & Static DATA Slot TX:**
+   Upon waking from Deep-Sleep via RTC button interrupt, the Node firmware must:
+   - Perform hardware debounce and button electrical state validation.
+   - Increment the local persistent event counter / sequence number.
+   - Enqueue the event payload into local persistent FIFO / RTC storage.
+   - Transmit `UP_EVENT` **exclusively within the Node's assigned Static DATA Slot** in the active TDMA superframe.
+   - **No Contention Access for Normal Events:** Node must NOT use PCSS, CAD backoff, or Priority Contention slots for normal event reporting. *(Historical note: Any legacy instruction referencing a "contention-based CSMA/CA slot" is formally `SUPERSEDED / NON_NORMATIVE` per Owner decision 2026-11-04 abolishing PCSS in favor of Event-only Static TDMA).*
+   - **Join/Recovery/Maintenance Transmissions:** Join, recovery, and health replies may only use explicit transmission opportunities authorized by the active normative contract (`UP_JOIN_HELLO` in Join slot, `UP_HEALTH_REPLY` in assigned Maintenance slot).
+   - **Fail-Closed on Desynchronization:** If the Node loses Beacon synchronization ($N_{\text{MISSED}} \ge 3$) or possesses an invalid/expired TDMA schedule, RF transmission is immediately locked: `FAIL_CLOSED`.
    - Unscheduled transmissions violate airtime budgets, cause packet collisions, and break deterministic TDMA scheduling.
 
 ---

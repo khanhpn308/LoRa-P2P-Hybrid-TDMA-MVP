@@ -42,9 +42,9 @@ Review of the 15 files changed in PR #207 against the updated Issue #169 LAB-SCO
 
 | # | File Path | Action | Technical Justification under LAB-SCOPE V2 |
 |---|---|:---:|---|
-| 1 | `docs/verification/rf-hil-bench-setup-and-procedure.md` | **CORRECT** | Replaced mandatory RF equipment with Owner lab inventory (HT118E, Nutatra 1505TD, 24 MHz Logic Analyzer). Fixed GPIO5/MTDI strapping error. Documented 24 MHz sampling limits. |
-| 2 | `docs/verification/rf-hil-timing-verification-report.md` | **CORRECT** | Updated status to `BENCH_PREPARATION_COMPLETE / LAB_HIL_NOT_RUN / RF_MEASURED_NOT_VERIFIED`. Documented RX buffer blocker lines, candidate timing labels, and 10-step real HIL plan. |
-| 3 | `docs/verification/pcb-hw001-pinmap.md` | **CORRECT** | Corrected strapping pin note: GPIO5 is SDIO slave timing strapping pin (NOT MTDI; MTDI is GPIO12). Disentangled SPI Mode 0 idle state from boot reset strapping. |
+| 1 | `docs/verification/rf-hil-bench-setup-and-procedure.md` | **CORRECT** | Replaced mandatory RF equipment with Owner lab inventory (HT118E, Nutatra 1505TD, 24 MHz Logic Analyzer). Fixed GPIO5/MTDI strapping error. Documented 24 MHz sampling limits. Corrected Gateway durable acceptance tiers (volatile queue vs flash vs SQLite WAL) and RF safety gate (PA trace, 50 $\Omega$ load, no defaulted +2 dBm/channel). |
+| 2 | `docs/verification/rf-hil-timing-verification-report.md` | **CORRECT** | Updated status to `BENCH_PREPARATION_COMPLETE / LAB_HIL_NOT_RUN / RF_MEASURED_NOT_VERIFIED`. Documented RX buffer blocker lines, candidate timing labels, Gateway durable acceptance conflict (`DEC-127-05`), portable relative links, and 10-step real HIL plan. |
+| 3 | `docs/verification/pcb-hw001-pinmap.md` | **CORRECT** | Corrected strapping pin note: GPIO5 is SDIO slave timing strapping pin (NOT MTDI; MTDI is GPIO12). Disentangled SPI Mode 0 idle state from boot reset strapping. Superseded legacy CSMA/CA instruction in favor of Owner-approved Event-only Static TDMA. |
 | 4 | `tests/hil/rf_timing/evidence_manifest_template.json` | **CORRECT** | Aligned manifest schema with lab equipment BOM; updated evidence classes to include `HARDWARE_DIGITAL_CAPTURE` and `ASSUMED_BOUND`. |
 | 5 | `tests/hil/rf_timing/analysis/guard_budget_calculator.py` | **CORRECT** | Maintained parameterized inequality validators; ensured candidate profiles SF8-A (400ms) and SF8-B (450ms) are explicitly labeled `CANDIDATE`. |
 | 6 | `tests/hil/rf_timing/analysis/test_timing_analysis.py` | **KEEP** | 16 unit tests verifying guard budget, candidate rebalanced profiles, and fail-closed bounds pass 100%. |
@@ -70,7 +70,7 @@ Review of the 15 files changed in PR #207 against the updated Issue #169 LAB-SCO
   - **`MTDI` is GPIO12.** `MTDI` controls the internal voltage regulator for SPI flash (`VDD_SDIO`: 0 for 3.3V, 1 for 1.8V). Pulling MTDI wrong can prevent flash access or cause a brownout.
   - **`GPIO5` is a strapping pin for SDIO Slave timing** (bit 1 of strapping vector, sampled at rising edge of `CHIP_PU`). It is **NOT MTDI**.
   - **SPI Mode 0 ($CPOL=0, CPHA=0$):** Defines that when the SPI master peripheral is *actively operating*, SCK idles LOW between bus frames. During chip reset, the SPI master peripheral has not yet initialized; the hardware bootloader evaluates GPIO5 according to its internal weak pull-up.
-  - **Remediation:** Both [`docs/verification/pcb-hw001-pinmap.md`](file:///home/khanh/projects/iot/LoRa-P2P-Hybrid-TDMA-MVP/docs/verification/pcb-hw001-pinmap.md#L39) and [`docs/verification/rf-hil-bench-setup-and-procedure.md`](file:///home/khanh/projects/iot/LoRa-P2P-Hybrid-TDMA-MVP/docs/verification/rf-hil-bench-setup-and-procedure.md#L62) have been corrected to remove the false `MTDI` reference and clarify that external test instruments must not clamp or pull GPIO5 to an invalid level during reset.
+  - **Remediation:** Both [pcb-hw001-pinmap.md](pcb-hw001-pinmap.md#L39) and [rf-hil-bench-setup-and-procedure.md](rf-hil-bench-setup-and-procedure.md#L62) have been corrected to remove the false `MTDI` reference and clarify that external test instruments must not clamp or pull GPIO5 to an invalid level during reset.
 
 ### 3.2 24 MHz USB Logic Analyzer Sampling Limits vs SPI Clock
 - **Nyquist-Shannon Constraint:** To accurately capture digital transitions, sampling frequency must be $\ge 4\times$ the clock frequency.
@@ -88,14 +88,14 @@ Review of the 15 files changed in PR #207 against the updated Issue #169 LAB-SCO
 ### 4.1 Exact Code Path Identification on `main`
 In the shared SX1276 driver on `main`:
 1. **Buffer Size Definition:**
-   [`firmware/components/sx1276_driver/include/sx1276_types.h:16`](file:///home/khanh/projects/iot/LoRa-P2P-Hybrid-TDMA-MVP/firmware/components/sx1276_driver/include/sx1276_types.h#L16):
+   [`firmware/components/sx1276_driver/include/sx1276_types.h:16`](../../firmware/components/sx1276_driver/include/sx1276_types.h#L16):
    ```c
    #ifndef CONFIG_SX1276_HOST_RX_BUFFER_SIZE
    #define CONFIG_SX1276_HOST_RX_BUFFER_SIZE 64U
    #endif
    ```
 2. **Buffer Allocation in Frame Structure:**
-   [`firmware/components/sx1276_driver/include/sx1276_types.h:134`](file:///home/khanh/projects/iot/LoRa-P2P-Hybrid-TDMA-MVP/firmware/components/sx1276_driver/include/sx1276_types.h#L134):
+   [`firmware/components/sx1276_driver/include/sx1276_types.h:134`](../../firmware/components/sx1276_driver/include/sx1276_types.h#L134):
    ```c
    typedef struct {
        uint8_t payload[CONFIG_SX1276_HOST_RX_BUFFER_SIZE];
@@ -104,7 +104,7 @@ In the shared SX1276 driver on `main`:
    } sx1276_rx_frame_t;
    ```
 3. **Execution Rejection Path:**
-   [`firmware/components/sx1276_driver/src/sx1276_owner.c:96, 123-129`](file:///home/khanh/projects/iot/LoRa-P2P-Hybrid-TDMA-MVP/firmware/components/sx1276_driver/src/sx1276_owner.c#L96):
+   [`firmware/components/sx1276_driver/src/sx1276_owner.c:96, 123-129`](../../firmware/components/sx1276_driver/src/sx1276_owner.c#L96):
    ```c
    sx1276_hal_read_reg(SX1276_REG_RX_NB_BYTES, &nb_bytes); // Line 96
    ...
@@ -118,7 +118,7 @@ In the shared SX1276 driver on `main`:
    ```
 
 ### 4.2 Impact on V2 Architecture
-Under V2 Normative MAC (`DEC-MH-01`), [`DOWN_SYNC_BEACON`](file:///home/khanh/projects/iot/LoRa-P2P-Hybrid-TDMA-MVP/contracts/radio-mac/specification.md#L91) (0x43) is **80 bytes** (16B header + 64B Ed25519 signature).
+Under V2 Normative MAC (`DEC-MH-01`), [`DOWN_SYNC_BEACON`](../../contracts/radio-mac/specification.md#L91) (0x43) is **80 bytes** (16B header + 64B Ed25519 signature).
 - When an 80B Beacon arrives, `nb_bytes` reads $80$.
 - Because $80 > 64$, `sx1276_owner.c` logs `Reject packet: Exceeds host buffer size 64 (got 80)`, increments `rx_host_buffer_overflow_dropped`, and immediately discards the packet without reading the FIFO.
 - **Result:** Sensor Nodes are completely unable to receive Beacons, leading to permanent clock desync, loss of holdover, and network failure.
@@ -161,7 +161,7 @@ In accordance with LAB-SCOPE V2, all candidate slot and guard durations must be 
 2. **400ms Beacon Window (`CANDIDATE`):** Candidate window to accommodate 80B Beacon at SF8 ($256.512\text{ ms} + \text{guard}$); NOT approved as frozen.
 3. **25ms Leading Guard ($W_{\text{lead}}$ — `ASSUMED_BOUND`):** Bound chosen to absorb maximum 300s holdover clock drift ($12.0\text{ ms}$) plus scheduler jitter ($5\text{ ms}$); pending multi-node physical verification.
 4. **100ms Trailing Guard ($W_{\text{trail}}$ — `ASSUMED_BOUND`):** Candidate boundary guard for SF8 rebalanced slot ($155\text{ms}$ for SF7).
-5. **Gateway Durable Acceptance ($\tau_{\text{accept}}$ — `ASSUMED_BOUND / NOT_VERIFIED`):** Assumed $15\text{ms}$ nominal (max bound $35\text{ms}$). Must be measured against actual ESP32 NVS flash commit / queue serialization.
+5. **Gateway Durable Acceptance ($\tau_{\text{accept}}$ — `CONTRACT_IMPLEMENTATION_CONFLICT / NOT_VERIFIED`):** Under `contracts/radio-mac/specification.md` line 20 and `DEC-127-05`, the Gateway must commit incoming `UP_EVENT` payloads to durable storage before emitting `DOWN_EVENT_ACK` (0x42) over RF to guarantee 0% data loss. Volatile FreeRTOS queue serialization is strictly in-memory and does NOT satisfy durable commit across power loss. Because neither SQLite nor NVS persistence is implemented in current ESP32 Gateway firmware (`firmware/gateway_master/main/main.c`), $\tau_{\text{accept}}$ is formally classified as `CONTRACT_IMPLEMENTATION_CONFLICT / NOT_VERIFIED`. The theoretical budget model reserves $15\text{ms}$ nominal (up to $35\text{ms}$ max bound) as a candidate allocation, pending downstream resolution in #127 and #131.
 6. **20ms Mode Turnaround ($\tau_{\text{turnaround}}$ — `ASSUMED_BOUND`):** Conservative engineering bound covering SX1276 synthesizer settling ($60\text{–}120\ \mu\text{s}$) plus FreeRTOS task scheduling.
 7. **±20 PPM Clock Drift Scenario (`ASSUMED_SCENARIO`):** Scenario assuming commercial-grade crystals drift $\pm 20\text{ PPM}$. Requires installed oscillator BOM verification.
 
@@ -171,7 +171,7 @@ In accordance with LAB-SCOPE V2, all candidate slot and guard durations must be 
 |---|:---:|:---:|:---:|---|:---:|:---:|---|
 | **`PROF_LEGACY_SF7`** | 7 | 125k | 400 ms | $[25, 100, 20, 100, 155]\text{ ms}$ | 250 ms | $+38.3\text{ms}$ (Event), $+48.5\text{ms}$ (ACK) | **FEASIBLE (THEORETICAL)** · Proven in #201 |
 | **`PROF_LEGACY_SF8`** | 8 | 125k | 400 ms | $[25, 100, 20, 100, 155]\text{ ms}$ | 250 ms | $-13.2\text{ms}$ (Event), $-2.9\text{ms}$ (ACK) | **REJECTED (INFEASIBLE)** · Violates sub-windows |
-| **`PROF_CANDIDATE_SF8_A`** | 8 | 125k | 400 ms | $[25, 125, 35, 115, 100]\text{ ms}$ | 400 ms | $+11.8\text{ms}$ (Event), $+12.1\text{ms}$ (ACK) | **CANDIDATE** · Tight margin; requires WAL $\le 15\text{ms}$ |
+| **`PROF_CANDIDATE_SF8_A`** | 8 | 125k | 400 ms | $[25, 125, 35, 115, 100]\text{ ms}$ | 400 ms | $+11.8\text{ms}$ (Event), $+12.1\text{ms}$ (ACK) | **CANDIDATE** · Tight margin; requires durable acceptance $\le 15\text{ms}$ (pending #127/#131) |
 | **`PROF_CANDIDATE_SF8_B`** | 8 | 125k | 450 ms | $[30, 130, 45, 120, 125]\text{ ms}$ | 400 ms | $+16.8\text{ms}$ (Event), $+17.1\text{ms}$ (ACK) | **CANDIDATE** · Sums to 450ms; conservative slack |
 | **`PROF_FALLBACK_HYBRID`** | 8/7 | 125k | 400 ms | DATA at SF8 (rebalanced), Beacon at SF7 | 250 ms | $+11.8\text{ms}$ (DATA), $+106.4\text{ms}$ (Beacon) | **CANDIDATE** · Dual-SF strategy |
 
@@ -183,12 +183,12 @@ In accordance with LAB-SCOPE V2, all candidate slot and guard durations must be 
 
 ## 6. Test Suite Execution & Host Verification Results
 
-All tests have been executed locally within the isolated worktree `/tmp/lora-issue-169`:
+All tests have been executed locally within the isolated PR #207 worktree:
 
 1. **Python Unit & Contract Timing Tests:**
-   - [`tests/contract/test_radio_mac_timing_consistency.py`](file:///home/khanh/projects/iot/LoRa-P2P-Hybrid-TDMA-MVP/tests/contract/test_radio_mac_timing_consistency.py): **12 passed** in 0.03s.
-   - [`tests/hil/rf_timing/analysis/test_timing_analysis.py`](file:///home/khanh/projects/iot/LoRa-P2P-Hybrid-TDMA-MVP/tests/hil/rf_timing/analysis/test_timing_analysis.py): **16 passed** in 0.12s.
-   - [`tests/hil/rf_timing/toa/test_sx1276_toa.py`](file:///home/khanh/projects/iot/LoRa-P2P-Hybrid-TDMA-MVP/tests/hil/rf_timing/toa/test_sx1276_toa.py): **9 passed** in 0.06s.
+   - [`tests/contract/test_radio_mac_timing_consistency.py`](../../tests/contract/test_radio_mac_timing_consistency.py): **12 passed** in 0.03s.
+   - [`tests/hil/rf_timing/analysis/test_timing_analysis.py`](../../tests/hil/rf_timing/analysis/test_timing_analysis.py): **16 passed** in 0.12s.
+   - [`tests/hil/rf_timing/toa/test_sx1276_toa.py`](../../tests/hil/rf_timing/toa/test_sx1276_toa.py): **9 passed** in 0.06s.
    - **Total:** **37 passed in 0.11s**.
 2. **C Firmware Toolchain Host Compilation & Execution:**
    - Compiled with strict warning flags: `gcc -Wall -Wextra -Werror -std=c11`.
@@ -199,7 +199,7 @@ All tests have been executed locally within the isolated worktree `/tmp/lora-iss
    - `HostCollector` processed `synthetic_v2_nominal_run.jsonl`: **251 valid records, 0 invalid, 0 dropped**.
 4. **Harness PR Review (`pr_review.py`):**
    - **Verdict:** `🟢 READY FOR HUMAN REVIEW`
-   - Scope compliance: **15 files changed, all within allowed paths**.
+   - Scope compliance: **16 files changed, all within allowed paths**.
    - Secret scan: **Clean**.
 
 ---
@@ -209,15 +209,16 @@ All tests have been executed locally within the isolated worktree `/tmp/lora-iss
 ### 7.1 Outstanding Blockers before Physical Multi-Node Execution
 1. **Physical Board Access & Inventory Check:** Awaiting physical connection of PCB HW-001 boards to verify operational count (1 GW + 1/4/9/10–15 Nodes).
 2. **Production Driver RX Buffer Capacity Blocker:** `CONFIG_SX1276_HOST_RX_BUFFER_SIZE` must be updated from 64U to $\ge 128\text{U}$ under Issue #10.
-3. **Module PA Path Identification:** Visual/schematic verification required to confirm `PA_BOOST` vs `RFO_HF` on physical boards.
-4. **Human RF Safety Authorization:** Written sign-off required prior to enabling `rf_tx_enabled = true`.
+3. **Gateway Durable Acceptance Implementation:** Unresolved conflict between MAC contract requirement for durable commit before ACK and current ESP32 scaffold implementation (`CONTRACT_IMPLEMENTATION_CONFLICT / NOT_VERIFIED` under `DEC-127-05`).
+4. **Module PA Path Identification:** Visual/schematic verification required to confirm `PA_BOOST` vs `RFO_HF` on physical boards.
+5. **RF Safety, Load & Regulatory Authorization:** Written sign-off required prior to enabling `rf_tx_enabled = true`. Verified 50 $\Omega$ SMA dummy load / matched antenna required. Transmit power level and channel frequency must not default to $+2\text{ dBm}$ or 921.4 MHz without explicit written Owner authorization.
 
 ### 7.2 Downstream Issue Handoffs
 - **[Issue #10](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/10) (Shared SX1276 Driver):** Remediate the 64U buffer blocker to allow 80B Beacon reception.
-- **[Issue #127](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/127) (Radio MAC V2 Specification / Gate G2):** Maintain parameterized geometry equations instead of frozen numeric tables.
+- **[Issue #127](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/127) (Radio MAC V2 Specification / Gate G2):** Maintain parameterized geometry equations instead of frozen numeric tables; resolve `DEC-127-05` Gateway durable acceptance SLA and slot budget allocation (SF7 400ms vs SF8 450ms).
+- **[Issue #131](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/131) (Node & Gateway TDMA Integration):** Implement Gateway non-volatile durable storage persistence prior to ACK; implement Fence 4 dynamic timing window checks using active schedule parameters.
 - **[Issue #19](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/19) (Go Backend TDMA Scheduler):** Implement versioned schedule models with dynamic sub-window parameters.
 - **[Issue #130](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/130) (Gateway TDMA Implementation):** Implement symbolic schedule validation fail-closed checks on Gateway.
-- **[Issue #131](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/131) (Node TDMA & Deep-Sleep):** Implement Fence 4 dynamic timing window checks using active schedule parameters.
 
 ---
 
