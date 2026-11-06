@@ -29,7 +29,7 @@ Sơ đồ biểu diễn cấu hình tối đa bốn Gateway; một hệ thống 
 | **Gateway** | TDMA Master cục bộ; kiểm tra danh tính/quyền, lịch, đồng bộ và airtime; lưu Active/Shadow; xử lý RX/TX SX1276 bán song công; persist Event trước ACK, giữ buffer hữu hạn và **cấp Event ID bền vững** khi nhận gói RF mới. **Không tự sửa hoặc cấp lại Slot Assignment**. |
 | **Backend Go** | Lập kế hoạch và quản lý phiên bản lịch/kênh, quản lý trạng thái cấp quyền, đối soát Gateway, tiếp nhận dữ liệu và chống ghi trùng theo Event ID do Gateway cấp, lưu PostgreSQL. |
 | **User có quyền** | Phê duyệt lịch và khoảng thời gian kích hoạt trước khi phân phối; phân quyền được Backend kiểm tra, không chỉ ở giao diện. |
-| **Web/Mobile** | Cấu hình, quản trị và hiển thị thông qua REST/WSS của Backend; không truy cập trực tiếp broker/DB. Công nghệ Mobile trong các tài liệu cũ chưa thống nhất (Flutter/Kotlin), cần quyết định riêng trước implementation. |
+| **Web/Mobile** | Cấu hình, quản trị và hiển thị thông qua REST/WSS của Backend; không truy cập trực tiếp broker/DB. Công nghệ presentation đã được chốt theo Quyết định Owner #111 / PR #112: Web dùng **Next.js + TypeScript**, Mobile dùng **Kotlin native Android**. Các tài liệu cũ nhắc đến Flutter là doc drift lịch sử, không dùng làm căn cứ triển khai. |
 
 Dùng **ESP-IDF v6.1** cho Gateway/Node ([ADR-0003](../adr/0003-esp-idf-v6-1.md)), FreeRTOS/C và SX1276; Backend Go Modular Monolith + PostgreSQL, Mosquitto MQTT 5.0/TLS ([ADR-0002](../adr/0002-mqtt-5.md)). **Không sử dụng LoRaWAN MAC, OTAA/ADR/ChirpStack**.
 
