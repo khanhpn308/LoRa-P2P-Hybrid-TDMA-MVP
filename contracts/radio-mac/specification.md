@@ -1,6 +1,6 @@
 # Custom LoRa P2P Radio MAC — Giao diện Node ↔ Gateway
 
-**Revision 0.2.0-draft · V2 Protocol Architecture Integration · Issue #127 / Umbrella #125 · Gate G2: NOT_VERIFIED.**
+**Revision 0.3.0-draft · Owner MVP V2 packet/timing alignment · Issue #127 / Umbrella #125 · Gate G2: NOT_VERIFIED.**
 
 ---
 
@@ -11,14 +11,14 @@ Hệ thống hoạt động theo mô hình **Local Alarm Autonomy + Event-Only R
 - **Sensor Node (ESP32-WROOM-32E + SX1276)**:
   - Khi cảm biến phát hiện vượt ngưỡng, Node kích hoạt cảnh báo phần cứng tại chỗ tức thời (GPIO, còi buzzer, đèn LED, relay) hoàn toàn tự chủ mà không phụ thuộc vào trạng thái sóng LoRa RF hay ranh giới khe TDMA.
   - Giao diện RF chỉ truyền dữ liệu ứng dụng khi có sự kiện vi phạm (`UP_EVENT`, 0x41); chế độ truyền định kỳ liên tục (`DATA_TELEMETRY`) bị bãi bỏ hoàn toàn.
-  - Node chỉ được phép truyền dữ liệu sự kiện trong khe tĩnh (`Static DATA Slot`) độc quyền của mình; không dùng cơ chế tranh chấp kênh (PCSS/CAD).
+  - Node chỉ được phép truyền dữ liệu sự kiện trong khe tĩnh (`Static DATA Slot`) độc quyền của mình; không dùng contention/PCSS cho UP_EVENT; **Join (0x45..0x49) được khởi tạo bất đồng bộ bằng CAD/backoff bất kỳ thời điểm nào**.
   - Duy trì hàng đợi sự kiện bền vững trong bộ nhớ NVS với mã tham chiếu cục bộ `EVENT_REF` (4 byte tăng đơn điệu) để theo dõi xác nhận và phát lại; không tự ý gán nhãn `event_id` toàn cục.
   - Tuân thủ nghiêm ngặt 8 tầng bảo vệ an toàn (`8-Fold Fail-Closed Guards`) trước khi bật bộ phát radio TX.
 - **Gateway (ESP32-WROOM-32E / Linux Gateway Engine + SX1276)**:
   - Là nguồn cung cấp nhịp đồng hồ danh định và superframe cục bộ; vận hành bộ thu/phát bán song công trên một chip SX1276 duy nhất.
   - Là thẩm quyền duy nhất sinh ra và quản lý mã định danh sự kiện toàn cục (`event_id`) để xuất bản lên Backend MQTT.
   - Bắt buộc phải ghi nhận sự kiện vào bộ nhớ bền vững (WAL / SQLite) trước khi phát gói tin xác nhận `DOWN_EVENT_ACK` (0x42) ngay trong khe thời gian.
-  - Phát sóng `DOWN_SYNC_BEACON` (0x43) mang chữ ký số Ed25519 tại đầu mỗi chu kỳ; thực thi lịch TDMA tích cực và lưu trữ lịch dự phòng (shadow schedule).
+  - Phát `DOWN_SYNC_BEACON` (0x43, 32B, per-Gateway HMAC-SHA256-128) chỉ trong Maintenance danh định ~300s; thực thi lịch TDMA tích cực và lưu trữ lịch dự phòng (shadow schedule).
   - Bắt tay thỏa thuận khóa phiên cục bộ với Node thông qua X25519 ECDH; quản lý ranh giới kích hoạt khóa phiên (`INSTALLED_INACTIVE` $\to$ `ACTIVE`).
 - **Backend Go Modular Monolith**:
   - Lập kế hoạch phân bổ lịch TDMA ở tầng vĩ mô và đẩy xuống Gateway qua MQTT 5.0 / TLS; tuyệt đối **không** tạo lệnh điều khiển TX/RX theo từng slot thời gian RF.
@@ -50,10 +50,10 @@ Hệ thống hoạt động theo mô hình **Local Alarm Autonomy + Event-Only R
 ### 2.2 Loại bản tin V1 và Trạng thái Chuyển đổi
 | Mã V1 | Tên bản tin V1 | Chiều truyền | Trạng thái trong Kiến trúc V2 | Thay thế bởi V2 |
 |:---:|---|:---:|:---:|---|
-| `0x01` / `0x21` | `BEACON` (14B / 28B Group-HMAC) | GW $\to$ Broadcast | **SUPERSEDED** | `0x43 DOWN_SYNC_BEACON` (80B, ký số Ed25519) |
-| `0x02` / `0x22` | `SCHED_ANNOUNCE` | GW $\to$ Broadcast | **OPEN_DECISION** | Chuyển vào kênh quản trị / Beacon countdown |
+| `0x01` / `0x21` | `BEACON` (14B / 28B Group-HMAC) | GW $\to$ Broadcast | **SUPERSEDED** | `0x43 DOWN_SYNC_BEACON` (32B, HMAC-SHA256-128) |
+| `0x02` / `0x22` | `SCHED_ANNOUNCE` | GW $\to$ Broadcast | **OPEN_DECISION** | Thay bằng Backend-signed SCHEDULE_PREPARE/DECISION on demand |
 | `0x03` / `0x23` | `DATA_TELEMETRY` (12B định kỳ) | Node $\to$ GW | **SUPERSEDED_HISTORICAL** | Bãi bỏ hoàn toàn; hệ thống chuyển sang Event-Only |
-| `0x04` / `0x24` | `PRIORITY_ALERT` (trong PCSS) | Node $\to$ GW | **SUPERSEDED_HISTORICAL** | Bãi bỏ PCSS/CAD; thay bằng `0x41 UP_EVENT` khe tĩnh |
+| `0x04` / `0x24` | `PRIORITY_ALERT` (trong PCSS) | Node $\to$ GW | **SUPERSEDED_HISTORICAL** | Bãi bỏ PCSS/CAD cho DATA Event; giữ CAD cho Join bất đồng bộ |
 | `0x05` / `0x25` | `ACK_PACKET` / `ACK_BITMAP` | GW $\to$ Node | **SUPERSEDED** | Thay bằng `0x42 DOWN_EVENT_ACK` ngay trong khe |
 | `0x06` / `0x26` | `CMD_DOWNLINK` | GW $\to$ Node | **OPEN_DECISION** | Giữ riêng trong luồng xem xét bảo mật lệnh |
 | `0x07` / `0x11` | `JOIN_SLOT_REQ` / Bootstrap V1 | Node $\to$ GW | **SUPERSEDED_HISTORICAL** | Thay bằng `0x45 UP_JOIN_HELLO` (68B X25519) |
@@ -88,13 +88,17 @@ Mọi gói tin V2 Unicast sử dụng **Header chuẩn 7 byte** không mã hóa 
 |:---:|---|:---:|:---:|---|:---:|---|
 | `0x41` | `UP_EVENT` | Node $\to$ GW | 26 | Ciphertext 11B + Thẻ CCM-8 (8B) dưới khóa $K_{\text{SESSION\_UP}}$ | **OWNER_APPROVED_DESIGN** | Owner Phê duyệt (2026-11-06, DEC-127-01 & DEC-127-02) |
 | `0x42` | `DOWN_EVENT_ACK` | GW $\to$ Node | 19 | Ciphertext 4B + Thẻ CCM-8 (8B) dưới khóa $K_{\text{SESSION\_DOWN}}$ | **OWNER_APPROVED_DESIGN** | Owner Phê duyệt (2026-11-06, DEC-127-01 & DEC-127-02) |
-| `0x43` | `DOWN_SYNC_BEACON` | GW $\to$ BC | 80 | 16B Thông tin + 64B Chữ ký số Ed25519 (Private Key của GW) | **OWNER_APPROVED_DESIGN** | Owner Phê duyệt (2026-11-06, DEC-MH-01) |
+| `0x43` | `DOWN_SYNC_BEACON` | GW → Broadcast | **32** | Header16 + HMAC-SHA256-128 tag16 với `K_BEACON` per-Gateway | **OWNER_APPROVED_MVP_DESIGN** | #209, #208 (2026-11-07) |
 | `0x44` | `UP_HEALTH_REPLY` | Node $\to$ GW | 21 | Ciphertext 6B + Thẻ CCM-8 (8B) dưới khóa $K_{\text{SESSION\_UP}}$ | **OWNER_APPROVED_DESIGN** | Owner Phê duyệt (2026-11-06, DEC-MH-02) |
 | `0x45` | `UP_JOIN_HELLO` | Node $\to$ GW | 68 | X25519 Ephemeral Pub (32B) + Hello Tag (16B HMAC $K_{\text{JOIN}}$) | **OWNER_APPROVED_DESIGN** | Issue #127 Comment 6628167582 |
 | `0x46` | `DOWN_JOIN_GRANT` | GW $\to$ Node | 66 | X25519 Ephemeral Pub (32B) + Backend Grant Proof (16B) | **OWNER_APPROVED_DESIGN** | Issue #127 Comment 6629944747 |
 | `0x47` | `UP_JOIN_KEY_CONFIRM` | Node $\to$ GW | 31 | `GW_KC_TAG` (8B $K_{\text{KC\_UP}}$) + `BACKEND_PROOF` (16B $K_{\text{JCONFIRM}}$) | **OWNER_APPROVED_DESIGN** | Issue #127 Comment 6630055809 |
 | `0x48` | `DOWN_JOIN_FINISH` | GW $\to$ Node | 31 | `GW_TAG8` (8B $K_{\text{KC\_DOWN}}$) + `BACKEND_TAG16` (16B $K_{\text{JFINISH}}$) | **OWNER_APPROVED_DESIGN** | Issue #127 Comment 6630280648 |
 | `0x49` | `UP_JOIN_READY` | Node $\to$ GW | 31 | `GW_READY_TAG` (8B $K_{\text{KC\_UP}}$) + `BACKEND_READY_PROOF` (16B $K_{\text{JREADY}}$) | **OWNER_APPROVED_DESIGN** | Commit `f5dd608` (DEC-SEC-03 & DEC-SEC-04) |
+| `0x4A` | `UP_DIAG_METRICS` | Node → GW | **23** | Header7 + ciphertext8 `[DROPPED_EVENT_COUNT:u32BE, DIAG_SEQ:u32BE]` + CCM8 | **OWNER_APPROVED_MVP_WIRE_DESIGN** | #204/#205 |
+| `0x4B` | `DOWN_SCHED_PREPARE` | Backend-signed GW → Broadcast | **80** | Canonical header16 + Backend Ed25519 signature64 | **80B/CRYPTO APPROVED, TYPE CODE CANDIDATE** | #208 |
+| `0x4C` | `UP_SCHED_READY` | Node → GW | **41** | Header7 + ciphertext26 (generation/target/status/reason/Backend proof16) + CCM8 | **OWNER_APPROVED_MVP_DESIGN** | #208 |
+| `0x4D` | `DOWN_SCHED_DECISION` | Backend-signed GW → Broadcast | **80** | Canonical header16 + Backend Ed25519 signature64, COMMIT/ABORT | **80B/CRYPTO APPROVED, TYPE CODE CANDIDATE** | #208 |
 
 ---
 
@@ -116,16 +120,24 @@ Mọi gói tin V2 Unicast sử dụng **Header chuẩn 7 byte** không mã hóa 
 - **Thẻ xác thực:** `CCM-8 Tag` (8B).
 - **Ràng buộc:** Gateway chỉ được phát gói tin này sau khi sự kiện đã được lưu bền vững vào WAL / SQLite.
 
-#### 3. `DOWN_SYNC_BEACON` (0x43, 80 octets)
-- **Thông tin đồng bộ không mã hóa (16B):**
-  - `MAGIC` (1B): `0x43`
-  - `GW_ID` (1B): Định danh Gateway phát sóng (`0x01`..`0xFE`).
-  - `EPOCH_SEC` (4B, u32 Big-Endian): Thời gian thực Unix chuẩn từ Gateway (GPS/NTP/RTC).
-  - `SF_SEQ` (4B, u32 Big-Endian): Số thứ tự Superframe toàn cục tăng đơn điệu.
-  - `SCHED_VER` (1B, u8): Phiên bản lịch TDMA đang có hiệu lực.
-  - `FLAGS` (1B): Bit 7..6: Đếm ngược chuyển đổi lịch ($3 \to 2 \to 1 \to 0$); Bit 5: Cờ cảnh báo khẩn; Bit 4..0: Dành riêng (=0).
-  - `RESERVED` (4B): Đệm căn chỉnh 0x00000000.
-- **Chữ ký số Ed25519 (64B):** Ký trên toàn bộ 16 byte thông tin bằng khóa bí mật Ed25519 của Gateway. Mọi Node dùng khóa công khai của Gateway (đã được nạp cứng an toàn) để xác minh tính xác thực nguồn gốc.
+#### 3. `DOWN_SYNC_BEACON` (0x43, **32 octets**)
+
+**Owner-approved MVP wire target:** 16B header and a 16B truncated HMAC-SHA256 authentication tag. Beacon is *time synchronization only* and cannot authorize schedule COMMIT, rejoin or activation.
+
+| Offset | Field | Size |
+| --- | --- | ---: |
+| 0 | `MAGIC = 0x43` | 1 |
+| 1 | `GW_ID` | 1 |
+| 2–5 | `EPOCH_SEC` (u32 Big-Endian) | 4 |
+| 6–9 | `SF_SEQ` (u32 Big-Endian, anti-replay) | 4 |
+| 10 | `SCHED_VER` (informational, not authorization) | 1 |
+| 11 | `FLAGS`, bits7:6 reserved=0, bit5 emergency | 1 |
+| 12 | `KEY_ID` for per-Gateway `K_BEACON` | 1 |
+| 13–15 | `RESERVED = 0` | 3 |
+| 16–31 | `TAG16 = LEFT16(HMAC-SHA256(K_BEACON, domain-separated NETWORK_ID/GW_ID/Header16 transcript))` | 16 |
+
+`K_BEACON` is 256-bit CSPRNG per Gateway, securely provisioned out-of-band to Gateway and authorized Nodes. Never reuse Join/session/Backend signing keys. Check tag constant-time and reject stale `SF_SEQ`, timestamp rollback/unknown key epoch. Exact canonical domain/NETWORK_ID serializer and key-lifecycle rollover require Golden Vectors before enabling RF. Any compromised Node holding group HMAC key can spoof Beacon; do NOT use it as Backend schedule authorization. Automated RF key rotation is not MVP.
+
 
 #### 4. `UP_HEALTH_REPLY` (0x44, 21 octets)
 - **Header (7B):** `0x44 | NODE_ID:1 | SESSION_SEL:1 | FRAME_COUNTER:4`
@@ -146,6 +158,20 @@ Mọi gói tin V2 Unicast sử dụng **Header chuẩn 7 byte** không mã hóa 
 
 ---
 
+#### 6. `UP_DIAG_METRICS` (0x4A, **23 octets**) — OWNER-APPROVED MVP
+
+Bytes 0..6: `0x4A | NODE_ID | SESSION_SEL | FRAME_COUNTER:u32BE` (AAD). Bytes 7..14: AES-128-CCM ciphertext of `DROPPED_EVENT_COUNT:u32BE | DIAG_SEQ:u32BE`. Bytes 15..22: CCM-8 authentication tag. Use `K_SESSION_UP` and V2 nonce `SESSION_NONCE_PREFIX8 || 0x01 || FRAME_COUNTER4`, **shared UP counter namespace** with 0x41/0x44 to avoid `(key,nonce)` reuse. Duplicate reports must not double count. Health 0x44 stays 21B. DIAG can only TX in explicitly authorized NORMAL Maintenance management opportunity; defer during Schedule Migration.
+
+#### 7. Schedule Migration V2 — signed Broadcast, READY TDMA
+
+- `DOWN_SCHED_PREPARE`: **80B**, 16B canonical common header + **64B Backend Ed25519 signature**, broadcast by Gateway. Candidate type `0x4B` is reserved for wire compatibility review; backend-only private signing key, Node verifies pinned Backend public key; fields bind GW/NETWORK/PROFILE/SCHED_GENERATION/K_TARGET/W_MS/KEY_ID.
+- `UP_SCHED_READY`: **41B**, **approved type 0x4C**, V2 unicast AAD 7B + encrypted 26B `[SCHED_GENERATION:u32, K_TARGET:u32, STATUS:u8, REASON:u8, BACKEND_READY_PROOF:16B]` + CCM8. A distinct Node↔Backend proof derived from `K_JOIN` must bind exact signed PREPARE, checked independently by Backend; Gateway verifies CCM.
+- `DOWN_SCHED_DECISION`: **80B**, header16 + Backend Ed25519 signature64, candidate type `0x4D`, signed COMMIT(1)/ABORT(0) cryptographically bound to the exact signed PREPARE digest. Exactly one immutable terminal decision per transaction.
+- Gateway may COMMIT **only when `VERIFIED_READY_SET == AFFECTED_NODE_SET` (100%)**, including offline still-authorized affected Nodes; `UP_JOIN_READY 0x49` is NOT `UP_SCHED_READY 0x4C`. Activate at common `K_TARGET`; prepared Nodes missing valid COMMIT must inhibit DATA TX from K_TARGET, including after reboot.
+- No `3→2→1` Beacon countdown, no Schedule Lease. Shared Maintenance Control allocated only on demand; Join proceeds asynchronously via CAD at any time and can collide with scheduled traffic, leading to missing READY and ABORT/defer.
+- Wire codepoint allocation 0x4B/0x4D, canonical Ed25519 signing transcript and `K_SCHED_READY` HKDF bytes must be frozen/tested before RF implementation. Their 80B signed Broadcast **format direction is approved**, not evidence of G2/HIL PASS.
+---
+
 ## 4. Ranh giới Mật mã & Thẩm quyền Khóa phiên (Cryptographic Authority)
 
 Tuân thủ nghiêm ngặt các quyết định `DEC-SEC-01` .. `DEC-SEC-07` đã được Owner phê duyệt:
@@ -164,8 +190,8 @@ Tuân thủ nghiêm ngặt các quyết định `DEC-SEC-01` .. `DEC-SEC-07` đ�
 | K_KC_UP (Xác thực GW)     | 32B  | PHÁI SINH TỪ Z  | PHÁI SINH TỪ Z  | **KHÔNG BIẾT**  | DEC-SEC-01  |
 | K_KC_DOWN (Xác thực Finish)| 32B | PHÁI SINH TỪ Z  | PHÁI SINH TỪ Z  | **KHÔNG BIẾT**  | DEC-SEC-01  |
 | K_JREADY (Xác thực Backend)| 32B | PHÁI SINH K_JOIN| KHÔNG SỞ HỮU    | PHÁI SINH K_JOIN| DEC-SEC-03  |
-| Gateway Ed25519 PrivKey   | 64B  | KHÔNG BIẾT      | LƯU BẢO MẬT     | KHÔNG SỞ HỮU    | DEC-MH-01   |
-| Gateway Ed25519 PubKey    | 32B  | NẠP CỨNG AN TOÀN| CÔNG KHAI       | QUẢN LÝ / PIN   | DEC-MH-01   |
+| K_BEACON (HMAC-SHA256)  | 32B | PROVISIONED | PROVISIONED | metadata only | #209, group key compromise risk |
+| Backend Ed25519 PubKey | 32B | PINNED | MAY VERIFY | PUBLIC | #208, PREPARE/DECISION verifier |
 +---------------------------+------+-----------------+-----------------+-----------------+-------------+
 ```
 
@@ -192,35 +218,35 @@ Tuân thủ nghiêm ngặt các quyết định `DEC-SEC-01` .. `DEC-SEC-07` đ�
      - Bản tin sức khỏe định kỳ `UP_HEALTH_REPLY` (0x44, 21B) đã được Owner phê duyệt (`DEC-MH-02`) có bố cục cố định và **không có trường truyền tải `DROPPED_EVENT_COUNT`** (trường `PENDING_COUNT: 1B` chỉ phản ánh số lượng sự kiện hiện đang nằm trong FIFO chưa được ACK, không phải bộ đếm tích lũy sự kiện bị mất).
      - **Chủ trương định hướng đã duyệt (`DEC-MH-08` — `OWNER_APPROVED_DIRECTION / PLANNED_NOT_IMPLEMENTED`):**
        - Giữ nguyên 100% bản tin 21B `UP_HEALTH_REPLY` (`0x44`) để tối ưu thời gian chiếm sóng airtime (56.6ms tại SF7).
-       - Project Owner đã chính thức phê duyệt định hướng áp dụng **bản tin quản trị/chẩn đoán riêng biệt có phiên bản (separate versioned diagnostic/management message)** để báo cáo số liệu mất mát `DROPPED_EVENT_COUNT`, thống kê retry và điện áp pin.
-       - **Ranh giới thực thi:** Mã định danh `0x4A` (ví dụ `UP_DIAG_METRICS`) chỉ là mã loại gói tin ứng viên (candidate packet type only), chưa được phê duyệt hợp đồng chi tiết. **Tuyệt đối không phát hành, gán byte wire format, hoặc truyền nhận loại bản tin này trong phạm vi PR hiện tại.** Việc chuẩn hóa bố cục wire cho bản tin chẩn đoán sẽ được giao cho một Issue hợp đồng riêng biệt sau khi có phê duyệt từ Owner.
+       - Project Owner đã chính thức phê duyệt định hướng áp dụng **bản tin quản trị/chẩn đoán riêng biệt có phiên bản (separate versioned diagnostic/management message)** để báo cáo `DROPPED_EVENT_COUNT` và `DIAG_SEQ` (không thêm retry/battery vào MVP 23B).
+        - **Latest Owner decision (2026-11-07):** `UP_DIAG_METRICS 0x4A` **23B is APPROVED**; exact layout §3.3.6 and #204; 21B Health unchanged. Earlier candidate prohibition is superseded.
 
 ---
 
-## 6. Ràng buộc Tần số và Thời gian RF (RF Spreading Factor & Timing)
+## 6. Ràng buộc Tần số, CAD Join và DATA/READY Timing — OWNER MVP BASELINE
 
-1. **Giới hạn Spreading Factor cho MVP V1 (`DEC-127-03` Lựa chọn A — Owner Phê duyệt 2026-11-06; Bổ chính TIM-01/TIM-02):**
-   - Vận hành hệ thống MVP V1 được **giới hạn nghiêm ngặt ở SF7 và SF8**.
-   - **Đối chiếu ToA khứ hồi hai chiều (Bổ chính TIM-01):**
-     - Tại **SF7:** $\text{ToA}_{\text{EVENT}} (61.696\text{ms}) + \tau_{\text{turnaround}} (20\text{ms}) + \text{ToA}_{\text{ACK}} (51.456\text{ms}) \approx 133.152\text{ms} < 250\text{ms}$. Hoàn toàn bảo đảm hoàn thành an toàn trong khe 400ms và phong bì minh họa $[25, 245)\text{ms}$.
-     - Tại **SF8:** $\text{ToA}_{\text{EVENT}} (113.152\text{ms}) + \tau_{\text{turnaround}} (20\text{ms}) + \text{ToA}_{\text{ACK}} (102.912\text{ms}) \approx 236.064\text{ms} > 220\text{ms}$. Dù tổng ToA RF lý thuyết ($216.064\text{ms}$) vẫn nằm trong khe 400ms, nó vượt quá phong bì minh họa $[25, 245)\text{ms}$ và từng cửa sổ con 100ms.
-   - **Tham số hóa hình học khe (`DEC-127-06` — `OWNER_APPROVED_DIRECTION / NOT_HIL_VERIFIED`):** Thời gian khe TDMA không bị đóng băng cứng nhắc, mà tuân thủ mô hình tham số hóa được thẩm định tự động fail-closed. Bộ số ví dụ minh họa ($25+125+35+115+100=400\text{ms}$) chỉ là ví dụ ứng viên, không phải profile cố định.
-   - Các cấu hình SF9+ tạm thời không kích hoạt trên luồng dữ liệu thời gian thực; việc điều chỉnh độ dài khe sẽ được tái đánh giá sau khi có số liệu đo đạc vật lý từ Issue #169.
-2. **Độc lập Đo đạc Vật lý (#169):**
-   - Mọi hằng số thời gian số học (ms) trong tài liệu này đều mang tính chất định danh biểu tượng (symbolic). Việc đóng băng chính thức các hằng số Guard Time và khe TDMA bị khóa (`BLOCKED`) chờ kết quả đo đạc thực tế từ Issue #169.
+- DATA: `W_MS=500ms` **usable**; `G_MS=50ms` each side. Full period per implicit Node ID index = **600ms**, 15 reserved positions occupy **9000ms** plus any separately modelled DATA SF overhead. Each usable W includes Event uplink, Gateway authentication + durable acceptance WAL, RX/TX turnaround and **immediate ACK downlink in same Node Slot**. If no valid ACK, Node keeps same logical Event and retries in its next own DATA slot with dedup; missing ACK does not establish Gateway failed to store Event.
+- Slot i boundaries from authorized common DATA origin: `start(i)=(i-1)*500+(2*i-1)*50` ms; `end(i)=start(i)+500`. Empty/offline indices remain reserved; no compaction.
+- READY migration: `R_MS=400ms` usable, `G_R_MS=50ms` each side, full READY period **500ms**; 15 READY opportunities occupy **7500ms** only in on-demand Maintenance Schedule Control. Shared authenticated Maintenance origin, not PREPARE receive time, determines READY slot.
+- Maintenance Beacon + Health nominal recurrence **~300 seconds** between Maintenance; do not conflate with Maintenance frame duration. Beacon 32B HMAC in Maintenance only, no DATA Beacon Slot0.
+- Join: asynchronous any time by SX1276 CAD + randomized bounded backoff, **3 retries** after initial attempt. Gateway downlink as soon as Backend accepts and radio can TX; such downlink may collide with incoming Event and cause no ACK, handled by next-own-slot Event retry; one SX1276 cannot RX and TX simultaneously. No protected Maintenance-only Join Window.
+- Reboot: Node **RX_ONLY / DATA_TX_DISABLED**, await authenticated Backend-authorized reactivation; no data TX from persisted schedule alone. Reconciliation of session/time/generation and pending cutover fail-closed state required. Reboot activation packet type/flow remains separate implementation dependency.
+- Beacon loss: **more than 3 consecutive missed** => report disconnected. This is a status threshold, NOT a license to TX with invalid clock confidence. If guard cannot contain uncertainty, inhibit TX earlier; active schedule does not expire automatically.
+- SF7/SF8 are intended PHY choices; validate ToA, SPI/ISR jitter, actual WAL latency, RX/TX turnaround, half-duplex, RF legality and clock error before real RF operation. **Owner approved MVP numeric values, not measured performance; HIL_NOT_VERIFIED.**
 
 ---
+
 
 ## 7. Tiêu chí Đóng băng Hợp đồng (Gate G2 Status)
 
-- [x] Phê duyệt kiến trúc Event-Only, Local Alarm Autonomy và bãi bỏ PCSS/CAD.
+- [x] Phê duyệt kiến trúc Event-Only, Local Alarm Autonomy và bãi bỏ PCSS cho DATA Event; CAD dành riêng cho Join.
 - [x] Phê duyệt mã bản tin và bố cục gói tin Join V2 (0x45..0x48) và Post-Join (0x49).
 - [x] Phê duyệt bộ quyết định an ninh mật mã `DEC-SEC-01` .. `DEC-SEC-07`.
 - [x] Phê duyệt mã bản tin `UP_EVENT` (0x41), `DOWN_EVENT_ACK` (0x42), `DOWN_SYNC_BEACON` (0x43), `UP_HEALTH_REPLY` (0x44).
-- [x] Phê duyệt giới hạn SF7/SF8 cho khe 400ms và chính sách hàng đợi `RING_BUFFER_DROP_OLDEST`.
+- [x] Phê duyệt baseline DATA W500/G50, READY R400/G_R50, SF7/SF8 (Owner #208; HIL chưa chạy) và chính sách hàng đợi `RING_BUFFER_DROP_OLDEST` (`DEC-127-04`).
 - [ ] Hoàn thành kiểm tra chéo Golden Vectors Go $\leftrightarrow$ ESP-IDF mbedTLS (Issue #173) $\to$ **NOT_VERIFIED**.
 - [ ] Hoàn thành kiểm tra phân quyền ACL broker Mosquitto mTLS (Issue #174) $\to$ **NOT_VERIFIED**.
 - [ ] Hoàn thành kiểm thử xung đột nguồn Gateway NVS HIL (Issue #175) $\to$ **NOT_VERIFIED**.
-- [ ] Hoàn thành đo đạc vật lý thời gian thực RF và Guard Time (Issue #169) $\to$ **BLOCKED**.
+- [ ] Hoàn thành đo đạc vật lý thời gian thực RF và Guard Time (Issue #169) $\to$ **NOT_VERIFIED; không chặn bắt đầu lập trình MVP, nhưng không được tuyên bố RF/HIL PASS**.
 
-**KẾT LUẬN G2: `NOT_VERIFIED`** — Tài liệu hợp đồng đã được đồng bộ hóa toàn diện; việc cấp chứng chỉ G2 PASS yêu cầu hoàn tất các bằng chứng kiểm thử thực tế từ các Issue phụ thuộc nêu trên.
+**KẾT LUẬN G2: `NOT_VERIFIED`** — Tài liệu đã đối chiếu baseline thiết kế; còn cần wire Golden Vectors, session/Join/recovery security review; việc cấp chứng chỉ G2 PASS yêu cầu hoàn tất các bằng chứng kiểm thử thực tế từ các Issue phụ thuộc nêu trên.

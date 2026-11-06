@@ -8,6 +8,7 @@
 - `PLANNED_NOT_IMPLEMENTED`: Đã được chấp thuận định hướng trong kiến trúc nhưng chưa cấp phát mã trên dây (wire codepoint) hoặc chưa triển khai mã nguồn trong phạm vi hợp đồng hiện tại.
 - `OPEN_DECISION`: Vấn đề kỹ thuật mở cần lựa chọn phương án trước khi đóng băng hợp đồng.
 - `BLOCKED`: Điểm nghẽn kỹ thuật bắt buộc phải có ADR mới hoặc bằng chứng đo đạc vật lý G1/G2 trước khi đóng băng.
+- `BLOCKED_FOR_OWNER_DECISION`: Đề xuất kỹ thuật hoặc cơ chế đang chờ quyết định phê duyệt chính thức từ Project Owner trước khi trở thành ràng buộc hợp đồng.
 - `NOT_HIL_VERIFIED`: Chưa có bằng chứng đo đạc thực tế trên phần cứng thật (Issue #169).
 
 ---
@@ -25,9 +26,9 @@
 | **DEC-SEC-07** | Cryptography | Tuân thủ triệt để RFC 7748 Section 6.1: Nếu $\text{X25519}(\text{priv}, \text{pub}) == 0^{32}$, Node và Gateway lập tức hủy phiên và xóa sạch trạng thái mật mã. | `OWNER_APPROVED_DESIGN` · Owner Phê duyệt (2026-11-06, Commit `f5dd608`) |
 | **DEC-127-01** | Wire Codepoint | Phê duyệt chính thức mã bản tin sự kiện `UP_EVENT` (`0x41`, 26B) và xác nhận sự kiện tức thì `DOWN_EVENT_ACK` (`0x42`, 19B) theo thiết kế PR #189. | `OWNER_APPROVED_DESIGN` · Owner Phê duyệt (2026-11-06) |
 | **DEC-127-02** | Cryptography | Chốt độ dài thẻ xác thực AES-128-CCM cho dữ liệu ứng dụng là **8 byte ($M=8$)** nhằm tối ưu hóa thời gian chiếm dụng sóng RF airtime. | `OWNER_APPROVED_DESIGN` · Owner Phê duyệt (2026-11-06) |
-| **DEC-127-03** | RF PHY / TDMA | Áp dụng **Lựa chọn A: Giới hạn vận hành hệ thống MVP V1 chỉ ở SF7 và SF8** (nguyên tắc khe 400ms). *Bổ chính #201:* Hình minh họa cửa sổ con $100\text{ms}/20\text{ms}/100\text{ms}$ và phong bì 220ms không hợp lệ cho SF8 (ToA Event 113.152ms, ACK 102.912ms). Việc tái phân bổ cửa sổ con cho SF8 trong khe 400ms được theo dõi dưới `DEC-127-06`. | `OWNER_APPROVED_DESIGN` · Owner Phê duyệt (2026-11-06) |
+| **DEC-127-03** | RF PHY | MVP hỗ trợ SF7/SF8; ví dụ 400ms lịch sử là NON_NORMATIVE. Baseline DATA V2 Owner chốt 2026-11-07: `W_MS=500ms` hữu dụng + `G_MS=50ms` mỗi bên; chu kỳ Node 600ms. | `OWNER_APPROVED_MVP_CONFIG / NOT_HIL_VERIFIED` · #208 |
 | **DEC-127-04** | Node Policy | Khi hàng đợi sự kiện NVS FIFO của Node đầy tải do mất kết nối kéo dài, áp dụng chính sách **`RING_BUFFER_DROP_OLDEST`** (ghi đè sự kiện cũ nhất để ưu tiên cảnh báo mới nhất). Bắt buộc lưu bền vững `DROPPED_EVENT_COUNT` trong NVS. | `OWNER_APPROVED_DESIGN` · Owner Phê duyệt (2026-11-06) |
-| **DEC-MH-01** | Wire Codepoint | Phê duyệt chính thức mã bản tin đồng bộ mạng `DOWN_SYNC_BEACON` (`0x43`, 80B) mang chữ ký số Ed25519 (64B) theo thiết kế PR #190. Bố cục wire được đóng băng an toàn. | `OWNER_APPROVED_DESIGN` · Owner Phê duyệt (2026-11-06) |
+| **DEC-MH-01** | Beacon | **SUPERSEDED:** Beacon V2 `0x43` **32B**: header16 + HMAC-SHA256-128 tag16, `KEY_ID` byte12, khóa nhóm 256-bit per-Gateway qua trusted out-of-band provisioning; Ed25519-80B cũ không còn là định dạng đích. Beacon không được ký lệnh đổi lịch. | `OWNER_APPROVED_MVP_DESIGN / NOT_IMPLEMENTED` · #209/#208 |
 | **DEC-MH-02** | Wire Codepoint | Phê duyệt chính thức mã bản tin sức khỏe định kỳ `UP_HEALTH_REPLY` (`0x44`, 21B, AES-128-CCM) theo thiết kế PR #190. *Bổ chính #201:* Khẳng định ngân sách 21B không có trường cho `DROPPED_EVENT_COUNT`; kênh truyền tải số liệu mất gói theo dõi dưới `DEC-MH-08`. | `OWNER_APPROVED_DESIGN` · Owner Phê duyệt (2026-11-06) |
 
 ---
@@ -36,16 +37,31 @@
 
 | ID / Nguồn | Vấn đề | Đề xuất giải quyết / Quy tắc candidate | Trạng thái & Cơ quan phụ trách |
 |---|---|---|---|
-| **DEC-MH-03** | Chu kỳ xen kẽ Khe Bảo trì | Xen kẽ 1 chu kỳ Maintenance Superframe sau mỗi ~300s giữa các chu kỳ Static DATA Superframe (~10s). | `CANDIDATE` · Gateway / MAC Scheduler |
-| **DEC-MH-04** | Ngưỡng khóa sóng do mất Beacon | Cho phép Holdover khi $N_{\text{MISSED}} \in \{1, 2\}$ nếu drift $\le 25\text{ms}$; khóa cứng phát sóng fail-closed khi $N_{\text{MISSED}} \ge 3$. | `CANDIDATE` · Node Clock Manager / MAC |
-| **DEC-MH-05** | Đồng bộ chuyển lịch 3 chu kỳ | Phát cờ đếm ngược $3 \to 2 \to 1$ trong Beacon và yêu cầu 100% Node bị ảnh hưởng sẵn sàng trước khi cắt chuyển lịch active. | `CANDIDATE` (Đồng bộ với SEC-05) · GW / Backend |
+| **DEC-MH-03** | Maintenance cadence | Danh định ~300s giữa các Maintenance Superframe; Maintenance bao gồm Beacon, Health theo Node và Shared Control theo nhu cầu. Join dùng CAD bất đồng bộ **mọi lúc**, không bắt buộc trong Maintenance. Thời lượng Maintenance và RF overhead là timing profile riêng. | `OWNER_APPROVED_MVP_DIRECTION / TIMING_TO_IMPLEMENT` · #208 |
+| **DEC-MH-04** | Beacon miss/holdover | Sau **hơn 3 Beacon liên tiếp** không nhận được, Node ghi nhận trạng thái mất kết nối (`N_MISSED > 3`). Đây là ngưỡng báo trạng thái; DATA TX phải tạm khóa sớm hơn nếu bound sai số clock vượt Guard/thiếu đồng bộ đáng tin cậy, lịch không tự hết hạn. | `OWNER_APPROVED_MVP_MONITORING_RULE / CLOCK_BOUND_NOT_HIL_VERIFIED` · #208 |
+| **DEC-MH-05** | Schedule migration | **Bãi bỏ countdown 3→2→1** và Schedule Lease. Một Maintenance on-demand dùng Backend-signed `DOWN_SCHED_PREPARE` **80B** → per-Node `UP_SCHED_READY 0x4C` **41B** (R=400ms hữu dụng, G_R=50ms mỗi bên) → Backend-signed `DOWN_SCHED_DECISION` **80B** COMMIT/ABORT. Chỉ COMMIT sau khi Backend xác minh **100% READY của mọi Node bị ảnh hưởng**, kể cả offline; kích hoạt ở K_TARGET, mất quyết định thì fail-closed. | `OWNER_APPROVED_MVP_DESIGN / CODEPOINT_0x4B_0x4D_CANDIDATE / NOT_IMPLEMENTED` · #208 |
 | **DEC-MH-06** | Rào chắn bán song công SX1276 | Thiết lập khoảng bảo vệ tối thiểu giữa RX và TX turnaround để tránh xung đột phần cứng khi radio đang nhận packet. | `CANDIDATE` (Chờ đo đạc #169) · Embedded / RF |
 | **DEC-127-05** | SLA ghi bền vững WAL tại Gateway | Xác định giới hạn mili-giây cho thao tác ghi SQLite/WAL tại Gateway trước khi phát `DOWN_EVENT_ACK` trên RF để cam kết 0% mất dữ liệu. | `OPEN_DECISION` · Gateway Engine / SQLite |
-| **DEC-127-06** | Tham số hóa hình học Khe Tĩnh DATA cho SF7 & SF8 (TIM-01) | Duy trì khả năng vận hành SF7/SF8. Quy định cấu trúc hình học khe DATA tĩnh là hệ thức tham số hóa được thẩm định tự động (`validator-checkable`) dựa trên PHY thực tế + ToA lý thuyết + trễ đo đạc thực tế (turnaround, WAL commit Gateway, jitter ngắt, clock drift, guards, airtime duty). Ví dụ 400ms ($25+125+35+115+100\text{ms}$) là **hình minh họa ứng viên (candidate example only)**, **tuyệt đối không phải profile cố định**. Backend lập lịch & quản lý phiên bản, Gateway thực thi, Node tuân thủ; duy trì xác thực đếm ngược $3 \to 2 \to 1$ và hàng rào 100%-READY. Bắt buộc fail-closed khi thiếu tham số hoặc vi phạm bất đẳng thức. | `OWNER_APPROVED_DIRECTION / NOT_HIL_VERIFIED` · Owner Phê duyệt (2026-11-06, Issue #201 / PR #202 Comment) |
-| **DEC-MH-07** | Tham số hóa Cửa sổ phát Beacon 80B trong Maintenance Superframe (TIM-02) | Giữ nguyên khung bản tin 80B Ed25519 đã duyệt (`DEC-MH-01`); **tham số hóa cửa sổ Beacon (parameterized Beacon window)** theo cấu hình PHY đang kích hoạt. Cửa sổ 400ms tại SF8 là ví dụ ứng viên, không cố định số học; tùy chọn khóa Beacon ở SF7 là phương án dự phòng ứng viên. Cần kiểm tra ngân sách thời gian Maintenance Superframe và đo đạc HIL #169. | `OWNER_APPROVED_DIRECTION / NOT_HIL_VERIFIED` · Owner Phê duyệt (2026-11-06, Issue #201 / PR #202 Comment) |
-| **DEC-MH-08** | Kênh truyền tải số liệu mất mát `DROPPED_EVENT_COUNT` của Node (MAC-01) | Giữ nguyên 100% bản tin `UP_HEALTH_REPLY` (`0x44`, 21B) hiện hành (`DEC-MH-02`) và duy trì bộ đếm bền vững `DROPPED_EVENT_COUNT` trong NVS flash của Node. Duyệt định hướng sử dụng **bản tin quản trị/chẩn đoán riêng biệt có phiên bản (separate versioned diagnostic/management message)** để báo cáo số liệu mất mát. Mã `0x4A` chỉ là mã loại gói tin ứng viên (candidate packet type only) chờ hợp đồng phân bổ riêng; **tuyệt đối không phát hành hoặc gán byte wire format trong PR này**. | `OWNER_APPROVED_DIRECTION` (Định hướng được duyệt) / `PLANNED_NOT_IMPLEMENTED` (Chưa triển khai trên wire) · Owner Phê duyệt (2026-11-06, Issue #201 / PR #202 Comment) |
+| **DEC-127-06** | DATA slot timing SF7/SF8 | Baseline triển khai: `NODE_ID == SLOT_INDEX` 1..15, `W_MS=500ms` hữu dụng bao gồm UP_EVENT→GW durable WAL→immediate DOWN_EVENT_ACK cùng Slot; `G_MS=50ms` mỗi bên; full Slot 600ms, 15 Slot = 9000ms chưa tính superframe overhead. Thay W live phải qua signed migration + 100% READY. Guard và timing có thể điều chỉnh bằng versioned profile, không mặc định timing/HIL PASS. | `OWNER_APPROVED_MVP_NUMERIC_CONFIG / HIL_NOT_VERIFIED` · #208 |
+| **DEC-MH-07** | Beacon Window | `DOWN_SYNC_BEACON 0x43` **32B HMAC** thay thế mục tiêu 80B Ed25519. Cửa sổ Beacon phải chứa PHY ToA SF7/SF8 + turnaround/guard; không mặc định 250ms hay 400ms là đã được đo. Beacon trong Maintenance (~300s recurrence), không có Beacon ở DATA Slot0. | `OWNER_APPROVED_MVP_BEACON / HIL_NOT_VERIFIED` · #209/#208 |
+| **DEC-MH-08** | Diagnostic packet | `UP_DIAG_METRICS 0x4A` **23B** được Owner phê duyệt: V2 header7 (AAD), encrypted `DROPPED_EVENT_COUNT:u32BE + DIAG_SEQ:u32BE` 8B, CCM-8 tag8. Health 0x44/21B giữ nguyên; Diagnostics chỉ TX trong Normal Maintenance Management cơ hội đã cấp, hoãn khi Schedule Migration. | `OWNER_APPROVED_MVP_WIRE_DESIGN / IMPLEMENTATION_NOT_VERIFIED` · #204/#205 |
 
 ---
+
+## 2A. Baseline bổ sung ngày 2026-11-07 — chuẩn bị triển khai V2
+
+**Quyết định mới nhất của Owner ưu tiên hơn mô tả lịch sử và draft chưa đồng bộ.**
+
+| Scope | Baseline triển khai | Trạng thái |
+| --- | --- | --- |
+| Join CAD | Node Join bất kỳ lúc nào, CAD/backoff, tối đa 3 retry sau lần đầu; Gateway đáp Join ngay khi Backend chấp thuận và radio có thể TX, chấp nhận collision Event/ACK; Event retry ở lượt Slot Node tiếp theo | OWNER_APPROVED_MVP_DESIGN #208 |
+| Reboot Node | DATA_TX_DISABLED, RX_ONLY, cần Backend kích hoạt lại và xác minh session/sync/schedule; không tự TX chỉ vì có NVS schedule | OWNER_APPROVED_MVP_DESIGN #208 |
+| Diagnostic | 0x4A 23B; giữ Health 21B; REPORT chỉ trong Normal Maintenance Management khi được cấp | OWNER_APPROVED_MVP_WIRE_DESIGN #204 |
+| Beacon key | 256-bit random per-Gateway K_BEACON, trusted local OOB provisioning cho Gateway/Node; byte12 KEY_ID; HMAC-SHA256-128; key compromise có thể spoof Beacon, không authorize schedule | OWNER_APPROVED_MVP_SECURITY_DESIGN #209 |
+| Schedule wire | Backend Ed25519 PREPARE 80B, SCHED_READY 0x4C 41B, DECISION Ed25519 80B; candidate 0x4B/0x4D cần wire registry agreement | OWNER_APPROVED_MVP_DESIGN #208 |
+| No Schedule Lease | Lịch đã COMMIT tiếp tục có hiệu lực tới khi đổi lịch với 100% READY và COMMIT ký, không tự hết hạn theo thời gian | OWNER_APPROVED_MVP_DESIGN #208 |
+
+**Verification:** Bắt đầu code/test không phụ thuộc HIL toàn diện, nhưng không đánh dấu timing/legal/security/HIL PASS khi chưa có bằng chứng. Review trước RF deploy.
 
 ## 3. Bảng Quyết định Lịch sử (D01 .. D13) và Trạng thái Chuyển đổi V2
 
@@ -55,7 +71,7 @@
 | **D02 §5.1** | Profile Superframe P-10S-15 | Đã bãi bỏ khe tranh chấp PCSS. Thay thế bằng mô hình Static DATA Superframe + Maintenance Superframe (~300s). | `OWNER_APPROVED_DESIGN` · Xem `tdma-schedule.md` |
 | **D03 §1** | Pháp lý tần số 921.4 MHz và airtime | Tuân thủ băng tần VN920 (920.250–922.750 MHz); hạn ngạch Node $\le 1.0\%$, GW $\le 10\%$. Công suất phát $\le +14\text{ dBm}$. | `CONFIRMED` / Chờ HIL #169 |
 | **D04 §5.2** | Giả định jitter DIO0 < 50µs | Bắt buộc đo kiểm thực tế trên bench hardware. | `BLOCKED` trên Issue #169 |
-| **D05 §5.3** | Gateway chọn K+3 chuyển lịch | Đã chính thức chuẩn hóa cơ chế đếm ngược $3 \to 2 \to 1$ qua Beacon và hàng rào 100%-READY (`DEC-SEC-05`). | `OWNER_APPROVED_DESIGN` |
+| **D05 §5.3** | Chuyển lịch/Countdown lịch sử | Countdown 3→2→1 **SUPERSEDED** bởi signed PREPARE→100% distinct Schedule READY→signed COMMIT/ABORT tại K_TARGET, tất cả trong một Maintenance nếu đủ thời gian. Quyền DATA của Node mới sau Join vẫn phải chờ Backend-authorized activation riêng. | `OWNER_APPROVED_MVP_DESIGN` · #208 |
 | **D06 §6.3** | Namespace MQTT topics | Sử dụng định dạng chuẩn `iot/v1/gw/{gateway_id}/...`. | `CONFIRMED` · ADR-0002 |
 | **D07 §6.3** | Cờ retain trên topic schedule | Cấm retain=true cho downlink schedule để tránh kích hoạt lịch cũ sau khởi động lại. | `CONFIRMED` |
 | **D08 §6.3** | Phiên bản giao thức MQTT | Bắt buộc MQTT 5.0 (Mosquitto 2.0) với QoS1 và User Properties. | `OWNER_ACCEPTED` (PR #26 MERGED) |
