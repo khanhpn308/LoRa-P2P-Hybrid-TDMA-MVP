@@ -27,23 +27,94 @@ Hệ thống phân tách không gian thời gian RF thành hai cấu trúc Super
 |                                                                                                       |
 |  [ Slot 0: SYNC/GUARD ] [ Slot 1: DATA N1 ] [ Slot 2: DATA N2 ] ... [ Slot N: DATA Nn ] [ GUARD ]     |
 |                                                                                                       |
-|  * Trong từng Slot DATA tĩnh:                                                                         |
+|  * Trong từng Slot DATA tĩnh (Hình minh họa SF7 — NON_NORMATIVE / NOT_VALID_FOR_SF8):                 |
 |    - [ 0..25ms ]: Leading Guard Time (bù trừ jitter ngắt và trôi dạt đồng hồ)                        |
-|    - [ 25..125ms ]: Node phát `UP_EVENT` (0x41, 26B, SF7 ToA ~61.7ms)                                 |
+|    - [ 25..125ms ]: Node phát `UP_EVENT` (0x41, 26B, SF7 ToA 61.696ms; SF8 KHÔNG PHÙ HỢP)            |
 |    - [ 125..145ms ]: Gateway chuyển chế độ bán song công (RX -> TX turnaround) & ghi WAL             |
-|    - [ 145..245ms ]: Gateway phát `DOWN_EVENT_ACK` (0x42, 19B, SF7 ToA ~51.5ms)                      |
+|    - [ 145..245ms ]: Gateway phát `DOWN_EVENT_ACK` (0x42, 19B, SF7 ToA 51.456ms; SF8 KHÔNG PHÙ HỢP)  |
 |    - [ 245..400ms ]: Trailing Guard Time & Node chuyển trạng thái radio                              |
 +-------------------------------------------------------------------------------------------------------+
 | 2. MAINTENANCE SUPERFRAME (Chu kỳ danh định ~300s, xen kẽ định kỳ):                                   |
 |                                                                                                       |
 |  [ Slot 0: BEACON ] [ Slot 1: HEALTH N1 ] [ Slot 2: HEALTH N2 ] ... [ Slot N+1: CTRL_WINDOW ]         |
 |                                                                                                       |
-|  * Slot 0 (0..250ms): Gateway phát `DOWN_SYNC_BEACON` (0x43, 80B, ký số Ed25519)                      |
+|  * Slot 0 [0..250ms] (Hình minh họa SF7 — NON_NORMATIVE / NOT_VALID_FOR_SF8):                         |
+|    Gateway phát `DOWN_SYNC_BEACON` (0x43, 80B, ký số Ed25519; SF7 ToA 143.616ms; SF8 KHÔNG PHÙ HỢP)  |
 |  * Slot 1..N: Từng Node đang hoạt động phát `UP_HEALTH_REPLY` (0x44, 21B, AES-CCM) theo lịch chỉ định |
 |  * Slot N+1 (Cuối chu kỳ): Cửa sổ kiểm soát chung (`CTRL_WINDOW`) phục vụ Join Handshake               |
 |    (0x45 Hello) và bản tin xác nhận sẵn sàng `UP_JOIN_READY` (0x49)                                   |
 +-------------------------------------------------------------------------------------------------------+
 ```
+
+### 2.1 Bảng Đối chiếu Thời gian Chiếm sóng Lý thuyết (Theoretical ToA Baseline)
+
+Tất cả số liệu dưới đây được tính toán từ công thức giải tích chuẩn Semtech SX1276 (Datasheet Rev 7, Mục 4.1.1.5–4.1.1.7) với tham số: **BW 125 kHz, CR 4/5 ($CR=1$), Preamble 8 symbols, Explicit PHY Header, PHY CRC Enabled**.
+
+> [!IMPORTANT]
+> **Phân loại xuất xứ (Provenance):** Các giá trị ToA này mang nhãn `CALCULATED` (kết quả giải tích lý thuyết thuần túy), **KHÔNG** phải số liệu đo kiểm RF thực tế từ bench test. Toàn bộ các độ trễ phần cứng ($\tau_{\text{turnaround}}$, $\tau_{\text{WAL}}$, $\tau_{\text{jitter}}$, $\tau_{\text{drift}}$) là giả định kỹ thuật chờ kiểm chứng thực địa tại Issue #169.
+
+| Loại bản tin | Mã Hex | Cỡ (B) | SF | Preamble (ms) | Payload (ms) | ToA Lý thuyết (ms) | Cửa sổ hình minh họa (ms) | Độ lệch / Đánh giá Khả thi |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| `UP_EVENT` | `0x41` | 26 | SF7 | 12.544 | 49.152 | **61.696** | 100 ([25, 125)) | Dư +38.304ms $\to$ **FEASIBLE (SF7)** |
+| `UP_EVENT` | `0x41` | 26 | SF8 | 25.088 | 88.064 | **113.152** | 100 ([25, 125)) | **Vượt -13.152ms $\to$ INFEASIBLE (SF8)** |
+| `DOWN_EVENT_ACK` | `0x42` | 19 | SF7 | 12.544 | 38.912 | **51.456** | 100 ([145, 245)) | Dư +48.544ms $\to$ **FEASIBLE (SF7)** |
+| `DOWN_EVENT_ACK` | `0x42` | 19 | SF8 | 25.088 | 77.824 | **102.912** | 100 ([145, 245)) | **Vượt -2.912ms $\to$ INFEASIBLE (SF8)** |
+| `DOWN_SYNC_BEACON` | `0x43` | 80 | SF7 | 12.544 | 131.072 | **143.616** | 250 ([0, 250)) | Dư +106.384ms $\to$ **FEASIBLE (SF7)** |
+| `DOWN_SYNC_BEACON` | `0x43` | 80 | SF8 | 25.088 | 231.424 | **256.512** | 250 ([0, 250)) | **Vượt -6.512ms $\to$ INFEASIBLE (SF8)** |
+| `UP_HEALTH_REPLY` | `0x44` | 21 | SF7 | 12.544 | 44.032 | **56.576** | Phân bổ theo slot | **FEASIBLE (SF7)** |
+| `UP_HEALTH_REPLY` | `0x44` | 21 | SF8 | 25.088 | 77.824 | **102.912** | Phân bổ theo slot | **FEASIBLE nếu slot $\ge 150\text{ms}$** |
+
+### 2.2 Phân tích Mâu thuẫn Thời gian & Tính Khả thi (Inconsistency Analysis)
+
+1. **Mâu thuẫn TIM-01 (Static DATA Slot tại SF8):**
+   - **Cửa sổ con đơn lẻ:** `UP_EVENT` (26B) tại SF8 có $\text{ToA} = 113.152\text{ms}$, vượt quá cửa sổ con 100ms $[25, 125)\text{ms}$. `DOWN_EVENT_ACK` (19B) tại SF8 có $\text{ToA} = 102.912\text{ms}$, vượt quá cửa sổ con 100ms $[145, 245)\text{ms}$.
+   - **Phong bì truyền tin hai chiều:** Phong bì minh họa cũ $[25, 245)\text{ms}$ (tổng thời lượng 220ms) phân bổ cho cả Event TX, ACK TX và chuyển đổi RX $\leftrightarrow$ TX. Tại SF8:
+     $$\text{ToA}_{\text{EVENT}}(\text{SF8}) + \tau_{\text{turnaround}} + \text{ToA}_{\text{ACK}}(\text{SF8}) = 113.152 + 20 + 102.912 = 236.064\text{ms} > 220.0\text{ms}$$
+     Vượt quá phong bì **16.064ms** ngay cả khi chưa tính đến độ trễ ghi bền vững SQLite WAL tại Gateway ($\tau_{\text{WAL}}$), jitter ngắt và khoảng bảo vệ dự phòng.
+   - **Kết luận TIM-01:** Phân bổ cửa sổ con $100\text{ms} / 20\text{ms} / 100\text{ms}$ và phong bì 220ms là **HOÀN TOÀN KHÔNG KHẢ THI TẠI SF8**. Hình minh họa cũ được chính thức dán nhãn `NON_NORMATIVE_EXAMPLE / SF7_ONLY_ILLUSTRATION (NOT_VALID_FOR_SF8)`.
+
+2. **Mâu thuẫn TIM-02 (Maintenance Slot 0 Beacon 80B tại SF8):**
+   - Bản tin `DOWN_SYNC_BEACON` (80B, mang chữ ký số Ed25519 64B theo `DEC-MH-01`) có $\text{ToA} = 256.512\text{ms}$ tại SF8.
+   - Thời gian này vượt quá độ dài cửa sổ Slot 0 (250ms) là **6.512ms** khi chưa hề tính đến khoảng bảo vệ (Guard Time) hay độ trễ khởi động modem.
+   - **Kết luận TIM-02:** Khẳng định "Beacon 80B truyền an toàn trong cửa sổ 250ms" là **SAI LẦM KHI VẬN HÀNH TẠI SF8**. Cửa sổ 250ms chỉ khả thi khi Beacon được phát tại SF7 ($\text{ToA} = 143.616\text{ms}$, biên an toàn 106.384ms).
+
+### 2.3 Bất đẳng thức Biểu tượng và Ràng buộc Thẩm định Khe (Symbolic Inequalities)
+
+Để bảo đảm tính an toàn fail-closed, bộ lập lịch TDMA và các bộ thẩm định (validators) bắt buộc phải kiểm tra hệ bất đẳng thức biểu tượng sau cho mỗi cấu hình khe TDMA danh định $T_{\text{slot}}$ (ví dụ 400ms):
+
+$$\begin{cases}
+W_{\text{UP\_EVENT}} \ge \text{ToA}_{\text{UP\_EVENT}}(\text{SF}) + \tau_{\text{jitter\_Node}} \\
+W_{\text{GAP}} \ge \tau_{\text{turnaround\_GW}} + \tau_{\text{WAL\_GW}} \\
+W_{\text{DOWN\_ACK}} \ge \text{ToA}_{\text{DOWN\_ACK}}(\text{SF}) + \tau_{\text{jitter\_GW}} \\
+W_{\text{lead}} + W_{\text{UP\_EVENT}} + W_{\text{GAP}} + W_{\text{DOWN\_ACK}} + W_{\text{trail}} \le T_{\text{slot}} \\
+T_{\text{slot}} \ge W_{\text{lead}} + \text{ToA}_{\text{EVENT}} + \tau_{\text{turnaround\_GW}} + \tau_{\text{WAL\_GW}} + \text{ToA}_{\text{ACK}} + \tau_{\text{turnaround\_Node}} + W_{\text{trail}} + 2 \cdot \tau_{\text{drift\_max}}
+\end{cases}$$
+
+- **Quy tắc Fail-Closed:** Nếu thông số $\tau_{\text{WAL\_GW}}$ (độ trễ ghi SQLite/WAL tại Gateway) chưa được đo đạc chính thức hoặc vượt quá $W_{\text{GAP}} - \tau_{\text{turnaround}}$, bộ thẩm định lịch **bắt buộc phải từ chối lịch (`FAIL_CLOSED`)**.
+
+### 2.4 Phương án Khắc phục Ứng viên (Candidate Solutions — Chờ Duyệt)
+
+Việc khắc phục các mâu thuẫn trên được đưa vào danh mục `OPEN_DECISION` / `CANDIDATE` (không tự ý thay đổi quyết định đã chốt `DEC-127-03` hay bố cục bản tin đã duyệt `DEC-MH-01`):
+
+1. **Khắc phục TIM-01 (Static DATA Slot tại SF8 — DEC-127-06):**
+   - **Phương án A (Tái phân bổ cửa sổ con trong khe 400ms):**
+     Tổng thời gian ToA lý thuyết của SF8 là $113.152 + 102.912 = 216.064\text{ms}$. Trong khe 400ms, tổng biên an toàn còn lại là $400 - 216.064 = 183.936\text{ms}$.
+     *Đề xuất tái phân bổ ứng viên:*
+     - Leading Guard: $[0, 25)\text{ms}$ (25ms)
+     - `UP_EVENT` sub-window: $[25, 150)\text{ms}$ (125ms $\ge 113.152\text{ms}$)
+     - Gateway Turnaround & WAL: $[150, 185)\text{ms}$ (35ms $\ge 20\text{ms} + 15\text{ms}$)
+     - `DOWN_EVENT_ACK` sub-window: $[185, 300)\text{ms}$ (115ms $\ge 102.912\text{ms}$)
+     - Trailing Guard: $[300, 400)\text{ms}$ (100ms)
+   - **Phương án B (Giới hạn PHY Static DATA ở SF7):**
+     Khóa cố định các khe dữ liệu tĩnh ở SF7; SF8 chỉ sử dụng cho các profile khe mở rộng đặc biệt.
+   - **Phương án C (Nới rộng độ dài khe):**
+     Mở rộng $T_{\text{slot}}$ lên 500ms hoặc 600ms nếu độ trễ WAL tại Gateway đòi hỏi biên lớn hơn.
+
+2. **Khắc phục TIM-02 (Cửa sổ Beacon 80B tại SF8 — DEC-MH-07):**
+   - **Phương án A (Mở rộng cửa sổ Slot 0 trong Maintenance Superframe):**
+     Tăng độ dài Slot 0 lên 400ms (hoặc 500ms) trong chu kỳ Maintenance Superframe (~300s). Do chu kỳ bảo trì diễn ra rất thưa, tác động airtime lên Gateway là tối thiểu.
+   - **Phương án B (Khóa cấu hình PHY của Beacon ở SF7):**
+     Quy định riêng bản tin `DOWN_SYNC_BEACON` luôn phát tại SF7 ($\text{ToA} = 143.616\text{ms}$, vừa vặn trong 250ms). Nhược điểm: độ nhạy thu giảm ~2.5 dB so với SF8.
 
 ---
 
@@ -70,7 +141,7 @@ Trước khi bộ điều khiển radio chuyển chip SX1276 sang trạng thái 
 1. **`GUARD_JOIN_ACTIVE` (Cổng 1):** Node phải ở trạng thái `NODE_ACTIVE_DATA_ELIGIBLE`. Node ở trạng thái `UNJOINED`, `JOINING` hoặc `SESSION_READY_NOT_ACTIVE` bị cấm phát sóng dữ liệu. Mã lỗi: `ERR_GUARD_NOT_JOINED`.
 2. **`GUARD_SESSION_VALID` (Cổng 2):** Khóa $K_{\text{SESSION\_UP}}$ đã nạp, thời hạn phiên (lease) còn hiệu lực, và bộ đếm `FRAME_COUNTER < 0xFFFFFFFE`. Mã lỗi: `ERR_GUARD_SESSION_INVALID`.
 3. **`GUARD_SLOT_OWNERSHIP` (Cổng 3):** Bảng lịch hoạt động hiện hành xác nhận khe thời gian hiện tại (`current_slot`) thuộc quyền sở hữu của chính Node. Cấm phát sóng trong khe của Node khác hoặc khe chưa gán. Mã lỗi: `ERR_GUARD_UNASSIGNED_SLOT`.
-4. **`GUARD_TIMING_WINDOW` (Cổng 4):** Bộ đếm thời gian khe $t_{\text{offset}}$ nằm trong cửa sổ cho phép: $t_{\text{offset}} \in [25\text{ms}, 125\text{ms}]$. Nếu trễ ngắt ISR vượt quá 125ms, lập tức hủy phát sóng để tránh đè sang khe tiếp theo. Mã lỗi: `ERR_GUARD_TIMING_WINDOW_VIOLATION`.
+4. **`GUARD_TIMING_WINDOW` (Cổng 4):** Bộ đếm thời gian khe $t_{\text{offset}}$ nằm trong cửa sổ truyền tin hợp lệ của cấu hình khe hiện hành: $t_{\text{offset}} \in [t_{\text{tx\_start}}, t_{\text{tx\_end}}]$ (với hình minh họa SF7 danh định là $[25\text{ms}, 125\text{ms}]$, còn với ứng viên SF8 là $[25\text{ms}, 150\text{ms}]$ theo `DEC-127-06`). Nếu trễ ngắt ISR vượt quá $t_{\text{tx\_end}}$, Node lập tức hủy phát sóng fail-closed để tránh đè sang khoảng turnaround và khe tiếp theo. Mã lỗi: `ERR_GUARD_TIMING_WINDOW_VIOLATION`.
 5. **`GUARD_CLOCK_SYNC` (Cổng 5):** Số lượng Beacon bị mất liên tiếp $N_{\text{MISSED}} < 3$, và sai số trôi dạt đồng hồ tích lũy ước tính $\tau_{\text{drift}} \le 25\text{ms}$. Mã lỗi: `ERR_GUARD_CLOCK_DESYNC`.
 6. **`GUARD_AIRTIME_DUTY` (Cổng 6):** Hạn mức phát sóng tích lũy trong 1 giờ không vượt quá $1.0\%$ (quy định pháp lý thiết bị IoT), và bộ tích lũy token bucket đủ cho ToA gói tin hiện tại ($\ge 61.7\text{ms}$ tại SF7). Mã lỗi: `ERR_GUARD_AIRTIME_EXHAUSTED`.
 7. **`GUARD_HALF_DUPLEX` (Cổng 7):** Đài SX1276 đang ở trạng thái `STANDBY`, không bận nhận gói tin khác, và không nằm trong ranh giới chuyển giao Superframe. Mã lỗi: `ERR_GUARD_HALF_DUPLEX_COLLISION`.
@@ -92,10 +163,12 @@ Trước khi bộ điều khiển radio chuyển chip SX1276 sang trạng thái 
 
 ## 5. Ràng buộc Spreading Factor và Đo đạc Vật lý (#169)
 
-1. **Giới hạn Vận hành MVP V1 (DEC-127-03 Lựa chọn A — Owner Phê duyệt 2026-11-06):**
+1. **Giới hạn Vận hành MVP V1 (DEC-127-03 Lựa chọn A — Owner Phê duyệt 2026-11-06; Bổ chính TIM-01/TIM-02):**
    - Toàn bộ luồng vận hành dữ liệu thời gian thực của MVP V1 **giới hạn nghiêm ngặt ở SF7 và SF8**.
-   - Tại SF7 và SF8, thời gian chiếm sóng khứ hồi được kiểm soát an toàn tuyệt đối trong khe 400ms:
-     $$\text{ToA}_{\text{roundtrip}} = \text{ToA}_{\text{EVENT}} (61.7\text{ms}) + \tau_{\text{turnaround}} (20\text{ms}) + \text{ToA}_{\text{ACK}} (51.5\text{ms}) \approx 133.2\text{ms} < 250\text{ms}$$
+   - **Đối chiếu ToA khứ hồi hai chiều:**
+     - **Tại SF7:** $\text{ToA}_{\text{EVENT}} (61.696\text{ms}) + \tau_{\text{turnaround}} (20\text{ms}) + \text{ToA}_{\text{ACK}} (51.456\text{ms}) \approx 133.152\text{ms} < 250\text{ms}$. Hoàn toàn vừa vặn trong phong bì minh họa $[25, 245)\text{ms}$ (220ms) và khe 400ms.
+     - **Tại SF8:** $\text{ToA}_{\text{EVENT}} (113.152\text{ms}) + \tau_{\text{turnaround}} (20\text{ms}) + \text{ToA}_{\text{ACK}} (102.912\text{ms}) \approx 236.064\text{ms} > 220\text{ms}$. Vượt quá phong bì $[25, 245)\text{ms}$, dù tổng ToA RF lý thuyết ($216.064\text{ms}$) vẫn nằm trong giới hạn khe 400ms (biên còn lại $183.936\text{ms}$).
+   - **Bổ chính:** Hình minh họa cửa sổ con cũ $100\text{ms} / 20\text{ms} / 100\text{ms}$ không áp dụng cho SF8; việc phân bổ lại cửa sổ con trong khe 400ms cho SF8 được đề xuất theo `DEC-127-06` (Candidate) và bắt buộc kiểm chứng thực tế tại Issue #169 trước khi đóng băng hằng số. Độ dài khe 400ms sẽ được tái đánh giá nếu độ trễ ghi WAL tại Gateway ($\tau_{\text{WAL}}$) vượt quá biên cho phép.
    - Độ dài khe 400ms sẽ được tái đánh giá và điều chỉnh sau khi có kết quả đo đạc vật lý thực địa từ Issue #169.
 2. **Khóa Hằng số Số học Chờ Bằng chứng Vật lý:**
    - Tuyệt đối cấm tuyên bố vượt qua cổng G1/G2 hoặc đóng băng các hằng số Guard Time số học trước khi hoàn tất đo đạc trên phần cứng thật tại Issue #169.

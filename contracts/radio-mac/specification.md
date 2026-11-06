@@ -132,8 +132,12 @@ Mọi gói tin V2 Unicast sử dụng **Header chuẩn 7 byte** không mã hóa 
 - **Plaintext trước khi mã hóa (6B):**
   - `MAINT_SEQ` (4B, u32 Big-Endian): Mã tuần tự của chu kỳ Maintenance Superframe hiện tại.
   - `STATUS_FLAGS` (1B): Trạng thái pin, cảm biến, lỗi phần cứng.
-  - `PENDING_COUNT` (1B, u8): Số lượng sự kiện còn tồn đọng trong FIFO chưa được ACK.
+  - `PENDING_COUNT` (1B, u8): Số lượng sự kiện còn tồn đọng tức thời trong FIFO chưa được ACK ($0..255$).
 - **Thẻ xác thực:** `CCM-8 Tag` (8B).
+- **Ràng buộc trường và ngân sách byte (Bổ chính MAC-01 / DEC-MH-02):**
+  - Toàn bộ ngân sách 21 byte đã được phân bổ trọn vẹn ($7\text{B Header} + 6\text{B Plaintext} + 8\text{B Tag} = 21\text{B}$).
+  - `PENDING_COUNT` là chỉ số đo tức thời độ sâu hàng đợi, **tuyệt đối không phải** bộ đếm tích lũy sự kiện bị ghi đè/mất mát (`DROPPED_EVENT_COUNT`).
+  - Bản tin 21B hiện thời **không có trường truyền tải `DROPPED_EVENT_COUNT`** trên đường truyền RF. Cơ chế truyền tải số liệu mất mát được quản lý dưới dạng quyết định mở `DEC-MH-08` (xem Mục 5.2). Cấm tùy tiện chèn byte hoặc định nghĩa lại các trường trong bản tin 21B mà không có phê duyệt từ Project Owner.
 
 #### 5. `UP_JOIN_READY` (0x49, 31 octets)
 - **Header (7B):** `0x49 | GW_ID:1 | NODE_ID:1 | JOIN_COUNTER:4 (Big-Endian)`
@@ -182,16 +186,25 @@ Tuân thủ nghiêm ngặt các quyết định `DEC-SEC-01` .. `DEC-SEC-07` đ�
    - Node chỉ duy trì mã tham chiếu nội bộ `EVENT_REF` (u32 tăng đơn điệu) lưu trong NVS flash.
    - Gateway là nguồn duy nhất phát hành `event_id` chuẩn doanh nghiệp lên Backend MQTT theo bộ ánh xạ:
      $$(\text{gateway\_id}, \text{node\_id}, \text{session\_sel}, \text{frame\_counter}) \longrightarrow \text{event\_id}$$
-2. **Chính sách Tràn bộ nhớ đệm tại Node (`DEC-127-04` — Owner Phê duyệt 2026-11-06):**
-   - Khi mạng mất kết nối kéo dài và hàng đợi NVS FIFO đầy tải, Node áp dụng chính sách **`RING_BUFFER_DROP_OLDEST`**: Ghi đè sự kiện cũ nhất để ưu tiên lưu giữ và truyền báo động mới nhất, đồng thời tăng bộ đếm cảnh báo mất sự kiện `DROPPED_EVENT_COUNT` để báo cáo trong gói Health tiếp theo.
+2. **Chính sách Tràn bộ nhớ đệm tại Node (`DEC-127-04` — Owner Phê duyệt 2026-11-06; Bổ chính MAC-01):**
+   - Khi mạng mất kết nối kéo dài và hàng đợi NVS FIFO đầy tải, Node áp dụng chính sách **`RING_BUFFER_DROP_OLDEST`**: Ghi đè sự kiện cũ nhất để ưu tiên lưu giữ và truyền báo động mới nhất, đồng thời bắt buộc phải tăng và lưu trữ bền vững bộ đếm mất sự kiện `DROPPED_EVENT_COUNT` trong bộ nhớ NVS non-volatile.
+   - **Bổ chính MAC-01 (Kênh truyền tải số liệu mất mát — DEC-MH-08):**
+     - Bản tin sức khỏe định kỳ `UP_HEALTH_REPLY` (0x44, 21B) đã được Owner phê duyệt (`DEC-MH-02`) có bố cục cố định và **không có trường truyền tải `DROPPED_EVENT_COUNT`** (trường `PENDING_COUNT: 1B` chỉ phản ánh số lượng sự kiện hiện đang nằm trong FIFO chưa được ACK, không phải bộ đếm tích lũy sự kiện bị mất).
+     - Việc truyền tải `DROPPED_EVENT_COUNT` lên Gateway/Backend qua sóng RF hiện được phân loại là **`OPEN_DECISION (DEC-MH-08) / NOT_IMPLEMENTED_ON_WIRE`**. Cấm tùy tiện sửa đổi bố cục 21B khi chưa có phê duyệt chính thức từ Owner.
+     - **Các phương án phiên bản hóa ứng viên (`DEC-MH-08`):**
+       - *Phương án 1 (Bản tin Chẩn đoán Riêng biệt — Khuyến nghị):* Giữ nguyên bản tin 21B `UP_HEALTH_REPLY` để tối ưu airtime (56.6ms tại SF7). Định nghĩa bản tin quản trị chẩn đoán riêng (ví dụ `UP_DIAG_METRICS`, mã `0x4A`, candidate) được truyền theo yêu cầu hoặc trong chu kỳ bảo trì, mang bộ đếm mất gói 32-bit, thống kê retry và điện áp pin.
+       - *Phương án 2 (Bản sửa đổi Bố cục Health trong tương lai):* Trình Owner phê duyệt phiên bản mới của bản tin Health (ví dụ 23B hoặc 25B bổ sung `DROPPED_COUNT: 2B/4B`). Đánh đổi: tăng thời gian chiếm sóng ToA và phá vỡ tính tương thích ngược với layout 21B đã đóng băng.
+       - *Phương án 3 (Cờ cảnh báo tràn trong STATUS_FLAGS):* Sử dụng 1 bit dự phòng trong `STATUS_FLAGS` (ví dụ Bit 4 `FLAG_HAS_DROPPED_EVENTS`) để báo hiệu có mất mát, kích hoạt Backend truy vấn chẩn đoán chi tiết sau đó mà không cần mở rộng frame 21B.
 
 ---
 
 ## 6. Ràng buộc Tần số và Thời gian RF (RF Spreading Factor & Timing)
 
-1. **Giới hạn Spreading Factor cho MVP V1 (`DEC-127-03` Lựa chọn A — Owner Phê duyệt 2026-11-06):**
+1. **Giới hạn Spreading Factor cho MVP V1 (`DEC-127-03` Lựa chọn A — Owner Phê duyệt 2026-11-06; Bổ chính TIM-01/TIM-02):**
    - Vận hành hệ thống MVP V1 được **giới hạn nghiêm ngặt ở SF7 và SF8**.
-   - Cơ sở kỹ thuật: Tại SF7 và SF8, thời gian chiếm sóng ToA khứ hồi (`UP_EVENT` 26B $\approx$ 61.7ms + turnaround 20ms + `DOWN_EVENT_ACK` 19B $\approx$ 51.5ms) bảo đảm hoàn thành an toàn trong vòng dưới 250ms, hoàn toàn vừa vặn trong khe thời gian 400ms.
+   - **Đối chiếu ToA khứ hồi hai chiều (Bổ chính TIM-01):**
+     - Tại **SF7:** $\text{ToA}_{\text{EVENT}} (61.696\text{ms}) + \tau_{\text{turnaround}} (20\text{ms}) + \text{ToA}_{\text{ACK}} (51.456\text{ms}) \approx 133.152\text{ms} < 250\text{ms}$. Hoàn toàn bảo đảm hoàn thành an toàn trong khe 400ms và phong bì minh họa $[25, 245)\text{ms}$.
+     - Tại **SF8:** $\text{ToA}_{\text{EVENT}} (113.152\text{ms}) + \tau_{\text{turnaround}} (20\text{ms}) + \text{ToA}_{\text{ACK}} (102.912\text{ms}) \approx 236.064\text{ms} > 220\text{ms}$. Dù tổng ToA RF lý thuyết ($216.064\text{ms}$) vẫn nằm trong khe 400ms, nó vượt quá phong bì minh họa $[25, 245)\text{ms}$ và từng cửa sổ con 100ms. Phân bổ cửa sổ con cho SF8 được xử lý theo `DEC-127-06` (Candidate) trong `tdma-schedule.md` Mục 2.4.
    - Các cấu hình SF9+ tạm thời không kích hoạt trên luồng dữ liệu thời gian thực; việc điều chỉnh độ dài khe 400ms sẽ được tái đánh giá sau khi có số liệu đo đạc vật lý từ Issue #169.
 2. **Độc lập Đo đạc Vật lý (#169):**
    - Mọi hằng số thời gian số học (ms) trong tài liệu này đều mang tính chất định danh biểu tượng (symbolic). Việc đóng băng chính thức các hằng số Guard Time và khe TDMA bị khóa (`BLOCKED`) chờ kết quả đo đạc thực tế từ Issue #169.
