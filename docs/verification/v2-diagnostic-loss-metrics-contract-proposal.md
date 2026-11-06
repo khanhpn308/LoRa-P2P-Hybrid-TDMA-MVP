@@ -39,7 +39,7 @@ In strict accordance with project authority (`AGENTS.md`, `contracts/OPEN_DECISI
 
 | Requirement ID | Domain | Requirement Statement & Authority Source | Verification Gate |
 |:---|:---|:---|:---|
-| **REQ-DIAG-01** | Semantics | Node must maintain `DROPPED_EVENT_COUNT` as a durable cumulative counter incremented strictly upon FIFO drop events (`RING_BUFFER_DROP_OLDEST` under `DEC-127-04`). Durability across crashes remains subject to HIL fault injection (#175). | Gate G2 / Firmware Unit (#131, #175) |
+| **REQ-DIAG-01** | Semantics | Node must maintain `DROPPED_EVENT_COUNT` as a durable cumulative counter incremented strictly upon FIFO drop events (`RING_BUFFER_DROP_OLDEST` under `DEC-127-04`). Crash durability remains `NOT_VERIFIED` pending **Node FIFO** fault injection; #175 targets **Gateway key slots**, not Node FIFO. | Firmware #131 / Node-specific HIL (to scope) |
 | **REQ-DIAG-02** | Framing | `UP_HEALTH_REPLY` (0x44, 21B) must not be altered, expanded, or bit-stuffed (`DEC-MH-02`, `DEC-MH-08`). | Gate G2 / Contract Assert |
 | **REQ-DIAG-03** | Framing | Diagnostic metrics must be encapsulated within a distinct, versioned Unicast uplink message following the standard V2 7-byte Unicast Header format (`DEC-127-01`, `DEC-SEC-01`). | Gate G2 / Wire Codec |
 | **REQ-DIAG-04** | Security | Diagnostic uplinks must be authenticated and encrypted using AES-128-CCM ($M=8$, $L=2$, Nonce=13B) with the active session key $K_{\text{SESSION\_UP}}$ (`DEC-SEC-01`, `DEC-127-02`). | Gate G2 / Crypto Golden Vector |
@@ -154,13 +154,33 @@ To avoid phantom increments or uncounted drops without introducing unreviewed fl
    - *Volatile RAM Queue:* If the event FIFO is maintained in volatile SRAM, any power loss completely clears all pending queue items. Persisting `DROPPED_EVENT_COUNT` in NVS preserves cumulative historical drops, but cannot reconcile uncommitted RAM states across power cycles.
    - *Durable Flash FIFO:* If the FIFO itself resides in flash storage, the drop pointer and the cumulative drop counter exist in separate storage structures. Achieving atomicity across them requires a coordinated recovery protocol.
 2. **Crash-Consistency Architectures (Candidate Design Options):**
-   - *Option 1 (Compound Metadata Record):* Bundle the FIFO read/write pointers and `DROPPED_EVENT_COUNT` into a single combined C struct committed via a single atomic `nvs_set_blob()` operation. Atomicity is inherited from ESP-IDF NVS entry CRC.
+   - *Option 1 (Compound Metadata Record, historical comparison):* Bundle FIFO pointers, generation and `DROPPED_EVENT_COUNT` into a metadata record. **CRC/`nvs_set_blob()` alone is insufficient to establish atomicity with Event records stored separately.** Requires a verified commit/recovery protocol.
    - *Option 2 (Intent Journal / WAL):* Log an intent record (`PENDING_DROP { old_event_ref, target_count }`) prior to queue pointer advancement, committing final state upon queue update completion.
    - *Option 3 (Recovery Reconciliation on Boot):* At boot initialization, scan the persistent FIFO sequence IDs (`EVENT_REF`) against the last committed `DROPPED_EVENT_COUNT` and unacknowledged transmit records to detect and reconcile any partial-transaction gaps.
-3. **Formal Architectural Disposition:**
-   - Because standard ESP-IDF NVS does not natively provide multi-key two-phase transactions, and because defining custom flash sector layouts or journal schemas is outside the authorized scope of this Radio MAC proposal, the exact firmware crash-consistency mechanism is **NOT CLOSED** by this document.
-   - **Status:** **`OPEN_DECISION / NOT_VERIFIED`** (`DEC-DIAG-05`).
-   - Implementation ownership is delegated to **Issue #131** (Node/Gateway firmware queue architecture), and empirical power-loss validation is delegated to **Issue #175** (HIL power-loss fault injection). Zero-loss or atomic durability cannot be claimed without physical HIL proof.
+3. **Formal Architectural Disposition — Owner-approved design direction (2026-11-07):**
+   - **`DEC-DIAG-05 = OWNER_APPROVED_DIRECTION / IMPLEMENTATION_NOT_VERIFIED`:** Adopt **Copy-on-Write (CoW) Event staging + coordinated durable metadata commit + Boot Recovery** for the Node's approved persistent FIFO and cumulative `DROPPED_EVENT_COUNT`. This selects the *architecture*, not a specific ESP-IDF NVS API, Flash partition, journal encoding, bounded-wear algorithm or executable implementation.
+   - A committed FIFO state must bind the queue's selected Event records and read/write pointers to the same committed `DROPPED_EVENT_COUNT` and generation. When the queue is full, a *committed transition* that logically evicts the oldest Event must increment the counter **exactly once**. A failed/uncommitted attempt must not create a phantom increment.
+   - **Crash boundary:** A new Event staged but not yet durably committed is **not guaranteed preserved** across power loss. CoW/recovery aims to restore the previous or newly committed **valid queue snapshot** and avoid inconsistency; it is not a claim of zero data loss for all incoming real-world signals, nor a proof that every possible brownout can be recovered. Explicit status/failure evidence is required when recovery is ambiguous.
+   - **No atomicity shortcut:** `nvs_set_blob()`, CRC or a standalone `nvs_commit()` call **do not by themselves prove atomic cross-record Event + metadata transactions**. Implementation must specify staging capacity, record validation, commit marker/generation, power-fail-safe switching and reclamation order; recoverability must be demonstrated. If Flash full or integrity cannot be established, fail safely rather than falsely increment/drop.
+   - **Owner & HIL scope:** Firmware design/implementation belongs to **Issue #131** (Node Event FIFO). Node-specific power-loss HIL must be separately scoped there or in a dedicated Node HIL Issue. **Issue #175 is the Gateway `INSTALLED_INACTIVE` key-slot NVS fault-injection task, NOT Node FIFO validation.** It may share test methods but its PASS does not certify this decision.
+   - **Boundary:** No firmware/schema/Flash layout/codepoint is authorized by this design document. `0x4A = NOT_APPROVED_WIRE`; `DEC-DIAG-01` wire approval, `DEC-DIAG-02/04/06`, physical HIL and G2 remain separately gated.
+
+#### DEC-DIAG-05 Design Requirements — Pre-Implementation Gate
+
+| ID | Required property | Verification criterion / owner |
+|:---|:---|:---|
+| `REQ-NVS-01` | Persistent FIFO as approved in `DEC-127-04` | Event and cumulative drop-count data survive reboot as specified; prohibit unapproved RAM-only fallback (#131) |
+| `REQ-NVS-02` | Copy-on-Write before logical eviction | Stage and validate replacement Event without overwriting the only committed copy of the old FIFO head; reserve storage for staging/reclamation (#131) |
+| `REQ-NVS-03` | Coherent durable commit boundary | One accepted generation binds queue pointers/records, `EVENT_REF` identity and `DROPPED_EVENT_COUNT`; atomicity must be **implemented and proven**, not inferred from one CRC-bearing blob (#131) |
+| `REQ-NVS-04` | Exact drop accounting | Exactly one durable counter increment per **committed FIFO-full eviction**; no phantom increment if old snapshot remains authoritative; no uncounted committed eviction (#131/#130) |
+| `REQ-NVS-05` | Boot recovery and fail-closed integrity | Select the newest internally consistent committed generation; reject partial/torn/incompatible records. On ambiguous/corrupt states: preserve evidence, signal error and avoid silently resetting count or destructive cleanup (#131) |
+| `REQ-NVS-06` | ACK/pending coherence | Queue removal on an authenticated `DOWN_EVENT_ACK` is also crash-consistent; repeated ACK or retransmit must not delete another Event or double count loss (#131/#130) |
+| `REQ-NVS-07` | Flash endurance and bounded resources | Size staging, NVS overhead, reclaim policy, wear and worst-case latency against expected Event rate; handle full NVS, commit failures and watchdog/queue bounds without unsafe TX (#131/#130) |
+| `REQ-NVS-08` | Physical fault evidence | Test on real Node ESP32/actual Flash partition with controlled injection before/during/after Event staging and metadata commit and during reclamation; report actual coverage and unresolved failure windows (Node-specific HIL scope, **not** #175) |
+
+**Additional clarification to historical candidate options above:** Option 1's description of `nvs_set_blob()` as automatically atomic across FIFO Event records and metadata was **overstated**; it is not accepted as sufficient proof. Option 2/3 are evaluated mechanisms rather than isolated alternative Owner choices: the Owner selected CoW + coordinated commit + recovery **together**, with precise implementation still subject to review.
+
+
 
 ---
 
@@ -621,7 +641,7 @@ Under Health Slot Interleaving, even Maintenance epochs transmit `UP_HEALTH_REPL
 | Test ID | Test Category | Stimulus & Trigger Condition | Expected System Behavior & Invariant | Verification Tier | Tracking Owner |
 |:---|:---|:---|:---|:---:|:---:|
 | **TM-DIAG-01** | Counter Overflow & Wrap | Node FIFO saturated with $>65,535$ drops (Cand 1, 16-bit) or $>4.29\times 10^9$ (Cand 2, 32-bit). | Counter rolls over gracefully. Backend calculates wrapped delta only when elapsed time bounds rule out multi-wrap; otherwise flags `AMBIGUOUS_MULTI_WRAP`. | Unit / Sim | #130 / #131 |
-| **TM-DIAG-02** | Crash & Reboot | Power cut to Node during active event dropping; Node restarts and re-reads NVS flash. | Node recovers last committed `DROPPED_EVENT_COUNT` from NVS. Incomplete write invalidated by CRC. Counter does not reset to zero. | HIL / Fault Injection | #175 / #131 |
+| **TM-DIAG-02** | Crash & Reboot | Power cut to Node during active Event FIFO overflow, including before/after durable metadata commit. | Node selects the previous or next valid committed FIFO+counter snapshot; corruption/torn write is rejected; CRC alone is not an atomicity guarantee. | Node HIL / Fault Injection | #131 / dedicated Node HIL scope (**not #175**) |
 | **TM-DIAG-03** | Duplicate Delivery | Gateway receives duplicate RF transmission (e.g. reflection or re-trigger) with identical `FRAME_COUNTER`. | Gateway rejects duplicate at MAC layer (`FRAME_COUNTER <= LAST_RX`). Zero redundant MQTT publishes. | Sim / Integration | #130 / #131 |
 | **TM-DIAG-04** | Replay Attack | Malicious actor replays valid diagnostic packet from previous superframe. | Gateway detects expired `FRAME_COUNTER` and discards packet. Security log recorded. | Security / Sim | #182 / #130 |
 | **TM-DIAG-05** | Stale Epoch Echo | Node transmits diagnostic packet echoing `MAINT_SEQ` from 10 cycles ago ($K-10$). | Gateway detects desynchronization / stale beacon echo; rejects packet or flags freshness anomaly to Backend. | Contract / Unit | #128 / #131 |
@@ -631,7 +651,7 @@ Under Health Slot Interleaving, even Maintenance epochs transmit `UP_HEALTH_REPL
 | **TM-DIAG-09** | Malformed Length | Received packet has `VER_TYPE=0x4A` but payload length is truncated (e.g. 18B) or oversized (e.g. 35B). | Gateway parser rejects invalid frame length fail-closed without buffer over-read. | Fuzzing / Unit | #130 / #131 |
 | **TM-DIAG-10** | Unallocated Opcode | Node transmits candidate `0x4A` before Owner wire approval is activated. | Gateway rejects frame as unallocated codepoint. (Asserted active by `test_radio_mac_timing_consistency.py`). | Contract Test | #127 / #201 |
 | **TM-DIAG-11** | Backend Idempotency | MQTT broker redelivers identical diagnostic JSON payload twice due to QoS 1 reconnect. | Backend Ingest deduplicates via `(gateway_id, event_id)` or unique constraint on `(node_id, observed_at)`. | Backend Test | #18 / #132 |
-| **TM-DIAG-12** | Flash Saturation Stress| High-frequency alert storm generating 100 drops/second for 10 minutes. | Batched dirty-commit absorbs writes; NVS wear-leveling prevents sector exhaustion; MCU heap remains bounded. | Soak / Sim | #130 / #131 |
+| **TM-DIAG-12** | Flash Saturation Stress| Model high-rate alert storm generating 100 drops/second for 10 minutes (stress case, not typical expected rate). | Measure/estimate Flash capacity, wear, write latency, staging bounds and reclaim success; fail safely on full/failed commit. Do not assume batching or NVS wear-leveling proves endurance or committed loss correctness. | Soak / Sim; physical follow-up | #130 / #131 |
 
 ### 9.1 DEC-DIAG-03 Mandatory Security Test Plan (NOT_EXECUTED)
 
@@ -648,11 +668,28 @@ Under Health Slot Interleaving, even Maintenance epochs transmit `UP_HEALTH_REPL
 
 **Required artifacts before implementation authorization:** Reviewed allocator/call graph; key/session lifecycle and immutable-retry specification; Golden Vectors showing nonce composition and cross-packet uniqueness; unit/contract/integration results for the above scenarios; brownout/sleep HIL data when corresponding implementation paths exist. All eight test cases are **DESIGNED / NOT_RUN** here.
 
+### 9.2 DEC-DIAG-05 Node FIFO Crash-Consistency Test Plan (DESIGNED / NOT_RUN)
+
+**Scope boundary:** These are **Node** FIFO and `DROPPED_EVENT_COUNT` test requirements for #131/#130 and separately scoped physical Node fault injection. **Issue #175 covers Gateway session key-slot NVS only.** No result here establishes an existing PASS.
+
+| Test ID | Trigger / cut point | Expected recoverable invariant | Evidence tier |
+|:---|:---|:---|:---|
+| `TM-DIAG-21` | Saturate persistent FIFO; accept a replacement Event when capacity is exhausted. | A successful committed eviction replaces exactly the oldest pending Event and increments `DROPPED_EVENT_COUNT` **once**. | Unit / Node HIL |
+| `TM-DIAG-22` | Power cut **before** replacement Event staging is durable. | Recover previous valid snapshot; drop counter unchanged. New uncommitted Event is **not guaranteed** preserved. | Fault injection / Node HIL |
+| `TM-DIAG-23` | Power cut after staged Event write but **before** metadata commit. | Recover previous valid committed FIFO+counter; ignore uncommitted staging; no phantom drop. | Fault injection / Node HIL |
+| `TM-DIAG-24` | Power cut during commit marker/metadata write and just after verified commit. | Recover **either old or new valid committed generation**, never a mixed head/tail/Event/count snapshot. Test torn writes and corruption. | Fault injection / Node HIL |
+| `TM-DIAG-25` | Power cut during/after safe reclamation of obsolete Event storage. | Last committed FIFO remains recoverable; committed counter cannot roll back/double increment. | Fault injection / Node HIL |
+| `TM-DIAG-26` | Inject NVS full, write/commit error, invalid checksum/generation, repeated reboot. | No silent counter reset, data overwrite or fabricated drop. Preserve evidence; degrade or fail-closed per reviewed design. | Negative / Node HIL |
+| `TM-DIAG-27` | Power cut around authenticated `DOWN_EVENT_ACK`, queue-head removal and retry. | No unauthorized event deletion, no lost ACK-state consistency; duplicate event and ACK are idempotently handled. | Integration / Node HIL |
+| `TM-DIAG-28` | Sustained bursts with wrap/reclaim, repeated reboot and finite storage. | Prove bounded queue/heap, worst-case commit latency, measured/estimated Flash wear and recovery in actual board/partition configuration; record unsupported windows. | Soak / Node HIL |
+
+**Acceptance hold:** Before claiming `DEC-DIAG-05` implementation PASS, require reviewed `#131` design/code at a known SHA, explicit transaction state machine and generation scheme, Node Flash/NVS configuration, host tests, real-board power-cut logs with cut-point uncertainty, power/current conditions, and an independent Embedded/Hardware review. All `TM-DIAG-21..28` remain **`NOT_RUN / NOT_VERIFIED`** at document creation.
+
 ---
 
 ## 10. Open Decision Register for Owner Review (Deliverable 8)
 
-**DEC-DIAG-01 field-selection subset is `OWNER_APPROVED_FIELD_SELECTION` (2026-11-07)**: keep `DROPPED_EVENT_COUNT`, `DIAG_FLAGS` and `BATTERY_MV` (and `MAINT_SEQ` echo); omit both TX statistics fields. **DEC-DIAG-03 Option A is `OWNER_APPROVED_DIRECTION / IMPLEMENTATION_NOT_VERIFIED` (2026-11-07); remaining implementation and wire decisions are open**, including DEC-DIAG-01 frame layout and codepoint. No wire allocations are made, `0x4A` remains strictly `NOT_APPROVED_WIRE`, and the approved 21B `UP_HEALTH_REPLY` frame remains 100% frozen:
+**Owner-approved partial design choices (2026-11-07):** `DEC-DIAG-01 = OWNER_APPROVED_FIELD_SELECTION` (retain `DROPPED_EVENT_COUNT`, `DIAG_FLAGS`, `BATTERY_MV`, and `MAINT_SEQ`; exclude TX statistics), `DEC-DIAG-03 Option A = OWNER_APPROVED_DIRECTION` (shared uplink `FRAME_COUNTER`), and `DEC-DIAG-05 = OWNER_APPROVED_DIRECTION` (CoW + coordinated metadata commit + Boot Recovery). **All implementation verification and wire/codepoint decisions remain open**; especially `DEC-DIAG-01` 26B frame offsets and `DEC-DIAG-06` allocation. No wire allocation is made, `0x4A` remains `NOT_APPROVED_WIRE`, and `UP_HEALTH_REPLY` (0x44, 21B) remains frozen:
 
 | Decision ID | Summary of Issue | Options Considered | Status & Proposed Disposition | Impacted Teams |
 |:---|:---|:---|:---|:---|
@@ -660,7 +697,7 @@ Under Health Slot Interleaving, even Maintenance epochs transmit `UP_HEALTH_REPL
 | **DEC-DIAG-02** | TDMA Transmission Opportunity | **Option 1:** Interleave with Health Reply (alternating cadence, ~600s health interval).<br>**Option 2:** Expand Maintenance Superframe ($+N$ slots).<br>**Option 3:** Low-frequency periodic diagnostic superframe (~3600s). | `PROPOSED / OPEN_DECISION` — Propose Option 1 with dynamic health override, balancing zero additional slot allocations against halved health frequency. | MAC Scheduler / Gateway |
 | **DEC-DIAG-03** | Frame Counter Domain Binding | **Option A (OWNER SELECTED DESIGN DIRECTION):** Shared `FRAME_COUNTER` under $K_{\text{SESSION\_UP}}$ across newly encrypted Event, Health and future-approved Diagnostic frames, scoped to the authenticated uplink session/key instance.<br>**Option B (NOT SELECTED):** Dedicated derived subkey $K_{\text{DIAG\_UP}}$ with independent counter. | **`OWNER_APPROVED_DIRECTION` (2026-11-07) / `IMPLEMENTATION_NOT_VERIFIED`** — Option A selected; complete `SEC-DIAG-C01..C09` and `TM-DIAG-13..20` security evidence before implementation. No wire approval, no crypto/firmware contract change, `G2=NOT_VERIFIED`. | Security / Crypto / Firmware / HIL |
 | **DEC-DIAG-04** | Retransmission Policy | **Option A:** Best-effort unacknowledged (zero MAC retries).<br>**Option B:** Bounded retry in next maintenance superframe.<br>**Option C:** Dedicated downlink diagnostic ACK. | `PROPOSED / OPEN_DECISION` — Propose Option A (Best-Effort Zero Retries) to eliminate RF clutter and preserve airtime margins. | Radio MAC / Firmware |
-| **DEC-DIAG-05** | NVS Persistence Strategy & FIFO Atomicity | **Option A:** Compound metadata record commit.<br>**Option B:** Slot-synchronized dirty-commit.<br>**Option C:** Boot recovery reconciliation. (Brownout ISR flash write prohibited). | `PROPOSED / OPEN_DECISION` — FIFO/NVS transaction atomicity and durability remain `NOT_VERIFIED pending HIL #175 and firmware queue architecture #131`. | Node Firmware / HIL |
+| **DEC-DIAG-05** | NVS Persistence Strategy & FIFO Atomicity | **OWNER-SELECTED COMBINED DIRECTION:** **Copy-on-Write Event staging + coherent durable metadata commit/generation + Boot Recovery**; preserve persistent NVS Event FIFO and `RING_BUFFER_DROP_OLDEST` counter invariant from `DEC-127-04`. Historical metadata-only / dirty-commit / recovery-only alternatives are not independent approvals. | **`OWNER_APPROVED_DIRECTION` (2026-11-07) / `IMPLEMENTATION_NOT_VERIFIED`**. `REQ-NVS-01..08`, `TM-DIAG-21..28`, storage layout and physical **Node** power-loss tests required before implementation acceptance. #175 is **Gateway key-slot HIL**, not Node FIFO evidence. Brownout ISR Flash writes prohibited. No wire/schema change authorized. | Node Firmware #131 / Node-specific HIL / #130 |
 | **DEC-DIAG-06** | Wire Codepoint Assignment Boundary | **Option A:** Allocate candidate `0x4A` (`UP_DIAG_METRICS`) formally in Wire Registry.<br>**Option B:** Maintain `0x4A` as candidate; freeze wire allocation at Gate G2. | `PROPOSED / OPEN_DECISION` — Propose Option B (`NOT_APPROVED_WIRE`), strictly upholding `DEC-MH-08` policy until formal Owner wire allocation. | Project Owner / G2 Gate |
 
 ---
@@ -671,7 +708,7 @@ Under Health Slot Interleaving, even Maintenance epochs transmit `UP_HEALTH_REPL
 - [x] **AC-1 (Source-Bound Boundaries):** Preserves `UP_HEALTH_REPLY` (0x44, 21B); defines `PENDING_COUNT` as volatile FIFO depth and `DROPPED_EVENT_COUNT` as cumulative loss counter in NVS, with atomicity qualified (Section 1 & 3).
 - [x] **AC-2 (Candidate Designs):** Specifies at least two complete candidate designs with bitfields and wire diagrams (Candidate 1 historical 23B, Candidate 2 historical 29B, Candidate 3 historical TLV 29B/33B, Candidate 4 Reduced MVP proposed primary 26B (Section 4)).
 - [x] **AC-3 (Trade-off & Airtime Analysis):** Compares physical LoRa ToA at SF7 and SF8, evaluates slot budget feasibility as `THEORETICAL_MODEL / ASSUMED_GUARDS_ONLY`, and analyzes byte efficiencies (Section 5).
-- [x] **AC-4 (Field & Semantic Mapping):** Details mathematically bounded modular rollover logic, reboot recovery, batching wear-leveling, and idempotency (Section 3).
+- [x] **AC-4 (Field & Semantic Mapping):** Documents qualified rollover handling and Owner-selected CoW + coordinated metadata commit + Boot Recovery as a **design direction** (Section 3). Flash endurance, physical crash consistency, storage layout and runtime implementation are **NOT_VERIFIED**; batching is not presumed approved.
 - [x] **AC-5 (Security & Replay Analysis):** Evaluates AES-128-CCM nonce uniqueness, shared frame counter domain failure modes, and epoch binding (Section 6). Owner approved `DEC-DIAG-03 Option A` **direction only**; the `SEC-DIAG-C01..C09` conditions and `TM-DIAG-13..20` tests are DESIGN / NOT_RUN and no implementation security acceptance is claimed.
 - [x] **AC-6 (Cross-Layer Impact Matrix):** Produces non-authorizing cross-layer impact matrix distinguishing approved scope from future potential impact across #131, #128, #18/#132, #130, #169, #127, #117 (Section 8).
 - [x] **AC-7 (Negative Test Matrix):** Formulates 12-case negative test suite covering overflow, replay, tampering, desync, and idempotency (Section 9).
@@ -680,6 +717,6 @@ Under Health Slot Interleaving, even Maintenance epochs transmit `UP_HEALTH_REPL
 
 ### 11.2 Status on Completion
 In accordance with the Definition of Done:
-- **Operational Status:** `DESIGN_REMEDIATED / READY_FOR_HUMAN_REVIEW / OWNER_WIRE_APPROVAL_PENDING` (DEC-DIAG-03 Option A `OWNER_APPROVED_DIRECTION`; security implementation `NOT_VERIFIED`)
+- **Operational Status:** `DESIGN_REMEDIATED / READY_FOR_HUMAN_REVIEW / OWNER_WIRE_APPROVAL_PENDING` (`DEC-DIAG-03` and `DEC-DIAG-05` `OWNER_APPROVED_DIRECTION` only; security/Node FIFO implementation `NOT_VERIFIED`)
 - **G2 Gate Status:** `NOT_VERIFIED` (pending physical HIL timing #169 and formal Owner wire allocation).
 - **Existing Baseline Test Evidence:** Execution of `tests/contract/test_radio_mac_timing_consistency.py` verifies baseline contract invariants (0x41..0x49 active codepoints, 0x4A not implemented on wire, 21B budget saturated). It does **NOT** establish implementation PASS, RF/HIL PASS, or cross-layer integration PASS.
