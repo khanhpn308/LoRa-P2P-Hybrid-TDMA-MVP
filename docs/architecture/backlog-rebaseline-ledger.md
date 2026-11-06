@@ -317,6 +317,20 @@ Actual referenced Issue identities:
 - SF8 Event 26B (~113.152ms) / ACK 19B (~102.912ms) violate the legacy **100ms** subwindows; 80B Beacon (~256.512ms) violates **250ms** at SF8 under #201 theoretical PHY assumptions. These results are **not HIL measurements**. No firmware may treat the old subwindows or `400ms` universal slot as verified safe.
 - Release Gates G0–G6 remain evidence-based. **No G1/G2/G3/RF/HIL PASS** follows from this backlog cleanup, merge of design documentation or green syntax CI.
 
+
+### 9.5. Final active-issue legacy remediation and provenance
+
+A live follow-up sweep found additional **active** Issue wording that still could have directed implementation toward obsolete behavior, beyond the 5 design and 4 Wave Issue bodies:
+
+- **#13 (shared MAC/TDMA/airtime components): UPDATED** — former dependency #12/PR #124 V1 is now explicitly historical; merged V1 candidate components must not be mistaken for V2 implementation. #131 owns migration; #127/PR #198 is V2 **DRAFT**; #201/#169 remain timing/HIL gates. Removed an ambiguous dedicated Priority Alert RF budget obligation.
+- **#17 (Gateway MQTT simulator): UPDATED** — replaced periodic telemetry injection with **Event-only Event/burst simulation**, retained 1/10/15 Node configurations strictly as test loads, bound real MQTT schemas to pending #128 and preserved the V1 periodic scenario only as a negative/historical fixture.
+- **#64 (historical G0/R2 remediation): UPDATED** with an explicit historical scope warning: original MAC-001/MAC-007 PCSS/contention requirements are no longer normative after #125/#133/#198. Preserve R2 review evidence; don't reimplement superseded MAC rules.
+- **#199: UPDATED** with a dated live-execution notice to prevent its initial Open-PR and DOC-DRIFT snapshot text from being mistaken for current main/PR status. Parent Issue stays Open for human PR review/merge and final acceptance.
+
+**Outstanding unrelated documentation drift:** `.github/CODEOWNERS` still has a comment `# React Web and Flutter Mobile`. The codeowner paths themselves remain unchanged; this stale comment must not override the Owner-approved Next.js + Kotlin stack (#111/merged PR #112). **This PR does not edit CODEOWNERS**; a separately scoped governance-doc maintenance change is needed if the comment is corrected.
+
+**Final acceptance boundary:** updated Issue bodies ≠ implemented firmware; design decisions ≠ HIL PASS. This PR is a documentation reconciliation with verified GitHub Issue mutation references; human technical sign-off and merge remain separate.
+
 ### 9.4. Closure / review boundary
 
 This PR updates **documentation only**. GitHub Issue mutations above are independent live actions with their own Issue history. **Human Technical Review of this PR and actual PR merge remain pending** until separately confirmed on GitHub. Do not close #199 just from CI success, ledger creation or historical audit table; complete final live consistency audit and review/merge disposition first.
