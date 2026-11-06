@@ -232,13 +232,113 @@ def generate_malformed_fixture(path: Path) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def generate_v2_nominal_fixture(path: Path, cycles: int = 25) -> None:
+    """Generate nominal V2 DATA and Maintenance cycles (26B Event, 19B ACK, 80B Beacon, 21B Health)."""
+    lines: list[str] = []
+    seq = 1
+    t_us = 10_000_000
+    rng = random.Random(2026)
+
+    # Initial boot event
+    lines.append(json.dumps({
+        "ver": "1.0.0", "seq": seq, "role": "NODE", "dev_id": "NODE_HIL_01",
+        "evt": "INIT", "ts_us": t_us, "class": "HOST_SYNTHETIC",
+        "pl_len": 0, "ch": 0, "status": 0, "extra": 0
+    }))
+    seq += 1
+
+    for cycle in range(cycles):
+        t_us += 400_000  # 400 ms TDMA slot / cycle
+
+        # 1. Maintenance Beacon (80B, SF7 ToA: 143,616 us)
+        t_us += rng.randint(10, 20)
+        lines.append(json.dumps({
+            "ver": "1.0.0", "seq": seq, "role": "GATEWAY", "dev_id": "GATEWAY_HIL_01",
+            "evt": "TX_CMD", "ts_us": t_us, "class": "HOST_SYNTHETIC",
+            "pl_len": 80, "ch": 0, "status": 0, "extra": 7
+        }))
+        seq += 1
+        t_us += 143_616 + rng.randint(-15, 15)
+        lines.append(json.dumps({
+            "ver": "1.0.0", "seq": seq, "role": "GATEWAY", "dev_id": "GATEWAY_HIL_01",
+            "evt": "DIO0_IRQ", "ts_us": t_us, "class": "HOST_SYNTHETIC",
+            "pl_len": 80, "ch": 0, "status": 0, "extra": 0
+        }))
+        seq += 1
+
+        # 2. Node Uplink Event (26B, SF7 ToA: 61,696 us)
+        t_us += 25_000  # 25 ms leading guard
+        lines.append(json.dumps({
+            "ver": "1.0.0", "seq": seq, "role": "NODE", "dev_id": "NODE_HIL_01",
+            "evt": "TX_CMD", "ts_us": t_us, "class": "HOST_SYNTHETIC",
+            "pl_len": 26, "ch": 0, "status": 0, "extra": 7
+        }))
+        seq += 1
+        t_us += rng.randint(20, 35)
+        lines.append(json.dumps({
+            "ver": "1.0.0", "seq": seq, "role": "NODE", "dev_id": "NODE_HIL_01",
+            "evt": "TX_START", "ts_us": t_us, "class": "HOST_SYNTHETIC",
+            "pl_len": 26, "ch": 0, "status": 0, "extra": 7
+        }))
+        seq += 1
+        t_us += 61_696 + rng.randint(-10, 10)
+        lines.append(json.dumps({
+            "ver": "1.0.0", "seq": seq, "role": "NODE", "dev_id": "NODE_HIL_01",
+            "evt": "DIO0_IRQ", "ts_us": t_us, "class": "HOST_SYNTHETIC",
+            "pl_len": 26, "ch": 0, "status": 0, "extra": 0
+        }))
+        seq += 1
+        t_us += rng.randint(10, 20)
+        lines.append(json.dumps({
+            "ver": "1.0.0", "seq": seq, "role": "NODE", "dev_id": "NODE_HIL_01",
+            "evt": "TX_DONE", "ts_us": t_us, "class": "HOST_SYNTHETIC",
+            "pl_len": 26, "ch": 0, "status": 0, "extra": 0
+        }))
+        seq += 1
+
+        # 3. Gateway Downlink Event ACK (19B, SF7 ToA: 51,456 us) after WAL commit (15 ms)
+        t_us += 20_000  # 20 ms GW turnaround + WAL latency
+        lines.append(json.dumps({
+            "ver": "1.0.0", "seq": seq, "role": "GATEWAY", "dev_id": "GATEWAY_HIL_01",
+            "evt": "TX_CMD", "ts_us": t_us, "class": "HOST_SYNTHETIC",
+            "pl_len": 19, "ch": 0, "status": 0, "extra": 7
+        }))
+        seq += 1
+        t_us += 51_456 + rng.randint(-10, 10)
+        lines.append(json.dumps({
+            "ver": "1.0.0", "seq": seq, "role": "NODE", "dev_id": "NODE_HIL_01",
+            "evt": "RX_DONE", "ts_us": t_us, "class": "HOST_SYNTHETIC",
+            "pl_len": 19, "ch": 0, "status": 0, "extra": 0
+        }))
+        seq += 1
+
+        # 4. Node Uplink Health Reply (21B, SF7 ToA: 56,576 us)
+        t_us += 30_000
+        lines.append(json.dumps({
+            "ver": "1.0.0", "seq": seq, "role": "NODE", "dev_id": "NODE_HIL_01",
+            "evt": "TX_CMD", "ts_us": t_us, "class": "HOST_SYNTHETIC",
+            "pl_len": 21, "ch": 0, "status": 0, "extra": 7
+        }))
+        seq += 1
+        t_us += 56_576 + rng.randint(-10, 10)
+        lines.append(json.dumps({
+            "ver": "1.0.0", "seq": seq, "role": "NODE", "dev_id": "NODE_HIL_01",
+            "evt": "DIO0_IRQ", "ts_us": t_us, "class": "HOST_SYNTHETIC",
+            "pl_len": 21, "ch": 0, "status": 0, "extra": 0
+        }))
+        seq += 1
+
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def main() -> int:
     generate_nominal_fixture(FIXTURES_DIR / "synthetic_nominal_run.jsonl")
+    generate_v2_nominal_fixture(FIXTURES_DIR / "synthetic_v2_nominal_run.jsonl")
     generate_jitter_burst_fixture(FIXTURES_DIR / "synthetic_jitter_burst.jsonl")
     generate_clock_drift_fixture(FIXTURES_DIR / "synthetic_clock_drift.jsonl")
     generate_dropped_overflow_fixture(FIXTURES_DIR / "synthetic_dropped_overflow.jsonl")
     generate_malformed_fixture(FIXTURES_DIR / "malformed_samples.jsonl")
-    print(f"Generated 5 synthetic test fixtures in: {FIXTURES_DIR}")
+    print(f"Generated 6 synthetic test fixtures in: {FIXTURES_DIR}")
     return 0
 
 

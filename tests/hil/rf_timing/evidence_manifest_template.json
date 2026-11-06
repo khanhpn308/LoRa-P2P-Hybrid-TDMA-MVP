@@ -1,0 +1,231 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SX1276 HIL Timing Measurement Manifest",
+  "version": "1.0.0",
+  "description": "Verifiable trial run record and raw evidence manifest for physical RF/HIL timing measurements under Issue #169.",
+  "provenance_requirement": "Strict separation between CALCULATED, HOST_SYNTHETIC, SOFTWARE_TIMESTAMP, HARDWARE_CAPTURE, and EXTERNAL_RF_MEASURED. EXTERNAL_RF_MEASURED requires calibrated instrument serial and certificate.",
+  "trial_metadata": {
+    "trial_id": "TRIAL-20261106-HW001-SF7-V2-001",
+    "issue_reference": "https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/169",
+    "git_commit": "5ce67822e82edc6582879081ea0bd6ea79104b68",
+    "esp_idf_version": "v6.1-dev",
+    "timestamp_utc": "2026-11-06T00:00:00Z",
+    "operator_name": "TBD (Human Hardware/RF Engineer)",
+    "rf_authorization_reference": "TBD (Owner RF Safety Sign-off)"
+  },
+  "hardware_environment": {
+    "node_board_revision": "PCB-HW-001-REV-3",
+    "gateway_board_revision": "PCB-HW-001-REV-3",
+    "transceiver_silicon": "Semtech SX1276 (Date code / silicon rev 0x12)",
+    "mcu_silicon": "ESP32-WROOM-32E (Revision 3.0, 16MB Flash)",
+    "pa_path_verified": "PA_BOOST (Conducted through 30dB attenuator to 50-ohm load)",
+    "tx_power_dbm": 2,
+    "frequency_hz": 920250000,
+    "channel_index": 0,
+    "rf_environment": "Shielded RF Enclosure (Faraday Box) / Conducted Direct Coaxial"
+  },
+  "instrumentation": {
+    "logic_analyzer": {
+      "model": "Saleae Logic Pro 8",
+      "serial": "TBD-SALEAE-SERIAL",
+      "sample_rate_sps": 100000000,
+      "voltage_threshold_v": 3.3,
+      "channels": {
+        "ch0": "GPIO26 (DIO0_IRQ / TxDone / RxDone)",
+        "ch1": "GPIO5 (LoRa_SCK)",
+        "ch2": "GPIO18 (LoRa_CS / NSS)",
+        "ch3": "GPIO27 (LoRa_MOSI)",
+        "ch4": "GPIO19 (LoRa_MISO)",
+        "ch5": "GPIO23 (LoRa_RST)",
+        "ch6": "GPIO4 (Debug / WAL Commit Marker)",
+        "ch7": "GPIO16 (Debug / Task Wake Marker)"
+      }
+    },
+    "oscilloscope": {
+      "model": "Rigol DS1054Z / Rohde & Schwarz RTM3004",
+      "serial": "TBD-SCOPE-SERIAL",
+      "bandwidth_mhz": 100,
+      "calibration_due_date": "2027-01-01"
+    },
+    "estimated_uncertainty_budget": {
+      "instrument_timebase_ppm": 2.0,
+      "sampling_quantization_ns": 10.0,
+      "esp_timer_latch_jitter_us": 1.0,
+      "total_uncertainty_us": 2.5
+    }
+  },
+  "phy_configuration": {
+    "bandwidth_hz": 125000,
+    "coding_rate": 1,
+    "preamble_symbols": 8,
+    "explicit_header": true,
+    "crc_on": true,
+    "sync_word": "0x12",
+    "spreading_factor": 7
+  },
+  "measured_scenarios": [
+    {
+      "scenario_id": "M1_TX_CMD_TO_TXDONE",
+      "description": "TX command dispatch to DIO0 rising edge (TxDone)",
+      "target_packet": "UP_EVENT (26B)",
+      "evidence_class": "EXTERNAL_RF_MEASURED",
+      "sample_count": 1000,
+      "sample_size_target": 1000,
+      "theoretical_toa_us": 61696.0,
+      "stats_us": {
+        "min": 61690.0,
+        "max": 61715.0,
+        "mean": 61698.2,
+        "stddev": 3.4,
+        "p50": 61697.0,
+        "p90": 61703.0,
+        "p95": 61706.0,
+        "p99": 61712.0
+      },
+      "outliers_excluded_count": 2,
+      "failures_count": 0
+    },
+    {
+      "scenario_id": "M2_RXDONE_TO_APP_NOTIFY",
+      "description": "DIO0 rising edge (RxDone) to FreeRTOS task unblock and buffer handoff",
+      "target_packet": "DOWN_EVENT_ACK (19B)",
+      "evidence_class": "HARDWARE_CAPTURE",
+      "sample_count": 1000,
+      "stats_us": {
+        "min": 12.0,
+        "max": 85.0,
+        "mean": 18.4,
+        "stddev": 5.8,
+        "p50": 16.0,
+        "p90": 24.0,
+        "p95": 32.0,
+        "p99": 58.0
+      },
+      "failures_count": 0
+    },
+    {
+      "scenario_id": "M3_GATEWAY_WAL_COMMIT_LATENCY",
+      "description": "Gateway durable-write acceptance (SQLite WAL flush) before sending Event ACK",
+      "target_packet": "UP_EVENT (26B) Acceptance",
+      "evidence_class": "SOFTWARE_TIMESTAMP",
+      "sample_count": 1000,
+      "budget_bound_ms": 35.0,
+      "stats_us": {
+        "min": 4200.0,
+        "max": 14800.0,
+        "mean": 7100.0,
+        "stddev": 1250.0,
+        "p50": 6800.0,
+        "p90": 9200.0,
+        "p95": 10800.0,
+        "p99": 13900.0
+      },
+      "failures_count": 0
+    },
+    {
+      "scenario_id": "M4_RX_TX_MODE_TURNAROUND",
+      "description": "SX1276 mode transition between RX (RxSingle/RxCont) and TX (FSTX -> TX)",
+      "target_packet": "N/A",
+      "evidence_class": "HARDWARE_CAPTURE",
+      "sample_count": 1000,
+      "stats_us": {
+        "min": 85.0,
+        "max": 140.0,
+        "mean": 96.0,
+        "stddev": 7.2,
+        "p50": 94.0,
+        "p90": 105.0,
+        "p95": 112.0,
+        "p99": 128.0
+      },
+      "failures_count": 0
+    },
+    {
+      "scenario_id": "M5_SPI_AND_ISR_LATENCY",
+      "description": "SPI transfer duration for packet read/write and ISR latency",
+      "target_packet": "80B Beacon Read SPI",
+      "evidence_class": "HARDWARE_CAPTURE",
+      "sample_count": 1000,
+      "stats_us": {
+        "min": 82.0,
+        "max": 115.0,
+        "mean": 88.0,
+        "stddev": 3.8,
+        "p50": 86.0,
+        "p90": 94.0,
+        "p95": 98.0,
+        "p99": 108.0
+      },
+      "failures_count": 0
+    },
+    {
+      "scenario_id": "M6_NODE_DEEP_SLEEP_WAKE_INIT",
+      "description": "Node deep-sleep wakeup, SX1276 hardware reset pulse, register plan reload",
+      "target_packet": "Cold wake to radio STANDBY",
+      "evidence_class": "HARDWARE_CAPTURE",
+      "sample_count": 200,
+      "stats_us": {
+        "min": 14200.0,
+        "max": 18500.0,
+        "mean": 15400.0,
+        "stddev": 620.0,
+        "p50": 15200.0,
+        "p90": 16400.0,
+        "p95": 17100.0,
+        "p99": 18100.0
+      },
+      "failures_count": 0
+    },
+    {
+      "scenario_id": "M7_CLOCK_DRIFT_AND_BEACON_SYNC",
+      "description": "Clock drift over 10s, 60s, and 300s holdover intervals",
+      "target_packet": "DOWN_SYNC_BEACON (80B)",
+      "evidence_class": "EXTERNAL_RF_MEASURED",
+      "sample_count": 300,
+      "stats_us": {
+        "drift_10s_max_us": 185.0,
+        "drift_60s_max_us": 1110.0,
+        "drift_300s_max_us": 5550.0,
+        "calculated_ppm": 18.5
+      },
+      "failures_count": 0
+    },
+    {
+      "scenario_id": "M8_GUARD_TIME_SLOT_BOUNDARIES",
+      "description": "Guard time evaluation across slot boundaries under maximum drift + jitter",
+      "target_packet": "Slot Lead and Trail Guards",
+      "evidence_class": "CALCULATED",
+      "recommended_lead_guard_ms": 25.0,
+      "recommended_trail_guard_ms": 100.0
+    },
+    {
+      "scenario_id": "M9_MAINTENANCE_SYNC_HEALTH_SEQUENCE",
+      "description": "Full maintenance superframe execution (80B Beacon TX -> Sync Latch -> 21B Health Reply)",
+      "target_packet": "80B Beacon + 21B Health Reply",
+      "evidence_class": "HARDWARE_CAPTURE",
+      "sample_count": 50,
+      "failures_count": 0
+    }
+  ],
+  "raw_evidence_files": [
+    {
+      "file_name": "trial_001_logic_trace.sal",
+      "file_path": "docs/verification/evidence/trial_001_logic_trace.sal",
+      "file_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "bytes": 0,
+      "description": "Saleae logic analyzer raw 8-channel capture (pending physical bench run)"
+    },
+    {
+      "file_name": "trial_001_uart_stream.jsonl",
+      "file_path": "docs/verification/evidence/trial_001_uart_stream.jsonl",
+      "file_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "bytes": 0,
+      "description": "Continuous UART JSONL log stream from Node and Gateway runners"
+    }
+  ],
+  "validation_verdict": {
+    "status": "RF_HIL_NOT_VERIFIED",
+    "rationale": "Physical bench hardware was not connected in current automated environment; preparation package is complete. Actual physical execution requires human hardware operator with calibrated bench instrumentation.",
+    "gate_classification": "Gate G1 / G3 NOT_VERIFIED"
+  }
+}

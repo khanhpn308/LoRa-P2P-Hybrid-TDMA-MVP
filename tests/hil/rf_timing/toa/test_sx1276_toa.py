@@ -35,6 +35,22 @@ EXPECTED_VECTORS_SF8 = {
     48: {"n_payload": 73, "toa_us": 174_592.0},
 }
 
+# Normative V2 Packet Vectors (Issue #169 / Issue #201 / PR #202):
+# 19B (DOWN_EVENT_ACK), 21B (UP_HEALTH_REPLY), 26B (UP_EVENT), 80B (DOWN_SYNC_BEACON)
+EXPECTED_V2_VECTORS_SF7 = {
+    19: {"n_payload": 38, "toa_us": 51_456.0},
+    21: {"n_payload": 43, "toa_us": 56_576.0},
+    26: {"n_payload": 48, "toa_us": 61_696.0},
+    80: {"n_payload": 128, "toa_us": 143_616.0},
+}
+
+EXPECTED_V2_VECTORS_SF8 = {
+    19: {"n_payload": 38, "toa_us": 102_912.0},
+    21: {"n_payload": 38, "toa_us": 102_912.0},
+    26: {"n_payload": 43, "toa_us": 113_152.0},
+    80: {"n_payload": 113, "toa_us": 256_512.0},
+}
+
 
 def test_hand_calculated_vectors_sf7():
     for pl, exp in EXPECTED_VECTORS_SF7.items():
@@ -54,6 +70,26 @@ def test_hand_calculated_vectors_sf8():
         assert abs(res.toa_calculated_us - exp["toa_us"]) < 1e-3
         assert res.provenance == "CALCULATED"
         assert res.ldro_on is False
+
+
+def test_v2_vectors_sf7():
+    """Verify exact ToA for V2 packets (19B ACK, 21B Health, 26B Event, 80B Beacon) at SF7."""
+    for pl, exp in EXPECTED_V2_VECTORS_SF7.items():
+        inp = ToAInput(sf=7, bw_hz=125_000, cr=1, payload_bytes=pl)
+        res = calculate_sx1276_toa(inp)
+        assert res.n_payload_sym == exp["n_payload"], f"Failed for SF7 V2 PL={pl}"
+        assert abs(res.toa_calculated_us - exp["toa_us"]) < 1e-3
+        assert res.provenance == "CALCULATED"
+
+
+def test_v2_vectors_sf8():
+    """Verify exact ToA for V2 packets (19B ACK, 21B Health, 26B Event, 80B Beacon) at SF8."""
+    for pl, exp in EXPECTED_V2_VECTORS_SF8.items():
+        inp = ToAInput(sf=8, bw_hz=125_000, cr=1, payload_bytes=pl)
+        res = calculate_sx1276_toa(inp)
+        assert res.n_payload_sym == exp["n_payload"], f"Failed for SF8 V2 PL={pl}"
+        assert abs(res.toa_calculated_us - exp["toa_us"]) < 1e-3
+        assert res.provenance == "CALCULATED"
 
 
 def test_secondary_implementation_consistency():

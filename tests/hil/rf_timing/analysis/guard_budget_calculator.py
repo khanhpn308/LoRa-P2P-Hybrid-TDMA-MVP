@@ -239,3 +239,183 @@ def calculate_slot_feasibility(params: SlotFeasibilityInput) -> SlotFeasibilityR
         rejection_reason=rejection_reason,
         slot_timetable=timetable,
     )
+
+
+# --- V2 Normative Specification & Parameterized Budget Validation (PR #202 / Issue #169) ---
+
+V2_PAYLOAD_UP_EVENT = 26
+V2_PAYLOAD_DOWN_EVENT_ACK = 19
+V2_PAYLOAD_DOWN_SYNC_BEACON = 80
+V2_PAYLOAD_UP_HEALTH_REPLY = 21
+
+
+@dataclass(frozen=True)
+class V2SlotTimingConfig:
+    sf: int
+    slot_duration_ms: float
+    guard_lead_ms: float
+    event_window_ms: float
+    gap_turnaround_ms: float
+    ack_window_ms: float
+    guard_trail_ms: float
+    wal_latency_ms: float | None = None
+    node_turnaround_ms: float = 20.0
+    max_clock_drift_ms: float = 25.0
+
+
+@dataclass(frozen=True)
+class V2SlotValidationResult:
+    is_valid: bool
+    status: str
+    reason: str
+    toa_event_ms: float
+    toa_ack_ms: float
+    total_allocated_ms: float
+    min_required_budget_ms: float
+    slack_margin_ms: float
+    provenance: str = "CALCULATED"
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def validate_v2_data_slot_timing(cfg: V2SlotTimingConfig) -> V2SlotValidationResult:
+    """Symbolic validator for V2 Static DATA Slot parameterized geometry.
+
+    Enforces the parameterized inequality system from PR #202 / DEC-127-06:
+      W_UP_EVENT >= ToA_UP_EVENT(SF)
+      W_GAP >= tau_turnaround_GW + tau_WAL_GW
+      W_DOWN_ACK >= ToA_DOWN_ACK(SF)
+      W_lead + W_UP_EVENT + W_GAP + W_DOWN_ACK + W_trail <= T_slot
+      T_slot >= W_lead + ToA_EVENT + W_GAP + ToA_ACK + W_trail
+
+    Fails closed if Gateway WAL write latency is unknown (DEC-127-05) or any inequality is violated.
+    """
+    toa_event_res = calculate_sx1276_toa(ToAInput(sf=cfg.sf, bw_hz=125_000, cr=1, payload_bytes=V2_PAYLOAD_UP_EVENT))
+    toa_ack_res = calculate_sx1276_toa(ToAInput(sf=cfg.sf, bw_hz=125_000, cr=1, payload_bytes=V2_PAYLOAD_DOWN_EVENT_ACK))
+
+    toa_event = round(toa_event_res.toa_calculated_ms, 3)
+    toa_ack = round(toa_ack_res.toa_calculated_ms, 3)
+
+    total_allocated = round(
+        cfg.guard_lead_ms + cfg.event_window_ms + cfg.gap_turnaround_ms + cfg.ack_window_ms + cfg.guard_trail_ms,
+        3
+    )
+    min_required_budget = round(
+        cfg.guard_lead_ms + toa_event + cfg.gap_turnaround_ms + toa_ack + cfg.guard_trail_ms,
+        3
+    )
+    slack_margin = round(cfg.slot_duration_ms - total_allocated, 3)
+
+    # 1. Fail closed if Gateway WAL write latency is unknown / unbounded
+    if cfg.wal_latency_ms is None:
+        return V2SlotValidationResult(
+            is_valid=False,
+            status="FAIL_CLOSED",
+            reason="FAIL_CLOSED: Gateway WAL write latency is unknown/unbounded (DEC-127-05 unresolved)",
+            toa_event_ms=toa_event,
+            toa_ack_ms=toa_ack,
+            total_allocated_ms=total_allocated,
+            min_required_budget_ms=min_required_budget,
+            slack_margin_ms=slack_margin,
+        )
+
+    # 2. Check Event sub-window
+    if cfg.event_window_ms < toa_event:
+        return V2SlotValidationResult(
+            is_valid=False,
+            status="REJECT_EVENT_OVERRUN",
+            reason=f"FAIL_CLOSED: Event sub-window ({cfg.event_window_ms}ms) < ToA ({toa_event}ms) for SF{cfg.sf}",
+            toa_event_ms=toa_event,
+            toa_ack_ms=toa_ack,
+            total_allocated_ms=total_allocated,
+            min_required_budget_ms=min_required_budget,
+            slack_margin_ms=slack_margin,
+        )
+
+    # 3. Check ACK sub-window
+    if cfg.ack_window_ms < toa_ack:
+        return V2SlotValidationResult(
+            is_valid=False,
+            status="REJECT_ACK_OVERRUN",
+            reason=f"FAIL_CLOSED: ACK sub-window ({cfg.ack_window_ms}ms) < ToA ({toa_ack}ms) for SF{cfg.sf}",
+            toa_event_ms=toa_event,
+            toa_ack_ms=toa_ack,
+            total_allocated_ms=total_allocated,
+            min_required_budget_ms=min_required_budget,
+            slack_margin_ms=slack_margin,
+        )
+
+    # 4. Check Gap window against WAL write latency
+    if cfg.gap_turnaround_ms < cfg.wal_latency_ms:
+        return V2SlotValidationResult(
+            is_valid=False,
+            status="REJECT_GAP_UNDER_BUDGET",
+            reason=f"FAIL_CLOSED: Gap window ({cfg.gap_turnaround_ms}ms) < required WAL latency ({cfg.wal_latency_ms}ms)",
+            toa_event_ms=toa_event,
+            toa_ack_ms=toa_ack,
+            total_allocated_ms=total_allocated,
+            min_required_budget_ms=min_required_budget,
+            slack_margin_ms=slack_margin,
+        )
+
+    # 5. Check sum of sub-windows against total slot duration
+    if total_allocated > cfg.slot_duration_ms:
+        return V2SlotValidationResult(
+            is_valid=False,
+            status="REJECT_SLOT_OVERRUN",
+            reason=f"FAIL_CLOSED: Sum of sub-windows ({total_allocated}ms) exceeds slot duration ({cfg.slot_duration_ms}ms)",
+            toa_event_ms=toa_event,
+            toa_ack_ms=toa_ack,
+            total_allocated_ms=total_allocated,
+            min_required_budget_ms=min_required_budget,
+            slack_margin_ms=slack_margin,
+        )
+
+    # 6. Minimum required theoretical budget check
+    if min_required_budget > cfg.slot_duration_ms:
+        return V2SlotValidationResult(
+            is_valid=False,
+            status="REJECT_THEORETICAL_DEFICIT",
+            reason=f"FAIL_CLOSED: Minimum theoretical budget ({min_required_budget}ms) exceeds slot ({cfg.slot_duration_ms}ms)",
+            toa_event_ms=toa_event,
+            toa_ack_ms=toa_ack,
+            total_allocated_ms=total_allocated,
+            min_required_budget_ms=min_required_budget,
+            slack_margin_ms=slack_margin,
+        )
+
+    return V2SlotValidationResult(
+        is_valid=True,
+        status="PASS",
+        reason=f"PASS: Valid schedule timing budget for SF{cfg.sf} (slack {slack_margin}ms)",
+        toa_event_ms=toa_event,
+        toa_ack_ms=toa_ack,
+        total_allocated_ms=total_allocated,
+        min_required_budget_ms=min_required_budget,
+        slack_margin_ms=slack_margin,
+    )
+
+
+def validate_v2_beacon_window(sf: int, beacon_window_ms: float = 250.0) -> tuple[bool, str, float, float]:
+    """Validate 80B Ed25519 Beacon window feasibility (PR #202 / DEC-MH-07).
+
+    Returns (is_feasible, reason, toa_beacon_ms, margin_ms).
+    """
+    res = calculate_sx1276_toa(ToAInput(sf=sf, bw_hz=125_000, cr=1, payload_bytes=V2_PAYLOAD_DOWN_SYNC_BEACON))
+    toa_ms = round(res.toa_calculated_ms, 3)
+    margin_ms = round(beacon_window_ms - toa_ms, 3)
+
+    if margin_ms < 0:
+        return (
+            False,
+            f"REJECT_BEACON_OVERRUN: Beacon ToA ({toa_ms}ms) exceeds window ({beacon_window_ms}ms) by {-margin_ms}ms at SF{sf}",
+            toa_ms,
+            margin_ms,
+        )
+    return (
+        True,
+        f"PASS: Beacon ToA ({toa_ms}ms) fits within window ({beacon_window_ms}ms) with margin {margin_ms}ms at SF{sf}",
+        toa_ms,
+        margin_ms,
+    )
