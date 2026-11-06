@@ -1,6 +1,6 @@
 # Source-Bound Backlog Rebaseline & Authority Ledger (Issue #199)
 
-**Trạng thái tài liệu:** `OWNER_BOUND_AUDIT_REPORT` / `CANONICAL_REBASELINE`  
+**Trạng thái tài liệu:** `AUDIT_SNAPSHOT` / `SOURCE_BOUND_TRACKING` / `NON_NORMATIVE` — sổ đối chiếu, **không** thay thế Owner-approved ADR/Requirements hoặc versioned contract theo trạng thái phê duyệt.  
 **Ngày thực hiện:** 2026-11-06 (Remediated)  
 **Live main HEAD snapshot:** `270888a076f4234ea3b59f38ef7f1c01e6435c22`  
 **Commit cơ sở:** `Merge pull request #198 from khanhpn308/feature/127-g2-integration-review`  
@@ -278,4 +278,45 @@ Tuân thủ nghiêm ngặt nguyên tắc: **Chỉ ghi nhận bằng chứng đo 
 5. Các Issue chứa AC định kỳ (#77, #78) đã có hồ sơ đề xuất hủy rõ ràng kèm successor mapping; các Issue onboarding (#79, #80, #90, #91, #117) đã có phương án cập nhật AC bám sát các quyết định đã duyệt, không bịa đặt thêm giao thức hay hành vi UI ngoài nguồn.
 6. Toàn bộ các cổng nghiệm thu G0–G6 được xác định trung thực ở trạng thái `NOT_VERIFIED` (hoặc `NOT_VERIFIED / BLOCKED`), phản ánh đúng thực tế chưa có biên bản nghiệm thu vật lý hoặc phê duyệt văn bản chính thức.
 
-*Tài liệu này đóng vai trò là cơ sở pháp lý và kỹ thuật duy nhất để Project Owner và đội ngũ phát triển điều phối các nhánh công việc tiếp theo trong kho mã nguồn.*
+*Tài liệu này là evidence ledger phục vụ review và truy vết Issue #199, không phải nguồn thẩm quyền duy nhất. Nếu có xung đột, ưu tiên Owner-approved decisions, ADR/Requirements và versioned contract đúng approval status tại `main`.*
+
+
+---
+
+## 9. Addendum — GitHub live backlog execution after audit snapshot (2026-11-06)
+
+**Nature:** Historical audit Section 4 (40 Open Issues) remains a **snapshot** of the 40 pre-existing domain/Wave issues. Its rows are not a continuously updated Open list. After the snapshot, #199 coordination and #201 corrective were already open; a new narrowly-scoped successor #203 has since been created and original #77/#78 have been closed. For current counts/states, **re-fetch live GitHub**, never infer from old table.
+
+### 9.1. Verified mutations (Issue #199)
+
+| Issue(s) | Actual action | Authorization/provenance | Result |
+|---|---|---|---|
+| #79, #80, #90, #91, #117 | Updated Issue bodies/AC and logged traceability comments | Owner #125 / merged PR #133; #127 / merged PR #198 V2 draft; #182 / merged PR #193; #111 / merged PR #112 | **UPDATED**; keep legacy discussions as historical, new active instructions govern |
+| #73, #74, #75, #76 | Updated Wave tracker bodies, dependencies and stale application-access/client-stack references | Same merged baseline, plus #201 corrective as pending integration | **UPDATED**; Wave trackers are not contract authorities |
+| #79 (follow-up) | Removed stale `Priority Alert` from operative Downlink rule; separated #12 V1 provenance from V2 design authority and preserved approved Join/Recovery review rights | Owner #125/#127; #201 only owner-approved **direction**, not merged numerical schedule | **UPDATED**; no PCSS/CAD operating mode resurrected |
+| #91 (follow-up) | Corrected obsolete Flutter/React-only exclusion language to Next.js/Kotlin native client scope | #111 / merged PR #112 | **UPDATED** |
+| #73–#76 (follow-up) | Removed unsupported assertion that Next.js version **15** (and React 19/Tailwind choice) was approved by #111/#112; #75 includes full `0x45→0x46→0x47→0x48→0x49` Join sequence; #76 removes fixed **400ms** RF timing acceptance | #111 / merged PR #112; V2 Join #127 / PR #198; #201 Owner-approved direction; #169 HIL pending | **UPDATED** |
+| #203 | Created design-only successor for valid sensor sample threshold/hysteresis/latch/clear scope not fully covered by button-only #149 or queue-only #131 | #77 provenance + Event-only #125/PR #133; no new mandatory wire/algorithm decision | **CREATED** — `PROPOSED_DESIGN / NOT_IMPLEMENTED` |
+| #77 | Posted closure rationale and successor mapping #203/#149/#131/#130/#128, then closed as `not_planned` | Owner instruction to execute the #199 disposition sequence; superseded architecture #125/PR #133 | **CLOSED_NOT_PLANNED**; valid sensing design preserved in #203 |
+| #78 | Posted closure rationale and successor mapping #127/#201/#131/#130/#169, then closed as `not_planned` | Same Owner instruction; MAC V2 #127/merged PR #198 removes periodic mode/PCSS/CAD-backoff as default Event access | **CLOSED_NOT_PLANNED** |
+
+**Source links:** [#77](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/77), [#78](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/78), [#203](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/203), [#199](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/199).
+
+### 9.2. Errata to external terminal handoff report
+
+A separate terminal summary displayed incorrect human-readable labels (e.g., `#12=Web Dashboard`, `#13=Device Management`, `#17=Mobile Auth`) and incorrect packet registry (`0x47=JOIN_ACTIVATION_REQUEST`, `0x48=JOIN_ACTIVATION_REPLY`, `0x49=JOIN_REJECT`). **Do not reuse those labels or packet aliases as engineering inputs.**
+
+Actual referenced Issue identities:
+- **#12** = Radio MAC V1 historical contract/Golden Vectors, **#13** = shared MAC/TDMA/airtime firmware implementation, **#17** = Gateway MQTT simulator.
+- **#18** = Backend Event-only ingest/durable dedup, **#19** = Backend Static TDMA Scheduler, **#154** = Backend channel registry, **#169** = RF/HIL timing gate.
+- V2: `0x45 UP_JOIN_HELLO (68B)` → `0x46 DOWN_JOIN_GRANT (66B)` → `0x47 UP_JOIN_KEY_CONFIRM (31B)` → `0x48 DOWN_JOIN_FINISH (31B)` → `0x49 UP_JOIN_READY (31B)`. **Event/ACK use AES-128-CCM-8**; V2 Join key agreement uses **X25519** with separately specified HMAC-based proofs, *not* ChaCha20-Poly1305 as a substitute for Event/ACK. Authoritative reference: `contracts/radio-mac/specification.md` on merged PR #198, **v0.2.0-DRAFT / G2 NOT_VERIFIED**.
+
+### 9.3. Corrective timing and contractual status
+
+- [#201](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/201) has an Owner-approved **design direction** (DEC-127-06, DEC-MH-07/08) to **parameterize** DATA slot and Beacon window geometry by approved PHY, ToA and real guard/turnaround/durable-write measurements. This Issue is **OPEN**; such directions do **not** change `main` V2 contract bytes/slot timing until reviewed and merged with controlled versioning.
+- SF8 Event 26B (~113.152ms) / ACK 19B (~102.912ms) violate the legacy **100ms** subwindows; 80B Beacon (~256.512ms) violates **250ms** at SF8 under #201 theoretical PHY assumptions. These results are **not HIL measurements**. No firmware may treat the old subwindows or `400ms` universal slot as verified safe.
+- Release Gates G0–G6 remain evidence-based. **No G1/G2/G3/RF/HIL PASS** follows from this backlog cleanup, merge of design documentation or green syntax CI.
+
+### 9.4. Closure / review boundary
+
+This PR updates **documentation only**. GitHub Issue mutations above are independent live actions with their own Issue history. **Human Technical Review of this PR and actual PR merge remain pending** until separately confirmed on GitHub. Do not close #199 just from CI success, ledger creation or historical audit table; complete final live consistency audit and review/merge disposition first.
