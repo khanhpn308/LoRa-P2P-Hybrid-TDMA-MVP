@@ -165,6 +165,47 @@ class RoutingTests(PolicyFixture):
                 self.assertLess(len(selection["selected_ids"]), 148)
                 self.assertEqual(set(selection["standards"]), {"GO"})
 
+    def test_go_test_file_automatically_routes_ts_001_without_requested_id(self):
+        selection = self.select(["backend-go/internal/plain/plain_test.go"], requested_ids=[])
+        self.assertIn("TS-001", selection["selected_ids"])
+        row = next(r for r in selection["rules"] if r["rule_id"] == "TS-001")
+        self.assertEqual(row["rule_sha256"], "3b27ac8dc671640e8381544a2f19ffe594999ee7f44b758bfd1620dc06d03c37")
+        self.assertIn("Không viết test chỉ để tăng coverage", row["directive"])
+
+    def test_reproduce_issue_139_allowlist_routes_ts_001_before_and_after_diff(self):
+        allowed_139 = [
+            "firmware/components/harness_e2e_probe/probe.c",
+            "firmware/components/harness_e2e_probe/probe.h",
+            "firmware/components/harness_e2e_probe/probe_test.c",
+            "backend-go/internal/harness_e2e_probe/probe.go",
+            "backend-go/internal/harness_e2e_probe/probe_test.go",
+            "docs/verification/harness-e2e-standards-routing-report.md",
+        ]
+        before = self.select(allowed_139, requested_ids=[])
+        self.assertEqual(len(before["selected_ids"]), 116)
+        self.assertIn("TS-001", before["selected_ids"])
+        row_before = next(r for r in before["rules"] if r["rule_id"] == "TS-001")
+        self.assertEqual(row_before["rule_sha256"], "3b27ac8dc671640e8381544a2f19ffe594999ee7f44b758bfd1620dc06d03c37")
+
+        for p in allowed_139:
+            self.write(p, "// synthetic file for test\n")
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD~1")
+        after = self.select(allowed_139, requested_ids=[])
+        self.assertEqual(len(after["selected_ids"]), 116)
+        self.assertIn("TS-001", after["selected_ids"])
+        row_after = next(r for r in after["rules"] if r["rule_id"] == "TS-001")
+        self.assertEqual(row_after["rule_sha256"], "3b27ac8dc671640e8381544a2f19ffe594999ee7f44b758bfd1620dc06d03c37")
+
+    def test_coordinator_omission_cannot_suppress_test_coverage(self):
+        selection = self.select(["backend-go/internal/plain/plain_test.go"], requested_ids=["GGS-001"])
+        self.assertIn("GGS-001", selection["selected_ids"])
+        self.assertIn("TS-001", selection["selected_ids"])
+
+    def test_pure_go_source_without_test_file_does_not_select_ts_001(self):
+        selection = self.select(["backend-go/internal/plain/plain.go"], requested_ids=[])
+        self.assertNotIn("TS-001", selection["selected_ids"])
+
     def test_dependency_only_diff_requires_security_without_coordinator_ids(self):
         for name, text in (
                 ("backend-go/go.mod", "module example.org/project\n\ngo 1.27.3\nrequire example.org/dependency v1.0.0\n"),
