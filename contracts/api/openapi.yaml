@@ -3,7 +3,7 @@ openapi: "3.0.3"
 info:
   title: "LoRa Hybrid TDMA MVP — Backend/Client REST Contract"
   version: "1.0.0-draft"
-  description: "DRAFT v1 contract only; 14 operations, including three PROPOSED additions for Issue #15. No business endpoints implemented. Bearer/JWT + browser WSS auth are D13 BLOCKED_SECURITY pending ADR. No client direct MQTT/DB; no physical actuation guarantee from HTTP 202."
+  description: "DRAFT v1 contract; 18 operations, including four VN920_V1 channel allocation endpoints (Issue #128, #154) and three additions from Issue #15. Periodic telemetry is deprecated (Event-Only V2). Bearer/JWT + browser WSS auth are D13 BLOCKED_SECURITY pending ADR. No client direct MQTT/DB; no physical actuation guarantee from HTTP 202."
 servers:
   -
     url: "http://localhost:8080"
@@ -128,6 +128,8 @@ paths:
     get:
       operationId: "nodes_telemetry"
       summary: "Cursor-paginated telemetry; UTC filter"
+      deprecated: true
+      description: "DEPRECATED_HISTORICAL: Historical periodic telemetry retrieval; superseded by Event-Only architecture (UP_EVENT 0x41). V2 nodes emit discrete event logs under /api/v1/alerts."
       tags:
         - "nodes"
       x-roles:
@@ -439,6 +441,126 @@ paths:
           "$ref": "#/components/responses/Forbidden"
         "422":
           "$ref": "#/components/responses/Unprocessable"
+  "/api/v1/channels":
+    get:
+      operationId: "channels_list"
+      summary: "List VN920 channels and availability"
+      description: "Lists all VN920 channels (CH00..CH10) and their current allocation state. Assigned gateway identity is redacted for non-ADMIN users."
+      tags:
+        - "channels"
+      x-roles:
+        - "ADMIN"
+        - "OPERATOR"
+        - "VIEWER"
+      responses:
+        "200":
+          description: "Channel catalog"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  "$ref": "#/components/schemas/ChannelInfo"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+  "/api/v1/gateways/{gw_id}/channels/request":
+    post:
+      operationId: "channels_request"
+      summary: "Request exclusive VN920 channel allocation for a Gateway"
+      description: "Requests exclusive assignment of one unallocated VN920 channel (CH00..CH10). Requires idempotency header. Fails with 409 if channel is already allocated or if gateway already holds a channel."
+      tags:
+        - "channels"
+      x-roles:
+        - "ADMIN"
+        - "OPERATOR"
+      parameters:
+        -
+          "$ref": "#/components/parameters/GatewayId"
+        -
+          "$ref": "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/ChannelRequest"
+      responses:
+        "201":
+          description: "Channel allocated successfully"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ChannelAllocation"
+        "422":
+          "$ref": "#/components/responses/Unprocessable"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "409":
+          "$ref": "#/components/responses/Conflict"
+  "/api/v1/gateways/{gw_id}/channel":
+    get:
+      operationId: "channels_get_assignment"
+      summary: "Get assigned VN920 channel for a Gateway"
+      description: "Reads the currently allocated VN920 channel for the specified Gateway."
+      tags:
+        - "channels"
+      x-roles:
+        - "ADMIN"
+        - "OPERATOR"
+        - "VIEWER"
+      parameters:
+        -
+          "$ref": "#/components/parameters/GatewayId"
+      responses:
+        "200":
+          description: "Current channel allocation"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ChannelAllocation"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "404":
+          "$ref": "#/components/responses/NotFound"
+    delete:
+      operationId: "channels_release"
+      summary: "Release assigned VN920 channel for a Gateway"
+      description: "Releases the allocated channel for the Gateway. If the gateway has an ACTIVE TDMA schedule, release is rejected with 409 Conflict unless force=true is provided."
+      tags:
+        - "channels"
+      x-roles:
+        - "ADMIN"
+      parameters:
+        -
+          "$ref": "#/components/parameters/GatewayId"
+        -
+          name: "force"
+          in: "query"
+          required: false
+          schema:
+            type: "boolean"
+            default: false
+      responses:
+        "200":
+          description: "Channel released successfully"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ChannelReleaseResponse"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "404":
+          "$ref": "#/components/responses/NotFound"
+        "409":
+          "$ref": "#/components/responses/Conflict"
 components:
   securitySchemes:
     bearerAuth:
@@ -910,6 +1032,7 @@ components:
           type: "string"
           enum:
             - "P-10S-15"
+            - "V2-VN920-STATIC-15N"
         min_announce_superframes:
           type: "integer"
           minimum: 3
@@ -1070,6 +1193,108 @@ components:
           minLength: 1
           maxLength: 512
           nullable: true
+    ChannelInfo:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "channel_id"
+        - "frequency_hz"
+        - "bandwidth_hz"
+        - "status"
+      properties:
+        channel_id:
+          type: "string"
+          pattern: "^CH(0[0-9]|10)$"
+        frequency_hz:
+          type: "integer"
+          minimum: 920250000
+          maximum: 922750000
+        bandwidth_hz:
+          type: "integer"
+          enum: [125000]
+        status:
+          type: "string"
+          enum:
+            - "AVAILABLE"
+            - "ALLOCATED"
+        assigned_gateway_id:
+          type: "string"
+          nullable: true
+          pattern: "^[A-Za-z0-9_-]{1,32}$"
+    ChannelRequest:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "channel_id"
+      properties:
+        channel_id:
+          type: "string"
+          pattern: "^CH(0[0-9]|10)$"
+    ChannelAllocation:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "gateway_id"
+        - "channel_id"
+        - "frequency_hz"
+        - "bandwidth_hz"
+        - "allocation_generation"
+        - "allocated_at"
+        - "rf_authorized"
+        - "state"
+      properties:
+        gateway_id:
+          type: "string"
+          pattern: "^[A-Za-z0-9_-]{1,32}$"
+        channel_id:
+          type: "string"
+          pattern: "^CH(0[0-9]|10)$"
+        frequency_hz:
+          type: "integer"
+          minimum: 920250000
+          maximum: 922750000
+        bandwidth_hz:
+          type: "integer"
+          enum: [125000]
+        allocation_generation:
+          type: "integer"
+          minimum: 1
+          maximum: 4294967295
+        allocated_at:
+          type: "string"
+          format: "date-time"
+          pattern: "Z$"
+        rf_authorized:
+          type: "boolean"
+          description: "False upon channel allocation; RF authorization requires valid active schedule, clock confidence and duty cycle limit."
+        state:
+          type: "string"
+          enum:
+            - "ALLOCATED"
+            - "RELEASED"
+    ChannelReleaseResponse:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "gateway_id"
+        - "channel_id"
+        - "released_at"
+        - "status"
+      properties:
+        gateway_id:
+          type: "string"
+          pattern: "^[A-Za-z0-9_-]{1,32}$"
+        channel_id:
+          type: "string"
+          pattern: "^CH(0[0-9]|10)$"
+        released_at:
+          type: "string"
+          format: "date-time"
+          pattern: "Z$"
+        status:
+          type: "string"
+          enum:
+            - "RELEASED"
   responses:
     Unauthorized:
       description: "Authentication required"

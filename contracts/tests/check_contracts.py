@@ -50,19 +50,44 @@ def validate_examples(directory: str, fixture_name: str, schema_folder: str) -> 
 
 
 def validate_schedule_slots(schedule: dict) -> str:
-    """Candidate P-10S-15 semantic checks beyond JSON Schema (not full G2 validation)."""
-    if schedule["profile_id"] != "P-10S-15":
-        return "REJECT_UNSUPPORTED_PROFILE"
-    owners = [item["node_id"] for item in schedule["slots"]]
-    slots = [item["slot_id"] for item in schedule["slots"]]
-    if len(set(owners)) != len(owners) or len(set(slots)) != len(slots):
+    """Schedule semantic validator covering V2-VN920-STATIC-15N and candidate P-10S-15 geometry."""
+    profile = schedule.get("profile_id")
+    slots = schedule.get("slots", [])
+    owners = [item["node_id"] for item in slots]
+    slot_ids = [item["slot_id"] for item in slots]
+
+    if len(set(owners)) != len(owners) or len(set(slot_ids)) != len(slot_ids):
         return "REJECT_OVERLAPPING_SLOT"
-    for item in schedule["slots"]:
-        slot = item["slot_id"]
-        expected_offset = 2000 * ((slot - 1) // 3) + 650 + 400 * ((slot - 1) % 3)
-        if item["offset_ms"] != expected_offset or item["duration_ms"] != 400:
+
+    if profile == "V2-VN920-STATIC-15N":
+        # V2 Owner-approved baseline (PR #206, #208):
+        # W_MS = 500ms usable, G_MS = 50ms each side => pitch = 600ms per slot.
+        # 15 reserved positions occupy 9000ms.
+        # start(i) = (i - 1) * 600 + 50, duration = 500ms.
+        if schedule.get("superframe_ms") != 9000:
             return "REJECT_OVERLAPPING_SLOT"
-    return "ACCEPT_CANDIDATE_GEOMETRY_ONLY"
+        for item in slots:
+            slot = item["slot_id"]
+            if not (1 <= slot <= 15):
+                return "REJECT_OVERLAPPING_SLOT"
+            expected_offset = (slot - 1) * 600 + 50
+            if item["offset_ms"] != expected_offset or item["duration_ms"] != 500:
+                return "REJECT_OVERLAPPING_SLOT"
+        return "ACCEPT_V2_STATIC_GEOMETRY"
+
+    if profile == "P-10S-15":
+        if schedule.get("superframe_ms") != 10000:
+            return "REJECT_OVERLAPPING_SLOT"
+        for item in slots:
+            slot = item["slot_id"]
+            if not (1 <= slot <= 15):
+                return "REJECT_OVERLAPPING_SLOT"
+            expected_offset = 2000 * ((slot - 1) // 3) + 650 + 400 * ((slot - 1) % 3)
+            if item["offset_ms"] != expected_offset or item["duration_ms"] != 400:
+                return "REJECT_OVERLAPPING_SLOT"
+        return "ACCEPT_CANDIDATE_GEOMETRY_ONLY"
+
+    return "REJECT_UNSUPPORTED_PROFILE"
 
 
 def validate_openapi() -> int:

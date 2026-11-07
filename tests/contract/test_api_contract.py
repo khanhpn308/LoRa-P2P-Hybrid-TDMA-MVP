@@ -37,18 +37,28 @@ class ApiContractTest(unittest.TestCase):
                 if path not in ("/healthz", "/api/v1/auth/login"):
                     self.assertTrue(op["x-roles"], (path, method))
                     self.assertTrue({"401", "403"}.issubset(op["responses"]), (path, method))
-        self.assertEqual(len(operations), 14)
+        self.assertEqual(len(operations), 18)
         expected = {
             "schedules_review": "post",
             "schedules_request_activation": "post",
             "nodes_command_get": "get",
+            "channels_list": "get",
+            "channels_request": "post",
+            "channels_get_assignment": "get",
+            "channels_release": "delete",
         }
         for name in expected:
             self.assertIn(name, operations)
         self.assertEqual(operations["schedules_review"]["x-roles"], ["ADMIN"])
         self.assertEqual(operations["schedules_request_activation"]["x-roles"], ["ADMIN"])
         self.assertEqual(operations["nodes_command_get"]["x-roles"], ["ADMIN", "OPERATOR", "VIEWER"])
+        self.assertEqual(operations["channels_list"]["x-roles"], ["ADMIN", "OPERATOR", "VIEWER"])
+        self.assertEqual(operations["channels_request"]["x-roles"], ["ADMIN", "OPERATOR"])
+        self.assertEqual(operations["channels_get_assignment"]["x-roles"], ["ADMIN", "OPERATOR", "VIEWER"])
+        self.assertEqual(operations["channels_release"]["x-roles"], ["ADMIN"])
         self.assertIn("WWW-Authenticate", self.openapi["components"]["responses"]["Unauthorized"]["headers"])
+        telemetry_get = self.openapi["paths"]["/api/v1/nodes/{node_id}/telemetry"]["get"]
+        self.assertTrue(telemetry_get.get("deprecated"), "Legacy telemetry must be marked deprecated")
 
     def test_post_idempotency_and_async_contract(self):
         paths = self.openapi["paths"]
@@ -60,6 +70,11 @@ class ApiContractTest(unittest.TestCase):
             self.assertIn("202", op["responses"])
             refs = [p.get("$ref") for p in op.get("parameters", [])]
             self.assertIn("#/components/parameters/IdempotencyKey", refs)
+        # Channel request requires IdempotencyKey and returns 201
+        channel_op = paths["/api/v1/gateways/{gw_id}/channels/request"]["post"]
+        self.assertIn("201", channel_op["responses"])
+        channel_refs = [p.get("$ref") for p in channel_op.get("parameters", [])]
+        self.assertIn("#/components/parameters/IdempotencyKey", channel_refs)
         self.assertTrue(self.openapi["components"]["parameters"]["IdempotencyKey"]["required"])
         self.assertNotIn("/api/v1/auth/ws-ticket", paths, "D13 auth ticket remains unapproved")
 
@@ -77,7 +92,7 @@ class ApiContractTest(unittest.TestCase):
 
     def test_rest_component_examples(self):
         casebook = json.loads((API / "examples" / "rest-cases.json").read_text(encoding="utf-8"))
-        self.assertGreaterEqual(len(casebook["cases"]), 16)
+        self.assertGreaterEqual(len(casebook["cases"]), 24)
         for case in casebook["cases"]:
             with self.subTest(case=case["id"]):
                 component = self.openapi["components"]["schemas"][case["schema"]]

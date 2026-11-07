@@ -62,6 +62,7 @@
       "then": {
         "properties": {
           "payload": {
+            "description": "DEPRECATED_HISTORICAL: Maintained for historical playback and legacy compatibility; active V2 nodes emit discrete event notifications via ALERT_TRIGGERED.",
             "type": "object",
             "additionalProperties": false,
             "required": [

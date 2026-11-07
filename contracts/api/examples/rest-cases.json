@@ -165,6 +165,83 @@
       "message": {
         "profile_id": "REGION-UNKNOWN"
       }
+    },
+    {
+      "id": "REST-GENERATE-PROFILE-V2-VALID",
+      "schema": "GenerateScheduleRequest",
+      "valid": true,
+      "message": {
+        "profile_id": "V2-VN920-STATIC-15N",
+        "min_announce_superframes": 3
+      }
+    },
+    {
+      "id": "REST-CHANNEL-INFO-VALID",
+      "schema": "ChannelInfo",
+      "valid": true,
+      "message": {
+        "channel_id": "CH04",
+        "frequency_hz": 921250000,
+        "bandwidth_hz": 125000,
+        "status": "AVAILABLE"
+      }
+    },
+    {
+      "id": "REST-CHANNEL-REQUEST-VALID",
+      "schema": "ChannelRequest",
+      "valid": true,
+      "message": {
+        "channel_id": "CH04"
+      }
+    },
+    {
+      "id": "REST-CHANNEL-REQUEST-INVALID-ID",
+      "schema": "ChannelRequest",
+      "valid": false,
+      "message": {
+        "channel_id": "CH99"
+      }
+    },
+    {
+      "id": "REST-CHANNEL-ALLOCATION-VALID",
+      "schema": "ChannelAllocation",
+      "valid": true,
+      "message": {
+        "gateway_id": "gw01",
+        "channel_id": "CH04",
+        "frequency_hz": 921250000,
+        "bandwidth_hz": 125000,
+        "allocation_generation": 1,
+        "allocated_at": "2026-11-07T08:00:00Z",
+        "rf_authorized": false,
+        "state": "ALLOCATED"
+      }
+    },
+    {
+      "id": "REST-CHANNEL-ALLOCATION-INVALID-GENERATION",
+      "schema": "ChannelAllocation",
+      "valid": false,
+      "message": {
+        "gateway_id": "gw01",
+        "channel_id": "CH04",
+        "frequency_hz": 921250000,
+        "bandwidth_hz": 125000,
+        "allocation_generation": 0,
+        "allocated_at": "2026-11-07T08:00:00Z",
+        "rf_authorized": false,
+        "state": "ALLOCATED"
+      }
+    },
+    {
+      "id": "REST-CHANNEL-RELEASE-VALID",
+      "schema": "ChannelReleaseResponse",
+      "valid": true,
+      "message": {
+        "gateway_id": "gw01",
+        "channel_id": "CH04",
+        "released_at": "2026-11-07T08:30:00Z",
+        "status": "RELEASED"
+      }
     }
   ]
 }

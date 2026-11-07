@@ -40,7 +40,7 @@
         "SET_SAMPLE_PERIOD",
         "SET_RELAY"
       ],
-      "description": "Draft action allowlist; no action authorized for physical execution before producer/consumer review."
+      "description": "Draft action allowlist. SET_SAMPLE_PERIOD configures local ADC sensor sampling cadence inside the node (NOT periodic RF transmission). SET_PERIODIC_MODE is deprecated and rejected in V2 Event-Only architecture. SET_THRESHOLD configures event detection limits. SET_RELAY controls local actuator."
     },
     "params": {
       "type": "object",

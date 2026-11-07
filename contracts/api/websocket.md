@@ -17,8 +17,8 @@ Machine-readable envelope: `schema_version="1.0-draft"`, `event_id` (Backend-ori
 
 | Event `type` | Required payload | Client reconciliation |
 |---|---|---|
-| `TELEMETRY_UPDATE` | `gateway_id, node_id, reading_id, event_id, observed_at, data` | Use `gateway_id + payload.event_id` source identity. New example uses MQTT v1 UUID boot epoch. |
-| `ALERT_TRIGGERED` | `gateway_id, node_id, alert_id, severity, triggered_at` | Correlate `alert_id`; do not overwrite ACK status from a newer REST snapshot. |
+| `TELEMETRY_UPDATE` | `gateway_id, node_id, reading_id, event_id, observed_at, data` | **DEPRECATED_HISTORICAL**; retained for playback of legacy logs. Use `gateway_id + payload.event_id` source identity. |
+| `ALERT_TRIGGERED` | `gateway_id, node_id, alert_id, severity, triggered_at` | **ACTIVE_V2_EVENT_PLANE**; primary live event notification for local threshold violations. Correlate `alert_id`; UI ACK is not radio ACK. |
 | `SCHEDULE_STATE_CHANGED` | `gateway_id, schedule_id, version, state` | `STAGED != ACTIVE`; only a verified Gateway `ACTIVE_REPORT` in Backend justifies `ACTIVE`. |
 | `GATEWAY_STATUS_CHANGED` | `gateway_id, mode, last_seen_at` | Retained MQTT status is not proof of live connection; trust REST/backend freshness policy. |
 | `COMMAND_STATE_CHANGED` (**PROPOSED EXTENSION**) | `gateway_id, node_id, command_id, state, state_revision` | Read after HTTP 202 from `GET /api/v1/nodes/{node_id}/commands/{command_id}`; compare revisions (decimal strings, not JS Number). `NODE_ACKED` is **not** actuator success. |

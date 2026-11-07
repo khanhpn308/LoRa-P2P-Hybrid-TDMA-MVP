@@ -50,7 +50,13 @@ Gateway validates gateway/topic/auth provenance, schema, monotonic **Backend** s
 
 A delayed, buffered `ACTIVE_REPORT` after Backend marked EXPIRED must be reconciled against Gateway current status and trustworthy reported activation epoch/sequence **before** any transition; no blind state flip. `expires_at` is the deadline for accepting/activating this proposal, **not** an unapproved periodic schedule lease (separate design needed for lease revocation). Boot/reconnect and active/shadow NVS recovery require idempotent reconciliation; a shadow proposal is never silently activated on reboot. If UTC is untrusted at acceptance, fail closed. A schedule may continue locally while backhaul is absent only under the separate active-schedule safety requirements.
 
-Schedule `P-10S-15`, `superframe_ms=10000`, 400 ms slots and radio version mapping are **candidate values only**; no RF timing/airtime/G1/G2/G3 PASS is implied. Radio `SCHED_VER` wrap/truncation remains BLOCKED at #12/D11. JSON Schema cannot check overlap or half-duplex; the Gateway must do those checks.
+Schedule `P-10S-15` (superframe_ms=10000, 400 ms slots) là **hình học ứng viên lịch sử V1** phục vụ kiểm tra tương thích ngược. Kiến trúc V2 chuẩn hóa hình học **`V2-VN920-STATIC-15N`** (Owner MVP baseline #206, #208):
+- Độ rộng khe hữu dụng `W_MS = 500ms`, `G_MS = 50ms` bảo vệ mỗi bên $\to$ chu kỳ khe `600ms/Node`.
+- 15 vị trí tĩnh chiếm trọn **9000ms** của superframe DATA (`start(i) = (i-1)*600 + 50`, `end(i) = start(i) + 500`).
+- Mỗi khe W_MS tích hợp: phát `UP_EVENT 0x41` (26B), Gateway xác thực + ghi bền vững WAL, đảo chiều RX/TX và phát ngay `DOWN_EVENT_ACK 0x42` (19B) trong cùng khe.
+- Khe READY trong chuyển đổi lịch: `R_MS = 400ms` hữu dụng + `G_R_MS = 50ms` mỗi bên $\to$ chu kỳ khe `500ms/Node` (7500ms cho 15 Node), kích hoạt theo yêu cầu trong chu kỳ Maintenance. Yêu cầu 100% Node bị ảnh hưởng báo READY trước khi ký COMMIT tại `K_TARGET`.
+- Chu kỳ Maintenance danh định ~300s. Mất >3 Beacon liên tiếp $\to$ chuyển trạng thái mất đồng bộ, cấm phát DATA khi độ tin cậy đồng hồ không đảm bảo; lịch ACTIVE không tự động xóa bỏ.
+- Join khởi tạo bất đồng bộ qua CAD (tối đa 3 lần thử lại). Reboot đưa Node về trạng thái RX-only cho đến khi Backend xác thực kích hoạt lại. JSON Schema kiểm tra khuôn dạng; kiểm tra ranh giới, không chồng lấn và bảo vệ vật lý do Validator và Gateway đảm nhiệm.
 
 ## 5. Error codes and ACK semantics
 
@@ -104,3 +110,23 @@ Specific invariants:
 6. **Limits:** FormatChecker/JSON Schema alone cannot verify cryptographic authenticity, NVS persistence, broker ACLs, or RF timing.
 
 Review: Gateway / Backend Go / Infra-Security / CODEOWNERS. G2 security audit, Golden Vectors, MQTT broker/G4 integration, Flash fault injection and RF/HIL remain **NOT_VERIFIED**.
+
+## 8. Kế hoạch chuyển đổi, hủy bỏ (Deprecation Policy) & Ranh giới V2 (Issue #128)
+
+1. **Hủy bỏ chế độ định kỳ (Zero Periodic Telemetry):**
+   - Topic `iot/v1/gw/{gateway_id}/uplink/telemetry` và schema `telemetry.schema.json` được đánh dấu `DEPRECATED_HISTORICAL`. Active V2 nodes và firmware mới tuyệt đối **không phát dữ liệu lên topic này**. Backend Go duy trì topic và schema `1.0-draft` cho mục đích đọc và giải mã log lịch sử.
+   - Hành động `SET_PERIODIC_MODE` trong `command.schema.json` bị bãi bỏ (`DEPRECATED_UNSUPPORTED`). Khi nhận lệnh này, Node/Gateway phản hồi `command-ack` với `status=REJECTED`, `reason_code=UNSUPPORTED_ACTION`.
+   - `SET_SAMPLE_PERIOD` trong `command.schema.json`: chỉ quy định chu kỳ đọc cảm biến ADC cục bộ tại Node để đánh giá vượt ngưỡng. Đây là tham số lấy mẫu phần cứng nội bộ, **hoàn toàn không phải tần suất phát sóng vô tuyến RF định kỳ**.
+2. **Phân định hai chỉ số giám sát bảo trì V2:**
+   - `PENDING_COUNT` trong `UP_HEALTH_REPLY` (0x44, 21B, trường `pending_event_count` trong status schema): là **độ sâu hàng đợi FIFO tức thời** tại thời điểm phản hồi bảo trì.
+   - `DROPPED_EVENT_COUNT` trong `UP_DIAG_METRICS` (0x4A, 23B, trường `dropped_event_count` trong status schema): là **bộ đếm tích lũy số sự kiện bị hủy** do tràn hàng đợi ring-buffer qua các chu kỳ.
+   - Hai chỉ số này đo lường hai hiện tượng hoàn toàn khác nhau; cấm gộp trường hoặc đánh đồng `PENDING_COUNT` thành số sự kiện bị mất.
+3. **Phân định bốn tầng xác nhận (Four-Layer Confirmation Model):**
+   - **RF ACK (`DOWN_EVENT_ACK 0x42`, 19B):** Gateway xác nhận ngay cùng khe sau khi đã commit bền vững sự kiện vào WAL cục bộ.
+   - **MQTT Transport PUBACK:** Mosquitto xác nhận hop truyền mạng QoS 1; không chứng minh Backend đã ghi nhận CSDL.
+   - **Backend DB Commit:** Backend Go khử trùng lặp qua `UNIQUE(gateway_id, event_id)` và lưu trữ bền vững vào PostgreSQL.
+   - **UI Acknowledgement:** Người vận hành gọi `POST /api/v1/alerts/{id}/acknowledge` làm thay đổi trạng thái xử lý người dùng; không phát sinh bất kỳ bản tin RF ACK nào.
+4. **Đăng ký kênh độc quyền VN920_V1 (#154):**
+   - Backend Go quản lý cấp phát độc quyền một trong các kênh CH00–CH10 (920.250–922.750 MHz) qua REST API (`POST /api/v1/gateways/{id}/channels/request`) có hỗ trợ `X-Idempotency-Key`.
+   - Phân định rõ thứ bậc trạng thái: `CHANNEL_ALLOCATED` $\to$ `SCHEDULE_STAGED` $\to$ `SCHEDULE_ACTIVE` $\to$ `RF_AUTHORIZED`.
+   - Việc được cấp kênh không tự động cho phép Gateway phát sóng RF nếu thiếu lịch ACTIVE hợp lệ, đồng hồ tin cậy và kiểm soát duty-cycle. Thu hồi kênh bị từ chối nếu lịch đang ở trạng thái ACTIVE (trừ khi dùng force deactivation).
