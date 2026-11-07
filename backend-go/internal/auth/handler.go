@@ -6,8 +6,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-
-
 )
 
 const maxPayloadBytes = 4096

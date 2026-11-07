@@ -51,6 +51,9 @@ func TestService_Login(t *testing.T) {
 		t.Fatalf("failed to create inactive user: %v", err)
 	}
 
+	passFixture := "$ValidPassword123"
+	wrongPassFixture := "$WrongPassword999"
+
 	tests := []struct {
 		name        string
 		req         auth.LoginRequestDTO
@@ -61,7 +64,7 @@ func TestService_Login(t *testing.T) {
 			name: "successful login",
 			req: auth.LoginRequestDTO{
 				Username: "active_user",
-				Password: "$ValidPassword123",
+				Password: passFixture,
 			},
 			expectError: false,
 			expectRole:  auth.RoleOperator,
@@ -70,7 +73,7 @@ func TestService_Login(t *testing.T) {
 			name: "wrong password",
 			req: auth.LoginRequestDTO{
 				Username: "active_user",
-				Password: "$WrongPassword999",
+				Password: wrongPassFixture,
 			},
 			expectError: true,
 		},
@@ -78,7 +81,7 @@ func TestService_Login(t *testing.T) {
 			name: "inactive account",
 			req: auth.LoginRequestDTO{
 				Username: "inactive_user",
-				Password: "$ValidPassword123",
+				Password: passFixture,
 			},
 			expectError: true,
 		},
@@ -86,7 +89,7 @@ func TestService_Login(t *testing.T) {
 			name: "nonexistent user",
 			req: auth.LoginRequestDTO{
 				Username: "unknown_user",
-				Password: "$ValidPassword123",
+				Password: passFixture,
 			},
 			expectError: true,
 		},
@@ -94,7 +97,7 @@ func TestService_Login(t *testing.T) {
 			name: "empty username",
 			req: auth.LoginRequestDTO{
 				Username: "",
-				Password: "$ValidPassword123",
+				Password: passFixture,
 			},
 			expectError: true,
 		},

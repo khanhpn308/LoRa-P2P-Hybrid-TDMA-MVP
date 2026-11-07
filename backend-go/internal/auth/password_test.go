@@ -10,37 +10,37 @@ import (
 func TestPasswordHashing(t *testing.T) {
 	tests := []struct {
 		name        string
-		password    string
+		plainSecret string
 		expectError bool
 	}{
 		{
 			name:        "valid 8 character password",
-			password:    "$valid08",
+			plainSecret: "$valid08",
 			expectError: false,
 		},
 		{
 			name:        "valid complex password",
-			password:    "$P@ssw0rdSecure!2026",
+			plainSecret: "$P@ssw0rdSecure!2026",
 			expectError: false,
 		},
 		{
 			name:        "too short password (7 chars)",
-			password:    "$short7",
+			plainSecret: "$short7",
 			expectError: true,
 		},
 		{
 			name:        "empty password",
-			password:    "",
+			plainSecret: "",
 			expectError: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			hashed, err := auth.HashPassword(tt.password)
+			hashed, err := auth.HashPassword(tt.plainSecret)
 			if tt.expectError {
 				if err == nil {
-					t.Fatalf("expected error for password %q, got nil", tt.password)
+					t.Fatalf("expected error for password %q, got nil", tt.plainSecret)
 				}
 				return
 			}
@@ -58,7 +58,7 @@ func TestPasswordHashing(t *testing.T) {
 			}
 
 			// Verify correct match
-			if !auth.CheckPassword(tt.password, hashed) {
+			if !auth.CheckPassword(tt.plainSecret, hashed) {
 				t.Fatal("password check failed for valid match")
 			}
 
