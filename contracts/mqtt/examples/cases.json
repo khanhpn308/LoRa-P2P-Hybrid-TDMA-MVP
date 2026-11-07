@@ -581,6 +581,155 @@
           "node_duty_permille": 6
         }
       }
+    },
+    {
+      "id": "SCHEDULE-V2-VALID",
+      "schema": "schedule",
+      "valid": true,
+      "semantic_result": "ACCEPT_V2_STATIC_GEOMETRY",
+      "message": {
+        "schema_version": "1.0-draft",
+        "request_id": "b3e04e90-c21d-44aa-9cbf-70a9e7d95cb2",
+        "gateway_id": "gw01",
+        "schedule_id": "4002",
+        "schedule_version": 2,
+        "created_at": "2026-11-07T07:30:00Z",
+        "expires_at": "2026-11-07T07:40:00Z",
+        "profile_id": "V2-VN920-STATIC-15N",
+        "superframe_ms": 9000,
+        "min_announce_superframes": 3,
+        "slots": [
+          {
+            "node_id": 1,
+            "slot_id": 1,
+            "offset_ms": 50,
+            "duration_ms": 500
+          },
+          {
+            "node_id": 2,
+            "slot_id": 2,
+            "offset_ms": 650,
+            "duration_ms": 500
+          },
+          {
+            "node_id": 3,
+            "slot_id": 3,
+            "offset_ms": 1250,
+            "duration_ms": 500
+          }
+        ]
+      }
+    },
+    {
+      "id": "SCHEDULE-V2-OVERLAPPING-SLOT",
+      "schema": "schedule",
+      "valid": true,
+      "semantic_result": "REJECT_OVERLAPPING_SLOT",
+      "message": {
+        "schema_version": "1.0-draft",
+        "request_id": "b3e04e90-c21d-44aa-9cbf-70a9e7d95cb3",
+        "gateway_id": "gw01",
+        "schedule_id": "4003",
+        "schedule_version": 3,
+        "created_at": "2026-11-07T07:30:00Z",
+        "expires_at": "2026-11-07T07:40:00Z",
+        "profile_id": "V2-VN920-STATIC-15N",
+        "superframe_ms": 9000,
+        "min_announce_superframes": 3,
+        "slots": [
+          {
+            "node_id": 1,
+            "slot_id": 1,
+            "offset_ms": 50,
+            "duration_ms": 500
+          },
+          {
+            "node_id": 2,
+            "slot_id": 2,
+            "offset_ms": 500,
+            "duration_ms": 500
+          }
+        ]
+      }
+    },
+    {
+      "id": "SCHEDULE-V2-INVALID-DURATION",
+      "schema": "schedule",
+      "valid": false,
+      "message": {
+        "schema_version": "1.0-draft",
+        "request_id": "b3e04e90-c21d-44aa-9cbf-70a9e7d95cb4",
+        "gateway_id": "gw01",
+        "schedule_id": "4004",
+        "schedule_version": 4,
+        "created_at": "2026-11-07T07:30:00Z",
+        "expires_at": "2026-11-07T07:40:00Z",
+        "profile_id": "V2-VN920-STATIC-15N",
+        "superframe_ms": 9000,
+        "min_announce_superframes": 3,
+        "slots": [
+          {
+            "node_id": 1,
+            "slot_id": 1,
+            "offset_ms": 50,
+            "duration_ms": 450
+          }
+        ]
+      }
+    },
+    {
+      "id": "STATUS-V2-DIAGNOSTIC-VALID",
+      "schema": "status",
+      "valid": true,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:101",
+        "gateway_id": "gw01",
+        "gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+        "event_seq": "101",
+        "observed_at": "2026-11-07T08:00:00Z",
+        "observed_time_source": "gateway_utc",
+        "radio_rx_monotonic_us": "9876543210",
+        "buffered": false,
+        "active_schedule_version": 2,
+        "mode": "ACTIVE",
+        "rf_duty_permille": 25,
+        "free_heap_bytes": 150000,
+        "offline_queue_count": 0,
+        "offline_dropped_telemetry": "0",
+        "offline_dropped_alert": "0",
+        "node_count": 3,
+        "pending_event_count": 1,
+        "dropped_event_count": "0",
+        "diag_seq": "1",
+        "channel_id": "CH04",
+        "maint_seq": 15
+      }
+    },
+    {
+      "id": "STATUS-V2-INVALID-CHANNEL",
+      "schema": "status",
+      "valid": false,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:102",
+        "gateway_id": "gw01",
+        "gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+        "event_seq": "102",
+        "observed_at": "2026-11-07T08:00:00Z",
+        "observed_time_source": "gateway_utc",
+        "radio_rx_monotonic_us": "9876543211",
+        "buffered": false,
+        "active_schedule_version": 2,
+        "mode": "ACTIVE",
+        "rf_duty_permille": 25,
+        "free_heap_bytes": 150000,
+        "offline_queue_count": 0,
+        "offline_dropped_telemetry": "0",
+        "offline_dropped_alert": "0",
+        "node_count": 3,
+        "channel_id": "CH99"
+      }
     }
   ]
 }

@@ -1,7 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:loratdma:mqtt:command-ack:v1-draft",
-  "title": "LoRa TDMA command-ack (proposed contract)",
+  "title": "LoRa TDMA command-ack (active V2 contract)",
+  "description": "Active V2 command acknowledgment contract. NODE_ACKED requires explicit verified application ACK from the target node, distinct from Gateway MQTT PUBACK. Rejections (including UNSUPPORTED_ACTION for deprecated commands) require specific reason_code.",
   "type": "object",
   "additionalProperties": false,
   "properties": {

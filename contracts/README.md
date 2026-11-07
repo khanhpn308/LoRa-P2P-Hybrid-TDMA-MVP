@@ -1,30 +1,43 @@
 # Hợp đồng giao tiếp giữa các nhóm — LoRa P2P Hybrid TDMA MVP
 
-**Revision:** 0.1.0-draft · **Status:** PROPOSED / REQUIRES CROSS-TEAM REVIEW · **Ngày:** 2026-10-20.
+**Revision:** 0.2.0-draft · **Status:** V2 MIGRATION / EVENT-ONLY CONTRACTS ALIGNED · **Ngày:** 2026-11-07 (Issue #128 / Umbrella #125).
 
-Các tệp trong thư mục này định nghĩa giao diện để Firmware Node, Firmware Gateway, Backend Go, Web và Mobile phát triển độc lập. **Đây là thiết kế hợp đồng, không phải bằng chứng đã triển khai, đã nghiệm thu hay đạt an toàn RF.** Tham chiếu kiến trúc gốc: tài liệu `esp32_sx1762.md` người đề xuất cung cấp (mục 1, 3, 5–9, 11) và baseline tại `docs/architecture/system-overview.md`.
+Các tệp trong thư mục này định nghĩa giao diện để Firmware Node, Firmware Gateway, Backend Go, Web và Mobile phát triển độc lập. **Đây là thiết kế hợp đồng, không phải bằng chứng đã triển khai, đã nghiệm thu hay đạt an toàn RF.** Tham chiếu kiến trúc: contracts/radio-mac/specification.md (Rev 0.3.0-draft), contracts/radio-mac/tdma-schedule.md, contracts/OPEN_DECISIONS.md trên main (PR #205, PR #206).
 
 | Ranh giới/đầu mối | Nguồn chuẩn đề xuất | Chủ trì → Cùng duyệt | Issue |
 |---|---|---|---|
-| Node ↔ Gateway RF Custom MAC | [radio-mac/specification.md](radio-mac/specification.md) | Embedded Node + Gateway → RF/Security, Backend | [#12](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/12) |
-| Backend Planner → Gateway Executor → Node | [radio-mac/tdma-schedule.md](radio-mac/tdma-schedule.md) | Backend + Gateway → Node/RF | #12, #14 |
-| Gateway ↔ Mosquitto ↔ Backend Go | [mqtt/topics.md](mqtt/topics.md), [mqtt/schemas/](mqtt/schemas/) | Gateway + Backend/Infra → Security | [#14](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/14) |
-| Backend REST → Next.js/Kotlin Android | [api/openapi.yaml](api/openapi.yaml) | Backend → Web/Mobile | [#15](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/15) |
-| Backend WSS → Next.js/Kotlin Android | [api/websocket.md](api/websocket.md), [api/schemas/](api/schemas/) | Backend → Web/Mobile | #15 |
+| Node ↔ Gateway RF Custom MAC | [radio-mac/specification.md](radio-mac/specification.md) | Embedded Node + Gateway → RF/Security, Backend | [#12](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/12), [#127](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/127) |
+| Backend Planner → Gateway Executor → Node | [radio-mac/tdma-schedule.md](radio-mac/tdma-schedule.md) | Backend + Gateway → Node/RF | #12, #14, #128 |
+| Gateway ↔ Mosquitto ↔ Backend Go | [mqtt/topics.md](mqtt/topics.md), [mqtt/schemas/](mqtt/schemas/) | Gateway + Backend/Infra → Security | [#14](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/14), [#128](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/128) |
+| Backend REST → Next.js/Kotlin Android | [api/openapi.yaml](api/openapi.yaml) | Backend → Web/Mobile | [#15](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/15), [#128](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/128), [#154](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/154) |
+| Backend WSS → Next.js/Kotlin Android | [api/websocket.md](api/websocket.md), [api/schemas/](api/schemas/) | Backend → Web/Mobile | #15, #128 |
 
-## Quy tắc hợp đồng
+## Quy tắc hợp đồng & Kiến trúc Event-Only V2
 
-1. Hợp đồng chỉ có hiệu lực khi chủ sở hữu phía gửi **và** phía nhận duyệt qua PR/ADR. Không suy diễn việc xuất hiện trong Git là đã được phê duyệt.
-2. Không dùng LoRaWAN/ChirpStack. Backend chỉ lập lịch; Gateway cục bộ điều khiển SX1276 bán song công và duy trì chế độ offline.
-3. Ba lớp version độc lập: RF `PROTO_VER` (chưa chốt byte layout), MQTT `schema_version`, REST `/api/v1` + OpenAPI và sự kiện WSS `schema_version`. Thay đổi phá vỡ tương thích yêu cầu ADR, bump version, vectors và review.
-4. `event_id` không được sinh mới khi publish lại dữ liệu cũ; `SEQ_NUM` 8-bit của RF **không** được dùng riêng để khử trùng lặp trong CSDL.
-5. Các con số 10 s / 2 s / 400 ms / SF7 / 921.4 MHz / 1%–10% / trễ <3 s từ bản thiết kế là **đầu vào/giả thuyết đo kiểm**, không là SLA hay RF-compliance đã xác nhận.
-6. Chỉ những tệp `contracts/` được sửa trong bộ hồ sơ này; CI hiện tại chỉ kiểm tra cú pháp JSON. Xem [trình tự kiểm tra](verification.md) để chạy kiểm tra hành vi riêng.
+1. **Thẩm quyền hợp đồng:** Hợp đồng chỉ có hiệu lực khi chủ sở hữu phía gửi **và** phía nhận duyệt qua PR/ADR. Không suy diễn việc xuất hiện trong Git là đã được phê duyệt, đạt an toàn RF hay hoàn thành HIL (#169).
+2. **Event-Only Architecture & Zero Periodic Telemetry:** Bãi bỏ hoàn toàn chế độ truyền định kỳ DATA_TELEMETRY (0x03/0x23) và topic uplink/telemetry theo Quyết định Owner #125 / PR #133. Chuyển dịch sang mô hình:
+   - **Local Alarm Autonomy:** Cảm biến Node tự kích hoạt chuông/đèn/relay phần cứng tại chỗ ngay khi vượt ngưỡng, không phụ thuộc sóng RF hay ranh giới TDMA.
+   - **Event-Only Remote Logging:** Node chỉ truyền UP_EVENT (0x41, 26B) trong khe tĩnh (Static DATA Slot) độc quyền của mình.
+   - **Same-Slot ACK:** Gateway ghi bền vững (WAL/SQLite) trước khi phát DOWN_EVENT_ACK (0x42, 19B) ngay trong cùng khe DATA của Node.
+3. **Phân định 4 tầng xác nhận độc lập:**
+   - **RF ACK** (DOWN_EVENT_ACK 0x42 19B): Gateway phản hồi Node sau khi commit WAL; Node xóa hoặc đánh dấu sự kiện trong hàng đợi NVS.
+   - **MQTT Transport PUBACK**: Broker Mosquitto xác nhận đã nhận gói tin qua QoS 1; không chứng minh Backend đã ghi nhận CSDL.
+   - **Backend DB Commit**: Backend Go xác thực, khử trùng lặp qua UNIQUE(gateway_id, event_id) và lưu trữ bền vững vào PostgreSQL.
+   - **UI Acknowledgement**: Người vận hành gọi POST /api/v1/alerts/{id}/acknowledge để ghi nhận quy trình xử lý của con người; không bao giờ được coi là RF ACK.
+4. **Đăng ký kênh độc quyền VN920_V1 (Refs #154):** Mỗi Gateway được cấp phát độc quyền một kênh tĩnh CH00–CH10 (920.250–922.750 MHz, 125 kHz BW), lưu trữ bền vững trong PostgreSQL; không chia sẻ kênh giữa các Gateway trong MVP.
+   - Phân biệt rạch ròi các trạng thái: CHANNEL_ALLOCATED (đã cấp kênh) $	o$ SCHEDULE_STAGED (đã nạp lịch dự phòng) $	o$ SCHEDULE_ACTIVE (lịch đang kích hoạt) $	o$ RF_AUTHORIZED (cho phép phát sóng).
+   - Việc được cấp kênh chưa cấu thành quyền phát sóng RF nếu thiếu lịch ACTIVE hợp lệ và đồng hồ tin cậy.
+5. **Giám sát & Bảo trì V2:**
+   - UP_HEALTH_REPLY (0x44, 21B): Phản ánh PENDING_COUNT (độ sâu hàng đợi FIFO tức thời chưa được ACK).
+   - UP_DIAG_METRICS (0x4A, 23B, PR #205): Phản ánh DROPPED_EVENT_COUNT (bộ đếm tích lũy sự kiện bị tràn/hủy do hàng đợi đầy) và DIAG_SEQ.
+   - Tuyệt đối không gộp chung hoặc đánh đồng PENDING_COUNT với DROPPED_EVENT_COUNT.
+6. **Kế hoạch chuyển đổi và hủy bỏ (Deprecation Policy):**
+   - Topic uplink/telemetry, endpoint REST /api/v1/nodes/{id}/telemetry, sự kiện WSS TELEMETRY_UPDATE, và lệnh SET_PERIODIC_MODE được đánh dấu DEPRECATED_HISTORICAL.
+   - Giữ nguyên cấu trúc dữ liệu của các schema 1.0-draft để các hệ thống giải mã log lịch sử không bị gián đoạn.
+   - Cấm mọi firmware và producer V2 xuất bản dữ liệu đo kiểm định kỳ lên uplink/telemetry hoặc gửi lệnh SET_PERIODIC_MODE.
 
 ## Trạng thái
 
-- **MQTT / REST / WebSocket**: đủ mức làm mock, tích hợp schema draft và review; chưa có producer/consumer thực tế PASS.
-- **Radio MAC v1**: *BLOCKED G2* đến khi chốt authenticated framing/nonce/key provisioning, tính airtime và có cross-language golden vectors; không dùng định dạng 8 byte + CRC16 như giao thức production.
-- Danh sách bất đồng/giả định cần xử lý tại [OPEN_DECISIONS.md](OPEN_DECISIONS.md).
-
-**Bảo vệ phạm vi:** #12, #14, #15 đều cho phép sửa `contracts/`. Không tự thay đổi firmware, SQL migration, CI workflow hay tài liệu ngoài phạm vi Issue.
+- **Radio MAC V2 (0.3.0-draft):** Đã căn chỉnh baseline MVP (PR #205, PR #206); Join CAD bất đồng bộ (tối đa 3 lần thử lại), khe DATA W500ms + G50ms (chu kỳ 600ms/Node, 15 slots 9000ms), khe READY R400ms + G50ms (chu kỳ 500ms/Node) trong Migration theo yêu cầu, Beacon 0x43 32B HMAC-SHA256-128 trong Maintenance (~300s). HIL #169 tiếp tục đo kiểm thực địa độc lập.
+- **MQTT / REST / WebSocket V2 (Issue #128):** Đồng bộ hóa schema sự kiện, hủy bỏ telemetry định kỳ, tích hợp cấp phát kênh VN920_V1, cập nhật validator kiểm tra hình học lịch V2 và bộ test tương thích.
+- Bất đồng và lộ trình kỹ thuật được cập nhật tại [OPEN_DECISIONS.md](OPEN_DECISIONS.md).

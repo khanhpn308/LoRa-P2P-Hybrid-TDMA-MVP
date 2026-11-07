@@ -140,6 +140,33 @@
         }
       ],
       "description": "Optional staged version; staging MUST NOT set active_schedule_version."
+    },
+    "pending_event_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255,
+      "description": "Instant FIFO depth of unacknowledged events from UP_HEALTH_REPLY 0x44 (21B PENDING_COUNT). Distinct from dropped_event_count."
+    },
+    "dropped_event_count": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$",
+      "description": "Cumulative count of events dropped due to queue overflow from UP_DIAG_METRICS 0x4A (23B DROPPED_EVENT_COUNT). Decimal uint32/uint64 string."
+    },
+    "diag_seq": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$",
+      "description": "Monotonic diagnostic sequence number from UP_DIAG_METRICS 0x4A (23B DIAG_SEQ)."
+    },
+    "channel_id": {
+      "type": "string",
+      "pattern": "^CH(0[0-9]|10)$",
+      "description": "Assigned exclusive VN920 channel (CH00..CH10) registered in PostgreSQL per Issue #154."
+    },
+    "maint_seq": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295,
+      "description": "Monotonic sequence number of the current Maintenance Superframe cycle."
     }
   },
   "required": [

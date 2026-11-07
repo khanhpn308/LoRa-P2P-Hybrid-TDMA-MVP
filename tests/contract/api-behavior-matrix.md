@@ -19,6 +19,17 @@
 | WS-05 | Outbound/inbound queue overflow | Bounded disconnect/STALE and REST resync; no unbounded RAM growth | NOT_RUN |
 | WS-06 | Duplicate/reordered COMMAND_STATE_CHANGED | Highest persisted state_revision wins; no rollback | NOT_RUN |
 | WS-07 | Disconnect and client passes `cursor` | No implied event replay; REST snapshot required | NOT_RUN |
+| CHAN-01 | Concurrent requests for distinct available channels | Both granted with distinct `allocation_generation` >= 1; 201 Created | NOT_RUN |
+| CHAN-02 | Two Gateways request the same channel concurrently | First wins (201 Created); second receives 409 Conflict; no dual assignment | NOT_RUN |
+| CHAN-03 | Gateway requests second channel when already holding one | HTTP 409 Conflict; Gateway holds at most one channel in MVP | NOT_RUN |
+| CHAN-04 | VIEWER calls channel request or release endpoint | HTTP 403 Forbidden; RBAC violation prevented | NOT_RUN |
+| CHAN-05 | Release channel while Gateway schedule is ACTIVE (force=false) | HTTP 409 Conflict; release blocked until schedule deactivated | NOT_RUN |
+| CHAN-06 | Release channel when schedule is idle or with force=true | HTTP 200 OK, status=RELEASED, Gateway reassignment unlocked | NOT_RUN |
+| CHAN-07 | Non-ADMIN queries `GET /api/v1/channels` | Returns all channels; `assigned_gateway_id` redacted for foreign Gateways | NOT_RUN |
+| EVENT-01 | Client queries deprecated `GET /api/v1/nodes/{id}/telemetry` | Deprecation header/flag present; historical logs returned; no active stream | NOT_RUN |
+| EVENT-02 | V2 node triggers local alarm; sends `UP_EVENT 0x41` | Gateway persists WAL before same-slot `DOWN_EVENT_ACK 0x42`; publishes `uplink/alert` | NOT_RUN |
+| EVENT-03 | MQTT QoS 1 duplicate delivery to Backend | Deduplicated via `UNIQUE(gateway_id, event_id)` in PostgreSQL; exactly-once DB state | NOT_RUN |
+| EVENT-04 | Operator calls `POST /api/v1/alerts/{id}/acknowledge` | UI state updated to acknowledged; no RF downlink packet generated | NOT_RUN |
 | SECURITY-01 | Production browser WSS authentication D13 unresolved | No production auth-enabled claim or unsafe fallback before signed ADR | BLOCKED_SECURITY |
 
 ## Actual verification evidence required

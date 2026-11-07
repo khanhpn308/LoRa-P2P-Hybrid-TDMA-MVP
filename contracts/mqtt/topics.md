@@ -1,21 +1,21 @@
 # MQTT Contract v1 — Gateway ↔ Mosquitto ↔ Backend Go
-**Version:** `0.1.0-draft` · **MQTT 5.0:** `OWNER_ACCEPTED` (ADR-0002, PR #26) · **Contract:** `DRAFT / PENDING CROSS-TEAM REVIEW` (Issue #14) · **Implementation:** `NOT_VERIFIED`.
+**Version:** `0.2.0-draft` · **MQTT 5.0:** `OWNER_ACCEPTED` (ADR-0002) · **V2 Architecture Alignment:** `EVENT-ONLY / STATIC TDMA` (Issue #128, Umbrella #125) · **Implementation:** `NOT_VERIFIED`.
 
 ## 1. Topics, QoS và ownership
 
 Root `iot/v1/gw/{gateway_id}`. **MQTT 5.0 bắt buộc** cho Gateway và Backend (xem [ADR-0002](../../docs/adr/0002-mqtt-5.md)); MQTT 3.1.1 không thuộc contract v1. Dùng TLS với xác thực broker/Gateway, ACL theo **authenticated principal** (username/verified client certificate); ràng buộc với gateway_id, không tin ClientID tự khai báo; chỉ profile `dev-insecure` localhost bị cô lập mới được chạy cleartext.
 
-| Suffix | Publisher → Consumer | QoS | Retain | Schema |
-|---|---|---:|---|---|
-| `uplink/telemetry` | Gateway → Backend | 1 | false | [telemetry](schemas/telemetry.schema.json) |
-| `uplink/alert` | Gateway → Backend | 1 | false | [alert](schemas/alert.schema.json) |
-| `uplink/status` | Gateway → Backend | 1 | true | [status](schemas/status.schema.json) |
-| `uplink/schedule-ack` | Gateway → Backend | 1 | false | [schedule-ack](schemas/schedule-ack.schema.json) |
-| `uplink/command-ack` (bổ sung đề xuất) | Gateway → Backend | 1 | false | [command-ack](schemas/command-ack.schema.json) |
-| `uplink/session-key-ack` (NEW · DRAFT) | Gateway → Backend | 1 | **false** | [session-key-ack](schemas/session-key-ack.schema.json) |
-| `downlink/schedule` | Backend → Gateway | 1 | **false** | [schedule](schemas/schedule.schema.json) |
-| `downlink/command` | Backend → Gateway | 1 | false | [command](schemas/command.schema.json) |
-| `downlink/session-key-install` (NEW · DRAFT) | Backend → Gateway | 1 | **false** | [session-key-install](schemas/session-key-install.schema.json) |
+| Suffix | Publisher → Consumer | QoS | Retain | Schema / Giao thức V2 | Trạng thái |
+|---|---|---:|---|---|---|
+| `uplink/telemetry` | Gateway → Backend | 1 | false | [telemetry](schemas/telemetry.schema.json) | **DEPRECATED_LEGACY** (Cấm phát sinh mới ở V2; chỉ đọc log lịch sử) |
+| `uplink/alert` | Gateway → Backend | 1 | false | [alert](schemas/alert.schema.json) (V2 `UP_EVENT` 0x41, 26B) | **ACTIVE_V2_EVENT_PLANE** (Sự kiện vượt ngưỡng cảm biến) |
+| `uplink/status` | Gateway → Backend | 1 | true | [status](schemas/status.schema.json) (V2 Health 0x44 & Diag 0x4A, VN920) | **ACTIVE** (Snapshot vận hành, kênh VN920, hàng đợi/mất gói) |
+| `uplink/schedule-ack` | Gateway → Backend | 1 | false | [schedule-ack](schemas/schedule-ack.schema.json) | **ACTIVE** (Xác nhận STAGE_ACK / VERIFY_NACK / ACTIVE_REPORT) |
+| `uplink/command-ack` (bổ sung đề xuất) | Gateway → Backend | 1 | false | [command-ack](schemas/command-ack.schema.json) | **ACTIVE** (Kết quả thi hành lệnh Node, phân biệt NODE_ACKED) |
+| `uplink/session-key-ack` (NEW · DRAFT) | Gateway → Backend | 1 | **false** | [session-key-ack](schemas/session-key-ack.schema.json) | **DRAFT** (Xác nhận cài đặt khóa phiên bền vững vào NVS) |
+| `downlink/schedule` | Backend → Gateway | 1 | **false** | [schedule](schemas/schedule.schema.json) | **ACTIVE_V2** (Lịch TDMA tĩnh V2: W500/G50, 15 khe 9000ms) |
+| `downlink/command` | Backend → Gateway | 1 | false | [command](schemas/command.schema.json) | **ACTIVE** (Lệnh điều khiển Node; cấm SET_PERIODIC_MODE) |
+| `downlink/session-key-install` (NEW · DRAFT) | Backend → Gateway | 1 | **false** | [session-key-install](schemas/session-key-install.schema.json) | **DRAFT** (Cài đặt cặp khóa phiên được bọc AES-256-GCM) |
 
 Gateway chỉ publish `uplink/#` và subscribe `downlink/#` của **chính mình**; Backend ngược lại. Topic `gateway_id` phải khớp danh tính đã được Broker xác thực; payload `gateway_id` phải khớp topic/identity (semantic check), không dùng riêng `ClientID` tự khai báo để cấp quyền. Web/Mobile không truy cập MQTT trực tiếp. Không tạo ngầm alias `iot/gw/{id}/control/schedule/set` hay `uplink/sched_ack` nêu trong tài liệu đính kèm: namespace canonical là của repository.
 
@@ -82,3 +82,23 @@ Based on OWNER_APPROVED design decisions `MQTT-SESSION-KEY-01`, `MQTT-KEY-WRAP-0
 - Post-install activation: Key installation places the slot into `INSTALLED_INACTIVE` on the Gateway; it does not grant TDMA DATA slot or active lease. Pre-staging before `not_before` is permitted, but keys cannot be used for DATA TX before `not_before` or after `expires_at`. In proposed V2 flow (#136), candidate Node readiness `UP_JOIN_READY` (0x49, candidate for Owner decision, verified at edge via `K_KC_UP`, not data session keys) and TDMA schedule staging/countdown (3→2→1) occur only after successful session key installation.
 - Event-Only data plane (#125): Key installation enables cryptographic verification for event-triggered transmissions (`Event TX → ACK RX`) and Maintenance superframe health sync; periodic business telemetry remains superseded.
 - Static JSON Schema validation ≠ GCM tag verification, authenticated current session, durable Flash write, G2/G4 or radio tests. This contract is pending cross-team/G2 security review.
+
+## 8. Đăng ký kênh độc quyền VN920_V1 & Ranh giới vòng đời (#154)
+
+Theo Quyết định Owner (2026-11-05), Backend Go quản lý đăng ký kênh độc quyền trong bảng CSDL PostgreSQL:
+- **Kênh hợp lệ:** CH00–CH10 (tương ứng 920.250 MHz đến 922.750 MHz, khoảng cách kênh 250 kHz, băng thông 125 kHz BW).
+- **Tính độc quyền:** Mỗi Gateway được gán tối đa 1 kênh; không chia sẻ kênh giữa các Gateway trong MVP.
+- **Ranh giới trạng thái (State Hierarchy):**
+  1. `CHANNEL_ALLOCATED`: Gateway đã được Backend cấp phát kênh trong CSDL qua REST API (`POST /api/v1/gateways/{id}/channels/request`). Trạng thái này **chưa cho phép phát sóng RF**.
+  2. `SCHEDULE_STAGED`: Gateway đã nhận và lưu bền vững cấu hình lịch TDMA dự phòng từ Backend (`downlink/schedule`).
+  3. `SCHEDULE_ACTIVE`: Gateway đã kích hoạt lịch TDMA thực tế tại ranh giới superframe và báo cáo `ACTIVE_REPORT`.
+  4. `RF_AUTHORIZED`: Gateway đã hội tụ đủ: Kênh được cấp + Lịch ACTIVE hợp lệ + Đồng hồ UTC tin cậy + Giới hạn Duty Cycle an toàn. Chỉ khi đạt trạng thái này mới được phát sóng RF.
+- **Quan hệ với MQTT:** Gateway công bố `channel_id` (VD: `"CH04"`) trong bản tin snapshot `uplink/status`. Nếu Gateway bị thu hồi kênh hoặc chưa được cấp kênh, nó không được phép kích hoạt lịch phát RF.
+
+## 9. Phân định bốn tầng xác nhận (Four-Layer Confirmation Model)
+
+Tuyệt đối không đánh đồng hoặc suy diễn các tầng xác nhận sau:
+1. **RF ACK (`DOWN_EVENT_ACK 0x42`, 19B):** Gateway gửi trả về Node ngay trong cùng khe DATA sau khi đã lưu bền vững sự kiện vào WAL/SQLite cục bộ. Node dựa vào đây để xóa/latch sự kiện trong NVS.
+2. **MQTT Transport PUBACK:** Broker Mosquitto xác nhận hop truyền mạng qua giao thức MQTT 5.0 QoS 1. Gói tin đến broker **không** đồng nghĩa Backend Go đã commit vào CSDL.
+3. **Backend DB Commit:** Backend Go nhận bản tin MQTT, kiểm tra tính lũy thừa qua `UNIQUE(gateway_id, event_id)`, lưu bền vững vào bảng PostgreSQL. Nếu trùng lặp, backend khử trùng lặp an toàn.
+4. **UI Acknowledgement:** Người vận hành gọi REST endpoint `POST /api/v1/alerts/{id}/acknowledge` để xác nhận đã xử lý cảnh báo trong quy trình làm việc con người. Hành động này **không phát sinh bất kỳ bản tin RF ACK nào** xuống Node.

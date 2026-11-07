@@ -1,7 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:loratdma:mqtt:telemetry:v1-draft",
-  "title": "LoRa TDMA telemetry (proposed contract)",
+  "title": "LoRa TDMA telemetry (DEPRECATED_HISTORICAL)",
+  "description": "DEPRECATED_HISTORICAL: Maintained strictly for historical log playback and transitional decoding under schema_version '1.0-draft'. Active V2 nodes operate exclusively under Event-Only architecture (UP_EVENT 0x41) publishing to uplink/alert; V2 firmware MUST NOT emit periodic telemetry.",
   "type": "object",
   "additionalProperties": false,
   "properties": {

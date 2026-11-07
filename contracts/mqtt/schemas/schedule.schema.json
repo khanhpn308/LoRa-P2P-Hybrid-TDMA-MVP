@@ -40,14 +40,20 @@
       "description": "Absolute UTC proposal/command acceptance deadline; MQTT Message Expiry is separate and also mandatory."
     },
     "profile_id": {
-      "const": "P-10S-15",
+      "enum": [
+        "P-10S-15",
+        "V2-VN920-STATIC-15N"
+      ],
       "type": "string",
-      "description": "Candidate only (P-10S-15); not validated airtime/RF/HIL profile. Do not treat as approved timing."
+      "description": "V2-VN920-STATIC-15N is the Owner-approved MVP baseline (W500/G50, 15 slots 9000ms); P-10S-15 is the historical candidate profile."
     },
     "superframe_ms": {
-      "const": 10000,
       "type": "integer",
-      "description": "Candidate/mock-only value. Actual timing requires #12/G1/G2/G3 review."
+      "enum": [
+        9000,
+        10000
+      ],
+      "description": "Superframe duration in ms (9000 ms for V2-VN920-STATIC-15N; 10000 ms for legacy P-10S-15)."
     },
     "min_announce_superframes": {
       "type": "integer",
@@ -85,8 +91,12 @@
             "maximum": 10000
           },
           "duration_ms": {
-            "const": 400,
-            "type": "integer"
+            "type": "integer",
+            "enum": [
+              400,
+              500
+            ],
+            "description": "Usable slot duration in ms (500 ms for V2 W_MS; 400 ms for legacy P-10S-15)."
           }
         }
       },

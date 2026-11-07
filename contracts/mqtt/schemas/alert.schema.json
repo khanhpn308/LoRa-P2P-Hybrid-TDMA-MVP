@@ -1,7 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:loratdma:mqtt:alert:v1-draft",
-  "title": "LoRa TDMA alert (proposed contract)",
+  "title": "LoRa TDMA alert / event (active V2 contract)",
+  "description": "Active V2 event plane contract for discrete event ingestion (mapping UP_EVENT 0x41 26B). Gateway publishes this record following durable local WAL commit and immediate same-slot radio ACK (DOWN_EVENT_ACK 0x42 19B, radio_ack_sent: true). RF ACK, MQTT PUBACK, and Backend PostgreSQL commit are distinct confirmation layers.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
