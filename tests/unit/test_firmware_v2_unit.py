@@ -1,7 +1,9 @@
 """
-Host unit test execution for V2 MAC framing, codecs, and Node Event FIFO.
+Host unit test execution for V2 MAC framing, codecs, Node Event FIFO,
+Node TDMA Slot Client, and Gateway TDMA Master Engine.
 
-Authority: Issue #131, C Coding Standard v2, contracts/radio-mac/specification.md.
+Authority: Issue #131, Issue #239, Issue #240, C Coding Standard v2,
+           contracts/radio-mac/specification.md.
 """
 
 from pathlib import Path
@@ -43,6 +45,17 @@ class TestFirmwareV2Unit(unittest.TestCase):
         assert cls.airtime_policy_c.is_file(), f"Source not found: {cls.airtime_policy_c}"
         assert cls.node_crypto_c.is_file(), f"Source not found: {cls.node_crypto_c}"
         assert cls.node_tdma_client_c.is_file(), f"Source not found: {cls.node_tdma_client_c}"
+
+        cls.gateway_master_main_dir = cls.repo_root / "firmware" / "gateway_master" / "main"
+        cls.gateway_wal_c = cls.gateway_master_main_dir / "gateway_wal.c"
+        cls.gateway_crypto_c = cls.gateway_master_main_dir / "gateway_crypto.c"
+        cls.gateway_tdma_master_c = cls.gateway_master_main_dir / "gateway_tdma_master.c"
+        cls.test_gateway_tdma_engine_c = cls.repo_root / "tests" / "unit" / "test_gateway_tdma_engine.c"
+
+        assert cls.gateway_wal_c.is_file(), f"Source not found: {cls.gateway_wal_c}"
+        assert cls.gateway_crypto_c.is_file(), f"Source not found: {cls.gateway_crypto_c}"
+        assert cls.gateway_tdma_master_c.is_file(), f"Source not found: {cls.gateway_tdma_master_c}"
+        assert cls.test_gateway_tdma_engine_c.is_file(), f"Test not found: {cls.test_gateway_tdma_engine_c}"
 
     def test_compile_and_run_lora_mac_v2_unit_tests(self):
         """Compile test_lora_mac_v2.c with strict flags and execute all V2 framing/codec tests."""
@@ -173,7 +186,57 @@ class TestFirmwareV2Unit(unittest.TestCase):
             self.assertIn("Running test_state_transition_beacon_loss_lock ... PASSED", res.stdout)
             self.assertIn("Running test_zero_out_of_slot_rf_transmission ... PASSED", res.stdout)
 
+    def test_compile_and_run_gateway_tdma_engine_unit_tests(self):
+        """Compile test_gateway_tdma_engine.c with strict flags and execute all Master TDMA state machine tests."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bin_path = Path(tmpdir) / "test_gateway_tdma_engine"
+            cmd_compile = [
+                "gcc",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-pedantic",
+                "-std=c11",
+                f"-I{self.c_inc}",
+                f"-I{self.mock_inc}",
+                f"-I{self.tdma_common_inc}",
+                f"-I{self.airtime_policy_inc}",
+                f"-I{self.gateway_master_main_dir}",
+                str(self.lora_mac_c),
+                str(self.node_event_fifo_c),
+                str(self.tdma_common_c),
+                str(self.airtime_policy_c),
+                str(self.gateway_wal_c),
+                str(self.gateway_crypto_c),
+                str(self.gateway_tdma_master_c),
+                str(self.test_gateway_tdma_engine_c),
+                "-o",
+                str(bin_path),
+            ]
+            comp = subprocess.run(cmd_compile, capture_output=True, text=True)
+            self.assertEqual(
+                comp.returncode,
+                0,
+                f"Compilation failed:\nSTDOUT:\n{comp.stdout}\nSTDERR:\n{comp.stderr}",
+            )
+
+            res = subprocess.run([str(bin_path)], capture_output=True, text=True)
+            self.assertEqual(
+                res.returncode,
+                0,
+                f"Test execution failed with code {res.returncode}:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}",
+            )
+            self.assertIn("All Gateway TDMA Master Engine unit tests PASSED successfully!", res.stdout)
+            self.assertIn("Running test_crypto_operations_roundtrip ... PASSED", res.stdout)
+            self.assertIn("Running test_wal_buffer_bounded_overflow ... PASSED", res.stdout)
+            self.assertIn("Running test_superframe_beacon_broadcast ... PASSED", res.stdout)
+            self.assertIn("Running test_slot_idle_advancement_zero_stray_tx ... PASSED", res.stdout)
+            self.assertIn("Running test_up_event_valid_receipt_wal_commit_in_slot_ack ... PASSED", res.stdout)
+            self.assertIn("Running test_corrupted_mic_and_invalid_header_rejection ... PASSED", res.stdout)
+            self.assertIn("Running test_airtime_exhaustion_suppression ... PASSED", res.stdout)
+            self.assertIn("Running test_maintenance_superframe_management ... PASSED", res.stdout)
+            self.assertIn("Running test_tdma_v2_timing_boundaries ... PASSED", res.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
-
