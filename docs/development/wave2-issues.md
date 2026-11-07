@@ -3,6 +3,7 @@
 > **Trạng thái:** INITIAL / PARTIAL TASK BREAKDOWN. Bốn Issues dưới đây đã được chuyển từ Wave 1 theo quyết định Project Lead. Đây không phải toàn bộ backlog Wave 2 và không chứng minh core implementation đã PASS.
 > **Quy tắc:** Wave phân loại mục tiêu triển khai; Workstream xác định nhóm; Gate G0–G6 là bước nghiệm thu, không phải Wave. Các Workstreams được triển khai song song khi dependencies được đáp ứng.
 > **GitHub Labels:** `wave:1`, `wave:2`, `wave:3`, `wave:4` đã được tạo. Bốn Issues thuộc tài liệu này được gắn `wave:2`; các nhãn chuyên môn và assignees giữ nguyên. GitHub Project Custom Field `Wave` (nếu có) chưa được xác minh/cập nhật.
+> **Amendment 2026-11-04 theo [#125](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/125):** định hướng chuyển sang Event-only Static TDMA + Maintenance SF (~300s). Bãi bỏ telemetry định kỳ và contention/PCSS; các migration issues tương ứng là #127 (contract G2), #128 (contract G4), #129 (docs roadmap), #130 (sim), #131 (firmware) và #132 (backend).
 
 ## 1. Danh mục bốn Issues đã chuyển — Label `wave:2`
 
@@ -17,17 +18,17 @@
 
 ## 2. Công việc Wave 2 còn cần phân rã
 
-Các hạng mục sau mới thuộc backlog dự kiến, **chưa phải Issues đã tạo**:
+Các hạng mục sau thuộc backlog triển khai; một số đã có Issue được dẫn trong bảng, các mục còn lại cần phân rã phạm vi trước khi thực hiện:
 
 | Workstream | Hạng mục triển khai | Điều kiện cần |
 |---|---|---|
 | Hardware/RF | RF measurements mở rộng, chuẩn bị 2–5 Node HIL | Kết quả #9/#11, thiết bị và RF policy |
-| Firmware Gateway | Beacon Engine, TDMA Master Executor, local fallback | #10/#11/#12, #13 |
-| Firmware Node | Beacon Sync, TDMA Client, Priority Access | #10/#11/#12, #13 |
+| Firmware Gateway | Static DATA/ACK Executor, durable Event receipt, Maintenance/Health, local fallback | #10/#11/#12, #13, #127/#131 |
+| Firmware Node | Local alarm, persistent bounded Event FIFO, own-slot ACK/retry, Maintenance Sync/Health | #10/#11/#12, #13, #127/#131 |
 | Gateway Connectivity | Wi-Fi, MQTT/TLS bridge, disconnect/recovery | #14/#16, Gateway FW |
-| Backend | Hoàn thiện các module API/Alert và domain theo contract | #14/#15, #17/#18/#19 |
-| Mobile Flutter | Dashboard, devices, telemetry, alerts với mock/API | Flutter foundation Issues cần tạo ở Wave 1, #15 |
-| QA/Simulation | Radio-network simulator và các kịch bản thử lỗi | MAC/TDMA contract và test fixtures |
+| Backend | Event-only ingest/durable dedup, static DATA/Maintenance planning và API theo contract | #14/#15, #17/#18/#19, #128/#132 |
+| Mobile Flutter | Dashboard, devices, Event history, alerts với mock/API | Flutter foundation Issues cần tạo ở Wave 1, #15, contract migration #128 |
+| QA/Simulation | DATA/Maintenance/Join/Recovery timeline, ACK/replay/Health/reboot/overflow fault cases | Reviewed MAC/TDMA contracts, timing evidence và #130 |
 
 **Không coi** Gateway MQTT Simulator (#17) là Radio-network Simulator và không suy diễn `SIMULATOR_PASS` thành `RF_HIL_PASS`.
 

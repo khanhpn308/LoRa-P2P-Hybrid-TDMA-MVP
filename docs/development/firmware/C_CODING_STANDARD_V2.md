@@ -91,7 +91,7 @@ Rule fields: `ID | scope | directive | verification | failure action`. Source ma
 |---|---|---|---|---|
 | ARCH-001 | shared components | MUST keep `sx1276_driver` for registers/SPI/radio state, `lora_mac` for framing/security, `tdma_common` for schedule utilities and `airtime_policy` for admission, subject to actual repo boundaries | STATIC/BUILD | FIX |
 | ARCH-002 | gateway | MUST keep Gateway as local TDMA real-time executor; Backend computes/version-controls future schedules and MUST_NOT command per-slot TX instants | STATIC/CONTRACT | STOP |
-| ARCH-003 | node | MUST use authenticated Beacon/mapping and validated slot/priority conditions before periodic TX; unsafe sync ⇒ suppress affected TX | UNIT/HIL | STOP |
+| ARCH-003 | node | MUST require authenticated mapping, current rights, sync and an approved static DATA slot before Event TX; suppress unsafe application/control TX while keeping local alarm independent | UNIT/HIL | STOP |
 | ARCH-004 | all | MUST check interface/ABI changes across Gateway/Node, radio codec, MQTT, Go, React/Flutter; breaking interface requires explicit approval and tests | STATIC(CG)/CONTRACT/HUMAN | STOP |
 | ARCH-005 | all | MUST_NOT silently add Redis, InfluxDB, extra services or LoRaWAN stacks to the MVP | STATIC/HUMAN | STOP |
 | ARCH-006 | all | MUST_NOT assume scaffold equals operational SX1276 driver/TDMA stack; claim implemented features only when verified from live code | STATIC/HUMAN | STOP |
@@ -138,9 +138,9 @@ Rule fields: `ID | scope | directive | verification | failure action`. Source ma
 | TDMA-004 | backend boundary | MUST_NOT invent `EXPIRED→ACTIVE` transition on late `ACTIVE_REPORT`; reconcile per reviewed contract or report BLOCKED | CONTRACT/HUMAN | STOP |
 | TDMA-005 | gateway/node | MUST distinguish proposal `expires_at` from unapproved active schedule lease; offline active continuation only under reviewed validity/safety policy | UNIT/HIL/HUMAN | STOP |
 | TDMA-006 | clocks | MUST distinguish UTC for expiry, monotonic local deadlines and Beacon-derived RF slot synchronization; reset/jump/holdover mapping not inferred | HIL/HUMAN | STOP |
-| TDMA-007 | node | MUST suppress periodic TX when authenticated mapping/sync/guard assurance is inadequate; missed-Beacon numeric limit remains candidate | HIL/RF | STOP |
-| TDMA-008 | RF timeline | MUST validate full Beacon/DL/PCSS/DATA/ACK/JOIN/guard timeline, including JOIN→next Beacon spill, against one half-duplex radio | UNIT/HIL/RF | STOP |
-| TDMA-009 | alarms | MUST bound priority contention and account for ACK/retry and airtime; `<3 s` is research target, not an approved SLA | SIM/HIL/RF | STOP |
+| TDMA-007 | node | MUST suppress each unsafe Event/control TX when sync or guard assurance is inadequate; retain durable pending Events and independent local alarm; N_MISSED > 3 disconnect is an observability indicator and schedule does not expire by lease | HIL/RF | STOP |
+| TDMA-008 | RF timeline | MUST validate static DATA Event TX/ACK RX (W500/G50), Gateway Event RX/ACK TX, Maintenance 32B SYNC_BEACON/HEALTH_REPLY/23B Diagnostic, CAD Join (up to 3 retries), READY (R400/G_R50) and guards across boundaries against one half-duplex radio | UNIT/HIL/RF | STOP |
+| TDMA-009 | alarms | MUST retry the same Event only in its next approved static DATA slot up to the bounded retry limit; normal priority contention/PCSS is superseded; `<3 s` remains research target | SIM/HIL/RF | STOP |
 | TDMA-010 | profile | MUST_NOT treat 10-second superframe, 15 slots, 400ms slot, fixed IRQ jitter or guard as measured/approved production parameters | HUMAN/HIL/RF | STOP |
 ## 11. QA — evidence, testing and claim discipline
 | Rule ID | Scope | Directive | Verify | If violated |
@@ -157,7 +157,7 @@ Rule fields: `ID | scope | directive | verification | failure action`. Source ma
 | Decision | Current source status | Agent behavior |
 |---|---|---|
 | D01/D11 | BLOCKED G2 | No production frame layout, key/nonce/MIC/replay/epoch design or fake golden bytes |
-| D02/D04/D05 | CANDIDATE / needs G1/G2/G3 | No numeric ToA/jitter/drift/guard/superframe/activation horizon guarantee |
+| D02/D04/D05 | D02 superseded by Event-Only Static TDMA + Maintenance SF; D04/D05 need G1/G2/G3 | No numeric ToA/jitter/drift/guard/superframe/activation horizon guarantee without measurement |
 | D03 | BLOCKED G1 | No approved Vietnamese RF frequency, power, duty, ERP or TX authority inferred from examples |
 | D06/D07/D09/D10/D12 | PROPOSED / some BLOCKED | No implicit MQTT topic aliases, sensor scaling, alert mapping or infinite-buffer promise |
 | D08 | MQTT 5.0 OWNER_ACCEPTED, cross-team PENDING | Preserve chosen version; do not infer all detailed MQTT rules approved/implemented |
