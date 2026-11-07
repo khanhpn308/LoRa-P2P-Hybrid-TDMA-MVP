@@ -72,9 +72,10 @@ class TestMqttSessionKeyIntegration(unittest.TestCase):
         cls.broker_dir = cls.work_dir / "broker"
         generate_ephemeral_pki(cls.cert_dir, cls.broker_dir)
 
-        # 2. Write test ACL file extending #16 with session key topics
+        # 2. Write test ACL file from canonical deploy/mosquitto/acl (#228)
+        canonical_acl = (ROOT / "deploy/mosquitto/acl").read_text(encoding="utf-8")
         cls.acl_path = cls.work_dir / "session_key.acl"
-        cls.acl_path.write_text(SESSION_KEY_ACL, encoding="utf-8")
+        cls.acl_path.write_text(canonical_acl, encoding="utf-8")
         cls.acl_path.chmod(0o600)
         run_cmd(
             "docker", "run", "--rm", "--user", "0:0", "--entrypoint", "chown",
@@ -158,6 +159,38 @@ class TestMqttSessionKeyIntegration(unittest.TestCase):
             client_key_path=client_key,
             server_hostname="localhost",
         )
+
+    # -------------------------------------------------------------------------
+    # TEST 0: Canonical Mosquitto ACL Structure, Topic Mapping and Syntax (#228)
+    # -------------------------------------------------------------------------
+    def test_00_canonical_acl_structure_and_broker_syntax(self):
+        """Assert deploy/mosquitto/acl contains canonical Session Key topics and broker loaded cleanly."""
+        acl_file = ROOT / "deploy/mosquitto/acl"
+        self.assertTrue(acl_file.is_file(), "deploy/mosquitto/acl must exist")
+        acl_text = acl_file.read_text(encoding="utf-8")
+
+        # Verify gw-a permissions
+        self.assertIn("user gw-a", acl_text)
+        self.assertIn("topic read iot/v1/gw/gw-a/downlink/session-key-install", acl_text)
+        self.assertIn("topic write iot/v1/gw/gw-a/uplink/session-key-ack", acl_text)
+
+        # Verify gw-b permissions
+        self.assertIn("user gw-b", acl_text)
+        self.assertIn("topic read iot/v1/gw/gw-b/downlink/session-key-install", acl_text)
+        self.assertIn("topic write iot/v1/gw/gw-b/uplink/session-key-ack", acl_text)
+
+        # Verify backend permissions
+        self.assertIn("user backend", acl_text)
+        self.assertIn("topic write iot/v1/gw/+/downlink/session-key-install", acl_text)
+        self.assertIn("topic read iot/v1/gw/+/uplink/session-key-ack", acl_text)
+
+        # Verify broker logs confirm successful startup and zero ACL syntax/parsing errors
+        logs = run_cmd(*self.compose_cmd, "logs", "--no-color", "mqtt-tls", env=self.env).stdout.lower()
+        self.assertIn("mosquitto version 2.0", logs)
+        self.assertIn("opening ipv4 listen socket on port 8883", logs)
+        self.assertNotIn("syntax error", logs)
+        self.assertNotIn("failed to parse", logs)
+        self.assertNotIn("unknown directive", logs)
 
     # -------------------------------------------------------------------------
     # TEST 1: TLS Mutual Authentication & Handshake Verification
