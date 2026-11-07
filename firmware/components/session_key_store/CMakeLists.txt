@@ -1,0 +1,12 @@
+idf_component_register(
+    SRCS
+        "src/session_key_store.c"
+        "src/session_key_crypto.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        nvs_flash
+        mbedtls
+        esp_hw_support
+        log
+)
