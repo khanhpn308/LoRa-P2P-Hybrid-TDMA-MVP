@@ -49,3 +49,42 @@ menu "Sensor Node Button Wakeup and Power Configuration"
             If greater than 0, sets an RTC timer wakeup fallback in addition to the button EXT0 wakeup.
 
 endmenu
+
+menu "Sensor Node V2 TDMA Slot Client Configuration"
+
+    config NODE_TDMA_NODE_ID
+        int "Node Network ID & Assigned Static TDMA Slot (1..15)"
+        default 1
+        range 1 15
+        help
+            Assigned static DATA slot index in the TDMA superframe (Slot #1 to #15).
+
+    config NODE_TDMA_GATEWAY_ID
+        int "Expected Gateway Network ID"
+        default 1
+        range 1 254
+        help
+            Network Gateway ID emitting DOWN_SYNC_BEACON (0x43).
+
+    config NODE_TDMA_BEACON_TIMEOUT_MS
+        int "Beacon Reception Window Timeout (ms)"
+        default 500
+        range 100 5000
+        help
+            Duration the node listens for Gateway DOWN_SYNC_BEACON before marking as missed.
+
+    config NODE_TDMA_CLOCK_DRIFT_PPM
+        int "Local Crystal Oscillator Drift in PPM"
+        default 20
+        range 1 100
+        help
+            Assumed crystal drift in parts-per-million used to compute holdover guard.
+
+    config NODE_TDMA_AIRTIME_PERMILLE
+        int "Regulatory Duty Cycle Permille Limit (10 = 1.0%)"
+        default 10
+        range 1 100
+        help
+            Pre-transmit duty cycle enforcement limit (1.0% = 10 permille).
+
+endmenu
