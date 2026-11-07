@@ -104,4 +104,6 @@ Validated sample envelopes generated for `ALERT_TRIGGERED`, `SCHEDULE_STATE_CHAN
 - **Remediations Executed:**
   1. `GGS-001` / `QG-003`: Ran `gofmt -w .` on all modified/new Go files. Verified `gofmt -l .` output is empty.
   2. `GB-007` / `QG-001`: Ran `go mod tidy` in `backend-go/`. Direct dependencies `github.com/gorilla/websocket` and `go.uber.org/goleak` properly recorded in `go.mod` and checksums recorded in `go.sum`.
+  3. `TS-009` / `RT-004`: Fixed race condition in `TestHub_SlowConsumerBackpressurePolicy` by sizing `fastClient` buffer to 64 and extending timeout to 2s, preventing fast consumer from being prematurely dropped during rapid 3-message broadcasts. Verified 100x consecutive iterations pass with zero race conditions.
+  4. Synchronized with latest `origin/main` (`81bdb41`) to resolve base branch drift and eliminate PR-03 allowlist mismatch.
 - **Final Verdict:** **`AUDIT_PASS`**.

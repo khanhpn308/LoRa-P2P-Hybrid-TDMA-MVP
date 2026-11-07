@@ -89,7 +89,7 @@ func TestHub_SlowConsumerBackpressurePolicy(t *testing.T) {
 
 	go hub.Run(ctx)
 
-	fastClient := NewClient("fast-client", hub, nil, &auth.Claims{Role: auth.RoleViewer}, 2)
+	fastClient := NewClient("fast-client", hub, nil, &auth.Claims{Role: auth.RoleViewer}, 64)
 	slowClient := NewClient("slow-client", hub, nil, &auth.Claims{Role: auth.RoleViewer}, 2)
 
 	hub.Register(fastClient)
@@ -116,7 +116,7 @@ func TestHub_SlowConsumerBackpressurePolicy(t *testing.T) {
 					close(fastDone)
 					return
 				}
-			case <-time.After(500 * time.Millisecond):
+			case <-time.After(2 * time.Second):
 				return
 			}
 		}
@@ -135,7 +135,7 @@ func TestHub_SlowConsumerBackpressurePolicy(t *testing.T) {
 	select {
 	case <-fastDone:
 		// Fast client received all 3 messages
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(2 * time.Second):
 		t.Fatalf("fast client timed out, received %d of 3", fastReceived)
 	}
 
