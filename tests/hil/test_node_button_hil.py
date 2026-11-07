@@ -19,19 +19,23 @@ class TestNodeButtonWakeupHIL(unittest.TestCase):
         cls.repo_root = Path(__file__).resolve().parents[2]
         cls.node_dir = cls.repo_root / "firmware" / "sensor_node"
         cls.main_dir = cls.node_dir / "main"
+        cls.button_dir = cls.repo_root / "firmware" / "components" / "button_driver"
         cls.kconfig_file = cls.main_dir / "Kconfig.projbuild"
-        cls.button_h = cls.main_dir / "button_driver.h"
-        cls.button_c = cls.main_dir / "button_driver.c"
+        cls.button_h = cls.button_dir / "include" / "button_driver.h"
+        cls.button_c = cls.button_dir / "src" / "button_driver.c"
+        cls.button_cmakelists = cls.button_dir / "CMakeLists.txt"
         cls.main_c = cls.main_dir / "main.c"
         cls.cmakelists = cls.main_dir / "CMakeLists.txt"
 
     def test_files_exist_in_allowed_paths(self):
-        """Verify all required button wake-up files exist in firmware/sensor_node/main/."""
+        """Verify all required button wake-up files exist in components and sensor_node/main/."""
         self.assertTrue(self.kconfig_file.is_file(), "Kconfig.projbuild missing")
         self.assertTrue(self.button_h.is_file(), "button_driver.h missing")
         self.assertTrue(self.button_c.is_file(), "button_driver.c missing")
+        self.assertTrue(self.button_cmakelists.is_file(), "button_driver CMakeLists.txt missing")
         self.assertTrue(self.main_c.is_file(), "main.c missing")
         self.assertTrue(self.cmakelists.is_file(), "CMakeLists.txt missing")
+        self.assertIn("button_driver", self.cmakelists.read_text(encoding="utf-8"))
 
     def test_kconfig_definitions(self):
         """Verify Kconfig exposes all required user configuration knobs."""
