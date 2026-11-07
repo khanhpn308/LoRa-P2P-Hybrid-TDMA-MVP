@@ -47,7 +47,13 @@ esp_err_t airtime_policy_record_tx(uint32_t packet_toa_ms)
         return ESP_OK;
     }
 
-    s_accumulated_tx_ms += packet_toa_ms;
+    uint64_t sum = (uint64_t)s_accumulated_tx_ms + packet_toa_ms;
+    if (sum > (uint64_t)UINT32_MAX) {
+        s_accumulated_tx_ms = UINT32_MAX;
+    } else {
+        s_accumulated_tx_ms = (uint32_t)sum;
+    }
+
     ESP_LOGD(TAG, "Recorded TX: +%lu ms -> total %lu/%lu ms",
              (unsigned long)packet_toa_ms,
              (unsigned long)s_accumulated_tx_ms,
