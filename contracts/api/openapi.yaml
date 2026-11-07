@@ -27,6 +27,8 @@ tags:
     name: "schedules"
   -
     name: "audit"
+  -
+    name: "provisioning"
 paths:
   "/healthz":
     get:
@@ -415,6 +417,41 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/Unprocessable" }
+  "/api/v1/devices/provision":
+    post:
+      operationId: "devices_provision"
+      summary: "Provision a new device with root K_JOIN key material"
+      description: "Registers a device and persists wrapped K_JOIN under an initial active generation. Restricted to ADMIN."
+      tags:
+        - "nodes"
+        - "provisioning"
+      x-roles:
+        - "ADMIN"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/DeviceProvisionRequest"
+      responses:
+        "201":
+          description: "Device successfully provisioned"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/DeviceProvisionResponse"
+        "400":
+          description: "Invalid request payload or parameter format"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "409":
+          "$ref": "#/components/responses/Conflict"
   "/api/v1/audit":
     get:
       operationId: "audit_list"
@@ -1314,6 +1351,71 @@ components:
           type: "string"
           enum:
             - "RELEASED"
+    DeviceProvisionRequest:
+      type: "object"
+      required:
+        - "network_id"
+        - "device_mac"
+        - "k_join"
+      properties:
+        network_id:
+          type: "integer"
+          format: "int64"
+          minimum: 1
+          description: "Network identifier"
+          example: 1
+        device_mac:
+          type: "string"
+          pattern: "^[0-9a-f]{12}$"
+          description: "12 hex characters lowercase MAC address"
+          example: "001122334455"
+        k_join:
+          type: "string"
+          pattern: "^(?:[0-9a-fA-F]{64}|[A-Za-z0-9+/]{43}=?)$"
+          description: "256-bit CSPRNG key in 64 hex characters or 32-byte Base64"
+        generation:
+          type: "integer"
+          minimum: 1
+          maximum: 65535
+          default: 1
+          description: "Key generation counter"
+          example: 1
+        initial_join_counter:
+          type: "integer"
+          minimum: 0
+          maximum: 4294967295
+          default: 0
+          description: "Initial monotonic join counter"
+          example: 0
+    DeviceProvisionResponse:
+      type: "object"
+      required:
+        - "device_mac"
+        - "network_id"
+        - "generation"
+        - "status"
+        - "created_at"
+      properties:
+        device_mac:
+          type: "string"
+          pattern: "^[0-9a-f]{12}$"
+          example: "001122334455"
+        network_id:
+          type: "integer"
+          format: "int64"
+          example: 1
+        generation:
+          type: "integer"
+          example: 1
+        status:
+          type: "string"
+          enum:
+            - "ACTIVE"
+          example: "ACTIVE"
+        created_at:
+          type: "string"
+          format: "date-time"
+          example: "2026-11-08T00:00:00Z"
   responses:
     Unauthorized:
       description: "Authentication required"

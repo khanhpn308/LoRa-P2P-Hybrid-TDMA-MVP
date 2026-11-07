@@ -200,10 +200,28 @@ func (s *mockStmt) Query(args []driver.Value) (driver.Rows, error) {
 		if state == "join_device_not_found" {
 			return &mockRows{columns: []string{"status"}, rows: nil}, nil
 		}
-		if state == "join_device_revoked" {
+		if state == "join_device_revoked" || state == "provision_device_revoked" {
 			return &mockRows{columns: []string{"status"}, rows: [][]driver.Value{{"REVOKED"}}}, nil
 		}
 		return &mockRows{columns: []string{"status"}, rows: [][]driver.Value{{"ACTIVE"}}}, nil
+	}
+
+	if strings.Contains(q, "from device_generations where network_id = $1 and device_mac = $2 and is_active = true for update") {
+		if state == "provision_active_conflict" {
+			return &mockRows{columns: []string{"generation"}, rows: [][]driver.Value{{1}}}, nil
+		}
+		return &mockRows{columns: []string{"generation"}, rows: nil}, nil
+	}
+
+	if strings.Contains(q, "from device_generations where network_id = $1 and device_mac = $2 and generation = $3") && !strings.Contains(q, "for update") {
+		if state == "provision_gen_exists" {
+			return &mockRows{columns: []string{"dummy"}, rows: [][]driver.Value{{1}}}, nil
+		}
+		return &mockRows{columns: []string{"dummy"}, rows: nil}, nil
+	}
+
+	if strings.Contains(q, "insert into device_generations") && strings.Contains(q, "returning created_at") {
+		return &mockRows{columns: []string{"created_at"}, rows: [][]driver.Value{{time.Now().UTC()}}}, nil
 	}
 
 	if strings.Contains(q, "from device_generations where network_id = $1 and device_mac = $2 and generation = $3 for update") {
