@@ -259,6 +259,79 @@ func (s *mockStmt) Query(args []driver.Value) (driver.Rows, error) {
 		}, nil
 	}
 
+	// 6. Event and Health Storage Queries
+	if strings.Contains(q, "from events where gateway_id = $1 and event_id = $2 for update") {
+		if state == "event_idempotent_duplicate" {
+			h := validStorageEvent().ComputePayloadSHA256()
+			return &mockRows{
+				columns: []string{"id", "raw_payload_sha256"},
+				rows: [][]driver.Value{
+					{int64(42), h[:]},
+				},
+			}, nil
+		}
+		if state == "event_conflicting_payload" {
+			// Mock conflicting hash
+			return &mockRows{
+				columns: []string{"id", "raw_payload_sha256"},
+				rows: [][]driver.Value{
+					{int64(42), []byte("conflicting-hash-32-bytes-here!")},
+				},
+			}, nil
+		}
+		return &mockRows{columns: []string{"id", "raw_payload_sha256"}, rows: nil}, nil
+	}
+
+	if strings.Contains(q, "insert into events") && strings.Contains(q, "returning id") {
+		return &mockRows{
+			columns: []string{"id"},
+			rows:    [][]driver.Value{{int64(101)}},
+		}, nil
+	}
+
+	if strings.Contains(q, "from events where gateway_id = $1 and event_id = $2") {
+		if state == "event_not_found" {
+			return &mockRows{columns: []string{"id"}, rows: nil}, nil
+		}
+		now := time.Now().UTC()
+		return &mockRows{
+			columns: []string{
+				"id", "event_id", "gateway_id", "gateway_epoch", "event_seq", "node_id",
+				"superframe_seq", "seq_num", "schedule_version", "severity", "observed_at", "observed_time_source",
+				"radio_rx_monotonic_us", "buffered", "radio_ack_sent", "slot_id", "sensor_status_mask",
+				"ch1_raw", "ch2_raw", "ch3_raw", "battery_mv", "node_duty_permille",
+				"trigger_channel", "trigger_observed_raw", "trigger_threshold_raw",
+				"raw_payload_sha256", "ingested_at", "ack_status", "acknowledged_at", "acknowledged_by",
+			},
+			rows: [][]driver.Value{
+				{
+					int64(101), "gw01:550e8400-e29b-41d4-a716-446655440000:42", "gw01", "550e8400-e29b-41d4-a716-446655440000", "42", 1,
+					int64(100), 5, int64(1), "P1_HIGH", now, "gateway_utc",
+					"123456789", false, true, 1, 0,
+					2500, 500, 300, 3300, 10,
+					1, 2500, 2000,
+					[]byte("test-matching-hash-32-bytes!!!"), now, "UNACKNOWLEDGED", nil, nil,
+				},
+			},
+		}, nil
+	}
+
+	if strings.Contains(q, "from node_health where gateway_id = $1 and node_id = $2") {
+		if state == "health_not_found" {
+			return &mockRows{columns: []string{"gateway_id"}, rows: nil}, nil
+		}
+		now := time.Now().UTC()
+		return &mockRows{
+			columns: []string{
+				"gateway_id", "node_id", "session_sel", "frame_counter", "maint_seq", "status_flags",
+				"pending_event_count", "health_status", "last_seen_at", "updated_at",
+			},
+			rows: [][]driver.Value{
+				{"gw01", 1, 1, int64(100), int64(10), 0, 0, "ONLINE", now, now},
+			},
+		}, nil
+	}
+
 	return nil, fmt.Errorf("unhandled query in mock driver: %s", s.query)
 }
 
