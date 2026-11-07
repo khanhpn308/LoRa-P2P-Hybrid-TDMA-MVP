@@ -12,6 +12,7 @@ Root `iot/v1/gw/{gateway_id}`. **MQTT 5.0 bắt buộc** cho Gateway và Backend
 | `uplink/status` | Gateway → Backend | 1 | true | [status](schemas/status.schema.json) (V2 Health 0x44 & Diag 0x4A, VN920) | **ACTIVE** (Snapshot vận hành, kênh VN920, hàng đợi/mất gói) |
 | `uplink/schedule-ack` | Gateway → Backend | 1 | false | [schedule-ack](schemas/schedule-ack.schema.json) | **ACTIVE** (Xác nhận STAGE_ACK / VERIFY_NACK / ACTIVE_REPORT) |
 | `uplink/command-ack` (bổ sung đề xuất) | Gateway → Backend | 1 | false | [command-ack](schemas/command-ack.schema.json) | **ACTIVE** (Kết quả thi hành lệnh Node, phân biệt NODE_ACKED) |
+| `uplink/join-hello` (NEW · V2) | Gateway → Backend | 1 | **false** | [join-hello](schemas/join-hello.schema.json) (V2 `UP_JOIN_HELLO` 0x45, 68B) | **ACTIVE_V2_JOIN_PLANE** (Relay bản tin Hello gia nhập mạng V2) |
 | `uplink/session-key-ack` (NEW · DRAFT) | Gateway → Backend | 1 | **false** | [session-key-ack](schemas/session-key-ack.schema.json) | **DRAFT** (Xác nhận cài đặt khóa phiên bền vững vào NVS) |
 | `downlink/schedule` | Backend → Gateway | 1 | **false** | [schedule](schemas/schedule.schema.json) | **ACTIVE_V2** (Lịch TDMA tĩnh V2: W500/G50, 15 khe 9000ms) |
 | `downlink/command` | Backend → Gateway | 1 | false | [command](schemas/command.schema.json) | **ACTIVE** (Lệnh điều khiển Node; cấm SET_PERIODIC_MODE) |
@@ -102,3 +103,10 @@ Tuyệt đối không đánh đồng hoặc suy diễn các tầng xác nhận s
 2. **MQTT Transport PUBACK:** Broker Mosquitto xác nhận hop truyền mạng qua giao thức MQTT 5.0 QoS 1. Gói tin đến broker **không** đồng nghĩa Backend Go đã commit vào CSDL.
 3. **Backend DB Commit:** Backend Go nhận bản tin MQTT, kiểm tra tính lũy thừa qua `UNIQUE(gateway_id, event_id)`, lưu bền vững vào bảng PostgreSQL. Nếu trùng lặp, backend khử trùng lặp an toàn.
 4. **UI Acknowledgement:** Người vận hành gọi REST endpoint `POST /api/v1/alerts/{id}/acknowledge` để xác nhận đã xử lý cảnh báo trong quy trình làm việc con người. Hành động này **không phát sinh bất kỳ bản tin RF ACK nào** xuống Node.
+
+## 10. V2 Join Hello Relay Envelope (`uplink/join-hello`) (#221)
+
+Chuyển tiếp bản tin gia nhập mạng V2 `UP_JOIN_HELLO` (0x45, 68B) nhận được từ sóng RF lên Backend Go qua broker Mosquitto:
+- **Nguyên tắc Zero-Knowledge biên:** Gateway SX1276 chỉ đóng gói khung tin thô 68 byte (`raw_frame_hex`), metadata sóng RF (`rssi`, `snr`), định danh trạm đích (`target_gw_id`) và timestamp vào envelope. Gateway **tuyệt đối không nắm giữ** khóa gốc $K_{\text{JOIN}}$ hay khóa yêu cầu $K_{\text{JREQ}}$ và không được can thiệp sửa đổi byte nào trong khung 68B.
+- **Ràng buộc định danh trạm (Identity Binding):** Broker MQTT xác thực Gateway qua TLS client certificate (mTLS principal). Topic `iot/v1/gw/{gateway_id}/uplink/join-hello` và trường `gateway_id` trong payload phải khớp chính xác với danh tính đã xác thực. Backend độc lập ánh xạ `gateway_id` sang mã số trạm nội bộ và đối chiếu với `target_gw_id` trong payload cũng như byte 7 (`TARGET_GW_ID`) của khung tin thô; nếu không khớp, gói tin bị từ chối fail-closed.
+- **Tính lũy thừa & Khử trùng lặp:** Bản tin xuất bản với QoS 1, `Retain=false`. Khử trùng lặp hop mạng thông qua `(gateway_id, event_id)` với `event_id` bất biến `gateway_id:gateway_epoch:event_seq`. Tại tầng ứng dụng, Backend thực hiện khóa hàng (`FOR UPDATE`) trên bảng CSDL PostgreSQL, kiểm tra tính đơn điệu của `JOIN_COUNTER` và đối chiếu SHA-256 (`raw_hello_sha256`) để bảo đảm xử lý idempotent cho các gói tin truyền lại nguyên vẹn hoặc từ chối đòn tấn công phát lại (Replay Attack).

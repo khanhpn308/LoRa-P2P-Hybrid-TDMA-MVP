@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:loratdma:mqtt:join-hello:v1-draft",
+  "title": "LoRa TDMA V2 Join Hello relay envelope (proposed contract)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0-draft",
+      "type": "string"
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-]{1,32}:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}:(0|[1-9][0-9]{0,19})$",
+      "description": "MUST equal gateway_id + ':' + gateway_epoch + ':' + event_seq (semantic equality validated by consumers). Stable on QoS1 retransmission/replay."
+    },
+    "gateway_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,32}$"
+    },
+    "gateway_epoch": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique boot epoch; regenerate on Gateway reboot, never on MQTT reconnect. Offline queued events retain original epoch."
+    },
+    "event_seq": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$",
+      "description": "Decimal uint64 counter scoped to gateway_epoch; semantic integer <= 18446744073709551615 and no wrap/reuse."
+    },
+    "observed_at": {
+      "oneOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Event occurrence time (UTC Z) only when a defensible time source exists. Null when unknown; never silently backfill with ingest time."
+    },
+    "observed_time_source": {
+      "enum": [
+        "gateway_utc",
+        "node_utc",
+        "estimated",
+        "unknown"
+      ]
+    },
+    "radio_rx_monotonic_us": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$",
+      "description": "Gateway-local monotonic microseconds; meaningful only within gateway_epoch. Do not compare across boots."
+    },
+    "buffered": {
+      "type": "boolean",
+      "description": "Indicates offline queue/replay path; QoS1 DUP flag is NOT a business dedup key. Event identity never changes after buffering."
+    },
+    "target_gw_id": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 254,
+      "description": "Numeric Gateway ID (0x01..0xFE) targeted by the joining node in UP_JOIN_HELLO byte 7. Must match receiving gateway assignment."
+    },
+    "raw_frame_hex": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{136}$",
+      "description": "Exact 68-byte on-air UP_JOIN_HELLO (0x45) frame hex-encoded (136 hexadecimal characters)."
+    },
+    "rssi": {
+      "type": "integer",
+      "minimum": -140,
+      "maximum": 0,
+      "description": "Received signal strength indication in dBm measured by Gateway SX1276."
+    },
+    "snr": {
+      "type": "number",
+      "minimum": -30.0,
+      "maximum": 30.0,
+      "description": "Signal-to-noise ratio in dB measured by Gateway SX1276."
+    }
+  },
+  "required": [
+    "schema_version",
+    "event_id",
+    "gateway_id",
+    "gateway_epoch",
+    "event_seq",
+    "observed_at",
+    "observed_time_source",
+    "radio_rx_monotonic_us",
+    "buffered",
+    "target_gw_id",
+    "raw_frame_hex",
+    "rssi",
+    "snr"
+  ],
+  "description": "DRAFT MQTT v1 Join Hello relay payload; schema checks local shape, not topic authorization, replay, clock freshness, state transitions or cryptographic HMAC. Cross-team review pending (#221).",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "observed_time_source": {
+            "const": "unknown"
+          }
+        },
+        "required": [
+          "observed_time_source"
+        ]
+      },
+      "then": {
+        "properties": {
+          "observed_at": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ]
+}
