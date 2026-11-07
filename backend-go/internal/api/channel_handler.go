@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,19 +11,35 @@ import (
 
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/domain"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/jsonboundary"
+	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/scheduler"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/storage"
 )
 
 const maxPayloadBytes = 4096
 
-// ChannelHandler provides HTTP REST endpoints for RF channel catalogue and Gateway allocations.
-type ChannelHandler struct {
-	repo storage.ChannelRepository
+// ScheduleGuard defines the interface for checking active schedule constraints before channel operations.
+type ScheduleGuard interface {
+	CanChangeGatewayChannel(ctx context.Context, gatewayID string) error
 }
 
-// NewChannelHandler creates a new ChannelHandler.
-func NewChannelHandler(repo storage.ChannelRepository) *ChannelHandler {
-	return &ChannelHandler{repo: repo}
+// ChannelHandler provides HTTP REST endpoints for RF channel catalogue and Gateway allocations.
+type ChannelHandler struct {
+	repo  storage.ChannelRepository
+	guard ScheduleGuard
+}
+
+// NewChannelHandler creates a new ChannelHandler, optionally accepting a ScheduleGuard.
+func NewChannelHandler(repo storage.ChannelRepository, guard ...ScheduleGuard) *ChannelHandler {
+	h := &ChannelHandler{repo: repo}
+	if len(guard) > 0 {
+		h.guard = guard[0]
+	}
+	return h
+}
+
+// SetScheduleGuard sets the schedule guard for channel operations.
+func (h *ChannelHandler) SetScheduleGuard(guard ScheduleGuard) {
+	h.guard = guard
 }
 
 // RegisterRoutes registers the channel registry API endpoints on a ServeMux according to OpenAPI 3.0.3 spec.
@@ -143,6 +160,17 @@ func (h *ChannelHandler) handleRequestChannel(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	if h.guard != nil {
+		if err := h.guard.CanChangeGatewayChannel(r.Context(), gwID); err != nil {
+			if errors.Is(err, scheduler.ErrActiveScheduleOnChannel) {
+				writeError(w, http.StatusConflict, "ERR_ACTIVE_SCHEDULE_ON_CHANNEL", "cannot change channel while gateway holds an active schedule")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to check active schedule guard")
+			return
+		}
+	}
+
 	idempotencyKey := strings.TrimSpace(r.Header.Get("X-Idempotency-Key"))
 	if idempotencyKey == "" {
 		writeError(w, http.StatusBadRequest, "MISSING_IDEMPOTENCY_KEY", "X-Idempotency-Key header is required")
@@ -238,6 +266,17 @@ func (h *ChannelHandler) handleReleaseChannel(w http.ResponseWriter, r *http.Req
 	if err := domain.ValidateGatewayID(gwID); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_GATEWAY_ID", "invalid gateway identifier")
 		return
+	}
+
+	if h.guard != nil {
+		if err := h.guard.CanChangeGatewayChannel(r.Context(), gwID); err != nil {
+			if errors.Is(err, scheduler.ErrActiveScheduleOnChannel) {
+				writeError(w, http.StatusConflict, "ERR_ACTIVE_SCHEDULE_ON_CHANNEL", "cannot release channel while gateway holds an active schedule")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to check active schedule guard")
+			return
+		}
 	}
 
 	alloc, err := h.repo.GetActiveAllocationByGateway(r.Context(), gwID)
