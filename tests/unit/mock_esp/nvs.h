@@ -49,6 +49,9 @@ void nvs_close(nvs_handle_t handle);
 esp_err_t nvs_get_u64(nvs_handle_t handle, const char* key, uint64_t *out_value);
 esp_err_t nvs_set_u64(nvs_handle_t handle, const char* key, uint64_t value);
 
+esp_err_t nvs_get_u32(nvs_handle_t handle, const char* key, uint32_t *out_value);
+esp_err_t nvs_set_u32(nvs_handle_t handle, const char* key, uint32_t value);
+
 esp_err_t nvs_get_blob(nvs_handle_t handle, const char* key, void* out_value, size_t* length);
 esp_err_t nvs_set_blob(nvs_handle_t handle, const char* key, const void* value, size_t length);
 

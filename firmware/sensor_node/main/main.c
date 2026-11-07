@@ -12,6 +12,7 @@
 #include "tdma_common.h"
 #include "node_crypto.h"
 #include "node_tdma_client.h"
+#include "node_v2_join.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "sensor_node";
@@ -19,12 +20,19 @@ static const char *TAG = "sensor_node";
 /* Persistent RTC memory variables preserved across Deep-Sleep */
 RTC_DATA_ATTR static node_event_fifo_t s_event_fifo;
 RTC_DATA_ATTR static node_tdma_client_state_t s_tdma_state;
+RTC_DATA_ATTR static node_v2_join_context_t s_join_ctx;
 RTC_DATA_ATTR static uint32_t s_boot_count = 0;
 RTC_DATA_ATTR static uint32_t s_button_events = 0;
 RTC_DATA_ATTR static bool s_fifo_initialized = false;
 RTC_DATA_ATTR static bool s_tdma_initialized = false;
+RTC_DATA_ATTR static bool s_join_initialized = false;
 
 /* Production SX1276 & FreeRTOS Radio HAL Callbacks */
+static esp_err_t prod_radio_cad(bool *out_activity_detected)
+{
+    return sx1276_cad(out_activity_detected, pdMS_TO_TICKS(100));
+}
+
 static esp_err_t prod_radio_tx(const uint8_t *payload, uint8_t length, uint32_t timeout_ms)
 {
     return sx1276_tx(payload, length, pdMS_TO_TICKS(timeout_ms));
@@ -114,6 +122,25 @@ void app_main(void)
             ESP_LOGE(TAG, "Failed to initialize TDMA Client state: %s", esp_err_to_name(tdma_init_err));
         }
     }
+
+    if (!s_join_initialized) {
+        (void)node_v2_join_init(&s_join_ctx);
+        s_join_initialized = true;
+        ESP_LOGI(TAG, "Sensor Node V2 Join subsystem initialized (State: %s)",
+                 node_v2_join_state_to_str(s_join_ctx.state));
+    }
+
+    node_v2_join_radio_hal_t join_hal = {
+        .radio_cad = prod_radio_cad,
+        .radio_tx = prod_radio_tx,
+        .radio_rx_single = prod_radio_rx_single,
+        .radio_read_frame = prod_radio_read_frame,
+        .radio_sleep = prod_radio_sleep,
+        .radio_standby = prod_radio_standby,
+        .get_time_ms = prod_get_time_ms,
+        .delay_ms = prod_delay_ms,
+    };
+    (void)join_hal;
 
     /* 3. Initialize Airtime Policy & Crypto subsystem */
 #ifdef CONFIG_NODE_TDMA_AIRTIME_PERMILLE

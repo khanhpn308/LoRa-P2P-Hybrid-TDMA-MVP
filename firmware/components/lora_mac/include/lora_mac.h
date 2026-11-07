@@ -65,6 +65,11 @@ typedef enum {
 #define LORA_MAC_V2_LEN_DOWN_SYNC_BEACON   (32U)     /**< 16B header + 16B HMAC tag */
 #define LORA_MAC_V2_LEN_UP_HEALTH_REPLY    (21U)     /**< 7B header + 6B cipher + 8B tag */
 #define LORA_MAC_V2_LEN_UP_DIAG_METRICS    (23U)     /**< 7B header + 8B cipher + 8B tag */
+#define LORA_MAC_V2_LEN_UP_JOIN_HELLO      (68U)     /**< 1B type + 6B MAC + 1B target_gw + 4B ctr + 8B nonce + 32B pub + 16B proof */
+#define LORA_MAC_V2_LEN_DOWN_JOIN_GRANT    (66U)     /**< 1B type + 6B MAC + 1B node_id + 4B ctr + 6B nonce + 32B pub + 16B proof */
+#define LORA_MAC_V2_LEN_UP_JOIN_KEY_CONF   (31U)     /**< 1B type + 1B gw_id + 1B node_id + 4B ctr + 8B tag + 16B proof */
+#define LORA_MAC_V2_LEN_DOWN_JOIN_FINISH   (31U)     /**< 1B type + 1B gw_id + 1B node_id + 4B ctr + 8B tag + 16B proof */
+#define LORA_MAC_V2_LEN_UP_JOIN_READY      (31U)     /**< 1B type + 1B gw_id + 1B node_id + 4B ctr + 8B tag + 16B proof */
 
 /**
  * @brief V2 Unicast Header (7 octets, unencrypted AAD)
@@ -124,6 +129,68 @@ typedef struct {
     uint8_t  reserved[3];    /**< Reserved, must be 0 */
     uint8_t  hmac_tag[16];   /**< HMAC-SHA256-128 tag */
 } lora_mac_v2_beacon_t;
+
+/**
+ * @brief V2 UP_JOIN_HELLO Wire Representation (68 octets, DEC-SEC-01)
+ */
+typedef struct {
+    uint8_t  ver_type;            /**< Fixed 0x45 (LORA_MAC_V2_TYPE_UP_JOIN_HELLO) */
+    uint8_t  device_mac[6];       /**< 6-byte EUI-48 device MAC address */
+    uint8_t  target_gw_id;        /**< Target Gateway ID (1..254) */
+    uint32_t join_counter;        /**< Monotonic 32-bit big-endian counter */
+    uint8_t  node_nonce[8];       /**< 8-byte random client nonce */
+    uint8_t  node_x25519_pub[32]; /**< 32-byte ephemeral X25519 public key */
+    uint8_t  join_proof[16];      /**< 16-byte HMAC proof under K_JREQ */
+} lora_mac_v2_up_join_hello_t;
+
+/**
+ * @brief V2 DOWN_JOIN_GRANT Wire Representation (66 octets, DEC-SEC-01)
+ */
+typedef struct {
+    uint8_t  ver_type;          /**< Fixed 0x46 (LORA_MAC_V2_TYPE_DOWN_JOIN_GRANT) */
+    uint8_t  device_mac[6];     /**< Echoed 6-byte device MAC address */
+    uint8_t  node_id;           /**< Assigned 1-byte Node ID (1..15) */
+    uint32_t join_counter;      /**< Echoed monotonic counter */
+    uint8_t  gw_nonce[6];       /**< 6-byte gateway nonce */
+    uint8_t  gw_x25519_pub[32]; /**< 32-byte ephemeral X25519 public key */
+    uint8_t  grant_proof[16];   /**< 16-byte HMAC proof under K_JGRANT */
+} lora_mac_v2_down_join_grant_t;
+
+/**
+ * @brief V2 UP_JOIN_KEY_CONFIRM Wire Representation (31 octets, DEC-SEC-01)
+ */
+typedef struct {
+    uint8_t  ver_type;          /**< Fixed 0x47 (LORA_MAC_V2_TYPE_UP_JOIN_KEY_CONF) */
+    uint8_t  gw_id;             /**< Target Gateway ID (1..254) */
+    uint8_t  node_id;           /**< Assigned Node ID (1..15) */
+    uint32_t join_counter;      /**< Monotonic counter */
+    uint8_t  gw_kc_tag[8];      /**< 8-byte HMAC tag under K_KC_UP */
+    uint8_t  backend_proof[16]; /**< 16-byte HMAC proof under K_JCONF */
+} lora_mac_v2_up_join_key_confirm_t;
+
+/**
+ * @brief V2 DOWN_JOIN_FINISH Wire Representation (31 octets, DEC-SEC-04)
+ */
+typedef struct {
+    uint8_t  ver_type;                 /**< Fixed 0x48 (LORA_MAC_V2_TYPE_DOWN_JOIN_FINISH) */
+    uint8_t  gw_id;                    /**< Gateway ID (1..254) */
+    uint8_t  node_id;                  /**< Assigned Node ID (1..15) */
+    uint32_t join_counter;             /**< Monotonic counter */
+    uint8_t  gw_finish_tag[8];         /**< 8-byte HMAC tag under K_KC_DOWN */
+    uint8_t  backend_finish_proof[16]; /**< 16-byte HMAC proof under K_JFINISH */
+} lora_mac_v2_down_join_finish_t;
+
+/**
+ * @brief V2 UP_JOIN_READY Wire Representation (31 octets, DEC-SEC-03)
+ */
+typedef struct {
+    uint8_t  ver_type;                /**< Fixed 0x49 (LORA_MAC_V2_TYPE_UP_JOIN_READY) */
+    uint8_t  gw_id;                   /**< Target Gateway ID (1..254) */
+    uint8_t  node_id;                 /**< Assigned Node ID (1..15) */
+    uint32_t join_counter;            /**< Monotonic counter */
+    uint8_t  gw_ready_tag[8];         /**< 8-byte HMAC tag under K_KC_UP */
+    uint8_t  backend_ready_proof[16]; /**< 16-byte HMAC proof under K_JREADY */
+} lora_mac_v2_up_join_ready_t;
 
 /* =========================================================================
  * V2 API FUNCTIONS
@@ -244,6 +311,81 @@ esp_err_t lora_mac_v2_beacon_serialize(const lora_mac_v2_beacon_t *bcn,
 esp_err_t lora_mac_v2_beacon_deserialize(const uint8_t *buf,
                                          size_t len,
                                          lora_mac_v2_beacon_t *out_bcn);
+
+/**
+ * @brief Serialize UP_JOIN_HELLO frame (68 octets).
+ */
+esp_err_t lora_mac_v2_up_join_hello_serialize(const lora_mac_v2_up_join_hello_t *hello,
+                                              uint8_t *out_buf,
+                                              size_t buf_size,
+                                              size_t *out_written);
+
+/**
+ * @brief Deserialize UP_JOIN_HELLO frame (68 octets).
+ */
+esp_err_t lora_mac_v2_up_join_hello_deserialize(const uint8_t *buf,
+                                                size_t len,
+                                                lora_mac_v2_up_join_hello_t *out_hello);
+
+/**
+ * @brief Serialize DOWN_JOIN_GRANT frame (66 octets).
+ */
+esp_err_t lora_mac_v2_down_join_grant_serialize(const lora_mac_v2_down_join_grant_t *grant,
+                                                uint8_t *out_buf,
+                                                size_t buf_size,
+                                                size_t *out_written);
+
+/**
+ * @brief Deserialize DOWN_JOIN_GRANT frame (66 octets).
+ */
+esp_err_t lora_mac_v2_down_join_grant_deserialize(const uint8_t *buf,
+                                                  size_t len,
+                                                  lora_mac_v2_down_join_grant_t *out_grant);
+
+/**
+ * @brief Serialize UP_JOIN_KEY_CONFIRM frame (31 octets).
+ */
+esp_err_t lora_mac_v2_up_join_key_confirm_serialize(const lora_mac_v2_up_join_key_confirm_t *conf,
+                                                    uint8_t *out_buf,
+                                                    size_t buf_size,
+                                                    size_t *out_written);
+
+/**
+ * @brief Deserialize UP_JOIN_KEY_CONFIRM frame (31 octets).
+ */
+esp_err_t lora_mac_v2_up_join_key_confirm_deserialize(const uint8_t *buf,
+                                                      size_t len,
+                                                      lora_mac_v2_up_join_key_confirm_t *out_conf);
+
+/**
+ * @brief Serialize DOWN_JOIN_FINISH frame (31 octets).
+ */
+esp_err_t lora_mac_v2_down_join_finish_serialize(const lora_mac_v2_down_join_finish_t *finish,
+                                                 uint8_t *out_buf,
+                                                 size_t buf_size,
+                                                 size_t *out_written);
+
+/**
+ * @brief Deserialize DOWN_JOIN_FINISH frame (31 octets).
+ */
+esp_err_t lora_mac_v2_down_join_finish_deserialize(const uint8_t *buf,
+                                                   size_t len,
+                                                   lora_mac_v2_down_join_finish_t *out_finish);
+
+/**
+ * @brief Serialize UP_JOIN_READY frame (31 octets).
+ */
+esp_err_t lora_mac_v2_up_join_ready_serialize(const lora_mac_v2_up_join_ready_t *ready,
+                                              uint8_t *out_buf,
+                                              size_t buf_size,
+                                              size_t *out_written);
+
+/**
+ * @brief Deserialize UP_JOIN_READY frame (31 octets).
+ */
+esp_err_t lora_mac_v2_up_join_ready_deserialize(const uint8_t *buf,
+                                                size_t len,
+                                                lora_mac_v2_up_join_ready_t *out_ready);
 
 /* =========================================================================
  * V1 CANDIDATE DEFINITIONS (HISTORICAL PROVENANCE ONLY — SUPERSEDED)
