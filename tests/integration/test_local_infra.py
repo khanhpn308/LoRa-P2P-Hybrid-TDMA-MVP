@@ -267,6 +267,9 @@ class LocalInfrastructureTest(unittest.TestCase):
                 self.exchange("backend", gateway, f"iot/v1/gw/{gateway}/uplink/{suffix}")
             for suffix in ("schedule", "command"):
                 self.exchange(gateway, "backend", f"iot/v1/gw/{gateway}/downlink/{suffix}")
+            # Session Key Install & ACK (#174 / #228)
+            self.exchange("backend", gateway, f"iot/v1/gw/{gateway}/uplink/session-key-ack")
+            self.exchange(gateway, "backend", f"iot/v1/gw/{gateway}/downlink/session-key-install")
         print("PASS: both Gateways and Backend exchange every allowlisted topic at MQTT5 QoS1", flush=True)
         self.publish("gw-a", "iot/v1/gw/gw-b/uplink/telemetry", False,
                      "-i", "gw-b", "-u", "backend")
@@ -275,6 +278,10 @@ class LocalInfrastructureTest(unittest.TestCase):
         self.publish("backend", "iot/v1/gw/gw-a/uplink/telemetry", False)
         self.publish("unknown", "iot/v1/gw/unknown/uplink/status", False)
         self.publish("gw-a", "iot/v1/gw/gw-a/uplink/unlisted", False)
+        # Session Key negative checks: cross-gateway, role reversal (#228)
+        self.publish("gw-a", "iot/v1/gw/gw-b/uplink/session-key-ack", False)
+        self.publish("gw-a", "iot/v1/gw/gw-a/downlink/session-key-install", False)
+        self.publish("backend", "iot/v1/gw/gw-a/uplink/session-key-ack", False)
         print("PASS: cross-Gateway writes, ClientID/username spoof, reversed roles, unknown CN and unlisted topic denied with PUBACK 135", flush=True)
         self.exchange("gw-a", "backend", "iot/v1/gw/gw-b/downlink/command", False)
         self.exchange("gw-b", "backend", "iot/v1/gw/gw-a/downlink/command", False)

@@ -15,6 +15,8 @@ import shutil
 import subprocess
 from typing import Dict, Any, Tuple
 
+ROOT = Path(__file__).resolve().parents[3]
+CANONICAL_ACL_FILE = ROOT / "deploy/mosquitto/acl"
 
 # Baseline #16 ACL from deploy/mosquitto/acl
 BASELINE_ACL = """# Local sample identities, certificate CNs, not client-supplied MQTT ClientIDs.
@@ -47,8 +49,9 @@ topic write iot/v1/gw/+/downlink/schedule
 topic write iot/v1/gw/+/downlink/command
 """
 
-# Reviewed ACL extending #16 with Session Key topics from #122 / PR #123
-SESSION_KEY_ACL = """# Reviewed Mosquitto ACL with Session Key topics (PR #123 / Issue #174)
+# Reviewed ACL extending #16 with Session Key topics from #122 / PR #123 / Issue #228
+SESSION_KEY_ACL = """# Local sample identities, certificate CNs, not client-supplied MQTT ClientIDs.
+# Issue #14 draft topic mapping. Add a reviewed user block for each Gateway.
 user gw-a
 topic write iot/v1/gw/gw-a/uplink/telemetry
 topic write iot/v1/gw/gw-a/uplink/alert
@@ -57,6 +60,7 @@ topic write iot/v1/gw/gw-a/uplink/schedule-ack
 topic write iot/v1/gw/gw-a/uplink/command-ack
 topic read iot/v1/gw/gw-a/downlink/schedule
 topic read iot/v1/gw/gw-a/downlink/command
+# Session Key Install & ACK
 topic read iot/v1/gw/gw-a/downlink/session-key-install
 topic write iot/v1/gw/gw-a/uplink/session-key-ack
 
@@ -68,6 +72,7 @@ topic write iot/v1/gw/gw-b/uplink/schedule-ack
 topic write iot/v1/gw/gw-b/uplink/command-ack
 topic read iot/v1/gw/gw-b/downlink/schedule
 topic read iot/v1/gw/gw-b/downlink/command
+# Session Key Install & ACK
 topic read iot/v1/gw/gw-b/downlink/session-key-install
 topic write iot/v1/gw/gw-b/uplink/session-key-ack
 
@@ -79,6 +84,7 @@ topic read iot/v1/gw/+/uplink/schedule-ack
 topic read iot/v1/gw/+/uplink/command-ack
 topic write iot/v1/gw/+/downlink/schedule
 topic write iot/v1/gw/+/downlink/command
+# Session Key Install & ACK
 topic write iot/v1/gw/+/downlink/session-key-install
 topic read iot/v1/gw/+/uplink/session-key-ack
 """
