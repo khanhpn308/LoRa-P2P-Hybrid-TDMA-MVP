@@ -9,15 +9,15 @@
 Profile cũ `P-10S-15` (5 subframes $\times$ 2000ms, mỗi subframe chứa 400ms khe tranh chấp PCSS và 3 khe dữ liệu) chính thức được đánh dấu là **`OBSOLETE_HISTORICAL_BASELINE`**.
 
 **Lý do bãi bỏ:**
-1. Kiến trúc hệ thống đã chuyển dịch hoàn toàn sang mô hình **Event-Only và Báo động tại chỗ (Local Alarm Autonomy)** theo Quyết định Owner (2026-11-04). Mọi khe tranh chấp PCSS và cơ chế thử lại ngẫu nhiên qua CAD đều bị triệt tiêu khỏi luồng dữ liệu chính.
-2. Dữ liệu sự kiện khẩn cấp được báo động bằng còi/đèn tại chỗ ngay lập tức và được truyền tin RF độc quyền trong **Khe Dữ liệu Tĩnh (Static DATA Slot)** của Node.
+1. Kiến trúc hệ thống chuyển dịch hoàn toàn sang mô hình **Event-Only** (Quyết định Owner #230 bãi bỏ hoàn toàn Local Alarm còi/đèn vật lý và cảm biến phức tạp). Mọi khe tranh chấp PCSS và phát sóng định kỳ telemetry đều bị bãi bỏ khỏi luồng dữ liệu.
+2. Sự kiện phát sinh từ nút nhấn vật lý (button press qua GPIO/EXT0) được lưu bền vững vào NVS/RTC FIFO và truyền tin RF độc quyền trong **Khe Dữ liệu Tĩnh (Static DATA Slot)** của Node.
 3. Cơ chế xác nhận gói tin theo lô `ACK_BITMAP` (15 bit) trong Beacon chu kỳ sau bị hủy bỏ; thay vào đó là xác nhận tức thì trong khe `DOWN_EVENT_ACK` (0x42).
 
 ---
 
 ## 2. Static DATA Superframe — OWNER MVP BASELINE (2026-11-07)
 
-**Architecture:** Local Alarm Autonomy + Event-Only Remote Logging. Node `i` (Gateway-local `NODE_ID=i`, i=1..15) owns implicit DATA position `i` until a signed schedule migration completes. Empty/offline indices remain reserved (no compaction). No periodic application telemetry, Event contention or ACK_BITMAP.
+**Architecture:** Event-Only Remote Logging (Quyết định Owner #230 bãi bỏ Local Alarm Autonomy, nút nhấn vật lý là nguồn sự kiện MVP). Node `i` (Gateway-local `NODE_ID=i`, i=1..15) owns implicit DATA position `i` until a signed schedule migration completes. Empty/offline indices remain reserved (no compaction). No periodic application telemetry, Event contention or ACK_BITMAP.
 
 | Parameter | Owner-approved MVP working value |
 | --- | ---: |

@@ -1,48 +1,52 @@
 # Event-Driven Edge Trigger, Hysteresis, Latch/Clear, and Recovery Design (V2)
 
-> **Document Status:** `PROPOSED_DESIGN / NOT_IMPLEMENTED / RF_HIL_NOT_VERIFIED`  
-> **Authority / Provenance:** Successor to Issue #77 (closed `not_planned/SUPERSEDED` under #199 backlog rebaseline); parent architecture #125, #126, merged PR #133.  
+> **Document Status:** `REVISED_BY_OWNER_#230 / LOCAL_ALARM_ABOLISHED / BUTTON_TRIGGER_MVP`  
+> **Authority / Provenance:** Successor to Issue #77 (closed `not_planned/SUPERSEDED` under #199 backlog rebaseline); parent architecture #125, #126, merged PR #133; **Owner Decision Issue #230 (2026-11-07)**.  
 > **Interface Dependencies:** Radio MAC V2 (`contracts/radio-mac/specification.md` v0.2.0-DRAFT, #127, PR #198, PR #202, #201 corrective), TDMA Schedule (`contracts/radio-mac/tdma-schedule.md`), MQTT 5.0 contract (`contracts/mqtt/topics.md`), and `contracts/OPEN_DECISIONS.md`.  
 > **Allowed Implementation Path:** `docs/architecture/event-driven-edge-design.md` only. All code, wire formats, contracts, and firmware implementations are out of scope.  
-> **Numerical Values Invariant:** All numerical thresholds, debounce durations, hysteresis bands, and sampling intervals are strictly **`TBD` pending Owner physical calibration and real-hardware measurement (#169)**.
+> **Owner Decision #230 Revision Notice:**  
+> 1. **Bãi bỏ Local Alarm Autonomy:** Toàn bộ cơ cấu cảnh báo phần cứng tại chỗ (còi buzzer, đèn LED báo động, siren, relay) bị bãi bỏ hoàn toàn. Node không điều khiển còi/đèn tại chỗ.  
+> 2. **Bãi bỏ Sensor Sampling phức tạp trong MVP:** Bãi bỏ các giả định về lấy mẫu cảm biến công nghiệp (ADC, I2C, SPI nhiệt độ, rung lắc). Nguồn sinh sự kiện duy nhất được sử dụng để kiểm thử Node MVP là **Nút nhấn vật lý (Button press qua GPIO/ngắt EXT0, `button_driver.c`)** đã hoàn thiện ở Issue #149.  
+> 3. **Mô hình Event-Only:** Nút bấm kích hoạt ngắt, lọc dội phím (debounce), sinh bản tin `UP_EVENT` (0x41, 26B, `EVENT_CODE=0x01`, `EVENT_VALUE=1`) nạp vào `node_event_fifo` và phát trong khe Static DATA slot của Node.
 
 ---
 
 ## 1. Executive Summary & Architectural Scope
 
-This design document specifies a bounded, deterministic, Node-local edge event trigger algorithm for sensor threshold evaluation, noise suppression (hysteresis and debounce), latching/clear transitions, and power-loss recovery on the ESP32-WROOM-32E + SX1276 Sensor Node.
+This design document specifies a bounded, deterministic, Node-local edge event trigger algorithm on the ESP32-WROOM-32E + SX1276 Sensor Node.
 
-Under the approved V2 architecture (#125, #127, PR #133), the system enforces:
-1. **Local Alarm Autonomy:** When a sensor violation is qualified, the Node immediately triggers local physical actuators (buzzer, warning LED, relay) without awaiting RF transmission, TDMA slot arrival, Gateway acknowledgment, or Backend permission.
-2. **Event-Only RF Data Plane:** Continuous periodic application telemetry (`DATA_TELEMETRY`) is completely abolished. The SX1276 radio transmits application data **only** when a discrete, qualified Event occurs (`UP_EVENT`, opcode `0x41`, 26 octets).
-3. **Static DATA Slot Execution:** Normal application Event transmissions occur **exclusively** within the Node's pre-assigned Static TDMA DATA slot via the durable Event queue (#131). There is **no contention access**, no priority contention backoff (no PCSS/CAD application data access), and no unscheduled transmission.
-4. **Boundary Separation:** The Node generates a local monotonic `EVENT_REF` (4-byte unsigned integer). The Gateway and Backend originate the canonical, network-wide business `event_id`. RF hop acknowledgment (`DOWN_EVENT_ACK`, opcode `0x42`) strictly represents single-hop RF delivery to the Gateway's local persistent WAL/SQLite buffer; it **does not represent a Backend PostgreSQL database commit or human operator acknowledgment**.
+Under the approved V2 architecture (#125, #127, PR #133) and Owner Decision #230:
+1. **Local Alarm Autonomy Abolished:** Physical local actuators (buzzer, warning LED, relay) are abolished. The Node does not actuate local alarm hardware.
+2. **Button Trigger as MVP Event Source:** Complex industrial sensor sampling (ADC/I2C/SPI) is superseded for MVP. The physical button press via GPIO/EXT0 (`button_driver.c`) serves as the verified event generator.
+3. **Event-Only RF Data Plane:** Continuous periodic application telemetry (`DATA_TELEMETRY`) is completely abolished. The SX1276 radio transmits application data **only** when a discrete Event occurs (`UP_EVENT`, opcode `0x41`, 26 octets).
+4. **Static DATA Slot Execution:** Normal application Event transmissions occur **exclusively** within the Node's pre-assigned Static TDMA DATA slot via the durable Event queue (`node_event_fifo.c`). There is **no contention access**, no priority contention backoff (no PCSS/CAD application data access), and no unscheduled transmission.
+5. **Boundary Separation:** The Node generates a local monotonic `EVENT_REF` (4-byte unsigned integer). The Gateway and Backend originate the canonical, network-wide business `event_id`. RF hop acknowledgment (`DOWN_EVENT_ACK`, opcode `0x42`) strictly represents single-hop RF delivery to the Gateway's local persistent WAL/SQLite buffer; it **does not represent a Backend PostgreSQL database commit or human operator acknowledgment**.
 
 ```
-[ Sensor Input ] 
-       │ (ADC / I2C / SPI samples)
+[ Physical Button Input ] (GPIO / EXT0 Wakeup)
+       │
        ▼
 ┌────────────────────────────────────────────────────────┐
-│  Node Edge Trigger Engine (This Document - Issue #203) │
-│  - Validity checking & noise filtering                │
-│  - Hysteresis band & time-window debounce             │
-│  - One-event-per-transition latching & clear logic    │
-│  - Reset / power-loss state consistency               │
-└──────────────┬──────────────────────────┬──────────────┘
-               │ (Immediate)              │ (Local Event Intent)
-               ▼                          ▼
-      ┌─────────────────┐       ┌────────────────────────────────┐
-      │   Local Alarm   │       │   Durable Event FIFO (#131)    │
-      │   Autonomy      │       │   - RING_BUFFER_DROP_OLDEST    │
-      │ (Buzzer/LED/IO) │       │   - Persistent DROPPED_COUNT   │
-      └─────────────────┘       └──────────────┬─────────────────┘
-                                               │ (Own Static Slot)
-                                               ▼
-                                ┌────────────────────────────────┐
-                                │   SX1276 Radio Owner (TDMA)    │
-                                │   - UP_EVENT (0x41) 26B TX     │
-                                │   - DOWN_EVENT_ACK (0x42) RX   │
-                                └────────────────────────────────┘
+│  Button Driver / Edge Trigger Engine (#149)           │
+│  - EXT0 deep-sleep wakeup                              │
+│  - Time-window debounce & press qualification          │
+│  - Discrete event creation (CODE=0x01, VAL=1)          │
+└──────────────────────────────┬─────────────────────────┘
+                               │ (Local Event Intent)
+                               ▼
+                ┌────────────────────────────────┐
+                │   Durable Event FIFO (#149)    │
+                │   - RTC RAM / NVS persistence  │
+                │   - RING_BUFFER_DROP_OLDEST    │
+                │   - Persistent DROPPED_COUNT   │
+                └──────────────┬─────────────────┘
+                               │ (Own Static Slot)
+                               ▼
+                ┌────────────────────────────────┐
+                │   SX1276 Radio Owner (TDMA)    │
+                │   - UP_EVENT (0x41) 26B TX     │
+                │   - DOWN_EVENT_ACK (0x42) RX   │
+                └────────────────────────────────┘
 ```
 
 ---

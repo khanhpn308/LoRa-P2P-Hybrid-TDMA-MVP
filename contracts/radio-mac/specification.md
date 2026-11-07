@@ -6,11 +6,12 @@
 
 ## 1. Phạm vi và trách nhiệm hệ thống
 
-Hệ thống hoạt động theo mô hình **Local Alarm Autonomy + Event-Only Remote Logging + Static DATA TDMA + Maintenance Superframe**:
+Hệ thống hoạt động theo mô hình **Event-Only Remote Logging + Static DATA TDMA + Maintenance Superframe** (Quyết định Owner #230 bãi bỏ hoàn toàn cơ cấu cảnh báo phần cứng tại chỗ và cảm biến phức tạp):
 
 - **Sensor Node (ESP32-WROOM-32E + SX1276)**:
-  - Khi cảm biến phát hiện vượt ngưỡng, Node kích hoạt cảnh báo phần cứng tại chỗ tức thời (GPIO, còi buzzer, đèn LED, relay) hoàn toàn tự chủ mà không phụ thuộc vào trạng thái sóng LoRa RF hay ranh giới khe TDMA.
-  - Giao diện RF chỉ truyền dữ liệu ứng dụng khi có sự kiện vi phạm (`UP_EVENT`, 0x41); chế độ truyền định kỳ liên tục (`DATA_TELEMETRY`) bị bãi bỏ hoàn toàn.
+  - Nguồn kích hoạt sự kiện duy nhất cho kiểm thử MVP là **Nút nhấn vật lý** (Button press qua GPIO/ngắt EXT0, `button_driver.c`). Cơ cấu cảnh báo tại chỗ (còi buzzer, đèn LED báo động, relay) và lấy mẫu cảm biến công nghiệp phức tạp (ADC, I2C, SPI) bị bãi bỏ hoàn toàn theo Quyết định Owner #230.
+  - Khi nút bấm được kích hoạt và lọc dội phím thành công, Node ghi nhận sự kiện (`UP_EVENT`, 0x41, `EVENT_CODE=0x01`, `EVENT_VALUE=1`) vào hàng đợi bền vững `node_event_fifo` trong RTC RAM/NVS flash.
+  - Giao diện RF chỉ truyền dữ liệu ứng dụng khi có sự kiện từ nút bấm (`UP_EVENT`, 0x41); chế độ truyền định kỳ liên tục (`DATA_TELEMETRY`) bị bãi bỏ hoàn toàn.
   - Node chỉ được phép truyền dữ liệu sự kiện trong khe tĩnh (`Static DATA Slot`) độc quyền của mình; không dùng contention/PCSS cho UP_EVENT; **Join (0x45..0x49) được khởi tạo bất đồng bộ bằng CAD/backoff bất kỳ thời điểm nào**.
   - Duy trì hàng đợi sự kiện bền vững trong bộ nhớ NVS với mã tham chiếu cục bộ `EVENT_REF` (4 byte tăng đơn điệu) để theo dõi xác nhận và phát lại; không tự ý gán nhãn `event_id` toàn cục.
   - Tuân thủ nghiêm ngặt 8 tầng bảo vệ an toàn (`8-Fold Fail-Closed Guards`) trước khi bật bộ phát radio TX.
@@ -239,7 +240,7 @@ Tuân thủ nghiêm ngặt các quyết định `DEC-SEC-01` .. `DEC-SEC-07` đ�
 
 ## 7. Tiêu chí Đóng băng Hợp đồng (Gate G2 Status)
 
-- [x] Phê duyệt kiến trúc Event-Only, Local Alarm Autonomy và bãi bỏ PCSS cho DATA Event; CAD dành riêng cho Join.
+- [x] Phê duyệt kiến trúc Event-Only, bãi bỏ PCSS và Local Alarm Autonomy vật lý (Quyết định Owner #230); CAD dành riêng cho Join; nút bấm là nguồn sự kiện MVP.
 - [x] Phê duyệt mã bản tin và bố cục gói tin Join V2 (0x45..0x48) và Post-Join (0x49).
 - [x] Phê duyệt bộ quyết định an ninh mật mã `DEC-SEC-01` .. `DEC-SEC-07`.
 - [x] Phê duyệt mã bản tin `UP_EVENT` (0x41), `DOWN_EVENT_ACK` (0x42), `DOWN_SYNC_BEACON` (0x43), `UP_HEALTH_REPLY` (0x44).

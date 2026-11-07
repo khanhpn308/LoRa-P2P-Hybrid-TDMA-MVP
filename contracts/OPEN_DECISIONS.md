@@ -60,6 +60,8 @@
 | Beacon key | 256-bit random per-Gateway K_BEACON, trusted local OOB provisioning cho Gateway/Node; byte12 KEY_ID; HMAC-SHA256-128; key compromise có thể spoof Beacon, không authorize schedule | OWNER_APPROVED_MVP_SECURITY_DESIGN #209 |
 | Schedule wire | Backend Ed25519 PREPARE 80B, SCHED_READY 0x4C 41B, DECISION Ed25519 80B; candidate 0x4B/0x4D cần wire registry agreement | OWNER_APPROVED_MVP_DESIGN #208 |
 | No Schedule Lease | Lịch đã COMMIT tiếp tục có hiệu lực tới khi đổi lịch với 100% READY và COMMIT ký, không tự hết hạn theo thời gian | OWNER_APPROVED_MVP_DESIGN #208 |
+| **DEC-EVENT-01** (Bãi bỏ Local Alarm) | Bãi bỏ hoàn toàn các yêu cầu, đặc tả và cơ cấu chấp hành cảnh báo tại chỗ (còi buzzer, đèn LED báo động, siren, relay vật lý). Hệ thống chuyển dịch triệt để sang mô hình thuần túy **Event-Only Remote Logging** qua khe tĩnh Static DATA TDMA; không phát sóng định kỳ (loại bỏ hoàn toàn telemetry định kỳ). | `OWNER_APPROVED_MVP_DESIGN` · Issue #230 (2026-11-07) |
+| **DEC-NODE-01** (Nút nhấn làm nguồn sự kiện) | Bãi bỏ hoàn toàn các đặc tả/kế hoạch về lấy mẫu cảm biến công nghiệp phức tạp (ADC, I2C, SPI nhiệt độ/rung lắc) cho giai đoạn MVP. Nguồn sinh sự kiện duy nhất được sử dụng để kiểm thử và vận hành Node MVP là **Nút nhấn vật lý (Button press qua GPIO/EXT0 wakeup)** đã hoàn thiện ở Issue #149. Nút nhấn kích hoạt ngắt thức dậy chip, lọc dội phím (debounce), sinh bản tin `UP_EVENT` (0x41, 26B, `EVENT_CODE=0x01`, `EVENT_VALUE=1`) đẩy vào `node_event_fifo`. | `OWNER_APPROVED_MVP_DESIGN` · Issue #230 (2026-11-07) |
 
 **Verification:** Bắt đầu code/test không phụ thuộc HIL toàn diện, nhưng không đánh dấu timing/legal/security/HIL PASS khi chưa có bằng chứng. Review trước RF deploy.
 
