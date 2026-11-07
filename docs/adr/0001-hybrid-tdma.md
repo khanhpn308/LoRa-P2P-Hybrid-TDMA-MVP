@@ -42,7 +42,7 @@ Owner revision #125 ngày 2026-11-04 supersedes các quy tắc ứng dụng/MAC 
 | #77 optional periodic, `UP_TELEMETRY` / `TEMP_X10`, `uplink/telemetry` làm luồng mặc định; `Periodic ON/OFF` / `SET_PERIODIC_MODE` | **SUPERSEDED_BY_EVENT_ONLY**; bỏ business periodic mode qua migration topic/schema/API/UI có version; không tái dùng packet `0x26` âm thầm. |
 | C08 / #78 priority Alert contention, CAP/PCSS/CAD/backoff làm access path thông thường | **SUPERSEDED_BY_STATIC_TDMA**; giữ local alarm, quyền và RF/airtime safety. |
 | CT-01-ACK-01, Owner approval 2026-10-30: `ACK_BITMAP` 16-bit/2B trong Beacon N+1 ACK Telemetry kỳ N; không ACK Telemetry riêng | **SUPERSEDED semantics / NOT_APPLICABLE_TO_EVENT_ACK**. Không sửa trường/offset hay tái dùng `0x21`; Beacon 28B/HMAC transcript/keys/anti-replay phải có G2 compatibility review trước thay wire. |
-| Beacon mỗi DATA SF cho Telemetry ACK và `P-10S-15` 5 subframes/400 ms slots/PCSS | **OBSOLETE candidate**; tính lại DATA/Maintenance theo ToA và guard đo được. Giữ countdown 3→2→1, affected Node ACK, lease và Join/Recovery safety. |
+| Beacon mỗi DATA SF cho Telemetry ACK và `P-10S-15` 5 subframes/400 ms slots/PCSS | **OBSOLETE candidate**; tính lại DATA/Maintenance theo ToA và guard đo được. Countdown 3→2→1 bãi bỏ theo Quyết định Owner #208 / PR #206, thay bằng quy trình ký PREPARE → 100% READY → DECISION → COMMIT tại K_TARGET; không còn Schedule Lease. |
 
 Approval gốc của Planner/Executor và C01–C09 không mâu thuẫn được giữ. Supersession kiến trúc không phê duyệt UP_ALERT payload, Event ACK/UP_HEALTH_REPLY codepoint hoặc wire mới; registry/Beacon auth contracts cần Issue G2 riêng. Child #126 chỉ thay năm tệp kiến trúc, không tuyên bố đã migration toàn bộ active references.
 
@@ -75,7 +75,7 @@ Single-radio half-duplex buộc DATA/Event ACK, Maintenance SYNC_BEACON/HEALTH_R
 
 - D01/D11: authenticated framing, nonce/replay/key lifecycle và epoch/version mapping; CRC không đủ, không production codec trước approval. Nguồn: Radio MAC §§2–3, [vector plan](../../contracts/radio-mac/test-vectors/README.md); SEC-001/003/004.
 - D02/D03/D04: RF/legal applicability, ToA, IRQ-to-task latency, clock drift và guard margin cần G1/G3 theo [Issue #11](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/11). Không chốt superframe/slot/guard/jitter.
-- D05: Owner chốt ba nhịp announcement trọn Superframe 3→2→1; Node ACK/lease safety vẫn là điều kiện riêng. D07/D12: restart/reconnect và bounded buffering cần review/HIL/integration. D08 giữ MQTT 5.0 OWNER_ACCEPTED theo [ADR-0002](0002-mqtt-5.md); version approval không thay contract review.
+- D05: Countdown 3→2→1 **SUPERSEDED** bởi signed PREPARE → 100% distinct Schedule READY → signed COMMIT/ABORT tại K_TARGET (Quyết định Owner #208 / PR #206). D07/D12: restart/reconnect và bounded buffering cần review/HIL/integration. D08 giữ MQTT 5.0 OWNER_ACCEPTED theo [ADR-0002](0002-mqtt-5.md); version approval không thay contract review.
 
 Canonical register: [OPEN_DECISIONS](../../contracts/OPEN_DECISIONS.md). Options/constraints/evidence handoff R1 trong [audit](../audits/firmware/ARCHITECTURE_DOCUMENTATION_AUDIT.md) chỉ dẫn về IDs sẵn có, không đóng decisions hoặc sửa contracts.
 

@@ -37,15 +37,15 @@ Dùng **ESP-IDF v6.1** cho Gateway/Node ([ADR-0003](../adr/0003-esp-idf-v6-1.md)
 
 1. **Backend tạo/phiên bản hóa** lịch. **User duyệt** lịch và khoảng được phép kích hoạt.
 2. **Gateway kiểm tra** quyền, phiên bản, hết hạn, xung đột slot, đồng bộ và giới hạn phát. Kế hoạch không an toàn phải bị từ chối hoặc chặn TX; Gateway không thay trường phân bổ slot/kênh của lịch.
-3. Gateway **lưu bền vững Shadow** trước khi báo `STAGE_ACK`; phát ba nhịp thông báo lịch trọn Superframe **3 → 2 → 1** và thu ACK chuẩn bị của các Node chịu ảnh hưởng. Ba nhịp **không thay** bằng chứng Node đã chuẩn bị và old Slot Lease safety.
-4. Gateway chỉ chuyển sang lịch mới tại **ranh giới Superframe bên trong cửa sổ đã duyệt**, khi quyền dùng khe cũ đã kết thúc an toàn. Không chắc chắn thì **không kích hoạt**, tiếp tục Active chỉ khi còn an toàn; nếu không thì dừng TX chịu ảnh hưởng.
+3. Gateway **lưu bền vững Shadow** trước khi báo `STAGE_ACK`. Quá trình chuyển lịch V2 bãi bỏ countdown 3→2→1 (theo Quyết định Owner #208 / PR #206), thực hiện giao dịch trong một Maintenance Superframe: Backend ký `DOWN_SCHED_PREPARE` (80B) $\to$ từng Node gửi `UP_SCHED_READY` (0x4C, 41B) $\to$ Backend xác minh độc lập 100% READY của mọi Node bị ảnh hưởng (kể cả Node offline) $\to$ Backend ký `DOWN_SCHED_DECISION` (80B) COMMIT tại $K_{\text{TARGET}}$. Node lỡ mất COMMIT phải tự động khóa câm phát sóng (`DATA_TX_DISABLED`) từ $K_{\text{TARGET}}$ để triệt tiêu xung đột khe.
+4. Gateway chỉ chuyển sang lịch mới tại **ranh giới Superframe $K_{\text{TARGET}}$ bên trong cửa sổ đã duyệt**, khi quyền dùng khe cũ đã kết thúc an toàn. Không chắc chắn thì **không kích hoạt**, tiếp tục Active chỉ khi còn an toàn; nếu không thì dừng TX chịu ảnh hưởng.
 5. Gateway phát `ACTIVE_REPORT` **sau khi thực sự kích hoạt**. `MQTT PUBACK` và `STAGE_ACK` không chứng minh lịch ACTIVE. Sau reboot, **không tự nâng Shadow thành Active**.
 
 Gateway điều khiển mốc thời gian RF tại chỗ; Backend **không** kích hoạt TX/RX theo từng slot qua MQTT. Quy trình và phiên bản schema vẫn phải được các nhóm tích hợp kiểm tra tại G2/G4.
 
 DATA Superframe chứa các DATA slot tĩnh theo Node. Maintenance Superframe được chèn giữa các DATA Superframe theo lịch Backend/User duyệt, với **mục tiêu heartbeat/sync 300 s**. Gateway phát authenticated `SYNC_BEACON`; mỗi Node trả `HEALTH_REPLY` trong khe quản trị riêng không chồng lấn. Gateway-only Beacon không chứng minh Node alive; chỉ phản hồi Node hợp lệ mới cung cấp bằng chứng hiện diện. Cách tính `last_seen`, ngưỡng offline, thời điểm đo interval và dung sai còn OPEN.
 
-Validator phải xét toàn bộ DATA/ACK, SYNC_BEACON/HEALTH_REPLY, schedule/control, JOIN/RECOVERY và guard trên một radio half-duplex, kể cả qua ranh giới Superframe. Khoảng 300 s là target thiết kế; ToA SX1276, RX↔TX turnaround, jitter, clock drift/guard và HOLDOVER/UNSYNCED phải được tính và đo trước timing acceptance. Maintenance không thay ba nhịp announcement 3→2→1 hoặc affected Node ACK/old lease safety khi chuyển lịch.
+Validator phải xét toàn bộ DATA/ACK, SYNC_BEACON/HEALTH_REPLY, schedule/control, JOIN/RECOVERY và guard trên một radio half-duplex, kể cả qua ranh giới Superframe. Khoảng 300 s là target thiết kế; ToA SX1276, RX↔TX turnaround, jitter, clock drift/guard và HOLDOVER/UNSYNCED phải được tính và đo trước timing acceptance. Bãi bỏ countdown 3→2→1 (theo Quyết định Owner #208 / PR #206); việc chuyển lịch chỉ được kích hoạt tại $K_{\text{TARGET}}$ khi đã xác minh 100% READY của các Node bị ảnh hưởng.
 
 ## 4. Dữ liệu, cảnh báo và xác nhận (C05/C08)
 
