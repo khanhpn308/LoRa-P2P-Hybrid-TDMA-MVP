@@ -99,17 +99,14 @@ esp_err_t button_driver_init(button_driver_t *driver, const button_config_t *con
 
 button_wakeup_cause_t button_driver_get_wakeup_cause(void)
 {
-    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
-    switch (cause) {
-        case ESP_SLEEP_WAKEUP_EXT0:
-        case ESP_SLEEP_WAKEUP_EXT1:
-        case ESP_SLEEP_WAKEUP_GPIO:
-            return BUTTON_CAUSE_EXT0_BUTTON;
-        case ESP_SLEEP_WAKEUP_TIMER:
-            return BUTTON_CAUSE_TIMER;
-        default:
-            return BUTTON_CAUSE_RESET_OR_OTHER;
+    uint32_t causes = esp_sleep_get_wakeup_causes();
+    if (causes & (BIT(ESP_SLEEP_WAKEUP_EXT0) | BIT(ESP_SLEEP_WAKEUP_EXT1) | BIT(ESP_SLEEP_WAKEUP_GPIO))) {
+        return BUTTON_CAUSE_EXT0_BUTTON;
     }
+    if (causes & BIT(ESP_SLEEP_WAKEUP_TIMER)) {
+        return BUTTON_CAUSE_TIMER;
+    }
+    return BUTTON_CAUSE_RESET_OR_OTHER;
 }
 
 esp_err_t button_driver_qualify_press(button_driver_t *driver, bool *out_qualified)
