@@ -262,3 +262,183 @@ func TestListNodeHealth_Success(t *testing.T) {
 		t.Fatalf("unexpected nodes returned: %+v", nodes)
 	}
 }
+
+func TestListAlerts_Table(t *testing.T) {
+	nodeIDValid := uint8(2)
+	nodeIDInvalid := uint8(0)
+
+	tests := []struct {
+		name       string
+		state      string
+		filter     domain.AlertFilter
+		wantErr    bool
+		wantCount  int
+		wantCursor bool
+	}{
+		{
+			name:  "positive default list",
+			state: "events_ok",
+			filter: domain.AlertFilter{
+				Limit: 50,
+			},
+			wantErr:    false,
+			wantCount:  2,
+			wantCursor: false, // 2 items with limit 50 -> next_cursor == nil
+		},
+		{
+			name:  "positive filtered by severity and node_id",
+			state: "events_ok",
+			filter: domain.AlertFilter{
+				Limit:     10,
+				Severity:  "P0_EMERGENCY",
+				NodeID:    &nodeIDValid,
+				GatewayID: "gw01",
+				AckStatus: "UNACKNOWLEDGED",
+			},
+			wantErr:    false,
+			wantCount:  2,
+			wantCursor: false,
+		},
+		{
+			name:  "empty list when no events",
+			state: "events_empty",
+			filter: domain.AlertFilter{
+				Limit: 50,
+			},
+			wantErr:    false,
+			wantCount:  0,
+			wantCursor: false,
+		},
+		{
+			name:  "invalid limit negative",
+			state: "events_ok",
+			filter: domain.AlertFilter{
+				Limit: -1,
+			},
+			wantErr: true,
+		},
+		{
+			name:  "invalid limit excessive",
+			state: "events_ok",
+			filter: domain.AlertFilter{
+				Limit: 101,
+			},
+			wantErr: true,
+		},
+		{
+			name:  "invalid severity enum",
+			state: "events_ok",
+			filter: domain.AlertFilter{
+				Severity: "INVALID_SEV",
+			},
+			wantErr: true,
+		},
+		{
+			name:  "invalid node_id zero",
+			state: "events_ok",
+			filter: domain.AlertFilter{
+				NodeID: &nodeIDInvalid,
+			},
+			wantErr: true,
+		},
+		{
+			name:  "invalid cursor non-decimal",
+			state: "events_ok",
+			filter: domain.AlertFilter{
+				Cursor: "abc-invalid",
+			},
+			wantErr: true,
+		},
+		{
+			name:  "valid decimal cursor",
+			state: "events_ok",
+			filter: domain.AlertFilter{
+				Cursor: "105",
+				Limit:  1,
+			},
+			wantErr:    false,
+			wantCount:  1,
+			wantCursor: true, // 2 items returned, limit=1 -> items[0], nextCursor = "102"
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db := initMockDB(tc.state)
+			repo := storage.NewPostgresEventStorage(db)
+
+			page, err := repo.ListAlerts(context.Background(), tc.filter)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ListAlerts() error = %v, wantErr %v", err, tc.wantErr)
+			}
+			if err != nil {
+				return
+			}
+			if len(page.Items) != tc.wantCount {
+				t.Errorf("expected %d items, got %d", tc.wantCount, len(page.Items))
+			}
+			if (page.NextCursor != nil) != tc.wantCursor {
+				t.Errorf("expected NextCursor != nil to be %v, got %v", tc.wantCursor, page.NextCursor)
+			}
+		})
+	}
+}
+
+func TestAcknowledgeAlert_Table(t *testing.T) {
+	tests := []struct {
+		name           string
+		state          string
+		alertID        int64
+		acknowledgedBy string
+		wantErr        error
+		wantStatus     domain.AckStatus
+		wantActor      string
+	}{
+		{
+			name:           "positive initial acknowledgment",
+			state:          "ack_ok",
+			alertID:        101,
+			acknowledgedBy: "operator1",
+			wantErr:        nil,
+			wantStatus:     domain.AckStatusAcknowledged,
+			wantActor:      "operator1",
+		},
+		{
+			name:           "idempotent re-acknowledgment on already acknowledged alert",
+			state:          "ack_already_acked",
+			alertID:        101,
+			acknowledgedBy: "operator2",
+			wantErr:        nil,
+			wantStatus:     domain.AckStatusAcknowledged,
+			wantActor:      "operator1",
+		},
+		{
+			name:           "alert not found returns ErrAlertNotFound",
+			state:          "ack_not_found",
+			alertID:        999,
+			acknowledgedBy: "operator1",
+			wantErr:        storage.ErrAlertNotFound,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db := initMockDB(tc.state)
+			repo := storage.NewPostgresEventStorage(db)
+
+			view, err := repo.AcknowledgeAlert(context.Background(), tc.alertID, tc.acknowledgedBy)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("expected error %v, got %v", tc.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if view.AckStatus != tc.wantStatus {
+				t.Errorf("expected status %s, got %s", tc.wantStatus, view.AckStatus)
+			}
+		})
+	}
+}

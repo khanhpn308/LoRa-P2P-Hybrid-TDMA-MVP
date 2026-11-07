@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -11,11 +12,25 @@ import (
 	"time"
 
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/api"
+	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/mqtt"
+	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/scheduler"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/storage"
 )
 
-// BuildServeMux wires REST endpoints for health checks and operational gateway/node monitoring.
-func BuildServeMux(statusStore storage.StatusStorage, offlineThreshold time.Duration) *http.ServeMux {
+// NoopMQTTPublisher provides an in-memory/stub MQTT publisher when a broker is not connected.
+type NoopMQTTPublisher struct{}
+
+func (p *NoopMQTTPublisher) Publish(ctx context.Context, topic string, qos byte, retain bool, expiryInterval uint32, payload []byte) error {
+	log.Printf("[MQTT NOOP] Publish to %s (qos=%d, retain=%v, expiry=%ds, len=%dB)", topic, qos, retain, expiryInterval, len(payload))
+	return nil
+}
+
+// BuildServeMux wires REST endpoints for health checks, operational monitoring, and TDMA schedules.
+func BuildServeMux(
+	statusStore storage.StatusStorage,
+	offlineThreshold time.Duration,
+	schedHandler *api.ScheduleHandler,
+) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	healthHandler := api.NewHealthHandler()
@@ -26,14 +41,26 @@ func BuildServeMux(statusStore storage.StatusStorage, offlineThreshold time.Dura
 		monitoringHandler.RegisterRoutes(mux)
 	}
 
+	if schedHandler != nil {
+		schedHandler.RegisterRoutes(mux)
+		log.Println("Schedule lifecycle REST API registered.")
+	}
+
 	return mux
 }
 
 func main() {
-	log.Println("LoRa-P2P-Hybrid-TDMA-MVP Go Backend starting...")
+	log.Println("Starting LoRa-P2P Hybrid TDMA Go Backend Server...")
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
 
 	dbURL := os.Getenv("DATABASE_URL")
 	var statusStore storage.StatusStorage
+	var scheduleRepo scheduler.ScheduleRepository
+	var channelRepo storage.ChannelRepository
 
 	if dbURL != "" {
 		db, err := sql.Open("postgres", dbURL)
@@ -41,27 +68,45 @@ func main() {
 			log.Fatalf("failed to open database connection: %v", err)
 		}
 		defer db.Close()
+
 		statusStore = storage.NewPostgresStatusStorage(db)
+		scheduleRepo = storage.NewPostgresScheduleStorage(db)
+		channelRepo = storage.NewPostgresChannelRepository(db)
+		log.Println("PostgreSQL persistent storage initialized.")
+	} else {
+		log.Println("DATABASE_URL not set; initializing thread-safe in-memory storage.")
+		scheduleRepo = scheduler.NewMemoryScheduleRepository()
 	}
 
-	mux := BuildServeMux(statusStore, 5*time.Minute)
+	// Initialize TDMA planner
+	validator := scheduler.NewFeasibilityValidator(nil)
+	planner := scheduler.NewPlanner(validator)
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
+	// Initialize MQTT Dispatcher
+	mqttPub := &NoopMQTTPublisher{}
+	dispatcher, err := mqtt.NewScheduleDispatcher(mqttPub)
+	if err != nil {
+		log.Fatalf("Failed to initialize schedule dispatcher: %v", err)
 	}
+
+	var schedHandler *api.ScheduleHandler
+	if channelRepo != nil {
+		schedHandler = api.NewScheduleHandlerWithDeps(scheduleRepo, channelRepo, planner, dispatcher, nil)
+	}
+
+	mux := BuildServeMux(statusStore, 5*time.Minute, schedHandler)
 
 	srv := &http.Server{
 		Addr:         ":" + port,
 		Handler:      mux,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 
 	go func() {
 		log.Printf("HTTP server listening on %s", srv.Addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("server error: %v", err)
 		}
 	}()
@@ -77,5 +122,5 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Fatalf("forced server shutdown: %v", err)
 	}
-	log.Println("server stopped")
+	log.Println("server gracefully stopped.")
 }

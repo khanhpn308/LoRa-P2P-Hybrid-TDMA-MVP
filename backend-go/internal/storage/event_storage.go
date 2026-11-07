@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/domain"
 )
@@ -13,12 +15,16 @@ import (
 var (
 	// ErrEventNotFound indicates no discrete event record matches the gateway and event ID.
 	ErrEventNotFound = errors.New("event not found")
+	// ErrAlertNotFound indicates no alert matches the specified ID.
+	ErrAlertNotFound = errors.New("alert not found")
 	// ErrConflictingPayload indicates that an event with the same ID was submitted with differing business data.
 	ErrConflictingPayload = errors.New("conflicting payload detected for existing event_id")
 	// ErrHealthNotFound indicates no health record exists for the given gateway and node ID.
 	ErrHealthNotFound = errors.New("node health record not found")
 	// ErrAlreadyAcknowledged indicates the event/alert has already been acknowledged.
 	ErrAlreadyAcknowledged = errors.New("alert is already acknowledged")
+	// ErrInvalidAlertFilter indicates one or more filter parameters violate validation constraints.
+	ErrInvalidAlertFilter = domain.ErrInvalidAlertFilter
 )
 
 // EventRecordResult details the persistence outcome of an Event.
@@ -45,6 +51,12 @@ type EventRepository interface {
 	QuarantineEvent(ctx context.Context, q *QuarantineRecord) error
 	RecordHealthUpdate(ctx context.Context, h *domain.NodeHealth) error
 	GetNodeHealth(ctx context.Context, gatewayID string, nodeID uint8) (*domain.NodeHealth, error)
+}
+
+// AlertRepository defines query and operator workflow acknowledgment operations for REST APIs.
+type AlertRepository interface {
+	ListAlerts(ctx context.Context, filter domain.AlertFilter) (*domain.AlertPage, error)
+	AcknowledgeAlert(ctx context.Context, alertID int64, acknowledgedBy string) (*domain.AlertView, error)
 }
 
 // EventQueryRepository defines query and operator workflow acknowledgment operations for REST APIs.
@@ -647,6 +659,285 @@ func (s *PostgresEventStorage) AcknowledgeEvent(ctx context.Context, alertID int
 	copy(e.RawPayloadSHA256[:], rawHash)
 
 	return &e, nil
+}
+
+// ListAlerts retrieves cursor-paginated alerts ordered by ID descending with optional filtering.
+func (s *PostgresEventStorage) ListAlerts(ctx context.Context, filter domain.AlertFilter) (*domain.AlertPage, error) {
+	if err := filter.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidAlertFilter, err)
+	}
+
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	var cursorID int64
+	if filter.Cursor != "" {
+		parsed, err := strconv.ParseInt(filter.Cursor, 10, 64)
+		if err != nil || parsed < 0 {
+			return nil, fmt.Errorf("%w: cursor must be a non-negative decimal string", ErrInvalidAlertFilter)
+		}
+		cursorID = parsed
+	}
+
+	var conditions []string
+	var args []any
+	argIdx := 1
+
+	if cursorID > 0 {
+		conditions = append(conditions, fmt.Sprintf("id < $%d", argIdx))
+		args = append(args, cursorID)
+		argIdx++
+	}
+	if filter.Severity != "" {
+		conditions = append(conditions, fmt.Sprintf("severity = $%d", argIdx))
+		args = append(args, filter.Severity)
+		argIdx++
+	}
+	if filter.NodeID != nil {
+		conditions = append(conditions, fmt.Sprintf("node_id = $%d", argIdx))
+		args = append(args, *filter.NodeID)
+		argIdx++
+	}
+	if filter.GatewayID != "" {
+		conditions = append(conditions, fmt.Sprintf("gateway_id = $%d", argIdx))
+		args = append(args, filter.GatewayID)
+		argIdx++
+	}
+	if filter.AckStatus != "" {
+		conditions = append(conditions, fmt.Sprintf("ack_status = $%d", argIdx))
+		args = append(args, filter.AckStatus)
+		argIdx++
+	}
+
+	query := `
+		SELECT
+			id, event_id, gateway_id, gateway_epoch, event_seq, node_id,
+			superframe_seq, seq_num, schedule_version, severity, observed_at, observed_time_source,
+			radio_rx_monotonic_us, buffered, radio_ack_sent, event_ref, event_code, event_value,
+			raw_payload_sha256, ingested_at, ack_status, acknowledged_at, acknowledged_by
+		FROM events
+	`
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	query += fmt.Sprintf(" ORDER BY id DESC LIMIT $%d;", argIdx)
+	args = append(args, limit+1)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query alerts: %w", err)
+	}
+	defer rows.Close()
+
+	var items []domain.AlertView
+	for rows.Next() {
+		var e domain.Event
+		var obsAt sql.NullTime
+		var ackAt sql.NullTime
+		var ackBy sql.NullString
+		var nodeID, seqNum, eventCode, eventValue int
+		var eventRef int64
+		var rawHash []byte
+		var sev, timeSrc, ackStat string
+
+		if err := rows.Scan(
+			&e.ID,
+			&e.EventID,
+			&e.GatewayID,
+			&e.GatewayEpoch,
+			&e.EventSeq,
+			&nodeID,
+			&e.SuperframeSeq,
+			&seqNum,
+			&e.ScheduleVersion,
+			&sev,
+			&obsAt,
+			&timeSrc,
+			&e.RadioRxMonotonicUS,
+			&e.Buffered,
+			&e.RadioAckSent,
+			&eventRef,
+			&eventCode,
+			&eventValue,
+			&rawHash,
+			&e.IngestedAt,
+			&ackStat,
+			&ackAt,
+			&ackBy,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan alert row: %w", err)
+		}
+
+		e.NodeID = uint8(nodeID)
+		e.SeqNum = uint8(seqNum)
+		e.Data.EventRef = uint32(eventRef)
+		e.Data.EventCode = uint8(eventCode)
+		e.Data.EventValue = int16(eventValue)
+		e.Severity = domain.EventSeverity(sev)
+		e.ObservedTimeSource = domain.TimeSource(timeSrc)
+		e.AckStatus = domain.AckStatus(ackStat)
+
+		if obsAt.Valid {
+			t := obsAt.Time.UTC()
+			e.ObservedAt = &t
+		}
+		if ackAt.Valid {
+			t := ackAt.Time.UTC()
+			e.AcknowledgedAt = &t
+		}
+		if ackBy.Valid {
+			e.AcknowledgedBy = &ackBy.String
+		}
+		copy(e.RawPayloadSHA256[:], rawHash)
+
+		items = append(items, domain.EventToAlertView(&e))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error reading alert rows: %w", err)
+	}
+
+	var nextCursor *string
+	if len(items) > limit {
+		items = items[:limit]
+		cursorStr := items[len(items)-1].AlertID
+		nextCursor = &cursorStr
+	}
+
+	if items == nil {
+		items = []domain.AlertView{}
+	}
+
+	return &domain.AlertPage{
+		Items:      items,
+		NextCursor: nextCursor,
+	}, nil
+}
+
+// AcknowledgeAlert updates the acknowledgment status of an alert by its record ID.
+// Idempotent: If already acknowledged, it returns the current record without error.
+// If the alert ID does not exist, it returns ErrAlertNotFound.
+func (s *PostgresEventStorage) AcknowledgeAlert(ctx context.Context, alertID int64, acknowledgedBy string) (*domain.AlertView, error) {
+	if acknowledgedBy == "" {
+		acknowledgedBy = "operator"
+	}
+
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin acknowledge transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	const checkQuery = `
+		SELECT ack_status
+		FROM events
+		WHERE id = $1
+		FOR UPDATE;
+	`
+	var currentStatus string
+	err = tx.QueryRowContext(ctx, checkQuery, alertID).Scan(&currentStatus)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrAlertNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to check alert status: %w", err)
+	}
+
+	// Idempotent: if already acknowledged, do not re-update, just query and return
+	if domain.AckStatus(currentStatus) != domain.AckStatusAcknowledged {
+		const updateQuery = `
+			UPDATE events
+			SET ack_status = 'ACKNOWLEDGED',
+			    acknowledged_at = CURRENT_TIMESTAMP,
+			    acknowledged_by = $1
+			WHERE id = $2;
+		`
+		if _, err := tx.ExecContext(ctx, updateQuery, acknowledgedBy, alertID); err != nil {
+			return nil, fmt.Errorf("failed to update alert ack status: %w", err)
+		}
+	}
+
+	const selectQuery = `
+		SELECT
+			id, event_id, gateway_id, gateway_epoch, event_seq, node_id,
+			superframe_seq, seq_num, schedule_version, severity, observed_at, observed_time_source,
+			radio_rx_monotonic_us, buffered, radio_ack_sent, event_ref, event_code, event_value,
+			raw_payload_sha256, ingested_at, ack_status, acknowledged_at, acknowledged_by
+		FROM events
+		WHERE id = $1;
+	`
+	var e domain.Event
+	var obsAt sql.NullTime
+	var ackAt sql.NullTime
+	var ackBy sql.NullString
+	var nodeID, seqNum, eventCode, eventValue int
+	var eventRef int64
+	var rawHash []byte
+	var sev, timeSrc, ackStat string
+
+	err = tx.QueryRowContext(ctx, selectQuery, alertID).Scan(
+		&e.ID,
+		&e.EventID,
+		&e.GatewayID,
+		&e.GatewayEpoch,
+		&e.EventSeq,
+		&nodeID,
+		&e.SuperframeSeq,
+		&seqNum,
+		&e.ScheduleVersion,
+		&sev,
+		&obsAt,
+		&timeSrc,
+		&e.RadioRxMonotonicUS,
+		&e.Buffered,
+		&e.RadioAckSent,
+		&eventRef,
+		&eventCode,
+		&eventValue,
+		&rawHash,
+		&e.IngestedAt,
+		&ackStat,
+		&ackAt,
+		&ackBy,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load acknowledged alert: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit acknowledge transaction: %w", err)
+	}
+
+	e.NodeID = uint8(nodeID)
+	e.SeqNum = uint8(seqNum)
+	e.Data.EventRef = uint32(eventRef)
+	e.Data.EventCode = uint8(eventCode)
+	e.Data.EventValue = int16(eventValue)
+	e.Severity = domain.EventSeverity(sev)
+	e.ObservedTimeSource = domain.TimeSource(timeSrc)
+	e.AckStatus = domain.AckStatus(ackStat)
+
+	if obsAt.Valid {
+		t := obsAt.Time.UTC()
+		e.ObservedAt = &t
+	}
+	if ackAt.Valid {
+		t := ackAt.Time.UTC()
+		e.AcknowledgedAt = &t
+	}
+	if ackBy.Valid {
+		e.AcknowledgedBy = &ackBy.String
+	}
+	copy(e.RawPayloadSHA256[:], rawHash)
+
+	view := domain.EventToAlertView(&e)
+	return &view, nil
 }
 
 // ListNodeHealth queries all confirmed node health records.

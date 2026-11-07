@@ -41,3 +41,30 @@ uint32_t tdma_calculate_drift_guard_ms(uint32_t clock_drift_ppm, uint32_t interv
     /* Add minimum 5 ms base safety guard */
     return (drift_ms + 5U);
 }
+
+esp_err_t tdma_v2_get_slot_timing(uint8_t slot_id,
+                                  uint32_t *out_slot_start_ms,
+                                  uint32_t *out_usable_start_ms,
+                                  uint32_t *out_usable_end_ms,
+                                  uint32_t *out_slot_end_ms)
+{
+    if (slot_id == 0U || slot_id > TDMA_V2_DATA_SLOTS_COUNT) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (out_slot_start_ms == NULL || out_usable_start_ms == NULL ||
+        out_usable_end_ms == NULL || out_slot_end_ms == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    uint32_t slot_start = (uint32_t)slot_id * TDMA_V2_SLOT_DURATION_MS;
+    uint32_t usable_start = slot_start + TDMA_V2_SLOT_GUARD_MS;
+    uint32_t usable_end = usable_start + TDMA_V2_SLOT_USABLE_MS;
+    uint32_t slot_end = slot_start + TDMA_V2_SLOT_DURATION_MS;
+
+    *out_slot_start_ms = slot_start;
+    *out_usable_start_ms = usable_start;
+    *out_usable_end_ms = usable_end;
+    *out_slot_end_ms = slot_end;
+
+    return ESP_OK;
+}
