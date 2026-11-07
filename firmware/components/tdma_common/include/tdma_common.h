@@ -91,6 +91,33 @@ esp_err_t tdma_get_slot_start_offset_ms(uint8_t slot_id, uint32_t *out_offset_ms
  */
 uint32_t tdma_calculate_drift_guard_ms(uint32_t clock_drift_ppm, uint32_t interval_s);
 
+/* =========================================================================
+ * V2 STATIC TDMA DEFINITIONS (DEC-127-03, DEC-127-06, DEC-MH-03)
+ * ========================================================================= */
+#define TDMA_V2_DATA_SLOTS_COUNT        (15U)     /**< 15 dedicated static DATA slots (#1..#15) */
+#define TDMA_V2_SLOT_USABLE_MS          (500U)    /**< W_MS = 500ms usable window per DEC-127-03 */
+#define TDMA_V2_SLOT_GUARD_MS           (50U)     /**< G_MS = 50ms guard on each side per DEC-127-03 */
+#define TDMA_V2_SLOT_DURATION_MS        (600U)    /**< 500ms + 2*50ms = 600ms full slot duration */
+#define TDMA_V2_BEACON_WINDOW_MS        (250U)    /**< Slot 0 nominal Beacon Window */
+#define TDMA_V2_SUPERFRAME_MS           (10000U)  /**< 10-second superframe */
+#define TDMA_V2_MAINTENANCE_CADENCE_MS  (300000U) /**< ~300s Maintenance cadence per DEC-MH-03 */
+
+/**
+ * @brief Calculate V2 Static TDMA slot timing offsets within a superframe.
+ *
+ * @param slot_id Slot index (1..15).
+ * @param[out] out_slot_start_ms Slot start offset (slot_id * 600ms).
+ * @param[out] out_usable_start_ms Usable window start (slot_start + 50ms).
+ * @param[out] out_usable_end_ms Usable window end (usable_start + 500ms).
+ * @param[out] out_slot_end_ms Slot trailing boundary (slot_start + 600ms).
+ * @return ESP_OK on success, ESP_ERR_INVALID_ARG if slot_id is invalid or pointers NULL.
+ */
+esp_err_t tdma_v2_get_slot_timing(uint8_t slot_id,
+                                  uint32_t *out_slot_start_ms,
+                                  uint32_t *out_usable_start_ms,
+                                  uint32_t *out_usable_end_ms,
+                                  uint32_t *out_slot_end_ms);
+
 #ifdef __cplusplus
 }
 #endif
