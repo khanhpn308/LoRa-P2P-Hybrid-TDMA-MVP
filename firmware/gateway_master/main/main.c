@@ -2,9 +2,11 @@
 #include "nvs_flash.h"
 #include "session_key_store.h"
 #include "gateway_transport.h"
+#include "gateway_v2_join.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "gateway_master";
+static gateway_v2_join_engine_t s_join_engine;
 
 static void on_downlink_session_key(const uint8_t *data, size_t len)
 {
@@ -75,5 +77,19 @@ void app_main(void)
         gateway_transport_register_schedule_callback(&on_downlink_schedule);
     }
 
-    ESP_LOGI(TAG, "Gateway Master active with session key store and transport initialized");
+    // Initialize Gateway V2 Join Relay Engine
+    gateway_v2_join_config_t join_cfg = {
+        .target_gw_id = 1,
+        .network_id = 100,
+    };
+    snprintf(join_cfg.gateway_id, sizeof(join_cfg.gateway_id), "%s", transport_cfg.gateway_id);
+    snprintf(join_cfg.gateway_epoch, sizeof(join_cfg.gateway_epoch), "%s", GATEWAY_V2_JOIN_DEFAULT_EPOCH);
+    ret = gateway_v2_join_init(&s_join_engine, &join_cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize Gateway V2 Join Engine: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "Gateway V2 Join Engine initialized successfully");
+    }
+
+    ESP_LOGI(TAG, "Gateway Master active with session key store, transport, and V2 Join relay initialized");
 }

@@ -43,6 +43,15 @@ esp_err_t nvs_get_u64(nvs_handle_t handle, const char* key, uint64_t *out_value)
     return ESP_ERR_NVS_NOT_FOUND;
 }
 
+esp_err_t nvs_get_u32(nvs_handle_t handle, const char* key, uint32_t *out_value) {
+    uint64_t val64 = 0;
+    esp_err_t err = nvs_get_u64(handle, key, &val64);
+    if (err == ESP_OK && out_value != NULL) {
+        *out_value = (uint32_t)val64;
+    }
+    return err;
+}
+
 esp_err_t nvs_set_u64(nvs_handle_t handle, const char* key, uint64_t value) {
     (void)handle;
     if (!key) return ESP_ERR_INVALID_ARG;
@@ -70,6 +79,10 @@ esp_err_t nvs_set_u64(nvs_handle_t handle, const char* key, uint64_t value) {
     }
 
     return ESP_ERR_NO_MEM;
+}
+
+esp_err_t nvs_set_u32(nvs_handle_t handle, const char* key, uint32_t value) {
+    return nvs_set_u64(handle, key, (uint64_t)value);
 }
 
 esp_err_t nvs_get_blob(nvs_handle_t handle, const char* key, void* out_value, size_t* length) {

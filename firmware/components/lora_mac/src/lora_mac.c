@@ -393,6 +393,309 @@ esp_err_t lora_mac_v2_beacon_deserialize(const uint8_t *buf,
 }
 
 /* =========================================================================
+ * V2 JOIN HANDSHAKE CODECS (0x45 .. 0x49)
+ * ========================================================================= */
+
+esp_err_t lora_mac_v2_up_join_hello_serialize(const lora_mac_v2_up_join_hello_t *hello,
+                                              uint8_t *out_buf,
+                                              size_t buf_size,
+                                              size_t *out_written)
+{
+    if (hello == NULL || out_buf == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (buf_size < LORA_MAC_V2_LEN_UP_JOIN_HELLO) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    out_buf[0] = (hello->ver_type == 0U) ? (uint8_t)LORA_MAC_V2_TYPE_UP_JOIN_HELLO : hello->ver_type;
+    (void)memcpy(&out_buf[1], hello->device_mac, 6);
+    out_buf[7] = hello->target_gw_id;
+
+    out_buf[8]  = (uint8_t)((hello->join_counter >> 24) & 0xFFU);
+    out_buf[9]  = (uint8_t)((hello->join_counter >> 16) & 0xFFU);
+    out_buf[10] = (uint8_t)((hello->join_counter >> 8) & 0xFFU);
+    out_buf[11] = (uint8_t)(hello->join_counter & 0xFFU);
+
+    (void)memcpy(&out_buf[12], hello->node_nonce, 8);
+    (void)memcpy(&out_buf[20], hello->node_x25519_pub, 32);
+    (void)memcpy(&out_buf[52], hello->join_proof, 16);
+
+    if (out_written != NULL) {
+        *out_written = LORA_MAC_V2_LEN_UP_JOIN_HELLO;
+    }
+    return ESP_OK;
+}
+
+esp_err_t lora_mac_v2_up_join_hello_deserialize(const uint8_t *buf,
+                                                size_t len,
+                                                lora_mac_v2_up_join_hello_t *out_hello)
+{
+    if (buf == NULL || out_hello == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (len < LORA_MAC_V2_LEN_UP_JOIN_HELLO) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    if (buf[0] != LORA_MAC_V2_TYPE_UP_JOIN_HELLO) {
+        return ESP_ERR_INVALID_VERSION;
+    }
+
+    out_hello->ver_type = buf[0];
+    (void)memcpy(out_hello->device_mac, &buf[1], 6);
+    out_hello->target_gw_id = buf[7];
+
+    out_hello->join_counter = ((uint32_t)buf[8] << 24) |
+                              ((uint32_t)buf[9] << 16) |
+                              ((uint32_t)buf[10] << 8) |
+                              (uint32_t)buf[11];
+
+    (void)memcpy(out_hello->node_nonce, &buf[12], 8);
+    (void)memcpy(out_hello->node_x25519_pub, &buf[20], 32);
+    (void)memcpy(out_hello->join_proof, &buf[52], 16);
+
+    return ESP_OK;
+}
+
+esp_err_t lora_mac_v2_down_join_grant_serialize(const lora_mac_v2_down_join_grant_t *grant,
+                                                uint8_t *out_buf,
+                                                size_t buf_size,
+                                                size_t *out_written)
+{
+    if (grant == NULL || out_buf == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (buf_size < LORA_MAC_V2_LEN_DOWN_JOIN_GRANT) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    out_buf[0] = (grant->ver_type == 0U) ? (uint8_t)LORA_MAC_V2_TYPE_DOWN_JOIN_GRANT : grant->ver_type;
+    (void)memcpy(&out_buf[1], grant->device_mac, 6);
+    out_buf[7] = grant->node_id;
+
+    out_buf[8]  = (uint8_t)((grant->join_counter >> 24) & 0xFFU);
+    out_buf[9]  = (uint8_t)((grant->join_counter >> 16) & 0xFFU);
+    out_buf[10] = (uint8_t)((grant->join_counter >> 8) & 0xFFU);
+    out_buf[11] = (uint8_t)(grant->join_counter & 0xFFU);
+
+    (void)memcpy(&out_buf[12], grant->gw_nonce, 6);
+    (void)memcpy(&out_buf[18], grant->gw_x25519_pub, 32);
+    (void)memcpy(&out_buf[50], grant->grant_proof, 16);
+
+    if (out_written != NULL) {
+        *out_written = LORA_MAC_V2_LEN_DOWN_JOIN_GRANT;
+    }
+    return ESP_OK;
+}
+
+esp_err_t lora_mac_v2_down_join_grant_deserialize(const uint8_t *buf,
+                                                  size_t len,
+                                                  lora_mac_v2_down_join_grant_t *out_grant)
+{
+    if (buf == NULL || out_grant == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (len < LORA_MAC_V2_LEN_DOWN_JOIN_GRANT) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    if (buf[0] != LORA_MAC_V2_TYPE_DOWN_JOIN_GRANT) {
+        return ESP_ERR_INVALID_VERSION;
+    }
+
+    out_grant->ver_type = buf[0];
+    (void)memcpy(out_grant->device_mac, &buf[1], 6);
+    out_grant->node_id = buf[7];
+
+    out_grant->join_counter = ((uint32_t)buf[8] << 24) |
+                              ((uint32_t)buf[9] << 16) |
+                              ((uint32_t)buf[10] << 8) |
+                              (uint32_t)buf[11];
+
+    (void)memcpy(out_grant->gw_nonce, &buf[12], 6);
+    (void)memcpy(out_grant->gw_x25519_pub, &buf[18], 32);
+    (void)memcpy(out_grant->grant_proof, &buf[50], 16);
+
+    return ESP_OK;
+}
+
+esp_err_t lora_mac_v2_up_join_key_confirm_serialize(const lora_mac_v2_up_join_key_confirm_t *conf,
+                                                    uint8_t *out_buf,
+                                                    size_t buf_size,
+                                                    size_t *out_written)
+{
+    if (conf == NULL || out_buf == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (buf_size < LORA_MAC_V2_LEN_UP_JOIN_KEY_CONF) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    out_buf[0] = (conf->ver_type == 0U) ? (uint8_t)LORA_MAC_V2_TYPE_UP_JOIN_KEY_CONF : conf->ver_type;
+    out_buf[1] = conf->gw_id;
+    out_buf[2] = conf->node_id;
+
+    out_buf[3] = (uint8_t)((conf->join_counter >> 24) & 0xFFU);
+    out_buf[4] = (uint8_t)((conf->join_counter >> 16) & 0xFFU);
+    out_buf[5] = (uint8_t)((conf->join_counter >> 8) & 0xFFU);
+    out_buf[6] = (uint8_t)(conf->join_counter & 0xFFU);
+
+    (void)memcpy(&out_buf[7], conf->gw_kc_tag, 8);
+    (void)memcpy(&out_buf[15], conf->backend_proof, 16);
+
+    if (out_written != NULL) {
+        *out_written = LORA_MAC_V2_LEN_UP_JOIN_KEY_CONF;
+    }
+    return ESP_OK;
+}
+
+esp_err_t lora_mac_v2_up_join_key_confirm_deserialize(const uint8_t *buf,
+                                                      size_t len,
+                                                      lora_mac_v2_up_join_key_confirm_t *out_conf)
+{
+    if (buf == NULL || out_conf == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (len < LORA_MAC_V2_LEN_UP_JOIN_KEY_CONF) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    if (buf[0] != LORA_MAC_V2_TYPE_UP_JOIN_KEY_CONF) {
+        return ESP_ERR_INVALID_VERSION;
+    }
+
+    out_conf->ver_type = buf[0];
+    out_conf->gw_id = buf[1];
+    out_conf->node_id = buf[2];
+
+    out_conf->join_counter = ((uint32_t)buf[3] << 24) |
+                             ((uint32_t)buf[4] << 16) |
+                             ((uint32_t)buf[5] << 8) |
+                             (uint32_t)buf[6];
+
+    (void)memcpy(out_conf->gw_kc_tag, &buf[7], 8);
+    (void)memcpy(out_conf->backend_proof, &buf[15], 16);
+
+    return ESP_OK;
+}
+
+esp_err_t lora_mac_v2_down_join_finish_serialize(const lora_mac_v2_down_join_finish_t *finish,
+                                                 uint8_t *out_buf,
+                                                 size_t buf_size,
+                                                 size_t *out_written)
+{
+    if (finish == NULL || out_buf == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (buf_size < LORA_MAC_V2_LEN_DOWN_JOIN_FINISH) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    out_buf[0] = (finish->ver_type == 0U) ? (uint8_t)LORA_MAC_V2_TYPE_DOWN_JOIN_FINISH : finish->ver_type;
+    out_buf[1] = finish->gw_id;
+    out_buf[2] = finish->node_id;
+
+    out_buf[3] = (uint8_t)((finish->join_counter >> 24) & 0xFFU);
+    out_buf[4] = (uint8_t)((finish->join_counter >> 16) & 0xFFU);
+    out_buf[5] = (uint8_t)((finish->join_counter >> 8) & 0xFFU);
+    out_buf[6] = (uint8_t)(finish->join_counter & 0xFFU);
+
+    (void)memcpy(&out_buf[7], finish->gw_finish_tag, 8);
+    (void)memcpy(&out_buf[15], finish->backend_finish_proof, 16);
+
+    if (out_written != NULL) {
+        *out_written = LORA_MAC_V2_LEN_DOWN_JOIN_FINISH;
+    }
+    return ESP_OK;
+}
+
+esp_err_t lora_mac_v2_down_join_finish_deserialize(const uint8_t *buf,
+                                                   size_t len,
+                                                   lora_mac_v2_down_join_finish_t *out_finish)
+{
+    if (buf == NULL || out_finish == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (len < LORA_MAC_V2_LEN_DOWN_JOIN_FINISH) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    if (buf[0] != LORA_MAC_V2_TYPE_DOWN_JOIN_FINISH) {
+        return ESP_ERR_INVALID_VERSION;
+    }
+
+    out_finish->ver_type = buf[0];
+    out_finish->gw_id = buf[1];
+    out_finish->node_id = buf[2];
+
+    out_finish->join_counter = ((uint32_t)buf[3] << 24) |
+                               ((uint32_t)buf[4] << 16) |
+                               ((uint32_t)buf[5] << 8) |
+                               (uint32_t)buf[6];
+
+    (void)memcpy(out_finish->gw_finish_tag, &buf[7], 8);
+    (void)memcpy(out_finish->backend_finish_proof, &buf[15], 16);
+
+    return ESP_OK;
+}
+
+esp_err_t lora_mac_v2_up_join_ready_serialize(const lora_mac_v2_up_join_ready_t *ready,
+                                              uint8_t *out_buf,
+                                              size_t buf_size,
+                                              size_t *out_written)
+{
+    if (ready == NULL || out_buf == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (buf_size < LORA_MAC_V2_LEN_UP_JOIN_READY) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    out_buf[0] = (ready->ver_type == 0U) ? (uint8_t)LORA_MAC_V2_TYPE_UP_JOIN_READY : ready->ver_type;
+    out_buf[1] = ready->gw_id;
+    out_buf[2] = ready->node_id;
+
+    out_buf[3] = (uint8_t)((ready->join_counter >> 24) & 0xFFU);
+    out_buf[4] = (uint8_t)((ready->join_counter >> 16) & 0xFFU);
+    out_buf[5] = (uint8_t)((ready->join_counter >> 8) & 0xFFU);
+    out_buf[6] = (uint8_t)(ready->join_counter & 0xFFU);
+
+    (void)memcpy(&out_buf[7], ready->gw_ready_tag, 8);
+    (void)memcpy(&out_buf[15], ready->backend_ready_proof, 16);
+
+    if (out_written != NULL) {
+        *out_written = LORA_MAC_V2_LEN_UP_JOIN_READY;
+    }
+    return ESP_OK;
+}
+
+esp_err_t lora_mac_v2_up_join_ready_deserialize(const uint8_t *buf,
+                                                size_t len,
+                                                lora_mac_v2_up_join_ready_t *out_ready)
+{
+    if (buf == NULL || out_ready == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (len < LORA_MAC_V2_LEN_UP_JOIN_READY) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    if (buf[0] != LORA_MAC_V2_TYPE_UP_JOIN_READY) {
+        return ESP_ERR_INVALID_VERSION;
+    }
+
+    out_ready->ver_type = buf[0];
+    out_ready->gw_id = buf[1];
+    out_ready->node_id = buf[2];
+
+    out_ready->join_counter = ((uint32_t)buf[3] << 24) |
+                              ((uint32_t)buf[4] << 16) |
+                              ((uint32_t)buf[5] << 8) |
+                              (uint32_t)buf[6];
+
+    (void)memcpy(out_ready->gw_ready_tag, &buf[7], 8);
+    (void)memcpy(out_ready->backend_ready_proof, &buf[15], 16);
+
+    return ESP_OK;
+}
+
+/* =========================================================================
  * V1 CANDIDATE CODECS (HISTORICAL PROVENANCE ONLY — SUPERSEDED)
  * ========================================================================= */
 

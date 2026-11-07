@@ -19,30 +19,43 @@ class TestFirmwareV2Unit(unittest.TestCase):
         cls.mock_inc = cls.repo_root / "tests" / "unit" / "mock_esp"
 
         cls.lora_mac_c = cls.component_dir / "src" / "lora_mac.c"
+        cls.lora_mac_join_crypto_c = cls.component_dir / "src" / "lora_mac_join_crypto.c"
         cls.node_event_fifo_c = cls.component_dir / "src" / "node_event_fifo.c"
 
         cls.test_lora_mac_v2_c = cls.repo_root / "tests" / "unit" / "test_lora_mac_v2.c"
         cls.test_node_event_fifo_c = cls.repo_root / "tests" / "unit" / "test_node_event_fifo.c"
         cls.test_node_tdma_client_c = cls.repo_root / "tests" / "unit" / "test_node_tdma_client.c"
+        cls.test_firmware_v2_join_c = cls.repo_root / "tests" / "unit" / "test_firmware_v2_join.c"
 
         cls.tdma_common_inc = cls.repo_root / "firmware" / "components" / "tdma_common" / "include"
         cls.airtime_policy_inc = cls.repo_root / "firmware" / "components" / "airtime_policy" / "include"
+        cls.session_key_store_inc = cls.repo_root / "firmware" / "components" / "session_key_store" / "include"
+        cls.gateway_transport_inc = cls.repo_root / "firmware" / "components" / "gateway_transport" / "include"
         cls.sensor_node_main_dir = cls.repo_root / "firmware" / "sensor_node" / "main"
+        cls.gateway_master_main_dir = cls.repo_root / "firmware" / "gateway_master" / "main"
 
         cls.tdma_common_c = cls.repo_root / "firmware" / "components" / "tdma_common" / "src" / "tdma_common.c"
         cls.airtime_policy_c = cls.repo_root / "firmware" / "components" / "airtime_policy" / "src" / "airtime_policy.c"
         cls.node_crypto_c = cls.sensor_node_main_dir / "node_crypto.c"
         cls.node_tdma_client_c = cls.sensor_node_main_dir / "node_tdma_client.c"
+        cls.node_v2_join_c = cls.sensor_node_main_dir / "node_v2_join.c"
+        cls.gateway_v2_join_c = cls.gateway_master_main_dir / "gateway_v2_join.c"
+        cls.mock_nvs_c = cls.repo_root / "tests" / "unit" / "mock_nvs.c"
 
         assert cls.lora_mac_c.is_file(), f"Source not found: {cls.lora_mac_c}"
+        assert cls.lora_mac_join_crypto_c.is_file(), f"Source not found: {cls.lora_mac_join_crypto_c}"
         assert cls.node_event_fifo_c.is_file(), f"Source not found: {cls.node_event_fifo_c}"
         assert cls.test_lora_mac_v2_c.is_file(), f"Test not found: {cls.test_lora_mac_v2_c}"
         assert cls.test_node_event_fifo_c.is_file(), f"Test not found: {cls.test_node_event_fifo_c}"
         assert cls.test_node_tdma_client_c.is_file(), f"Test not found: {cls.test_node_tdma_client_c}"
+        assert cls.test_firmware_v2_join_c.is_file(), f"Test not found: {cls.test_firmware_v2_join_c}"
         assert cls.tdma_common_c.is_file(), f"Source not found: {cls.tdma_common_c}"
         assert cls.airtime_policy_c.is_file(), f"Source not found: {cls.airtime_policy_c}"
         assert cls.node_crypto_c.is_file(), f"Source not found: {cls.node_crypto_c}"
         assert cls.node_tdma_client_c.is_file(), f"Source not found: {cls.node_tdma_client_c}"
+        assert cls.node_v2_join_c.is_file(), f"Source not found: {cls.node_v2_join_c}"
+        assert cls.gateway_v2_join_c.is_file(), f"Source not found: {cls.gateway_v2_join_c}"
+        assert cls.mock_nvs_c.is_file(), f"Source not found: {cls.mock_nvs_c}"
 
     def test_compile_and_run_lora_mac_v2_unit_tests(self):
         """Compile test_lora_mac_v2.c with strict flags and execute all V2 framing/codec tests."""
@@ -172,6 +185,54 @@ class TestFirmwareV2Unit(unittest.TestCase):
             self.assertIn("Running test_state_transition_airtime_exhaustion_suppression ... PASSED", res.stdout)
             self.assertIn("Running test_state_transition_beacon_loss_lock ... PASSED", res.stdout)
             self.assertIn("Running test_zero_out_of_slot_rf_transmission ... PASSED", res.stdout)
+
+    def test_compile_and_run_v2_join_handshake_unit_tests(self):
+        """Compile test_firmware_v2_join.c with strict flags and execute V2 Join handshake tests."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bin_path = Path(tmpdir) / "test_firmware_v2_join"
+            cmd_compile = [
+                "gcc",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-pedantic",
+                "-std=c11",
+                f"-I{self.c_inc}",
+                f"-I{self.mock_inc}",
+                f"-I{self.sensor_node_main_dir}",
+                f"-I{self.gateway_master_main_dir}",
+                f"-I{self.session_key_store_inc}",
+                f"-I{self.gateway_transport_inc}",
+                str(self.lora_mac_c),
+                str(self.lora_mac_join_crypto_c),
+                str(self.node_v2_join_c),
+                str(self.gateway_v2_join_c),
+                str(self.mock_nvs_c),
+                str(self.test_firmware_v2_join_c),
+                "-o",
+                str(bin_path),
+            ]
+            comp = subprocess.run(cmd_compile, capture_output=True, text=True)
+            self.assertEqual(
+                comp.returncode,
+                0,
+                f"Compilation failed:\nSTDOUT:\n{comp.stdout}\nSTDERR:\n{comp.stderr}",
+            )
+
+            res = subprocess.run([str(bin_path)], capture_output=True, text=True)
+            self.assertEqual(
+                res.returncode,
+                0,
+                f"Test execution failed with code {res.returncode}:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}",
+            )
+            self.assertIn("ALL TESTS PASSED", res.stdout)
+            self.assertIn("Running test_join_frame_codecs_roundtrip ... PASSED", res.stdout)
+            self.assertIn("Running test_join_crypto_derivations_and_proofs ... PASSED", res.stdout)
+            self.assertIn("Running test_rfc7748_all_zeros_shared_secret_abort ... PASSED", res.stdout)
+            self.assertIn("Running test_monotonic_nvs_counter_commit_and_rollback_lockout ... PASSED", res.stdout)
+            self.assertIn("Running test_cad_retry_exhaustion ... PASSED", res.stdout)
+            self.assertIn("Running test_node_complete_handshake_end_to_end ... PASSED", res.stdout)
+            self.assertIn("Running test_gateway_relay_engine_and_mqtt_schema ... PASSED", res.stdout)
 
 
 if __name__ == "__main__":
