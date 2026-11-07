@@ -1,0 +1,182 @@
+{
+  "version": "1.0",
+  "description": "Deterministic Golden Vectors for MQTT Session Key Install & ACK Interop",
+  "contract": {
+    "source_pr": 123,
+    "commit_sha": "9ab052e24c8135f890ecd7e0ff5efa1f1313dd91",
+    "schema_version": "1.1-draft",
+    "install_protocol_version": 1,
+    "aad_version": 1,
+    "ack_protocol_version": 1,
+    "crypto_suite": "AES-256-GCM",
+    "k_gw_wrap_bytes": 32,
+    "nonce_bytes": 12,
+    "plaintext_bytes": 64,
+    "ciphertext_bytes": 64,
+    "tag_bytes": 16,
+    "ack_tag_bytes": 16
+  },
+  "synthetic_keys": {
+    "k_gw_wrap_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+    "k_session_up_hex": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+    "k_session_dl_hex": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+    "plaintext_hex": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+    "ack_prk_hex": "8c494209374bc5baadcb1dcd69ed8e5ce18f3e34c1066b6dda172355c51d6c7e",
+    "k_ack_hex": "4303ee06e9e6f2b6b2a2eff65b2e2b389260fc34673857580a41506db5263789"
+  },
+  "positive_cases": [
+    {
+      "id": "GV-POS-01-INSTALL",
+      "description": "Valid Session Key Install envelope",
+      "topic": "iot/v1/gw/gw01/downlink/session-key-install",
+      "message": {
+        "schema_version": "1.1-draft",
+        "install_protocol_version": 1,
+        "aad_version": 1,
+        "gateway_id": "gw01",
+        "target_gw_id": 1,
+        "device_mac": "246f28123456",
+        "node_id": 14,
+        "key_id": 1,
+        "session_id": "550e8400-e29b-41d4-a716-446655440000",
+        "install_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+        "session_revision": "7",
+        "assignment_revision": "3",
+        "session_context_hash": "aec56824a5abe8200f84366a35dee43ae6d8d0ea5bfb8b76d98dd99a861bc002",
+        "not_before": "2026-11-02T04:00:00Z",
+        "expires_at": "2026-11-03T04:00:00Z",
+        "install_deadline": "2026-11-02T04:05:00Z",
+        "wrap_key_id": 1,
+        "crypto_suite": "AES-256-GCM",
+        "nonce": "AAAAAQAAAAAAAAAB",
+        "ciphertext": "ELnnO/cbo4dQHTTd+ztrC+Y6scHFw3vkn0ZiCWxX46ygoJDMawgqlDCia7tJjlvI9tj9lvDHp+RrDem6m8nRlA==",
+        "tag": "XB25t0LOgnN417KQt5f/+g=="
+      },
+      "intermediate": {
+        "aad_hex": "00184c5032502f4d5154542f56312f4b45592d494e5354414c4c002b696f742f76312f67772f677730312f646f776e6c696e6b2f73657373696f6e2d6b65792d696e7374616c6c0009312e312d6472616674010100046777303101246f281234560e01550e8400e29b41d4a716446655440000f47ac10b58cc4372a5670e02b2c3d47900000000000000070000000000000003aec56824a5abe8200f84366a35dee43ae6d8d0ea5bfb8b76d98dd99a861bc002000001a19a69fe00000001a19f905a00000001a19a6e91e000000001000b4145532d3235362d47434d000000010000000000000001",
+        "aad_len": 232,
+        "nonce_hex": "000000010000000000000001",
+        "ciphertext_hex": "10b9e73bf71ba387501d34ddfb3b6b0be63ab1c1c5c37be49f4662096c57e3aca0a090cc6b082a9430a26bbb498e5bc8f6d8fd96f0c7a7e46b0de9ba9bc9d194",
+        "tag_hex": "5c1db9b742ce827378d7b290b797fffa"
+      }
+    },
+    {
+      "id": "GV-POS-02-ACK-INSTALLED",
+      "description": "Valid Session Key ACK (INSTALLED / NONE)",
+      "topic": "iot/v1/gw/gw01/uplink/session-key-ack",
+      "message": {
+        "schema_version": "1.1-draft",
+        "ack_protocol_version": 1,
+        "gateway_id": "gw01",
+        "install_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+        "session_id": "550e8400-e29b-41d4-a716-446655440000",
+        "session_revision": "7",
+        "wrap_key_id": 1,
+        "status": "INSTALLED",
+        "reason_code": "NONE",
+        "ack_tag": "RRDsUeL6dhrYxJtRTvKa4g=="
+      },
+      "intermediate": {
+        "m_ack_hex": "00124c5032502f4d5154542f56312f4d2d41434b0025696f742f76312f67772f677730312f75706c696e6b2f73657373696f6e2d6b65792d61636b0009312e312d647261667401000467773031f47ac10b58cc4372a5670e02b2c3d479550e8400e29b41d4a7164466554400000000000000000007000000010009494e5354414c4c454400044e4f4e45",
+        "m_ack_len": 138,
+        "ack_tag_hex": "4510ec51e2fa761ad8c49b514ef29ae2"
+      }
+    },
+    {
+      "id": "GV-POS-03-ACK-REJECTED",
+      "description": "Valid Session Key ACK (REJECTED / EXPIRED)",
+      "topic": "iot/v1/gw/gw01/uplink/session-key-ack",
+      "message": {
+        "schema_version": "1.1-draft",
+        "ack_protocol_version": 1,
+        "gateway_id": "gw01",
+        "install_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+        "session_id": "550e8400-e29b-41d4-a716-446655440000",
+        "session_revision": "7",
+        "wrap_key_id": 1,
+        "status": "REJECTED",
+        "reason_code": "EXPIRED",
+        "ack_tag": "9os/VkjdI6iI8VWKmYODVg=="
+      },
+      "intermediate": {
+        "m_ack_hex": "00124c5032502f4d5154542f56312f4d2d41434b0025696f742f76312f67772f677730312f75706c696e6b2f73657373696f6e2d6b65792d61636b0009312e312d647261667401000467773031f47ac10b58cc4372a5670e02b2c3d479550e8400e29b41d4a716446655440000000000000000000700000001000852454a4543544544000745585049524544",
+        "m_ack_len": 140,
+        "ack_tag_hex": "f68b3f5648dd23a888f1558a99838356"
+      }
+    }
+  ],
+  "negative_cases": [
+    {
+      "id": "GV-NEG-01-TAMPERED-CIPHERTEXT",
+      "description": "Ciphertext modified by 1 bit must fail GCM tag verification",
+      "tamper_target": "ciphertext",
+      "expected_error": "TAG_VERIFICATION_FAILED"
+    },
+    {
+      "id": "GV-NEG-02-TAMPERED-TAG",
+      "description": "Tag modified by 1 bit must fail GCM tag verification",
+      "tamper_target": "tag",
+      "expected_error": "TAG_VERIFICATION_FAILED"
+    },
+    {
+      "id": "GV-NEG-03-WRONG-WRAP-KEY",
+      "description": "Unwrapping with mismatched K_GW_WRAP must fail GCM tag verification",
+      "tamper_target": "key",
+      "expected_error": "TAG_VERIFICATION_FAILED"
+    },
+    {
+      "id": "GV-NEG-04-TAMPERED-AAD-TOPIC",
+      "description": "Modified topic alters AAD and causes GCM tag failure",
+      "tamper_target": "topic",
+      "expected_error": "TAG_VERIFICATION_FAILED"
+    },
+    {
+      "id": "GV-NEG-05-TAMPERED-AAD-GATEWAY-ID",
+      "description": "Modified gateway_id in payload alters AAD and causes GCM tag failure",
+      "tamper_target": "gateway_id",
+      "expected_error": "TAG_VERIFICATION_FAILED"
+    },
+    {
+      "id": "GV-NEG-06-TAMPERED-AAD-SESSION-ID",
+      "description": "Modified session_id alters AAD and causes GCM tag failure",
+      "tamper_target": "session_id",
+      "expected_error": "TAG_VERIFICATION_FAILED"
+    },
+    {
+      "id": "GV-NEG-07-TAMPERED-AAD-SESSION-REVISION",
+      "description": "Modified session_revision alters AAD and causes GCM tag failure",
+      "tamper_target": "session_revision",
+      "expected_error": "TAG_VERIFICATION_FAILED"
+    },
+    {
+      "id": "GV-NEG-08-TAMPERED-AAD-EXPIRY",
+      "description": "Modified expires_at alters AAD and causes GCM tag failure",
+      "tamper_target": "expires_at",
+      "expected_error": "TAG_VERIFICATION_FAILED"
+    },
+    {
+      "id": "GV-NEG-09-TAMPERED-ACK-TAG",
+      "description": "Modified ack_tag must fail constant-time comparison",
+      "tamper_target": "ack_tag",
+      "expected_error": "ACK_HMAC_MISMATCH"
+    },
+    {
+      "id": "GV-NEG-10-TAMPERED-ACK-STATUS",
+      "description": "Modifying status without updating HMAC must fail verification",
+      "tamper_target": "ack_status",
+      "expected_error": "ACK_HMAC_MISMATCH"
+    },
+    {
+      "id": "GV-NEG-11-TAMPERED-ACK-REASON",
+      "description": "Modifying reason_code without updating HMAC must fail verification",
+      "tamper_target": "ack_reason",
+      "expected_error": "ACK_HMAC_MISMATCH"
+    },
+    {
+      "id": "GV-NEG-12-TRUNCATED-CIPHERTEXT",
+      "description": "Ciphertext shorter than 64B must fail schema/size validation",
+      "tamper_target": "ciphertext_truncation",
+      "expected_error": "INVALID_LENGTH"
+    }
+  ]
+}

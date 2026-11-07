@@ -1,0 +1,68 @@
+{
+  "issue": 173,
+  "title": "Verify MQTT Session Key AES-GCM/HMAC Golden Vectors across Go and ESP-IDF mbedTLS",
+  "contract": {
+    "source_pr": 123,
+    "commit_sha": "9ab052e24c8135f890ecd7e0ff5efa1f1313dd91",
+    "schema_version": "1.1-draft",
+    "install_protocol_version": 1,
+    "aad_version": 1,
+    "ack_protocol_version": 1,
+    "crypto_suite": "AES-256-GCM"
+  },
+  "toolchains": {
+    "go": "go1.27.1 linux/amd64",
+    "esp_idf": "v6.1",
+    "mbedtls": "tf-psa-crypto (mbedTLS 3.6.x compatible)",
+    "emulator": "qemu-system-xtensa 9.2.2"
+  },
+  "file_hashes": {
+    "session_key_vectors.json": "1bfaf1a45bd20d11c66f024319df2f9951d784f77770481f6b3110a3a1ebf052",
+    "session_key_crypto.go": "caea4b0af1c96d40ba672bf30a2d2609a9cec24f3a4a05f79eed8c41a6959573",
+    "session_key_crypto_test.go": "d5b8d39ff0f21b5d1c751c071807f571dfa4da58425ad1131c47e0cebe862c18",
+    "session_key_crypto.h": "ea979f724d07720063780f91c167a15bd9a272dc073dda51495939c70884b3d8",
+    "session_key_crypto.c": "e25287af1e9d2795c11ffa0abbba3381cb122ba023595dee012138b63ffc6f51",
+    "test_main.c": "30170075eed8aeb469002ecd1683e7d23da6091b70db62b661e731c2247e6fbc"
+  },
+  "results": {
+    "vectors": {
+      "status": "PASS",
+      "vectors_hash": "1bfaf1a45bd20d11c66f024319df2f9951d784f77770481f6b3110a3a1ebf052",
+      "positive_cases_count": 3,
+      "negative_cases_count": 12
+    },
+    "go_adapter": {
+      "status": "PASS",
+      "exit_code": 0,
+      "passed_tests": 5,
+      "output_summary": [
+        "--- PASS: TestGoldenVector_InstallAAD_And_Wrap (0.00s)",
+        "--- PASS: TestGoldenVector_ACK_Installed (0.00s)",
+        "--- PASS: TestGoldenVector_ACK_Rejected (0.00s)",
+        "--- PASS: TestNegativeCases_AESGCM_FailClosed (0.00s)",
+        "--- PASS: TestNegativeCases_ACK_FailClosed (0.00s)",
+        "ok  \tgithub.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/tests/contract/session_key_interop\t(cached)"
+      ]
+    },
+    "esp_idf_mbedtls_adapter": {
+      "status": "PASS",
+      "qemu_verified": true,
+      "tests_passed": 10,
+      "output_summary": [
+        "TEST 1: sk_build_install_aad length=232 ... PASSED",
+        "TEST 2: sk_wrap_session_keys ... PASSED",
+        "TEST 3: sk_unwrap_session_keys round-trip ... PASSED",
+        "TEST 4: sk_derive_k_ack HKDF-SHA256 ... PASSED",
+        "TEST 5: sk_build_ack_transcript length=138 ... PASSED",
+        "TEST 6: sk_compute_ack_tag and verify (INSTALLED) ... PASSED",
+        "TEST 7: Negative tampered ciphertext rejected fail-closed ... PASSED",
+        "TEST 8: Negative tampered tag rejected fail-closed ... PASSED",
+        "TEST 9: Negative tampered AAD rejected fail-closed ... PASSED",
+        "TEST 10: Negative tampered ACK tag rejected fail-closed ... PASSED",
+        "=== SUMMARY: 10 passed, 0 failed ===",
+        "=== ESP32 MBEDTLS ALL TESTS PASSED ==="
+      ]
+    },
+    "interop_verified": true
+  }
+}
