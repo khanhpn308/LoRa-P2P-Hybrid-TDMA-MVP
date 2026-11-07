@@ -298,8 +298,7 @@ func (s *mockStmt) Query(args []driver.Value) (driver.Rows, error) {
 			columns: []string{
 				"id", "event_id", "gateway_id", "gateway_epoch", "event_seq", "node_id",
 				"superframe_seq", "seq_num", "schedule_version", "severity", "observed_at", "observed_time_source",
-				"radio_rx_monotonic_us", "buffered", "radio_ack_sent", "slot_id", "sensor_status_mask",
-				"ch1_raw", "ch2_raw", "ch3_raw", "battery_mv", "node_duty_permille",
+				"radio_rx_monotonic_us", "buffered", "radio_ack_sent", "event_ref", "event_code", "event_value",
 				"trigger_channel", "trigger_observed_raw", "trigger_threshold_raw",
 				"raw_payload_sha256", "ingested_at", "ack_status", "acknowledged_at", "acknowledged_by",
 			},
@@ -307,8 +306,7 @@ func (s *mockStmt) Query(args []driver.Value) (driver.Rows, error) {
 				{
 					int64(101), "gw01:550e8400-e29b-41d4-a716-446655440000:42", "gw01", "550e8400-e29b-41d4-a716-446655440000", "42", 1,
 					int64(100), 5, int64(1), "P1_HIGH", now, "gateway_utc",
-					"123456789", false, true, 1, 0,
-					2500, 500, 300, 3300, 10,
+					"123456789", false, true, int64(1), 1, 2500,
 					1, 2500, 2000,
 					[]byte("test-matching-hash-32-bytes!!!"), now, "UNACKNOWLEDGED", nil, nil,
 				},
@@ -328,6 +326,82 @@ func (s *mockStmt) Query(args []driver.Value) (driver.Rows, error) {
 			},
 			rows: [][]driver.Value{
 				{"gw01", 1, 1, int64(100), int64(10), 0, 0, "ONLINE", now, now},
+			},
+		}, nil
+	}
+
+	if strings.Contains(q, "from events") && strings.Contains(q, "order by id desc limit") {
+		if state == "events_empty" {
+			return &mockRows{columns: []string{"id"}, rows: nil}, nil
+		}
+		now := time.Now().UTC()
+		return &mockRows{
+			columns: []string{
+				"id", "event_id", "gateway_id", "gateway_epoch", "event_seq", "node_id",
+				"superframe_seq", "seq_num", "schedule_version", "severity", "observed_at", "observed_time_source",
+				"radio_rx_monotonic_us", "buffered", "radio_ack_sent", "event_ref", "event_code", "event_value",
+				"raw_payload_sha256", "ingested_at", "ack_status", "acknowledged_at", "acknowledged_by",
+			},
+			rows: [][]driver.Value{
+				{
+					int64(102), "gw01:550e8400-e29b-41d4-a716-446655440000:43", "gw01", "550e8400-e29b-41d4-a716-446655440000", "43", 2,
+					int64(101), 6, int64(1), "P0_EMERGENCY", now, "gateway_utc",
+					"123456790", false, true, int64(2), 2, 100,
+					[]byte("test-matching-hash-32-bytes!!!"), now, "UNACKNOWLEDGED", nil, nil,
+				},
+				{
+					int64(101), "gw01:550e8400-e29b-41d4-a716-446655440000:42", "gw01", "550e8400-e29b-41d4-a716-446655440000", "42", 1,
+					int64(100), 5, int64(1), "P1_HIGH", now, "gateway_utc",
+					"123456789", false, true, int64(1), 1, 2500,
+					[]byte("test-matching-hash-32-bytes!!!"), now, "UNACKNOWLEDGED", nil, nil,
+				},
+			},
+		}, nil
+	}
+
+	if strings.Contains(q, "select ack_status from events where id = $1 for update") {
+		if state == "ack_not_found" {
+			return &mockRows{columns: []string{"ack_status"}, rows: nil}, nil
+		}
+		if state == "ack_already_acked" {
+			return &mockRows{columns: []string{"ack_status"}, rows: [][]driver.Value{{"ACKNOWLEDGED"}}}, nil
+		}
+		return &mockRows{columns: []string{"ack_status"}, rows: [][]driver.Value{{"UNACKNOWLEDGED"}}}, nil
+	}
+
+	if strings.Contains(q, "from events where id = $1") {
+		now := time.Now().UTC()
+		return &mockRows{
+			columns: []string{
+				"id", "event_id", "gateway_id", "gateway_epoch", "event_seq", "node_id",
+				"superframe_seq", "seq_num", "schedule_version", "severity", "observed_at", "observed_time_source",
+				"radio_rx_monotonic_us", "buffered", "radio_ack_sent", "event_ref", "event_code", "event_value",
+				"raw_payload_sha256", "ingested_at", "ack_status", "acknowledged_at", "acknowledged_by",
+			},
+			rows: [][]driver.Value{
+				{
+					int64(101), "gw01:550e8400-e29b-41d4-a716-446655440000:42", "gw01", "550e8400-e29b-41d4-a716-446655440000", "42", 1,
+					int64(100), 5, int64(1), "P1_HIGH", now, "gateway_utc",
+					"123456789", false, true, int64(1), 1, 2500,
+					[]byte("test-matching-hash-32-bytes!!!"), now, "ACKNOWLEDGED", now, "operator1",
+				},
+			},
+		}, nil
+	}
+
+	if strings.Contains(q, "from node_health") && strings.Contains(q, "order by node_id asc limit") {
+		if state == "node_health_empty" {
+			return &mockRows{columns: []string{"node_id"}, rows: nil}, nil
+		}
+		now := time.Now().UTC()
+		return &mockRows{
+			columns: []string{
+				"gateway_id", "node_id", "session_sel", "frame_counter", "maint_seq", "status_flags",
+				"pending_event_count", "health_status", "last_seen_at", "updated_at",
+			},
+			rows: [][]driver.Value{
+				{"gw01", 1, 1, int64(100), int64(10), 0, 0, "ONLINE", now, now},
+				{"gw01", 2, 1, int64(95), int64(10), 0, 0, "ONLINE", now, now},
 			},
 		}, nil
 	}

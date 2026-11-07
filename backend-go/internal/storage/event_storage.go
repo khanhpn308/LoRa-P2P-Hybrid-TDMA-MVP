@@ -17,6 +17,8 @@ var (
 	ErrConflictingPayload = errors.New("conflicting payload detected for existing event_id")
 	// ErrHealthNotFound indicates no health record exists for the given gateway and node ID.
 	ErrHealthNotFound = errors.New("node health record not found")
+	// ErrAlreadyAcknowledged indicates the event/alert has already been acknowledged.
+	ErrAlreadyAcknowledged = errors.New("alert is already acknowledged")
 )
 
 // EventRecordResult details the persistence outcome of an Event.
@@ -43,6 +45,14 @@ type EventRepository interface {
 	QuarantineEvent(ctx context.Context, q *QuarantineRecord) error
 	RecordHealthUpdate(ctx context.Context, h *domain.NodeHealth) error
 	GetNodeHealth(ctx context.Context, gatewayID string, nodeID uint8) (*domain.NodeHealth, error)
+}
+
+// EventQueryRepository defines query and operator workflow acknowledgment operations for REST APIs.
+type EventQueryRepository interface {
+	EventRepository
+	ListEvents(ctx context.Context, cursor int64, limit int) ([]*domain.Event, int64, error)
+	AcknowledgeEvent(ctx context.Context, alertID int64, acknowledgedBy string) (*domain.Event, error)
+	ListNodeHealth(ctx context.Context, gatewayID string, limit int) ([]*domain.NodeHealth, error)
 }
 
 // PostgresEventStorage implements EventRepository on PostgreSQL with strict row-level lock idempotency.
@@ -200,8 +210,7 @@ func (s *PostgresEventStorage) GetEvent(ctx context.Context, gatewayID, eventID 
 		SELECT
 			id, event_id, gateway_id, gateway_epoch, event_seq, node_id,
 			superframe_seq, seq_num, schedule_version, severity, observed_at, observed_time_source,
-			radio_rx_monotonic_us, buffered, radio_ack_sent, slot_id, sensor_status_mask,
-			ch1_raw, ch2_raw, ch3_raw, battery_mv, node_duty_permille,
+			radio_rx_monotonic_us, buffered, radio_ack_sent, event_ref, event_code, event_value,
 			trigger_channel, trigger_observed_raw, trigger_threshold_raw,
 			raw_payload_sha256, ingested_at, ack_status, acknowledged_at, acknowledged_by
 		FROM events
@@ -215,8 +224,8 @@ func (s *PostgresEventStorage) GetEvent(ctx context.Context, gatewayID, eventID 
 	var trigChan sql.NullInt32
 	var trigObs sql.NullInt32
 	var trigThresh sql.NullInt32
-	var nodeID, seqNum, slotID, mask, duty int
-	var ch1, ch2, ch3, bat int
+	var nodeID, seqNum, eventCode, eventValue int
+	var eventRef int64
 	var rawHash []byte
 	var sev, timeSrc, ackStat string
 
@@ -236,13 +245,9 @@ func (s *PostgresEventStorage) GetEvent(ctx context.Context, gatewayID, eventID 
 		&e.RadioRxMonotonicUS,
 		&e.Buffered,
 		&e.RadioAckSent,
-		&slotID,
-		&mask,
-		&ch1,
-		&ch2,
-		&ch3,
-		&bat,
-		&duty,
+		&eventRef,
+		&eventCode,
+		&eventValue,
 		&trigChan,
 		&trigObs,
 		&trigThresh,
@@ -262,9 +267,9 @@ func (s *PostgresEventStorage) GetEvent(ctx context.Context, gatewayID, eventID 
 
 	e.NodeID = uint8(nodeID)
 	e.SeqNum = uint8(seqNum)
-	e.Data.EventRef = uint32(slotID)
-	e.Data.EventCode = 1
-	e.Data.EventValue = int16(ch1)
+	e.Data.EventRef = uint32(eventRef)
+	e.Data.EventCode = uint8(eventCode)
+	e.Data.EventValue = int16(eventValue)
 	e.Severity = domain.EventSeverity(sev)
 	e.ObservedTimeSource = domain.TimeSource(timeSrc)
 	e.AckStatus = domain.AckStatus(ackStat)
@@ -407,4 +412,316 @@ func (s *PostgresEventStorage) GetNodeHealth(ctx context.Context, gatewayID stri
 	h.HealthStatus = domain.HealthStatus(status)
 
 	return &h, nil
+}
+
+// ListEvents retrieves cursor-paginated events ordered by ID descending.
+// cursor == 0 indicates the first page.
+// Returns items and nextCursor (0 if no further items).
+func (s *PostgresEventStorage) ListEvents(ctx context.Context, cursor int64, limit int) ([]*domain.Event, int64, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	var query string
+	var args []any
+	if cursor > 0 {
+		query = `
+			SELECT
+				id, event_id, gateway_id, gateway_epoch, event_seq, node_id,
+				superframe_seq, seq_num, schedule_version, severity, observed_at, observed_time_source,
+				radio_rx_monotonic_us, buffered, radio_ack_sent, event_ref, event_code, event_value,
+				raw_payload_sha256, ingested_at, ack_status, acknowledged_at, acknowledged_by
+			FROM events
+			WHERE id < $1
+			ORDER BY id DESC
+			LIMIT $2;
+		`
+		args = []any{cursor, limit}
+	} else {
+		query = `
+			SELECT
+				id, event_id, gateway_id, gateway_epoch, event_seq, node_id,
+				superframe_seq, seq_num, schedule_version, severity, observed_at, observed_time_source,
+				radio_rx_monotonic_us, buffered, radio_ack_sent, event_ref, event_code, event_value,
+				raw_payload_sha256, ingested_at, ack_status, acknowledged_at, acknowledged_by
+			FROM events
+			ORDER BY id DESC
+			LIMIT $1;
+		`
+		args = []any{limit}
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query events: %w", err)
+	}
+	defer rows.Close()
+
+	var events []*domain.Event
+	for rows.Next() {
+		var e domain.Event
+		var obsAt sql.NullTime
+		var ackAt sql.NullTime
+		var ackBy sql.NullString
+		var nodeID, seqNum, eventCode, eventValue int
+		var eventRef int64
+		var rawHash []byte
+		var sev, timeSrc, ackStat string
+
+		if err := rows.Scan(
+			&e.ID,
+			&e.EventID,
+			&e.GatewayID,
+			&e.GatewayEpoch,
+			&e.EventSeq,
+			&nodeID,
+			&e.SuperframeSeq,
+			&seqNum,
+			&e.ScheduleVersion,
+			&sev,
+			&obsAt,
+			&timeSrc,
+			&e.RadioRxMonotonicUS,
+			&e.Buffered,
+			&e.RadioAckSent,
+			&eventRef,
+			&eventCode,
+			&eventValue,
+			&rawHash,
+			&e.IngestedAt,
+			&ackStat,
+			&ackAt,
+			&ackBy,
+		); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan event row: %w", err)
+		}
+
+		e.NodeID = uint8(nodeID)
+		e.SeqNum = uint8(seqNum)
+		e.Data.EventRef = uint32(eventRef)
+		e.Data.EventCode = uint8(eventCode)
+		e.Data.EventValue = int16(eventValue)
+		e.Severity = domain.EventSeverity(sev)
+		e.ObservedTimeSource = domain.TimeSource(timeSrc)
+		e.AckStatus = domain.AckStatus(ackStat)
+
+		if obsAt.Valid {
+			t := obsAt.Time.UTC()
+			e.ObservedAt = &t
+		}
+		if ackAt.Valid {
+			t := ackAt.Time.UTC()
+			e.AcknowledgedAt = &t
+		}
+		if ackBy.Valid {
+			e.AcknowledgedBy = &ackBy.String
+		}
+		copy(e.RawPayloadSHA256[:], rawHash)
+		events = append(events, &e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error reading event rows: %w", err)
+	}
+
+	var nextCursor int64
+	if len(events) == limit {
+		nextCursor = events[len(events)-1].ID
+	}
+	return events, nextCursor, nil
+}
+
+// AcknowledgeEvent updates the acknowledgment status of an event by its database ID.
+// Returns ErrAlreadyAcknowledged if already acknowledged, and ErrEventNotFound if not found.
+func (s *PostgresEventStorage) AcknowledgeEvent(ctx context.Context, alertID int64, acknowledgedBy string) (*domain.Event, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin acknowledge transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	const checkQuery = `
+		SELECT ack_status
+		FROM events
+		WHERE id = $1
+		FOR UPDATE;
+	`
+	var currentStatus string
+	err = tx.QueryRowContext(ctx, checkQuery, alertID).Scan(&currentStatus)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrEventNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to check event status: %w", err)
+	}
+	if domain.AckStatus(currentStatus) == domain.AckStatusAcknowledged {
+		return nil, ErrAlreadyAcknowledged
+	}
+
+	const updateQuery = `
+		UPDATE events
+		SET ack_status = 'ACKNOWLEDGED',
+		    acknowledged_at = CURRENT_TIMESTAMP,
+		    acknowledged_by = $1
+		WHERE id = $2;
+	`
+	if _, err := tx.ExecContext(ctx, updateQuery, acknowledgedBy, alertID); err != nil {
+		return nil, fmt.Errorf("failed to update event ack status: %w", err)
+	}
+
+	const selectQuery = `
+		SELECT
+			id, event_id, gateway_id, gateway_epoch, event_seq, node_id,
+			superframe_seq, seq_num, schedule_version, severity, observed_at, observed_time_source,
+			radio_rx_monotonic_us, buffered, radio_ack_sent, event_ref, event_code, event_value,
+			raw_payload_sha256, ingested_at, ack_status, acknowledged_at, acknowledged_by
+		FROM events
+		WHERE id = $1;
+	`
+	var e domain.Event
+	var obsAt sql.NullTime
+	var ackAt sql.NullTime
+	var ackBy sql.NullString
+	var nodeID, seqNum, eventCode, eventValue int
+	var eventRef int64
+	var rawHash []byte
+	var sev, timeSrc, ackStat string
+
+	err = tx.QueryRowContext(ctx, selectQuery, alertID).Scan(
+		&e.ID,
+		&e.EventID,
+		&e.GatewayID,
+		&e.GatewayEpoch,
+		&e.EventSeq,
+		&nodeID,
+		&e.SuperframeSeq,
+		&seqNum,
+		&e.ScheduleVersion,
+		&sev,
+		&obsAt,
+		&timeSrc,
+		&e.RadioRxMonotonicUS,
+		&e.Buffered,
+		&e.RadioAckSent,
+		&eventRef,
+		&eventCode,
+		&eventValue,
+		&rawHash,
+		&e.IngestedAt,
+		&ackStat,
+		&ackAt,
+		&ackBy,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load updated event: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit acknowledge transaction: %w", err)
+	}
+
+	e.NodeID = uint8(nodeID)
+	e.SeqNum = uint8(seqNum)
+	e.Data.EventRef = uint32(eventRef)
+	e.Data.EventCode = uint8(eventCode)
+	e.Data.EventValue = int16(eventValue)
+	e.Severity = domain.EventSeverity(sev)
+	e.ObservedTimeSource = domain.TimeSource(timeSrc)
+	e.AckStatus = domain.AckStatus(ackStat)
+
+	if obsAt.Valid {
+		t := obsAt.Time.UTC()
+		e.ObservedAt = &t
+	}
+	if ackAt.Valid {
+		t := ackAt.Time.UTC()
+		e.AcknowledgedAt = &t
+	}
+	if ackBy.Valid {
+		e.AcknowledgedBy = &ackBy.String
+	}
+	copy(e.RawPayloadSHA256[:], rawHash)
+
+	return &e, nil
+}
+
+// ListNodeHealth queries all confirmed node health records.
+func (s *PostgresEventStorage) ListNodeHealth(ctx context.Context, gatewayID string, limit int) ([]*domain.NodeHealth, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	var query string
+	var args []any
+	if gatewayID != "" {
+		query = `
+			SELECT
+				gateway_id, node_id, session_sel, frame_counter, maint_seq, status_flags,
+				pending_event_count, health_status, last_seen_at, updated_at
+			FROM node_health
+			WHERE gateway_id = $1
+			ORDER BY node_id ASC
+			LIMIT $2;
+		`
+		args = []any{gatewayID, limit}
+	} else {
+		query = `
+			SELECT
+				gateway_id, node_id, session_sel, frame_counter, maint_seq, status_flags,
+				pending_event_count, health_status, last_seen_at, updated_at
+			FROM node_health
+			ORDER BY node_id ASC
+			LIMIT $1;
+		`
+		args = []any{limit}
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query node health list: %w", err)
+	}
+	defer rows.Close()
+
+	var list []*domain.NodeHealth
+	for rows.Next() {
+		var h domain.NodeHealth
+		var nID, sessionSel, flags, pending int
+		var frameCounter, maintSeq int64
+		var status string
+
+		if err := rows.Scan(
+			&h.GatewayID,
+			&nID,
+			&sessionSel,
+			&frameCounter,
+			&maintSeq,
+			&flags,
+			&pending,
+			&status,
+			&h.LastSeenAt,
+			&h.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan node health row: %w", err)
+		}
+
+		h.NodeID = uint8(nID)
+		h.SessionSel = uint8(sessionSel)
+		h.FrameCounter = uint32(frameCounter)
+		h.MaintSeq = uint32(maintSeq)
+		h.StatusFlags = uint8(flags)
+		h.PendingEventCount = uint8(pending)
+		h.HealthStatus = domain.HealthStatus(status)
+		list = append(list, &h)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error reading node health rows: %w", err)
+	}
+	return list, nil
 }

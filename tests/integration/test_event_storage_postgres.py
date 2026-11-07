@@ -116,12 +116,13 @@ class TestPostgresEventStorageIntegration(unittest.TestCase):
             INSERT INTO events (
                 event_id, gateway_id, gateway_epoch, event_seq, node_id, superframe_seq,
                 seq_num, schedule_version, severity, observed_at, observed_time_source,
-                radio_rx_monotonic_us, buffered, radio_ack_sent, slot_id, sensor_status_mask,
+                radio_rx_monotonic_us, buffered, radio_ack_sent, event_ref, event_code, event_value,
+                slot_id, sensor_status_mask,
                 ch1_raw, ch2_raw, ch3_raw, battery_mv, node_duty_permille,
                 raw_payload_sha256
             ) VALUES (
                 'gw01:550e8400-e29b-41d4-a716-446655440000:1', 'gw01', '550e8400-e29b-41d4-a716-446655440000',
-                1, 1, 100, 1, 1, 'P1_HIGH', NOW(), 'gateway_utc', 1234567, FALSE, TRUE, 1, 0,
+                1, 1, 100, 1, 1, 'P1_HIGH', NOW(), 'gateway_utc', 1234567, FALSE, TRUE, 1, 1, 1, 1, 0,
                 2500, 500, 100, 3300, 10, '{raw_hash}'
             ) RETURNING id;
         """
@@ -140,12 +141,13 @@ class TestPostgresEventStorageIntegration(unittest.TestCase):
             INSERT INTO events (
                 event_id, gateway_id, gateway_epoch, event_seq, node_id, superframe_seq,
                 seq_num, schedule_version, severity, observed_at, observed_time_source,
-                radio_rx_monotonic_us, buffered, radio_ack_sent, slot_id, sensor_status_mask,
+                radio_rx_monotonic_us, buffered, radio_ack_sent, event_ref, event_code, event_value,
+                slot_id, sensor_status_mask,
                 ch1_raw, ch2_raw, ch3_raw, battery_mv, node_duty_permille,
                 raw_payload_sha256
             ) VALUES (
                 'gw01:550e8400-e29b-41d4-a716-446655440000:1', 'gw01', '550e8400-e29b-41d4-a716-446655440000',
-                1, 1, 100, 1, 1, 'P1_HIGH', NOW(), 'gateway_utc', 1234567, TRUE, TRUE, 1, 0,
+                1, 1, 100, 1, 1, 'P1_HIGH', NOW(), 'gateway_utc', 1234567, TRUE, TRUE, 1, 1, 1, 1, 0,
                 2500, 500, 100, 3300, 10, '{raw_hash}'
             );
         """
@@ -184,12 +186,13 @@ class TestPostgresEventStorageIntegration(unittest.TestCase):
             INSERT INTO events (
                 event_id, gateway_id, gateway_epoch, event_seq, node_id, superframe_seq,
                 seq_num, schedule_version, severity, observed_at, observed_time_source,
-                radio_rx_monotonic_us, buffered, radio_ack_sent, slot_id, sensor_status_mask,
+                radio_rx_monotonic_us, buffered, radio_ack_sent, event_ref, event_code, event_value,
+                slot_id, sensor_status_mask,
                 ch1_raw, ch2_raw, ch3_raw, battery_mv, node_duty_permille,
                 raw_payload_sha256
             ) VALUES (
                 '{event_id}', 'gw01', '550e8400-e29b-41d4-a716-446655440000',
-                999, 2, 200, 1, 1, 'P2_MEDIUM', NOW(), 'gateway_utc', 999999, FALSE, TRUE, 2, 0,
+                999, 2, 200, 1, 1, 'P2_MEDIUM', NOW(), 'gateway_utc', 999999, FALSE, TRUE, 2, 1, 1, 2, 0,
                 1200, 300, 50, 3300, 5, '{raw_hash}'
             );
         """

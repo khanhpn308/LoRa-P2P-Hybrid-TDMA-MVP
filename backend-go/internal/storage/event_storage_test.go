@@ -191,3 +191,74 @@ func TestQuarantineEvent_Success(t *testing.T) {
 		t.Fatalf("expected successful quarantine, got: %v", err)
 	}
 }
+
+func TestListEvents_Success(t *testing.T) {
+	db := initMockDB("events_ok")
+	repo := storage.NewPostgresEventStorage(db)
+
+	events, nextCursor, err := repo.ListEvents(context.Background(), 0, 50)
+	if err != nil {
+		t.Fatalf("expected successful ListEvents, got: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+	if nextCursor != 0 {
+		t.Fatalf("expected nextCursor=0 when less than limit, got %d", nextCursor)
+	}
+	if events[0].ID != 102 || events[1].ID != 101 {
+		t.Fatalf("unexpected events returned: %+v", events)
+	}
+}
+
+func TestAcknowledgeEvent_Success(t *testing.T) {
+	db := initMockDB("ack_ok")
+	repo := storage.NewPostgresEventStorage(db)
+
+	evt, err := repo.AcknowledgeEvent(context.Background(), 101, "operator1")
+	if err != nil {
+		t.Fatalf("expected successful AcknowledgeEvent, got: %v", err)
+	}
+	if evt.AckStatus != domain.AckStatusAcknowledged {
+		t.Fatalf("expected AckStatus=ACKNOWLEDGED, got %s", evt.AckStatus)
+	}
+	if evt.AcknowledgedBy == nil || *evt.AcknowledgedBy != "operator1" {
+		t.Fatalf("expected AcknowledgedBy=operator1, got %v", evt.AcknowledgedBy)
+	}
+}
+
+func TestAcknowledgeEvent_AlreadyAcknowledged(t *testing.T) {
+	db := initMockDB("ack_already_acked")
+	repo := storage.NewPostgresEventStorage(db)
+
+	_, err := repo.AcknowledgeEvent(context.Background(), 101, "operator1")
+	if !errors.Is(err, storage.ErrAlreadyAcknowledged) {
+		t.Fatalf("expected ErrAlreadyAcknowledged, got: %v", err)
+	}
+}
+
+func TestAcknowledgeEvent_NotFound(t *testing.T) {
+	db := initMockDB("ack_not_found")
+	repo := storage.NewPostgresEventStorage(db)
+
+	_, err := repo.AcknowledgeEvent(context.Background(), 999, "operator1")
+	if !errors.Is(err, storage.ErrEventNotFound) {
+		t.Fatalf("expected ErrEventNotFound, got: %v", err)
+	}
+}
+
+func TestListNodeHealth_Success(t *testing.T) {
+	db := initMockDB("node_health_ok")
+	repo := storage.NewPostgresEventStorage(db)
+
+	nodes, err := repo.ListNodeHealth(context.Background(), "gw01", 50)
+	if err != nil {
+		t.Fatalf("expected successful ListNodeHealth, got: %v", err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("expected 2 nodes, got %d", len(nodes))
+	}
+	if nodes[0].NodeID != 1 || nodes[1].NodeID != 2 {
+		t.Fatalf("unexpected nodes returned: %+v", nodes)
+	}
+}

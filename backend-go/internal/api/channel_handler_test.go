@@ -11,6 +11,7 @@ import (
 
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/api"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/domain"
+	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/scheduler"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/storage"
 )
 
@@ -385,4 +386,45 @@ func TestReleaseChannelEndpoint(t *testing.T) {
 			t.Fatalf("expected 404 Not Found, got %d: %s", rec.Code, rec.Body.String())
 		}
 	})
+
+	t.Run("release blocked by active schedule", func(t *testing.T) {
+		guard := &mockScheduleGuard{blockedGateway: "gw02"}
+		hWithGuard := api.NewChannelHandler(repo, guard)
+		mWithGuard := http.NewServeMux()
+		hWithGuard.RegisterRoutes(mWithGuard)
+
+		// Allocate CH02 to gw02
+		_, err := repo.AllocateChannel(context.Background(), domain.AllocateRequest{
+			GatewayID:          "gw02",
+			ChannelID:          "CH02",
+			ChannelPlanVersion: domain.ChannelPlanVN920V1,
+			RequestID:          "req-alloc-2",
+			GrantedBy:          "test",
+		})
+		if err != nil {
+			t.Fatalf("setup allocation failed: %v", err)
+		}
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/gateways/gw02/channel", nil)
+		rec := httptest.NewRecorder()
+		mWithGuard.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("expected 409 Conflict, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "ERR_ACTIVE_SCHEDULE_ON_CHANNEL") {
+			t.Errorf("expected ERR_ACTIVE_SCHEDULE_ON_CHANNEL in body: %s", rec.Body.String())
+		}
+	})
+}
+
+type mockScheduleGuard struct {
+	blockedGateway string
+}
+
+func (m *mockScheduleGuard) CanChangeGatewayChannel(ctx context.Context, gatewayID string) error {
+	if m.blockedGateway != "" && gatewayID == m.blockedGateway {
+		return scheduler.ErrActiveScheduleOnChannel
+	}
+	return nil
 }
