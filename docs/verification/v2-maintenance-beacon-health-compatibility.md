@@ -21,7 +21,7 @@ In accordance with **Owner Decision #137 (2026-11-04)** and project [AGENTS.md](
 ### 1.2 Parallel Child Division of Labor (3 Agents)
 Under parent #127 and umbrella #125, three disjoint child work packages execute concurrently:
 - **Agent 1 (Issue #177):** V2 Event-only DATA slots, own-slot uplink retry, `DOWN_EVENT_ACK` (0x42) framing, persistent local `EVENT_REF` vs Gateway-origin `event_id`, and V1 periodic telemetry/ACK_BITMAP supersession.
-- **Agent 2 (This Dossier, Issue #178):** V2 Maintenance Superframe (SF) interpolation, `DOWN_SYNC_BEACON` (0x43) candidate, `UP_HEALTH_REPLY` (0x44) candidate, half-duplex mode scheduling, 300 s calendar cadence, clock drift holdover, 100%-READY affected-node fence, and 3→2→1 countdown synchronization.
+- **Agent 2 (This Dossier, Issue #178):** V2 Maintenance Superframe (SF) interpolation, `DOWN_SYNC_BEACON` (0x43) candidate, `UP_HEALTH_REPLY` (0x44) candidate, half-duplex mode scheduling, 300 s calendar cadence, clock drift holdover, 100%-READY affected-node fence, and schedule synchronization (with legacy 3→2→1 countdown superseded per Owner Decision #208 / PR #206).
 - **Agent 3 (Issue #182):** V2 Join cryptographic handshake (`0x45`..`0x48`), ephemeral X25519 ECDH key agreement, Backend `K_JOIN` verification, candidate `UP_JOIN_READY` (0x49), and Backend 64B Install vs V2 derivation reconciliation.
 
 ```
@@ -381,16 +381,15 @@ When RF interference, deep fading, or collision causes a Node to miss a `DOWN_SY
    - **Mandatory Fail-Closed Lockout:** The Node immediately enters `HOLDOVER_DESYNCHRONIZED` state. All DATA and HEALTH RF transmissions are strictly **locked**. Local event logging continues in durable NVS, but no RF packets are emitted.
 4. **Clock Recovery Procedure:** To recover, the Node opens an extended, continuous RX window during subsequent maintenance intervals until an authentic, validated `DOWN_SYNC_BEACON` is acquired. Upon validation, the local clock is hard-reset to `NETWORK_TIME_MS`, $N_{\text{MISSED}}$ is zeroed, and transmissions are unlocked.
 
-### 5.3 Schedule Epoch Versioning & 3→2→1 Announcement Countdown
-To reconfigure slot allocations without service interruption or slot collisions, the network utilizes the Backend-authorized $3 \to 2 \to 1$ schedule countdown:
+### 5.3 Schedule Migration Baseline (Supersedes 3→2→1 Countdown)
 
-1. **Staging & Transaction Reference:** The Backend issues a signed schedule update with version $V_{\text{NEXT}}$ and announcement window $H = 3$.
-2. **Gateway Countdown Broadcast:** The Gateway broadcasts three consecutive Maintenance Beacons with decrementing countdown flags:
-   - Beacon $K$: `SCHED_VER` = $V_{\text{CURR}}$, `FLAGS.COUNTDOWN` = 1, Countdown = `3`
-   - Beacon $K+1$: `SCHED_VER` = $V_{\text{CURR}}$, `FLAGS.COUNTDOWN` = 1, Countdown = `2`
-   - Beacon $K+2$: `SCHED_VER` = $V_{\text{CURR}}$, `FLAGS.COUNTDOWN` = 1, Countdown = `1`
-3. **Atomic Cutover at $K_{\text{TARGET}} = K+3$:** At superframe $K+3$, both Gateway and all Nodes atomically promote $V_{\text{NEXT}}$ from Shadow to Active.
-4. **Anti-Confusion Guarantee:** A Node that misses all three countdown beacons will detect `SCHED_VER` mismatch in Beacon $K+3$. The Node detects that its local schedule version $V_{\text{LOCAL}} \neq \text{Beacon.SCHED\_VER}$ and immediately locks its DATA slot, preventing stale transmissions.
+> [!IMPORTANT]
+> **SUPERSEDED BY OWNER DECISION #208 / PR #206:** The historical `3→2→1` Beacon announcement countdown in `FLAGS[7:6]` has been formally abolished and set to `RESERVED=0`. Schedule migration is an on-demand, single-maintenance transaction: Backend-signed `DOWN_SCHED_PREPARE` (80B) $\to$ per-Node `UP_SCHED_READY` (41B, 0x4C) with 100% verified affected nodes $\to$ Backend-signed `DOWN_SCHED_DECISION` (80B) committing at common $K_{\text{TARGET}}$. Nodes missing COMMIT remain silent (`DATA_TX_DISABLED`) from $K_{\text{TARGET}}$.
+
+1. **Staging & Transaction Reference:** The Backend issues a signed schedule update `DOWN_SCHED_PREPARE` (80B) with target activation superframe $K_{\text{TARGET}}$.
+2. **Per-Node Readiness:** Each affected Node responds with `UP_SCHED_READY` (0x4C, 41B) within its designated management slot.
+3. **Atomic Cutover at $K_{\text{TARGET}}$:** Upon receiving `DOWN_SCHED_DECISION` (80B) from Backend after 100% verification, Gateway and Nodes atomically commit the new schedule at $K_{\text{TARGET}}$. No 3-beacon countdown horizon is used.
+4. **Anti-Confusion Guarantee:** A Node that misses the decision or commits inconsistently locks its DATA slot immediately from $K_{\text{TARGET}}$, preventing stale transmissions.
 
 ### 5.4 100%-READY Affected Nodes Policy
 Before the Gateway initiates the $3 \to 2 \to 1$ countdown for a schedule modification affecting existing slots:
@@ -483,7 +482,7 @@ In accordance with parent #127 coordination requirements, the technical recommen
 | **DEC-MH-02** | Wire Codepoint | `UP_HEALTH_REPLY` (0x44, 21B) | Issue #127 (Sketch-01) | Active Node | Gateway / Backend | AES-128-CCM / Session Key | Adopt 21B AES-CCM health packet echoing `MAINT_SEQ`. | Approve 21B layout and `PENDING_COUNT` reporting. | `TM-MH-02`, `TM-MH-11`, `TM-MH-12` |
 | **DEC-MH-03** | MAC Architecture| Maintenance SF Interleaving | Issue #126 / PR #133 | Gateway Scheduler | Node TDMA Engine | Symbolic 300s Cadence | Interpolate 1 Maintenance SF every ~300s among static DATA SFs. | Approve maintenance cadence and slot isolation policy. | `TM-MH-03`, `TM-MH-04`, `TM-MH-19` |
 | **DEC-MH-04** | Security / Timing | Holdover Desync Lockout | Issue #178 Dossier | Node Clock Manager | Radio MAC Engine | Physical Drift Data (#169)| Lock DATA TX after $N \ge 3$ consecutive missed beacons. | Approve fail-closed 3-miss lockout threshold. | `TM-MH-16`, `TM-MH-17`, `TM-MH-18` |
-| **DEC-MH-05** | Schedule Sync | 3→2→1 Countdown via Beacon | PR #124 / Issue #127 | Backend / Gateway | Node TDMA Engine | 100%-READY Affected Nodes| Broadcast countdown in `FLAGS` across 3 consecutive Beacons before cutover. | Reaffirm 3-beacon countdown and 100%-READY fence. | `TM-MH-21`, `TM-MH-22`, `TM-MH-23` |
+| **DEC-MH-05** | Schedule Sync | Schedule Migration Baseline | Issue #208 / PR #206 | Backend / Gateway | Node TDMA Engine | 100%-READY Affected Nodes| Bãi bỏ countdown 3→2→1. Giao dịch PREPARE (80B) → 100% UP_SCHED_READY (41B, 0x4C) → DECISION (80B) COMMIT tại K_TARGET. | SUPERSEDED: Bãi bỏ 3→2→1 countdown; phê duyệt giao dịch 100% READY tại #208. | `TM-MH-21`, `TM-MH-22`, `TM-MH-23` |
 | **DEC-MH-06** | Hardware / Timing | SX1276 Half-Duplex Guard | Issue #178 Dossier | Gateway / Node Radio | SX1276 SPI Driver | Physical Turnaround (#169)| Enforce explicit RX/TX turnaround guards; no GW RX during Beacon TX. | Formalize half-duplex slot scheduling constraints. | `TM-MH-19`, `TM-MH-20` |
 
 ### 7.2 Explicit Proposed Changes to Normative Parent Contracts
