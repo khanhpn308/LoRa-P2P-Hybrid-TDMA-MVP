@@ -1,0 +1,51 @@
+menu "Sensor Node Button Wakeup and Power Configuration"
+
+    config NODE_BUTTON_GPIO
+        int "Wakeup Button GPIO Pin"
+        default 4
+        range 0 39
+        help
+            Select the GPIO pin connected to your external push button.
+            To wake up the ESP32 from Deep-Sleep via EXT0, the selected pin MUST be an RTC GPIO:
+            - Safe general RTC pins: GPIO 4, 13, 14, 15, 25, 32, 33.
+            - Input-only RTC pins (require external pull resistor): GPIO 34, 35, 36, 39.
+            - On-board BOOT button: GPIO 0.
+            CAUTION: Do NOT select pins reserved by SX1276 HW-001:
+            - SCK = GPIO 5
+            - MISO = GPIO 19
+            - MOSI = GPIO 27
+            - CS = GPIO 18
+            - RST = GPIO 23
+            - DIO0 = GPIO 26
+            or UART console pins (TX=1, RX=3).
+
+    config NODE_BUTTON_ACTIVE_LEVEL
+        int "Button Active Trigger Level (0=Active Low / Pull-Up, 1=Active High / Pull-Down)"
+        default 0
+        range 0 1
+        help
+            0: Active Low (button connects to GND when pressed, ESP32 enables internal pull-up if supported).
+            1: Active High (button connects to 3.3V when pressed, ESP32 enables internal pull-down if supported).
+
+    config NODE_BUTTON_DEBOUNCE_MS
+        int "Software Debounce Duration (ms)"
+        default 50
+        range 5 500
+        help
+            Stable level duration required to qualify a valid button press and filter switch bouncing noise.
+
+    config NODE_BUTTON_HOLD_TIME_MS
+        int "Minimum Press Hold Time (ms)"
+        default 20
+        range 5 200
+        help
+            Minimum duration the button must remain pressed to generate an event.
+
+    config NODE_DEEP_SLEEP_TIMEOUT_SEC
+        int "Periodic Deep-Sleep Fallback Wakeup Timer in seconds (0 = disabled)"
+        default 0
+        range 0 86400
+        help
+            If greater than 0, sets an RTC timer wakeup fallback in addition to the button EXT0 wakeup.
+
+endmenu
