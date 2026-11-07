@@ -16,7 +16,7 @@ Các tệp trong thư mục này định nghĩa giao diện để Firmware Node,
 
 1. **Thẩm quyền hợp đồng:** Hợp đồng chỉ có hiệu lực khi chủ sở hữu phía gửi **và** phía nhận duyệt qua PR/ADR. Không suy diễn việc xuất hiện trong Git là đã được phê duyệt, đạt an toàn RF hay hoàn thành HIL (#169).
 2. **Event-Only Architecture & Zero Periodic Telemetry:** Bãi bỏ hoàn toàn chế độ truyền định kỳ DATA_TELEMETRY (0x03/0x23) và topic uplink/telemetry theo Quyết định Owner #125 / PR #133. Chuyển dịch sang mô hình:
-   - **Local Alarm Autonomy:** Cảm biến Node tự kích hoạt chuông/đèn/relay phần cứng tại chỗ ngay khi vượt ngưỡng, không phụ thuộc sóng RF hay ranh giới TDMA.
+   - **Physical Button Trigger & Event-Only (Refs #230):** Bãi bỏ cơ cấu cảnh báo tại chỗ (còi buzzer, đèn LED báo động, relay) và cảm biến phức tạp theo Quyết định Owner #230; Node dùng nút nhấn vật lý (button press qua GPIO/EXT0) làm nguồn sinh sự kiện duy nhất cho MVP.
    - **Event-Only Remote Logging:** Node chỉ truyền UP_EVENT (0x41, 26B) trong khe tĩnh (Static DATA Slot) độc quyền của mình.
    - **Same-Slot ACK:** Gateway ghi bền vững (WAL/SQLite) trước khi phát DOWN_EVENT_ACK (0x42, 19B) ngay trong cùng khe DATA của Node.
 3. **Phân định 4 tầng xác nhận độc lập:**
