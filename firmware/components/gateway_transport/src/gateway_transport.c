@@ -109,16 +109,29 @@ static void transport_task(void *pvParameters)
 }
 #endif /* ESP_PLATFORM */
 
+static inline void set_status(gateway_transport_status_t new_status)
+{
+#ifdef ESP_PLATFORM
+    if (s_state_mutex) {
+        xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+        s_status = new_status;
+        xSemaphoreGive(s_state_mutex);
+        return;
+    }
+#endif
+    s_status = new_status;
+}
+
 static void on_wifi_event(bool connected, bool got_ip)
 {
     ESP_LOGI(TAG, "WiFi event notification: connected=%d, got_ip=%d", connected, got_ip);
     if (connected && got_ip) {
-        s_status = GATEWAY_TRANSPORT_STATUS_WIFI_CONNECTED;
+        set_status(GATEWAY_TRANSPORT_STATUS_WIFI_CONNECTED);
         ESP_LOGI(TAG, "WiFi ready, starting MQTT client...");
-        s_status = GATEWAY_TRANSPORT_STATUS_MQTT_CONNECTING;
+        set_status(GATEWAY_TRANSPORT_STATUS_MQTT_CONNECTING);
         gateway_mqtt_start();
     } else {
-        s_status = GATEWAY_TRANSPORT_STATUS_WIFI_CONNECTING;
+        set_status(GATEWAY_TRANSPORT_STATUS_WIFI_CONNECTING);
         gateway_mqtt_stop();
     }
 }
@@ -127,12 +140,12 @@ static void on_mqtt_status(bool connected)
 {
     ESP_LOGI(TAG, "MQTT status notification: connected=%d", connected);
     if (connected) {
-        s_status = GATEWAY_TRANSPORT_STATUS_MQTT_CONNECTED;
+        set_status(GATEWAY_TRANSPORT_STATUS_MQTT_CONNECTED);
     } else {
         if (gateway_wifi_is_connected()) {
-            s_status = GATEWAY_TRANSPORT_STATUS_WIFI_CONNECTED;
+            set_status(GATEWAY_TRANSPORT_STATUS_WIFI_CONNECTED);
         } else {
-            s_status = GATEWAY_TRANSPORT_STATUS_WIFI_CONNECTING;
+            set_status(GATEWAY_TRANSPORT_STATUS_WIFI_CONNECTING);
         }
     }
 }
@@ -301,12 +314,26 @@ esp_err_t gateway_transport_init(const gateway_transport_config_t *cfg)
 
 esp_err_t gateway_transport_register_session_key_callback(gateway_downlink_session_key_cb_t cb)
 {
+#ifdef ESP_PLATFORM
+    if (s_state_mutex && xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        s_session_key_cb = cb;
+        xSemaphoreGive(s_state_mutex);
+        return ESP_OK;
+    }
+#endif
     s_session_key_cb = cb;
     return ESP_OK;
 }
 
 esp_err_t gateway_transport_register_schedule_callback(gateway_downlink_schedule_cb_t cb)
 {
+#ifdef ESP_PLATFORM
+    if (s_state_mutex && xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        s_schedule_cb = cb;
+        xSemaphoreGive(s_state_mutex);
+        return ESP_OK;
+    }
+#endif
     s_schedule_cb = cb;
     return ESP_OK;
 }
@@ -338,6 +365,13 @@ esp_err_t gateway_transport_publish_schedule_ack(const uint8_t *payload, size_t 
 
 gateway_transport_status_t gateway_transport_get_status(void)
 {
+#ifdef ESP_PLATFORM
+    if (s_state_mutex && xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        gateway_transport_status_t st = s_status;
+        xSemaphoreGive(s_state_mutex);
+        return st;
+    }
+#endif
     return s_status;
 }
 

@@ -1,9 +1,9 @@
 # Verification Dossier: Issue #244 — Gateway WiFi Station & MQTT 5.0 mTLS Transport Client
 
-**Status:** `VERIFIED_LOCAL`  
-**Issue:** #244  
-**Component:** `firmware/components/gateway_transport/`, `firmware/gateway_master/`  
-**Target Platform:** ESP32-WROOM-32E, ESP-IDF v6.1 (`espressif/idf:v6.1`)  
+**Status:** `VERIFIED_LOCAL`<br>
+**Issue:** #244<br>
+**Component:** `firmware/components/gateway_transport/`, `firmware/gateway_master/`<br>
+**Target Platform:** ESP32-WROOM-32E, ESP-IDF v6.1 (`espressif/idf:v6.1`)<br>
 **Authority:** ADR-0002, ADR-0003, `contracts/mqtt/topics.md`, `contracts/mqtt/semantic-rules.md`, C Coding Standard v2  
 
 ---
