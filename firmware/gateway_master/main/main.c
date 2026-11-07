@@ -1,8 +1,20 @@
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "session_key_store.h"
+#include "gateway_transport.h"
+#include "sdkconfig.h"
 
 static const char *TAG = "gateway_master";
+
+static void on_downlink_session_key(const uint8_t *data, size_t len)
+{
+    ESP_LOGI(TAG, "Downlink session-key-install received (%zu bytes)", len);
+}
+
+static void on_downlink_schedule(const uint8_t *data, size_t len)
+{
+    ESP_LOGI(TAG, "Downlink schedule received (%zu bytes)", len);
+}
 
 void app_main(void)
 {
@@ -24,5 +36,44 @@ void app_main(void)
         ESP_LOGI(TAG, "Session key store initialized successfully");
     }
 
-    ESP_LOGI(TAG, "Gateway Master active with session key store initialized");
+    // Initialize Gateway Transport (WiFi Station & MQTT 5.0 mTLS)
+    gateway_transport_config_t transport_cfg = {
+#ifdef CONFIG_GATEWAY_ID
+        .gateway_id = CONFIG_GATEWAY_ID,
+#else
+        .gateway_id = "gw-a",
+#endif
+#ifdef CONFIG_GATEWAY_WIFI_SSID
+        .wifi_ssid = CONFIG_GATEWAY_WIFI_SSID,
+#else
+        .wifi_ssid = "myssid",
+#endif
+#ifdef CONFIG_GATEWAY_WIFI_PASSWORD
+        .wifi_password = CONFIG_GATEWAY_WIFI_PASSWORD,
+#else
+        .wifi_password = "mypassword",
+#endif
+#ifdef CONFIG_GATEWAY_WIFI_MAX_RETRY
+        .wifi_max_retry = CONFIG_GATEWAY_WIFI_MAX_RETRY,
+#else
+        .wifi_max_retry = 5,
+#endif
+#ifdef CONFIG_GATEWAY_BROKER_URI
+        .broker_uri = CONFIG_GATEWAY_BROKER_URI,
+#else
+        .broker_uri = "",
+#endif
+        .disable_auto_connect = false,
+    };
+
+    ret = gateway_transport_init(&transport_cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize gateway transport: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "Gateway transport initialized successfully");
+        gateway_transport_register_session_key_callback(&on_downlink_session_key);
+        gateway_transport_register_schedule_callback(&on_downlink_schedule);
+    }
+
+    ESP_LOGI(TAG, "Gateway Master active with session key store and transport initialized");
 }

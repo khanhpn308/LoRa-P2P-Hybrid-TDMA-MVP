@@ -1,0 +1,18 @@
+idf_component_register(
+    SRCS
+        "src/gateway_transport.c"
+        "src/gateway_wifi.c"
+        "src/gateway_mqtt.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        esp_wifi
+        esp_event
+        esp_netif
+        nvs_flash
+        freertos
+        log
+        esp_timer
+        mbedtls
+        espressif__mqtt
+)

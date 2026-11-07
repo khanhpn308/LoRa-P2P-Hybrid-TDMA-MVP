@@ -1,0 +1,59 @@
+menu "Gateway Transport Configuration"
+
+    config GATEWAY_ID
+        string "Gateway Identity"
+        default "gw-a"
+        help
+            Canonical gateway identifier (e.g., gw-a, gw-b).
+            Used for MQTT topics and client identity.
+
+    config GATEWAY_WIFI_SSID
+        string "WiFi SSID"
+        default "myssid"
+        help
+            SSID of the WiFi network for Gateway station connection.
+
+    config GATEWAY_WIFI_PASSWORD
+        string "WiFi Password"
+        default "mypassword"
+        help
+            Password for the WiFi station connection.
+
+    config GATEWAY_WIFI_MAX_RETRY
+        int "WiFi Maximum Fast Retries"
+        default 5
+        help
+            Number of immediate connection retries before falling back to exponential backoff.
+
+    config GATEWAY_BROKER_HOST
+        string "MQTT Broker Host"
+        default "192.168.1.10"
+        help
+            Hostname or IP of the Mosquitto MQTT broker.
+
+    config GATEWAY_BROKER_PORT
+        int "MQTT Broker Port"
+        default 8883
+        help
+            Port of the Mosquitto MQTT broker (8883 for TLS).
+
+    config GATEWAY_BROKER_URI
+        string "MQTT Broker URI (mqtts://...)"
+        default ""
+        help
+            Optional full URI override (e.g. mqtts://192.168.1.10:8883).
+            If empty, constructed from host and port.
+
+    config GATEWAY_TRANSPORT_QUEUE_SIZE
+        int "Outbound Queue Capacity"
+        default 16
+        help
+            Bounded FreeRTOS queue depth for decoupling TDMA radio loop from network.
+
+    config GATEWAY_TRANSPORT_TASK_STACK_SIZE
+        int "Transport Task Stack Size"
+        default 8192
+        help
+            Stack size in bytes for the dedicated gateway transport task.
+
+endmenu
