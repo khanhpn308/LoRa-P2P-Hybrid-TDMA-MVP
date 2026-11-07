@@ -1,10 +1,12 @@
 "use client";
 
-import React, { useState, useMemo, Suspense } from "react";
+import React, { useState, useMemo, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { NavItemKey } from "@/components/layout/Sidebar";
-import { GatewayMode } from "@/types/api";
+import { GatewayMode, GatewayStatusChangedPayload } from "@/types/api";
+import { getGateways } from "@/lib/api/gateways";
+import { useRealtime } from "@/lib/realtime/RealtimeContext";
 import {
   Search,
   Plus,
@@ -190,6 +192,7 @@ const INITIAL_GATEWAYS: GatewayItem[] = [
 function GatewaysContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { subscribe } = useRealtime();
 
   // URL query params initialization (e.g. from Overview Gateway card click)
   const initialConn = searchParams.get("conn") || "all";
@@ -197,6 +200,7 @@ function GatewaysContent() {
   const initialQuery = searchParams.get("q") || "";
 
   const [activeRoute, setActiveRoute] = useState<NavItemKey>("gateways");
+  const [gateways, setGateways] = useState<GatewayItem[]>(INITIAL_GATEWAYS);
   const [searchQuery, setSearchQuery] = useState<string>(initialQuery);
   const [connFilter, setConnFilter] = useState<string>(initialConn);
   const [opsFilter, setOpsFilter] = useState<string>(initialOps);
@@ -204,6 +208,61 @@ function GatewaysContent() {
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [showAddGatewayModal, setShowAddGatewayModal] = useState<boolean>(false);
+
+  const loadGateways = useCallback(async () => {
+    try {
+      const realGws = await getGateways();
+      if (realGws && realGws.length > 0) {
+        setGateways((prev) =>
+          prev.map((gw) => {
+            const found = realGws.find((rg) => rg.gateway_id === gw.id);
+            if (!found) return gw;
+            return {
+              ...gw,
+              connected: found.mode !== "OFFLINE",
+              operating: found.mode === "ACTIVE" || found.mode === "AUTONOMOUS",
+              mode: found.mode,
+              activeScheduleVersion: found.active_schedule_version,
+              lastSeenAt: found.last_seen_at,
+              rfDutyPermille: found.rf_duty_permille,
+              nodeCount: found.node_count,
+            };
+          })
+        );
+      }
+    } catch {
+      // Keep baseline on connection failure
+    }
+  }, []);
+
+  useEffect(() => {
+    loadGateways();
+
+    const unsubscribe = subscribe((envelope) => {
+      if (envelope.type === "GATEWAY_STATUS_CHANGED") {
+        const payload = envelope.payload as GatewayStatusChangedPayload;
+        setGateways((prev) =>
+          prev.map((gw) =>
+            gw.id === payload.gateway_id
+              ? {
+                  ...gw,
+                  mode: payload.mode,
+                  connected: payload.mode !== "OFFLINE",
+                  operating: payload.mode === "ACTIVE" || payload.mode === "AUTONOMOUS",
+                  lastSeenAt: payload.last_seen_at,
+                }
+              : gw
+          )
+        );
+        setToastMessage(`[Realtime] Gateway ${payload.gateway_id} chuyển sang: ${payload.mode}`);
+        setTimeout(() => setToastMessage(null), 3500);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [loadGateways, subscribe]);
 
   const handleRouteChange = (route: NavItemKey) => {
     setActiveRoute(route);
@@ -216,7 +275,7 @@ function GatewaysContent() {
 
   // Filtered gateways based on the 3 independent controls
   const filteredGateways = useMemo(() => {
-    return INITIAL_GATEWAYS.filter((gw) => {
+    return gateways.filter((gw) => {
       // 1. Search Query filter (matches ID or Name)
       if (searchQuery.trim() !== "") {
         const q = searchQuery.toLowerCase().trim();
@@ -235,7 +294,7 @@ function GatewaysContent() {
 
       return true;
     });
-  }, [searchQuery, connFilter, opsFilter]);
+  }, [gateways, searchQuery, connFilter, opsFilter]);
 
   // Pagination calculation
   const totalCount = filteredGateways.length;

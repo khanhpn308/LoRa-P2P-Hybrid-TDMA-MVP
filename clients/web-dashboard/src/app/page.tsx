@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { NavItemKey } from "@/components/layout/Sidebar";
@@ -9,15 +9,15 @@ import {
   Cpu,
   AlertTriangle,
   ChevronRight,
-  Thermometer,
-  Gauge,
   CheckCircle2,
+  RefreshCw,
 } from "lucide-react";
+import { getNodes } from "@/lib/api/nodes";
+import { getAlerts } from "@/lib/api/alerts";
+import { getGateways } from "@/lib/api/gateways";
+import { useRealtime } from "@/lib/realtime/RealtimeContext";
+import { AlertTriggeredPayload } from "@/types/api";
 
-// Area datasets conforming strictly to DESIGN.md §7:
-// "Minimal status summary only, without graphs: Gateway (connected and operating counts separately),
-// Node (connected and operating counts separately), and recorded fault-event counts by type.
-// Use 'Sự kiện lỗi', not 'Lỗi đang mở'."
 interface MetricSnapshot {
   gateway: { connected: number; total: number; operating: number };
   node: { connected: number; total: number; operating: number };
@@ -69,21 +69,135 @@ const AREA_METRICS: Record<string, { name: string; data: MetricSnapshot }> = {
 
 export default function OverviewPage() {
   const router = useRouter();
+  const { subscribe } = useRealtime();
+
   const [activeRoute, setActiveRoute] = useState<NavItemKey>("overview");
   const [selectedArea, setSelectedArea] = useState<string>("all");
-  const [lastUpdated, setLastUpdated] = useState<string>("14:32:05");
+  const [lastUpdated, setLastUpdated] = useState<string>("--:--:--");
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [liveMetrics, setLiveMetrics] = useState<MetricSnapshot | null>(null);
 
-  useEffect(() => {
-    // Generate initial live time format hh:mm:ss
-    const now = new Date();
-    setLastUpdated(
-      now.toTimeString().split(" ")[0] || "14:32:05"
-    );
+  const fetchLiveMetrics = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const [nodesResp, alertsResp, gatewaysList] = await Promise.allSettled([
+        getNodes({ limit: 100 }),
+        getAlerts({ limit: 100 }),
+        getGateways(),
+      ]);
+
+      const now = new Date();
+      setLastUpdated(now.toTimeString().split(" ")[0] || "--:--:--");
+
+      let nodeConnected = 0;
+      let nodeOperating = 0;
+      let nodeTotal = 0;
+      if (nodesResp.status === "fulfilled") {
+        const items = nodesResp.value.items || [];
+        nodeTotal = items.length;
+        items.forEach((n) => {
+          if (n.status === "ONLINE") {
+            nodeConnected += 1;
+            if (n.assigned_slot_id !== null) {
+              nodeOperating += 1;
+            }
+          }
+        });
+      }
+
+      let gwConnected = 0;
+      let gwOperating = 0;
+      let gwTotal = 0;
+      if (gatewaysList.status === "fulfilled") {
+        const gws = gatewaysList.value || [];
+        gwTotal = gws.length;
+        gws.forEach((g) => {
+          if (g.online) gwConnected += 1;
+          if (g.operating) gwOperating += 1;
+        });
+      }
+
+      let faultTotal = 0;
+      let faultTemp = 0;
+      let faultSpeed = 0;
+      if (alertsResp.status === "fulfilled") {
+        const alerts = alertsResp.value.items || [];
+        faultTotal = alerts.length;
+        alerts.forEach((a) => {
+          if (a.event_code === 1 || (a.trigger && a.trigger.channel === 1)) {
+            faultTemp += 1;
+          } else {
+            faultSpeed += 1;
+          }
+        });
+      }
+
+      // If backend has real records, prioritize them; otherwise preserve baseline
+      if (nodeTotal > 0 || gwTotal > 0 || faultTotal > 0) {
+        setLiveMetrics({
+          gateway: {
+            connected: gwConnected,
+            total: Math.max(gwTotal, 1),
+            operating: gwOperating,
+          },
+          node: {
+            connected: nodeConnected,
+            total: Math.max(nodeTotal, 1),
+            operating: nodeOperating,
+          },
+          faults: {
+            total: faultTotal,
+            temp: faultTemp,
+            speed: faultSpeed,
+          },
+        });
+      }
+    } catch {
+      // Fallback to baseline metrics
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
-  const currentMetrics = AREA_METRICS[selectedArea]?.data ?? AREA_METRICS.all.data;
+  useEffect(() => {
+    fetchLiveMetrics();
+
+    // Listen to Realtime WebSocket Events
+    const unsubscribe = subscribe((envelope) => {
+      const now = new Date();
+      setLastUpdated(now.toTimeString().split(" ")[0] || "--:--:--");
+
+      if (envelope.type === "ALERT_TRIGGERED") {
+        const payload = envelope.payload as AlertTriggeredPayload;
+        setToastMessage(
+          `[Realtime] Cảnh báo mới từ Node #${payload.node_id} (Mức: ${payload.severity})`
+        );
+        setTimeout(() => setToastMessage(null), 4000);
+
+        setLiveMetrics((prev) => {
+          const current = prev || AREA_METRICS.all.data;
+          const isTemp = payload.event_code === 1;
+          return {
+            ...current,
+            faults: {
+              total: current.faults.total + 1,
+              temp: current.faults.temp + (isTemp ? 1 : 0),
+              speed: current.faults.speed + (isTemp ? 0 : 1),
+            },
+          };
+        });
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [fetchLiveMetrics, subscribe]);
+
   const currentAreaName = AREA_METRICS[selectedArea]?.name ?? "Tất cả khu vực";
+  const baselineMetrics = AREA_METRICS[selectedArea]?.data ?? AREA_METRICS.all.data;
+  const currentMetrics = (selectedArea === "all" && liveMetrics) ? liveMetrics : baselineMetrics;
 
   const showNavigationFeedback = (destination: string, filterStatus: string) => {
     setToastMessage(
@@ -133,9 +247,14 @@ export default function OverviewPage() {
           aria-label="Tiêu đề trang"
           className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 min-h-[40px]"
         >
-          <h1 className="text-2xl font-semibold text-text-primary tracking-[-0.015em]">
-            Tổng quan
-          </h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-semibold text-text-primary tracking-[-0.015em]">
+              Tổng quan
+            </h1>
+            {isLoading && (
+              <RefreshCw className="w-4 h-4 text-interactive animate-spin" />
+            )}
+          </div>
 
           <div className="flex flex-wrap items-center gap-4">
             {/* Area Filter Select */}
@@ -147,7 +266,7 @@ export default function OverviewPage() {
                 onChange={(e) => {
                   setSelectedArea(e.target.value);
                   const now = new Date();
-                  setLastUpdated(now.toTimeString().split(" ")[0] || "14:32:05");
+                  setLastUpdated(now.toTimeString().split(" ")[0] || "--:--:--");
                 }}
                 className="h-10 pl-3.5 pr-9 rounded-lg border border-border bg-surface text-text-primary text-sm font-medium focus:outline-none focus:border-interactive focus:ring-1 focus:ring-interactive appearance-none cursor-pointer shadow-none"
               >
@@ -157,14 +276,14 @@ export default function OverviewPage() {
                   </option>
                 ))}
               </select>
-              <div className="absolute right-3 pointer-events-none text-text-secondary">
-                <ChevronRight className="w-4 h-4 rotate-90" />
-              </div>
             </div>
 
-            {/* Timestamp text */}
-            <div className="text-xs text-text-secondary tabular-nums whitespace-nowrap">
-              Cập nhật lần cuối: {lastUpdated} (Vừa xong)
+            {/* Timestamp Badge */}
+            <div
+              className="text-xs text-text-secondary font-medium tracking-tight bg-surface px-3 py-2 rounded-lg border border-border"
+              title="Thời điểm làm mới dữ liệu"
+            >
+              Cập nhật: <span className="tabular-nums font-semibold text-text-primary">{lastUpdated}</span>
             </div>
           </div>
         </section>
@@ -391,7 +510,7 @@ export default function OverviewPage() {
                   className="group/field flex flex-col gap-1.5 p-2.5 -m-2.5 md:pl-4 md:border-l md:border-border/70 rounded-lg text-left hover:bg-canvas transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive"
                 >
                   <div className="flex items-center gap-2">
-                    <Thermometer className="w-4 h-4 text-text-secondary shrink-0" />
+                    <span className="w-2 h-2 rounded-full bg-state-critical shrink-0" />
                     <span className="text-[13px] font-medium text-text-secondary">
                       Nhiệt độ
                     </span>
@@ -415,7 +534,7 @@ export default function OverviewPage() {
                   className="group/field flex flex-col gap-1.5 p-2.5 -m-2.5 md:pl-4 md:border-l md:border-border/70 rounded-lg text-left hover:bg-canvas transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive"
                 >
                   <div className="flex items-center gap-2">
-                    <Gauge className="w-4 h-4 text-text-secondary shrink-0" />
+                    <span className="w-2 h-2 rounded-full bg-state-warning shrink-0" />
                     <span className="text-[13px] font-medium text-text-secondary">
                       Tốc độ
                     </span>

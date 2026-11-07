@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState, use, Suspense } from "react";
+import React, { useState, useEffect, use, Suspense } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
+import { getGatewayStatus } from "@/lib/api/gateways";
 import {
   ArrowLeft,
   ChevronRight,
@@ -141,7 +142,7 @@ function GatewayDetailContent({ params }: { params: Promise<{ id: string }> }) {
 
   const [timeRange, setTimeRange] = useState<"24h" | "7d" | "30d">("24h");
 
-  const gw: GatewayInfo = GATEWAY_DATA[rawId] || {
+  const initialGw: GatewayInfo = GATEWAY_DATA[rawId] || {
     id: rawId,
     name: `Trạm điều hành ${rawId}`,
     connected: true,
@@ -162,6 +163,31 @@ function GatewayDetailContent({ params }: { params: Promise<{ id: string }> }) {
     macAddress: "B8:D6:1A:4C:82:99",
     firmwareVersion: "ESP-IDF v6.1 · Hybrid-TDMA v2.4",
   };
+
+  const [gw, setGw] = useState<GatewayInfo>(initialGw);
+
+  useEffect(() => {
+    async function loadRealGateway() {
+      try {
+        const realStatus = await getGatewayStatus(rawId);
+        if (realStatus) {
+          setGw((prev) => ({
+            ...prev,
+            mode: realStatus.mode,
+            activeScheduleVersion: realStatus.active_schedule_version,
+            lastSeenAt: realStatus.last_seen_at,
+            rfDutyPermille: realStatus.rf_duty_permille,
+            nodeCount: realStatus.node_count,
+            connected: realStatus.mode !== "OFFLINE",
+            operating: realStatus.mode === "ACTIVE" || realStatus.mode === "AUTONOMOUS",
+          }));
+        }
+      } catch {
+        // preserve baseline
+      }
+    }
+    loadRealGateway();
+  }, [rawId]);
 
   // Backend-provided covered areas with fault-event count (DESIGN.md §7)
   const coveredAreas: CoveredAreaItem[] = [

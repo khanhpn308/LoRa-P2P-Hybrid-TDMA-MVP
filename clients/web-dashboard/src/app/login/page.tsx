@@ -2,7 +2,9 @@
 
 import React, { useState, useEffect, Suspense } from "react";
 import { useRouter } from "next/navigation";
-import { LoginRequest, TokenResponse } from "@/types/api";
+import { LoginRequest } from "@/types/api";
+import { useAuth } from "@/lib/auth/AuthContext";
+import { ApiClientError } from "@/lib/api/client";
 import {
   Radio,
   User,
@@ -17,6 +19,7 @@ import {
 
 function LoginContent() {
   const router = useRouter();
+  const { login } = useAuth();
 
   const [username, setUsername] = useState("admin01");
   const [password, setPassword] = useState("password123");
@@ -56,7 +59,7 @@ function LoginContent() {
     localStorage.setItem("lang", selectedLang);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
 
@@ -72,19 +75,30 @@ function LoginContent() {
       password: password.trim(),
     };
 
-    // Simulate authentication delay and process TokenResponse (ADR-0005)
-    setTimeout(() => {
-      setIsLoading(false);
-      const simulatedToken: TokenResponse = {
-        access_token: `mock-jwt-${loginPayload.username}-session`,
-        token_type: "Bearer",
-        expires_in: 3600,
-        role: "ADMIN",
-      };
-      localStorage.setItem("access_token", simulatedToken.access_token);
-      localStorage.setItem("user_role", simulatedToken.role);
+    try {
+      await login(loginPayload);
       router.push("/");
-    }, 600);
+    } catch (err) {
+      if (err instanceof ApiClientError) {
+        if (err.status === 401) {
+          setErrorMsg(
+            lang === "vi"
+              ? "Tài khoản hoặc mật khẩu không chính xác. Vui lòng thử lại."
+              : "Invalid username or password. Please try again."
+          );
+        } else {
+          setErrorMsg(err.message);
+        }
+      } else {
+        setErrorMsg(
+          lang === "vi"
+            ? "Không thể kết nối đến máy chủ Backend. Vui lòng thử lại sau."
+            : "Cannot connect to Backend server. Please try again later."
+        );
+      }
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (

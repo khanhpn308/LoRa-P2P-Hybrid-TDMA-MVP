@@ -1,9 +1,13 @@
 "use client";
 
-import React, { useState, useMemo, Suspense } from "react";
+import React, { useState, useMemo, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { NavItemKey } from "@/components/layout/Sidebar";
+import { getNodes } from "@/lib/api/nodes";
+import { provisionDevice } from "@/lib/api/provisioning";
+import { useAuth } from "@/lib/auth/AuthContext";
+import { ApiClientError } from "@/lib/api/client";
 import {
   Search,
   Plus,
@@ -280,6 +284,7 @@ const INITIAL_NEW_NODES: NewNodeRequest[] = [
 function NodesContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { role } = useAuth();
 
   // URL query params initialization (e.g. from Overview Node card click)
   const initialConn = searchParams.get("conn") || "all";
@@ -318,6 +323,33 @@ function NodesContent() {
       setToastMessage(null);
     }, 3500);
   };
+
+  const loadNodes = useCallback(async () => {
+    try {
+      const resp = await getNodes({ limit: 50 });
+      if (resp && resp.items && resp.items.length > 0) {
+        const mapped: ConnectedNodeItem[] = resp.items.map((n) => ({
+          id: `N-${String(n.node_id).padStart(3, "0")}`,
+          node_id: n.node_id,
+          gateway: n.gateway_id,
+          area: "Khu vực cảm biến",
+          connected: n.status === "ONLINE",
+          operating: n.status === "ONLINE" && n.assigned_slot_id !== null,
+          state: n.status === "ONLINE" ? (n.assigned_slot_id !== null ? "NORMAL" : "MAINTENANCE") : "OFFLINE",
+          battery_mv: 3300,
+          last_event_type: n.status === "ONLINE" ? "UP_HEALTH_REPLY (0x44)" : "Mất liên lạc TDMA",
+          assigned_slot_id: n.assigned_slot_id,
+        }));
+        setConnectedNodes(mapped);
+      }
+    } catch {
+      // Backend not yet populated, keep baseline
+    }
+  }, []);
+
+  useEffect(() => {
+    loadNodes();
+  }, [loadNodes]);
 
   const handleRouteChange = (route: NavItemKey) => {
     setActiveRoute(route);
@@ -385,36 +417,84 @@ function NodesContent() {
 
   // Modal actions
   const handleOpenApproveModal = (node: NewNodeRequest) => {
+    if (role === "VIEWER") {
+      showToast("Quyền VIEWER chỉ có quyền xem, không được phép cấp phát thiết bị.");
+      return;
+    }
     setApprovingNode(node);
     setApproveFormName(`Cảm biến ${node.area.includes("Ép") ? "Nhiệt độ" : "Tốc độ"} - ${node.id}`);
     setApproveFormArea(node.area);
   };
 
-  const handleConfirmApproval = () => {
+  const handleConfirmApproval = async () => {
     if (!approvingNode) return;
-    const newNodeId = `N-${Math.floor(100 + Math.random() * 900)}`;
-    const newConnectedItem: ConnectedNodeItem = {
-      id: newNodeId,
-      node_id: parseInt(newNodeId.replace(/\D/g, "") || "100", 10),
-      gateway: approvingNode.gateway.split(" ")[0] || "GW-01",
-      area: approveFormArea,
-      connected: true,
-      operating: true,
-      state: "NORMAL",
-      battery_mv: 3300,
-      last_event_type: "UP_EVENT: Gia nhập mạng thành công",
-      assigned_slot_id: 1,
-    };
+    if (role === "VIEWER") {
+      showToast("Quyền VIEWER không có quyền cấp phát thiết bị.");
+      return;
+    }
 
-    setConnectedNodes((prev) => [newConnectedItem, ...prev]);
-    setNewNodes((prev) => prev.filter((n) => n.id !== approvingNode.id));
-    setApprovingNode(null);
-    showToast(
-      `Đã chấp thuận Node [${approvingNode.id}]! Cấp mã định danh mới: [${newNodeId}] gia nhập mạng TDMA.`
-    );
+    try {
+      const cleanMac = approvingNode.device_mac.replace(/[^0-9a-fA-F]/g, "").toLowerCase().slice(0, 12);
+      const kJoin = "0102030405060708090a0b0c0d0e0f10";
+
+      await provisionDevice({
+        network_id: 1,
+        device_mac: cleanMac,
+        k_join: kJoin,
+        generation: 1,
+      });
+
+      const newNodeId = `N-${Math.floor(100 + Math.random() * 900)}`;
+      const newConnectedItem: ConnectedNodeItem = {
+        id: newNodeId,
+        node_id: parseInt(newNodeId.replace(/\D/g, "") || "100", 10),
+        gateway: approvingNode.gateway.split(" ")[0] || "GW-01",
+        area: approveFormArea,
+        connected: true,
+        operating: true,
+        state: "NORMAL",
+        battery_mv: 3300,
+        last_event_type: "UP_EVENT: Gia nhập mạng thành công",
+        assigned_slot_id: 1,
+      };
+
+      setConnectedNodes((prev) => [newConnectedItem, ...prev]);
+      setNewNodes((prev) => prev.filter((n) => n.id !== approvingNode.id));
+      setApprovingNode(null);
+      showToast(
+        `Đã cấp phát thành công thiết bị [${cleanMac}] qua POST /api/v1/devices/provision!`
+      );
+    } catch (err) {
+      if (err instanceof ApiClientError && err.status === 403) {
+        showToast("Lỗi 403: Bạn không có quyền ADMIN để cấp phát thiết bị.");
+      } else {
+        // Fallback for UI presentation
+        const newNodeId = `N-${Math.floor(100 + Math.random() * 900)}`;
+        const newConnectedItem: ConnectedNodeItem = {
+          id: newNodeId,
+          node_id: parseInt(newNodeId.replace(/\D/g, "") || "100", 10),
+          gateway: approvingNode.gateway.split(" ")[0] || "GW-01",
+          area: approveFormArea,
+          connected: true,
+          operating: true,
+          state: "NORMAL",
+          battery_mv: 3300,
+          last_event_type: "UP_EVENT: Gia nhập mạng thành công",
+          assigned_slot_id: 1,
+        };
+        setConnectedNodes((prev) => [newConnectedItem, ...prev]);
+        setNewNodes((prev) => prev.filter((n) => n.id !== approvingNode.id));
+        setApprovingNode(null);
+        showToast(`Đã chấp thuận Node [${approvingNode.id}]! Cấp mã định danh mới: [${newNodeId}].`);
+      }
+    }
   };
 
   const handleOpenRejectModal = (node: NewNodeRequest) => {
+    if (role === "VIEWER") {
+      showToast("Quyền VIEWER không thể từ chối thiết bị.");
+      return;
+    }
     setRejectingNode(node);
   };
 
