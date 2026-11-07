@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -8,42 +9,21 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/domain"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/jsonboundary"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/storage"
 )
 
-var alertIDRegex = regexp.MustCompile(`^(0|[1-9][0-9]{0,19})$`)
+var (
+	alertIDRegex   = regexp.MustCompile(`^(0|[1-9][0-9]{0,19})$`)
+	gatewayIDRegex = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
+)
 
-// AlertDTO matches the Alert component schema in openapi.yaml.
-type AlertDTO struct {
-	AlertID     string           `json:"alert_id"`
-	NodeID      int              `json:"node_id"`
-	GatewayID   string           `json:"gateway_id"`
-	EventRef    int64            `json:"event_ref"`
-	EventCode   int              `json:"event_code"`
-	EventValue  int              `json:"event_value"`
-	Severity    string           `json:"severity"`
-	TriggeredAt *string          `json:"triggered_at"`
-	ReceivedAt  string           `json:"received_at"`
-	AckStatus   string           `json:"ack_status"`
-	AckedAt     *string          `json:"acked_at"`
-	Trigger     *AlertTriggerDTO `json:"trigger,omitempty"`
-}
-
-// AlertTriggerDTO matches the trigger property in Alert schema.
-type AlertTriggerDTO struct {
-	Channel      int `json:"channel"`
-	ObservedRaw  int `json:"observed_raw"`
-	ThresholdRaw int `json:"threshold_raw"`
-}
-
-// AlertPageDTO matches the AlertPage component schema in openapi.yaml.
-type AlertPageDTO struct {
-	Items      []AlertDTO `json:"items"`
-	NextCursor *string    `json:"next_cursor"`
+// AlertRepository abstracts persistence operations for alerts.
+type AlertRepository interface {
+	ListAlerts(ctx context.Context, filter domain.AlertFilter) (*domain.AlertPage, error)
+	AcknowledgeAlert(ctx context.Context, alertID int64, acknowledgedBy string) (*domain.AlertView, error)
 }
 
 // AcknowledgeAlertRequest matches the request payload for POST /api/v1/alerts/{alert_id}/acknowledge.
@@ -53,12 +33,17 @@ type AcknowledgeAlertRequest struct {
 
 // AlertHandler provides HTTP REST endpoints for event querying and operator acknowledgment.
 type AlertHandler struct {
-	repo storage.EventQueryRepository
+	repo          AlertRepository
+	authenticator Authenticator
 }
 
-// NewAlertHandler creates a new AlertHandler.
-func NewAlertHandler(repo storage.EventQueryRepository) *AlertHandler {
-	return &AlertHandler{repo: repo}
+// NewAlertHandler creates a new AlertHandler with optional Authenticator.
+func NewAlertHandler(repo AlertRepository, auth ...Authenticator) *AlertHandler {
+	h := &AlertHandler{repo: repo}
+	if len(auth) > 0 {
+		h.authenticator = auth[0]
+	}
+	return h
 }
 
 // RegisterRoutes registers the alerts endpoints on a ServeMux according to openapi.yaml.
@@ -67,7 +52,42 @@ func (h *AlertHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/alerts/{alert_id}/acknowledge", h.handleAcknowledgeAlert)
 }
 
+func (h *AlertHandler) checkRBAC(r *http.Request, allowedRoles ...Role) (string, int, error) {
+	if h.authenticator == nil {
+		return "operator", http.StatusOK, nil
+	}
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+		return "", http.StatusUnauthorized, errors.New("bearer token required")
+	}
+	token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+	if token == "" {
+		return "", http.StatusUnauthorized, errors.New("bearer token empty")
+	}
+	role, err := h.authenticator.Authenticate(token)
+	if err != nil {
+		return "", http.StatusUnauthorized, errors.New("invalid or expired bearer token")
+	}
+	for _, allowed := range allowedRoles {
+		if role == allowed {
+			return string(role), http.StatusOK, nil
+		}
+	}
+	return "", http.StatusForbidden, errors.New("insufficient permissions")
+}
+
 func (h *AlertHandler) handleListAlerts(w http.ResponseWriter, r *http.Request) {
+	// 1. RBAC authorization check (SE-004): VIEWER, OPERATOR, ADMIN
+	_, status, err := h.checkRBAC(r, RoleViewer, RoleOperator, RoleAdmin)
+	if err != nil {
+		if status == http.StatusForbidden {
+			writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+		} else {
+			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", err.Error())
+		}
+		return
+	}
+
 	query := r.URL.Query()
 
 	limit := 50
@@ -80,57 +100,105 @@ func (h *AlertHandler) handleListAlerts(w http.ResponseWriter, r *http.Request) 
 		limit = parsed
 	}
 
-	var cursor int64
-	if cursorStr := query.Get("cursor"); cursorStr != "" {
-		parsed, err := strconv.ParseInt(cursorStr, 10, 64)
+	cursor := query.Get("cursor")
+	if cursor != "" {
+		parsed, err := strconv.ParseInt(cursor, 10, 64)
 		if err != nil || parsed < 0 {
 			writeError(w, http.StatusUnprocessableEntity, "INVALID_CURSOR", "cursor must be a non-negative decimal string")
 			return
 		}
-		cursor = parsed
 	}
 
-	events, nextCursorID, err := h.repo.ListEvents(r.Context(), cursor, limit)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list alerts")
+	severity := query.Get("severity")
+	if severity != "" {
+		switch domain.EventSeverity(severity) {
+		case domain.SeverityP0Emergency, domain.SeverityP1High, domain.SeverityP2Medium, domain.SeverityP3Normal:
+		default:
+			writeError(w, http.StatusUnprocessableEntity, "INVALID_SEVERITY", "severity must be one of P0_EMERGENCY, P1_HIGH, P2_MEDIUM, P3_NORMAL")
+			return
+		}
+	}
+
+	var nodeIDPtr *uint8
+	if nodeIDStr := query.Get("node_id"); nodeIDStr != "" {
+		parsed, err := strconv.ParseUint(nodeIDStr, 10, 8)
+		if err != nil || parsed < 1 || parsed > 254 {
+			writeError(w, http.StatusUnprocessableEntity, "INVALID_NODE_ID", "node_id must be an integer between 1 and 254")
+			return
+		}
+		nodeID := uint8(parsed)
+		nodeIDPtr = &nodeID
+	}
+
+	gatewayID := query.Get("gateway_id")
+	if gatewayID != "" && !gatewayIDRegex.MatchString(gatewayID) {
+		writeError(w, http.StatusUnprocessableEntity, "INVALID_GATEWAY_ID", "gateway_id must be 1-32 alphanumeric characters")
 		return
 	}
 
-	items := make([]AlertDTO, 0, len(events))
-	for _, e := range events {
-		items = append(items, toAlertDTO(e))
+	ackStatus := query.Get("ack_status")
+	if ackStatus != "" {
+		switch domain.AckStatus(ackStatus) {
+		case domain.AckStatusUnacknowledged, domain.AckStatusAcknowledged:
+		default:
+			writeError(w, http.StatusUnprocessableEntity, "INVALID_ACK_STATUS", "ack_status must be UNACKNOWLEDGED or ACKNOWLEDGED")
+			return
+		}
 	}
 
-	var nextCursor *string
-	if nextCursorID > 0 {
-		str := strconv.FormatInt(nextCursorID, 10)
-		nextCursor = &str
+	filter := domain.AlertFilter{
+		Cursor:    cursor,
+		Limit:     limit,
+		Severity:  severity,
+		NodeID:    nodeIDPtr,
+		GatewayID: gatewayID,
+		AckStatus: ackStatus,
 	}
 
-	page := AlertPageDTO{
-		Items:      items,
-		NextCursor: nextCursor,
+	page, err := h.repo.ListAlerts(r.Context(), filter)
+	if err != nil {
+		if errors.Is(err, domain.ErrInvalidAlertFilter) {
+			writeError(w, http.StatusUnprocessableEntity, "INVALID_FILTER", err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list alerts")
+		return
 	}
 
 	writeJSON(w, http.StatusOK, page)
 }
 
-// handleAcknowledgeAlert processes operator acknowledgment in Backend (not an RF ACK down to Node).
-// Authority: contracts/api/openapi.yaml, contracts/mqtt/topics.md §9.
+// handleAcknowledgeAlert processes operator acknowledgment in Backend (strictly UI workflow, not an RF ACK down to Node).
+// Authority: contracts/api/openapi.yaml, contracts/api/contract-semantics.md §1.2.
 func (h *AlertHandler) handleAcknowledgeAlert(w http.ResponseWriter, r *http.Request) {
+	// 1. RBAC authorization check (SE-004): OPERATOR, ADMIN (VIEWER forbidden)
+	actorRole, status, err := h.checkRBAC(r, RoleOperator, RoleAdmin)
+	if err != nil {
+		if status == http.StatusForbidden {
+			writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+		} else {
+			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", err.Error())
+		}
+		return
+	}
+
 	alertIDStr := r.PathValue("alert_id")
 	if !alertIDRegex.MatchString(alertIDStr) {
-		writeError(w, http.StatusUnprocessableEntity, "INVALID_ALERT_ID", "alert_id must be a decimal uint64 string")
+		writeError(w, http.StatusBadRequest, "INVALID_ALERT_ID", "alert_id must be a decimal uint64 string")
 		return
 	}
 
 	alertID, err := strconv.ParseInt(alertIDStr, 10, 64)
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "INVALID_ALERT_ID", "alert_id out of range")
+		writeError(w, http.StatusBadRequest, "INVALID_ALERT_ID", "alert_id out of range")
 		return
 	}
 
-	acknowledgedBy := "operator"
+	acknowledgedBy := actorRole
+	if acknowledgedBy == "" {
+		acknowledgedBy = "operator"
+	}
+
 	if r.ContentLength > 0 {
 		body, err := io.ReadAll(io.LimitReader(r.Body, maxPayloadBytes+1))
 		if err != nil {
@@ -149,13 +217,9 @@ func (h *AlertHandler) handleAcknowledgeAlert(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	updated, err := h.repo.AcknowledgeEvent(r.Context(), alertID, acknowledgedBy)
-	if errors.Is(err, storage.ErrEventNotFound) {
+	view, err := h.repo.AcknowledgeAlert(r.Context(), alertID, acknowledgedBy)
+	if errors.Is(err, storage.ErrAlertNotFound) || errors.Is(err, storage.ErrEventNotFound) {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", fmt.Sprintf("alert %d not found", alertID))
-		return
-	}
-	if errors.Is(err, storage.ErrAlreadyAcknowledged) {
-		writeError(w, http.StatusConflict, "CONFLICT", fmt.Sprintf("alert %d is already acknowledged", alertID))
 		return
 	}
 	if err != nil {
@@ -163,38 +227,5 @@ func (h *AlertHandler) handleAcknowledgeAlert(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	dto := toAlertDTO(updated)
-	writeJSON(w, http.StatusOK, dto)
-}
-
-func toAlertDTO(e *domain.Event) AlertDTO {
-	dto := AlertDTO{
-		AlertID:    strconv.FormatInt(e.ID, 10),
-		NodeID:     int(e.NodeID),
-		GatewayID:  e.GatewayID,
-		EventRef:   int64(e.Data.EventRef),
-		EventCode:  int(e.Data.EventCode),
-		EventValue: int(e.Data.EventValue),
-		Severity:   string(e.Severity),
-		ReceivedAt: e.IngestedAt.UTC().Format(time.RFC3339),
-		AckStatus:  string(e.AckStatus),
-	}
-
-	if e.ObservedAt != nil {
-		str := e.ObservedAt.UTC().Format(time.RFC3339)
-		dto.TriggeredAt = &str
-	}
-	if e.AcknowledgedAt != nil {
-		str := e.AcknowledgedAt.UTC().Format(time.RFC3339)
-		dto.AckedAt = &str
-	}
-	if e.Trigger != nil {
-		dto.Trigger = &AlertTriggerDTO{
-			Channel:      int(e.Trigger.Channel),
-			ObservedRaw:  int(e.Trigger.ObservedRaw),
-			ThresholdRaw: int(e.Trigger.ThresholdRaw),
-		}
-	}
-
-	return dto
+	writeJSON(w, http.StatusOK, view)
 }
