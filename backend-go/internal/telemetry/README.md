@@ -1,3 +1,3 @@
 # telemetry (planned)
 
-Validate event schema, idempotent ingest, persistent database record and timestamps with clock provenance.
+Planned ingest uses reviewed Event schemas, Gateway-origin Event IDs, durable dedup/conflict checks and timestamps with clock provenance. [#125](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/125) supersedes periodic application measurement publishing; the existing directory name does not authorize that flow. Legacy telemetry decoding/history requires the versioned migration in [#128](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/128). MQTT PUBACK, Gateway durable RF ACK and Backend DB commit remain separate. No ingest implementation exists here.

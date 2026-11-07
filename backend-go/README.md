@@ -4,6 +4,8 @@
 
 Architecture target: modular monolith with `internal/{domain,mqtt,scheduler,telemetry,alert,api,storage}`.
 
+Under [#125](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/125), the target is Event-only remote logging with Gateway-origin Event IDs, durable dedup and replay/conflict handling. The Planner versions static DATA and Maintenance schedules for User approval; Gateway executes them locally. Maintenance targets 300s SYNC_BEACON (32B HMAC) and per-Node HEALTH_REPLY; Beacon transmission alone does not establish Node alive (N_MISSED > 3 disconnect observation). Periodic measurement publishing and SET_PERIODIC_MODE are superseded business flows. Existing `telemetry` package naming is retained; versioned MQTT/API/DB compatibility remains pending [#128](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/128)/[#132](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/132), with no new runtime implementation here.
+
 ## Go toolchain lock
 
 - **Go 1.27.3 is required** for backend development, tests and CI. Root `.go-version` and `backend-go/go.mod` must match exactly.
