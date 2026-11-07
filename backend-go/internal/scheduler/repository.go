@@ -55,6 +55,16 @@ type ScheduleRepository interface {
 	GetTransaction(ctx context.Context, txID string) (*MigrationTransaction, error)
 	UpdateTransactionState(ctx context.Context, txID string, state string, reason string) error
 	RecordDecision(ctx context.Context, txID string, decType uint8, decFrame [BytesDownSchedDecision]byte) error
+
+	UpdateReviewState(ctx context.Context, scheduleID string, reviewState string, rejectReason *string) error
+	GetReviewState(ctx context.Context, scheduleID string) (reviewState string, rejectReason *string, err error)
+	UpdateScheduleState(ctx context.Context, scheduleID string, state string) error
+	GetScheduleState(ctx context.Context, scheduleID string) (string, error)
+}
+
+type memoryReviewRecord struct {
+	ReviewState  string
+	RejectReason *string
 }
 
 // MemoryScheduleRepository provides a thread-safe in-memory implementation of ScheduleRepository.
@@ -63,6 +73,8 @@ type MemoryScheduleRepository struct {
 	schedules    map[string]*Schedule
 	active       map[string]*ActiveGatewaySchedule // gatewayID -> active
 	transactions map[string]*MigrationTransaction
+	reviews      map[string]*memoryReviewRecord
+	states       map[string]string
 }
 
 // NewMemoryScheduleRepository creates a new MemoryScheduleRepository.
@@ -71,6 +83,8 @@ func NewMemoryScheduleRepository() *MemoryScheduleRepository {
 		schedules:    make(map[string]*Schedule),
 		active:       make(map[string]*ActiveGatewaySchedule),
 		transactions: make(map[string]*MigrationTransaction),
+		reviews:      make(map[string]*memoryReviewRecord),
+		states:       make(map[string]string),
 	}
 }
 
@@ -178,4 +192,49 @@ func (r *MemoryScheduleRepository) RecordDecision(ctx context.Context, txID stri
 	tx.DecisionFrame = &frameCopy
 	tx.UpdatedAt = time.Now().UTC()
 	return nil
+}
+
+// UpdateReviewState updates the review state and optional reject reason for a schedule.
+func (r *MemoryScheduleRepository) UpdateReviewState(ctx context.Context, scheduleID string, reviewState string, rejectReason *string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.reviews[scheduleID] = &memoryReviewRecord{
+		ReviewState:  reviewState,
+		RejectReason: rejectReason,
+	}
+	return nil
+}
+
+// GetReviewState retrieves the review state and optional reject reason for a schedule.
+func (r *MemoryScheduleRepository) GetReviewState(ctx context.Context, scheduleID string) (string, *string, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	rec, ok := r.reviews[scheduleID]
+	if !ok {
+		return "PENDING", nil, nil
+	}
+	return rec.ReviewState, rec.RejectReason, nil
+}
+
+// UpdateScheduleState updates the lifecycle state of a schedule.
+func (r *MemoryScheduleRepository) UpdateScheduleState(ctx context.Context, scheduleID string, state string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.states[scheduleID] = state
+	return nil
+}
+
+// GetScheduleState retrieves the lifecycle state of a schedule.
+func (r *MemoryScheduleRepository) GetScheduleState(ctx context.Context, scheduleID string) (string, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	state, ok := r.states[scheduleID]
+	if !ok {
+		return "PROPOSED", nil
+	}
+	return state, nil
 }
