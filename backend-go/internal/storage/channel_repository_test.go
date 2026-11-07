@@ -179,6 +179,86 @@ func (s *mockStmt) Query(args []driver.Value) (driver.Rows, error) {
 		}, nil
 	}
 
+	// 5. Join Storage Queries
+	if strings.Contains(q, "from devices d join device_generations g") {
+		if state == "join_device_not_found" {
+			return &mockRows{columns: []string{"status", "generation", "k_join_wrapped"}, rows: nil}, nil
+		}
+		if state == "join_device_revoked" {
+			return &mockRows{
+				columns: []string{"status", "generation", "k_join_wrapped"},
+				rows:    [][]driver.Value{{"REVOKED", int64(1), []byte("wrapped-key-revoked")}},
+			}, nil
+		}
+		return &mockRows{
+			columns: []string{"status", "generation", "k_join_wrapped"},
+			rows:    [][]driver.Value{{"ACTIVE", int64(1), []byte("wrapped-key-bytes-test-32bytes!")}},
+		}, nil
+	}
+
+	if strings.Contains(q, "from devices where network_id = $1 and device_mac = $2 for update") {
+		if state == "join_device_not_found" {
+			return &mockRows{columns: []string{"status"}, rows: nil}, nil
+		}
+		if state == "join_device_revoked" {
+			return &mockRows{columns: []string{"status"}, rows: [][]driver.Value{{"REVOKED"}}}, nil
+		}
+		return &mockRows{columns: []string{"status"}, rows: [][]driver.Value{{"ACTIVE"}}}, nil
+	}
+
+	if strings.Contains(q, "from device_generations where network_id = $1 and device_mac = $2 and generation = $3 for update") {
+		if state == "join_gen_inactive" {
+			return &mockRows{columns: []string{"is_active"}, rows: [][]driver.Value{{false}}}, nil
+		}
+		if state == "join_gen_not_found" {
+			return &mockRows{columns: []string{"is_active"}, rows: nil}, nil
+		}
+		return &mockRows{columns: []string{"is_active"}, rows: [][]driver.Value{{true}}}, nil
+	}
+
+	if strings.Contains(q, "from device_join_counters where network_id = $1 and device_mac = $2 and generation = $3 for update") {
+		if state == "join_first_counter" {
+			return &mockRows{columns: []string{"last_join_counter"}, rows: nil}, nil
+		}
+		if state == "join_advancing_counter" {
+			return &mockRows{columns: []string{"last_join_counter"}, rows: [][]driver.Value{{int64(10)}}}, nil
+		}
+		if state == "join_idempotent_retry" || state == "join_replay_conflict" {
+			return &mockRows{columns: []string{"last_join_counter"}, rows: [][]driver.Value{{int64(20)}}}, nil
+		}
+		if state == "join_stale_counter" {
+			return &mockRows{columns: []string{"last_join_counter"}, rows: [][]driver.Value{{int64(50)}}}, nil
+		}
+		return &mockRows{columns: []string{"last_join_counter"}, rows: [][]driver.Value{{int64(1)}}}, nil
+	}
+
+	if strings.Contains(q, "from join_transactions where network_id = $1 and device_mac = $2 and generation = $3 and join_counter = $4") {
+		if state == "join_idempotent_retry" {
+			return &mockRows{
+				columns: []string{"id", "status", "raw_hello_sha256"},
+				rows: [][]driver.Value{
+					{int64(88), storage.StatusHelloAuthenticatedPendingGrant, []byte("hello-hash-32-bytes-identical!!!")},
+				},
+			}, nil
+		}
+		if state == "join_replay_conflict" {
+			return &mockRows{
+				columns: []string{"id", "status", "raw_hello_sha256"},
+				rows: [][]driver.Value{
+					{int64(88), storage.StatusHelloAuthenticatedPendingGrant, []byte("hello-hash-different-original!!")},
+				},
+			}, nil
+		}
+		return &mockRows{columns: []string{"id", "status", "raw_hello_sha256"}, rows: nil}, nil
+	}
+
+	if strings.Contains(q, "insert into join_transactions") {
+		return &mockRows{
+			columns: []string{"id"},
+			rows:    [][]driver.Value{{int64(99)}},
+		}, nil
+	}
+
 	return nil, fmt.Errorf("unhandled query in mock driver: %s", s.query)
 }
 
