@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Canonical Light Mode Tokens (DESIGN.md §2) */
+  --color-canvas: #F5F7FA;
+  --color-surface: #FFFFFF;
+  --color-chrome: #FFFFFF;
+  --color-border: #E2E8F0;
+  --color-text-primary: #0F172A;
+  --color-text-secondary: #475569;
+  --color-interactive: #2563EB;
+  --color-sidebar-selected: #DBEAFE;
+  --color-state-active: #15803D;
+  --color-state-connected: #1D4ED8;
+  --color-state-warning: #A16207;
+  --color-state-critical: #B91C1C;
+  --color-state-offline: #64748B;
+}
+
+.dark {
+  /* Canonical Dark Mode Tokens (DESIGN.md §2) */
+  --color-canvas: #0B1220;
+  --color-surface: #172335;
+  --color-chrome: #111C2E;
+  --color-border: #334155;
+  --color-text-primary: #F8FAFC;
+  --color-text-secondary: #CBD5E1;
+  --color-interactive: #93C5FD;
+  --color-sidebar-selected: #1E3A5F;
+  --color-state-active: #4ADE80;
+  --color-state-connected: #93C5FD;
+  --color-state-warning: #FBBF24;
+  --color-state-critical: #F87171;
+  --color-state-offline: #94A3B8;
+}
+
+body {
+  background-color: var(--color-canvas);
+  color: var(--color-text-primary);
+  font-family: var(--font-inter), Inter, Arial, sans-serif;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Tabular numerals for measurements, durations, timestamps and KPI counts (DESIGN.md §3) */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Zero-Shadow Baseline: 1px solid border without decorative shadows (DESIGN.md §2 / §4) */
+.card-zero-shadow {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: none !important;
+}
+
+/* Standard Control: 40px height, 8px radius, 1px border */
+.control-standard {
+  height: 40px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background-color: var(--color-surface);
+  color: var(--color-text-primary);
+}
+
