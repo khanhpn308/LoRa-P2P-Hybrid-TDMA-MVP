@@ -1,0 +1,416 @@
+package storage
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+
+	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/domain"
+)
+
+var (
+	// ErrEventNotFound indicates no discrete event record matches the gateway and event ID.
+	ErrEventNotFound = errors.New("event not found")
+	// ErrConflictingPayload indicates that an event with the same ID was submitted with differing business data.
+	ErrConflictingPayload = errors.New("conflicting payload detected for existing event_id")
+	// ErrHealthNotFound indicates no health record exists for the given gateway and node ID.
+	ErrHealthNotFound = errors.New("node health record not found")
+)
+
+// EventRecordResult details the persistence outcome of an Event.
+type EventRecordResult struct {
+	EventID     int64
+	IsDuplicate bool
+	Status      string
+}
+
+// QuarantineRecord encapsulates an invalid, conflicting, or unauthorized payload for investigation.
+type QuarantineRecord struct {
+	GatewayID         string
+	EventID           string
+	ConflictReason    string
+	ExpectedSHA256    []byte
+	ConflictingSHA256 []byte
+	RawPayload        string
+}
+
+// EventRepository defines the storage interface for discrete Event ingest, idempotency, quarantine, and health.
+type EventRepository interface {
+	RecordEvent(ctx context.Context, event *domain.Event) (*EventRecordResult, error)
+	GetEvent(ctx context.Context, gatewayID, eventID string) (*domain.Event, error)
+	QuarantineEvent(ctx context.Context, q *QuarantineRecord) error
+	RecordHealthUpdate(ctx context.Context, h *domain.NodeHealth) error
+	GetNodeHealth(ctx context.Context, gatewayID string, nodeID uint8) (*domain.NodeHealth, error)
+}
+
+// PostgresEventStorage implements EventRepository on PostgreSQL with strict row-level lock idempotency.
+type PostgresEventStorage struct {
+	db *sql.DB
+}
+
+// NewPostgresEventStorage creates a new PostgresEventStorage instance.
+func NewPostgresEventStorage(db *sql.DB) *PostgresEventStorage {
+	return &PostgresEventStorage{db: db}
+}
+
+// RecordEvent idempotently records an active V2 event or deduplicates identical replays.
+// If a conflicting payload is presented with an existing event_id, it quarantines the payload and fails closed.
+func (s *PostgresEventStorage) RecordEvent(ctx context.Context, event *domain.Event) (*EventRecordResult, error) {
+	if event == nil {
+		return nil, errors.New("event cannot be nil")
+	}
+	if err := event.Validate(); err != nil {
+		return nil, fmt.Errorf("event validation failed: %w", err)
+	}
+
+	payloadHash := event.ComputePayloadSHA256()
+	event.RawPayloadSHA256 = payloadHash
+
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin event transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	const checkQuery = `
+		SELECT id, raw_payload_sha256
+		FROM events
+		WHERE gateway_id = $1 AND event_id = $2
+		FOR UPDATE;
+	`
+
+	var existingID int64
+	var existingHash []byte
+
+	err = tx.QueryRowContext(ctx, checkQuery, event.GatewayID, event.EventID).Scan(&existingID, &existingHash)
+	if err == nil {
+		// Existing event found: verify payload identity
+		if bytes.Equal(existingHash, payloadHash[:]) {
+			// Exact duplicate: commit transaction and return deduplicated result
+			if commitErr := tx.Commit(); commitErr != nil {
+				return nil, fmt.Errorf("failed to commit duplicate event transaction: %w", commitErr)
+			}
+			return &EventRecordResult{
+				EventID:     existingID,
+				IsDuplicate: true,
+				Status:      "DEDUPLICATED",
+			}, nil
+		}
+
+		// Conflict: same identity, different business payload! Fail closed and quarantine.
+		_ = tx.Rollback()
+		qErr := s.QuarantineEvent(ctx, &QuarantineRecord{
+			GatewayID:         event.GatewayID,
+			EventID:           event.EventID,
+			ConflictReason:    "CONFLICTING_PAYLOAD_HASH",
+			ExpectedSHA256:    existingHash,
+			ConflictingSHA256: payloadHash[:],
+			RawPayload:        fmt.Sprintf("node_id=%d, slot_id=%d, ch1=%d, ch2=%d, ch3=%d", event.NodeID, event.Data.SlotID, event.Data.Ch1Raw, event.Data.Ch2Raw, event.Data.Ch3Raw),
+		})
+		if qErr != nil {
+			return nil, fmt.Errorf("%w: failed to record quarantine: %v", ErrConflictingPayload, qErr)
+		}
+		return nil, ErrConflictingPayload
+	}
+
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("failed to query existing event: %w", err)
+	}
+
+	// Insert new event
+	const insertQuery = `
+		INSERT INTO events (
+			event_id, gateway_id, gateway_epoch, event_seq, node_id, superframe_seq,
+			seq_num, schedule_version, severity, observed_at, observed_time_source,
+			radio_rx_monotonic_us, buffered, radio_ack_sent, slot_id, sensor_status_mask,
+			ch1_raw, ch2_raw, ch3_raw, battery_mv, node_duty_permille,
+			trigger_channel, trigger_observed_raw, trigger_threshold_raw,
+			raw_payload_sha256, ack_status
+		) VALUES (
+			$1, $2, $3, $4, $5, $6,
+			$7, $8, $9, $10, $11,
+			$12, $13, $14, $15, $16,
+			$17, $18, $19, $20, $21,
+			$22, $23, $24,
+			$25, $26
+		) RETURNING id;
+	`
+
+	var triggerChan sql.NullInt32
+	var triggerObs sql.NullInt32
+	var triggerThresh sql.NullInt32
+	if event.Trigger != nil {
+		triggerChan = sql.NullInt32{Int32: int32(event.Trigger.Channel), Valid: true}
+		triggerObs = sql.NullInt32{Int32: event.Trigger.ObservedRaw, Valid: true}
+		triggerThresh = sql.NullInt32{Int32: event.Trigger.ThresholdRaw, Valid: true}
+	}
+
+	var insertedID int64
+	err = tx.QueryRowContext(
+		ctx,
+		insertQuery,
+		event.EventID,
+		event.GatewayID,
+		event.GatewayEpoch,
+		event.EventSeq,
+		int(event.NodeID),
+		int64(event.SuperframeSeq),
+		int(event.SeqNum),
+		int64(event.ScheduleVersion),
+		string(event.Severity),
+		event.ObservedAt,
+		string(event.ObservedTimeSource),
+		event.RadioRxMonotonicUS,
+		event.Buffered,
+		event.RadioAckSent,
+		int(event.Data.SlotID),
+		int(event.Data.SensorStatusMask),
+		int(event.Data.Ch1Raw),
+		int(event.Data.Ch2Raw),
+		int(event.Data.Ch3Raw),
+		int(event.Data.BatteryMv),
+		int(event.Data.NodeDutyPermille),
+		triggerChan,
+		triggerObs,
+		triggerThresh,
+		payloadHash[:],
+		string(domain.AckStatusUnacknowledged),
+	).Scan(&insertedID)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to insert discrete event: %w", err)
+	}
+
+	if commitErr := tx.Commit(); commitErr != nil {
+		return nil, fmt.Errorf("failed to commit new event: %w", commitErr)
+	}
+
+	return &EventRecordResult{
+		EventID:     insertedID,
+		IsDuplicate: false,
+		Status:      "INSERTED",
+	}, nil
+}
+
+// GetEvent retrieves a discrete event by its gateway ID and event ID.
+func (s *PostgresEventStorage) GetEvent(ctx context.Context, gatewayID, eventID string) (*domain.Event, error) {
+	const query = `
+		SELECT
+			id, event_id, gateway_id, gateway_epoch, event_seq, node_id,
+			superframe_seq, seq_num, schedule_version, severity, observed_at, observed_time_source,
+			radio_rx_monotonic_us, buffered, radio_ack_sent, slot_id, sensor_status_mask,
+			ch1_raw, ch2_raw, ch3_raw, battery_mv, node_duty_permille,
+			trigger_channel, trigger_observed_raw, trigger_threshold_raw,
+			raw_payload_sha256, ingested_at, ack_status, acknowledged_at, acknowledged_by
+		FROM events
+		WHERE gateway_id = $1 AND event_id = $2;
+	`
+
+	var e domain.Event
+	var obsAt sql.NullTime
+	var ackAt sql.NullTime
+	var ackBy sql.NullString
+	var trigChan sql.NullInt32
+	var trigObs sql.NullInt32
+	var trigThresh sql.NullInt32
+	var nodeID, seqNum, slotID, mask, duty int
+	var ch1, ch2, ch3, bat int
+	var rawHash []byte
+	var sev, timeSrc, ackStat string
+
+	err := s.db.QueryRowContext(ctx, query, gatewayID, eventID).Scan(
+		&e.ID,
+		&e.EventID,
+		&e.GatewayID,
+		&e.GatewayEpoch,
+		&e.EventSeq,
+		&nodeID,
+		&e.SuperframeSeq,
+		&seqNum,
+		&e.ScheduleVersion,
+		&sev,
+		&obsAt,
+		&timeSrc,
+		&e.RadioRxMonotonicUS,
+		&e.Buffered,
+		&e.RadioAckSent,
+		&slotID,
+		&mask,
+		&ch1,
+		&ch2,
+		&ch3,
+		&bat,
+		&duty,
+		&trigChan,
+		&trigObs,
+		&trigThresh,
+		&rawHash,
+		&e.IngestedAt,
+		&ackStat,
+		&ackAt,
+		&ackBy,
+	)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrEventNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to query event: %w", err)
+	}
+
+	e.NodeID = uint8(nodeID)
+	e.SeqNum = uint8(seqNum)
+	e.Data.SlotID = uint8(slotID)
+	e.Data.SensorStatusMask = uint8(mask)
+	e.Data.Ch1Raw = int16(ch1)
+	e.Data.Ch2Raw = uint16(ch2)
+	e.Data.Ch3Raw = uint16(ch3)
+	e.Data.BatteryMv = uint16(bat)
+	e.Data.NodeDutyPermille = uint16(duty)
+	e.Severity = domain.EventSeverity(sev)
+	e.ObservedTimeSource = domain.TimeSource(timeSrc)
+	e.AckStatus = domain.AckStatus(ackStat)
+
+	if obsAt.Valid {
+		t := obsAt.Time.UTC()
+		e.ObservedAt = &t
+	}
+	if ackAt.Valid {
+		t := ackAt.Time.UTC()
+		e.AcknowledgedAt = &t
+	}
+	if ackBy.Valid {
+		e.AcknowledgedBy = &ackBy.String
+	}
+	if trigChan.Valid {
+		e.Trigger = &domain.EventTrigger{
+			Channel:      uint8(trigChan.Int32),
+			ObservedRaw:  trigObs.Int32,
+			ThresholdRaw: trigThresh.Int32,
+		}
+	}
+	copy(e.RawPayloadSHA256[:], rawHash)
+
+	return &e, nil
+}
+
+// QuarantineEvent records a suspicious or conflicting payload into event_quarantine.
+func (s *PostgresEventStorage) QuarantineEvent(ctx context.Context, q *QuarantineRecord) error {
+	if q == nil {
+		return errors.New("quarantine record cannot be nil")
+	}
+
+	const query = `
+		INSERT INTO event_quarantine (
+			gateway_id, event_id, conflict_reason, expected_sha256, conflicting_sha256, raw_payload
+		) VALUES ($1, $2, $3, $4, $5, $6);
+	`
+
+	_, err := s.db.ExecContext(
+		ctx,
+		query,
+		q.GatewayID,
+		q.EventID,
+		q.ConflictReason,
+		q.ExpectedSHA256,
+		q.ConflictingSHA256,
+		q.RawPayload,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert quarantine record: %w", err)
+	}
+	return nil
+}
+
+// RecordHealthUpdate updates or inserts per-node health from authenticated UP_HEALTH_REPLY (0x44 21B).
+func (s *PostgresEventStorage) RecordHealthUpdate(ctx context.Context, h *domain.NodeHealth) error {
+	if h == nil {
+		return errors.New("health record cannot be nil")
+	}
+	if err := h.Validate(); err != nil {
+		return fmt.Errorf("invalid health update: %w", err)
+	}
+
+	const query = `
+		INSERT INTO node_health (
+			gateway_id, node_id, session_sel, frame_counter, maint_seq, status_flags,
+			pending_event_count, health_status, last_seen_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT (gateway_id, node_id) DO UPDATE SET
+			session_sel = EXCLUDED.session_sel,
+			frame_counter = EXCLUDED.frame_counter,
+			maint_seq = EXCLUDED.maint_seq,
+			status_flags = EXCLUDED.status_flags,
+			pending_event_count = EXCLUDED.pending_event_count,
+			health_status = EXCLUDED.health_status,
+			last_seen_at = CURRENT_TIMESTAMP,
+			updated_at = CURRENT_TIMESTAMP;
+	`
+
+	_, err := s.db.ExecContext(
+		ctx,
+		query,
+		h.GatewayID,
+		int(h.NodeID),
+		int(h.SessionSel),
+		int64(h.FrameCounter),
+		int64(h.MaintSeq),
+		int(h.StatusFlags),
+		int(h.PendingEventCount),
+		string(h.HealthStatus),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to record node health: %w", err)
+	}
+	return nil
+}
+
+// GetNodeHealth queries the latest reported health status of a Node.
+func (s *PostgresEventStorage) GetNodeHealth(ctx context.Context, gatewayID string, nodeID uint8) (*domain.NodeHealth, error) {
+	const query = `
+		SELECT
+			gateway_id, node_id, session_sel, frame_counter, maint_seq, status_flags,
+			pending_event_count, health_status, last_seen_at, updated_at
+		FROM node_health
+		WHERE gateway_id = $1 AND node_id = $2;
+	`
+
+	var h domain.NodeHealth
+	var nID, sessionSel, flags, pending int
+	var frameCounter, maintSeq int64
+	var status string
+
+	err := s.db.QueryRowContext(ctx, query, gatewayID, int(nodeID)).Scan(
+		&h.GatewayID,
+		&nID,
+		&sessionSel,
+		&frameCounter,
+		&maintSeq,
+		&flags,
+		&pending,
+		&status,
+		&h.LastSeenAt,
+		&h.UpdatedAt,
+	)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrHealthNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to query node health: %w", err)
+	}
+
+	h.NodeID = uint8(nID)
+	h.SessionSel = uint8(sessionSel)
+	h.FrameCounter = uint32(frameCounter)
+	h.MaintSeq = uint32(maintSeq)
+	h.StatusFlags = uint8(flags)
+	h.PendingEventCount = uint8(pending)
+	h.HealthStatus = domain.HealthStatus(status)
+
+	return &h, nil
+}
