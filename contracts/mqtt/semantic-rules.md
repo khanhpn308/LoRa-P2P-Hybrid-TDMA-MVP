@@ -130,3 +130,20 @@ Review: Gateway / Backend Go / Infra-Security / CODEOWNERS. G2 security audit, G
    - Backend Go quản lý cấp phát độc quyền một trong các kênh CH00–CH10 (920.250–922.750 MHz) qua REST API (`POST /api/v1/gateways/{id}/channels/request`) có hỗ trợ `X-Idempotency-Key`.
    - Phân định rõ thứ bậc trạng thái: `CHANNEL_ALLOCATED` $\to$ `SCHEDULE_STAGED` $\to$ `SCHEDULE_ACTIVE` $\to$ `RF_AUTHORIZED`.
    - Việc được cấp kênh không tự động cho phép Gateway phát sóng RF nếu thiếu lịch ACTIVE hợp lệ, đồng hồ tin cậy và kiểm soát duty-cycle. Thu hồi kênh bị từ chối nếu lịch đang ở trạng thái ACTIVE (trừ khi dùng force deactivation).
+
+## 9. V2 Join Hello Relay Envelope & Ingest Invariants (#221)
+
+Interface: `iot/v1/gw/{gateway_id}/uplink/join-hello`, QoS 1, `Retain=false`, schema `join-hello.schema.json`.
+
+Các bất biến nghiệp vụ bắt buộc:
+1. **JH-01 (Scope & Zero-Knowledge):** Gateway chỉ đóng vai trò chuyển tiếp vô tuyến (RF relay) cho bản tin `UP_JOIN_HELLO` (0x45, 68B). Gateway tuyệt đối không lưu, không phái sinh và không được gửi kèm khóa gốc $K_{\text{JOIN}}$ hay khóa yêu cầu $K_{\text{JREQ}}$.
+2. **JH-02 (Identity & Topic Binding):** Broker MQTT bắt buộc xác thực danh tính Gateway qua mTLS client certificate / username. `gateway_id` trong topic và trường `gateway_id` trong payload phải trùng khớp với danh tính được broker xác thực. Backend độc lập đối chiếu `gateway_id` sang mã số `target_gw_id` (0x01..0xFE) và từ chối gói tin nếu có sự sai lệch với byte 7 (`TARGET_GW_ID`) của khung tin RF.
+3. **JH-03 (Frame Wire Invariants):** `raw_frame_hex` phải là chuỗi đúng 136 ký tự hex (tương ứng 68 byte). Byte 0 phải là `0x45` (`VER_TYPE`), `TARGET_GW_ID` $\in [0x01, 0xFE]$, `JOIN_COUNTER` $\notin \{0, 0xFFFFFFFF\}$, `DEVICE_MAC` và `NODE_X25519_PUB` khác $0^{all}$ (RFC 7748 §6.1).
+4. **JH-04 (HMAC Authentication):** Backend giải mã hex, tra cứu thông tin thiết bị đang hoạt động (`ACTIVE`) và thế hệ hiện tại (`generation`), phái sinh $K_{\text{JREQ}}$ qua HKDF-Extract/Expand từ $K_{\text{JOIN}}$, và xác thực thẻ `JOIN_PROOF` (16B) bằng so sánh thời gian hằng số (`subtle.ConstantTimeCompare`).
+5. **JH-05 (Anti-Replay & Idempotency):**
+   - Bộ đếm `JOIN_COUNTER` phải tăng đơn điệu đối với mỗi cặp `(network_id, device_mac, generation)`.
+   - Nếu `JOIN_COUNTER > last_join_counter`: ghi nhận giao dịch mới ở trạng thái `HELLO_AUTHENTICATED_PENDING_GRANT`, nâng `last_join_counter`.
+   - Nếu `JOIN_COUNTER <= last_join_counter`: kiểm tra `raw_hello_sha256`. Nếu khớp hoàn toàn từng byte (byte-identical retransmission), Backend trả về kết quả idempotent của giao dịch trước đó. Nếu khác hash, Backend fail-closed và cảnh báo phát hiện tấn công phát lại (Replay Detected).
+6. **JH-06 (QoS 1 Dedup):** Khử trùng lặp tầng mạng thông qua `(gateway_id, event_id)` với `event_id` theo định dạng `<gateway_id>:<gateway_epoch>:<event_seq>`.
+7. **JH-07 (Timing & Metadata):** `radio_rx_monotonic_us` ghi nhận thời gian nhận tương đối tại Gateway trong `gateway_epoch`. `observed_at` chỉ ghi nhận khi có nguồn thời gian UTC tin cậy, nếu `observed_time_source=unknown` thì bắt buộc `observed_at=null`.
+8. **JH-08 (No Data Grant):** Việc xác thực thành công `UP_JOIN_HELLO` chỉ đưa trạng thái giao dịch vào `HELLO_AUTHENTICATED_PENDING_GRANT`. Tuyệt đối không tự động cấp phát khe TDMA DATA hay kích hoạt quyền phát sóng cho Node tại bước này.

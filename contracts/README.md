@@ -8,7 +8,7 @@ Các tệp trong thư mục này định nghĩa giao diện để Firmware Node,
 |---|---|---|---|
 | Node ↔ Gateway RF Custom MAC | [radio-mac/specification.md](radio-mac/specification.md) | Embedded Node + Gateway → RF/Security, Backend | [#12](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/12), [#127](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/127) |
 | Backend Planner → Gateway Executor → Node | [radio-mac/tdma-schedule.md](radio-mac/tdma-schedule.md) | Backend + Gateway → Node/RF | #12, #14, #128 |
-| Gateway ↔ Mosquitto ↔ Backend Go | [mqtt/topics.md](mqtt/topics.md), [mqtt/schemas/](mqtt/schemas/) | Gateway + Backend/Infra → Security | [#14](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/14), [#128](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/128) |
+| Gateway ↔ Mosquitto ↔ Backend Go | [mqtt/topics.md](mqtt/topics.md), [mqtt/schemas/](mqtt/schemas/) | Gateway + Backend/Infra → Security | [#14](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/14), [#128](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/128), [#221](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/221) |
 | Backend REST → Next.js/Kotlin Android | [api/openapi.yaml](api/openapi.yaml) | Backend → Web/Mobile | [#15](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/15), [#128](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/128), [#154](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/154) |
 | Backend WSS → Next.js/Kotlin Android | [api/websocket.md](api/websocket.md), [api/schemas/](api/schemas/) | Backend → Web/Mobile | #15, #128 |
 
@@ -39,5 +39,5 @@ Các tệp trong thư mục này định nghĩa giao diện để Firmware Node,
 ## Trạng thái
 
 - **Radio MAC V2 (0.3.0-draft):** Đã căn chỉnh baseline MVP (PR #205, PR #206); Join CAD bất đồng bộ (tối đa 3 lần thử lại), khe DATA W500ms + G50ms (chu kỳ 600ms/Node, 15 slots 9000ms), khe READY R400ms + G50ms (chu kỳ 500ms/Node) trong Migration theo yêu cầu, Beacon 0x43 32B HMAC-SHA256-128 trong Maintenance (~300s). HIL #169 tiếp tục đo kiểm thực địa độc lập.
-- **MQTT / REST / WebSocket V2 (Issue #128):** Đồng bộ hóa schema sự kiện, hủy bỏ telemetry định kỳ, tích hợp cấp phát kênh VN920_V1, cập nhật validator kiểm tra hình học lịch V2 và bộ test tương thích.
+- **MQTT / REST / WebSocket V2 (Issue #128, #221):** Đồng bộ hóa schema sự kiện, hủy bỏ telemetry định kỳ, tích hợp cấp phát kênh VN920_V1, bổ sung schema relay UP_JOIN_HELLO 0x45 68B, cập nhật validator kiểm tra hình học lịch V2 và bộ test tương thích.
 - Bất đồng và lộ trình kỹ thuật được cập nhật tại [OPEN_DECISIONS.md](OPEN_DECISIONS.md).

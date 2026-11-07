@@ -730,6 +730,106 @@
         "node_count": 3,
         "channel_id": "CH99"
       }
+    },
+    {
+      "id": "JOIN-HELLO-VALID",
+      "schema": "join-hello",
+      "valid": true,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:201",
+        "gateway_id": "gw01",
+        "gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+        "event_seq": "201",
+        "observed_at": "2026-11-07T08:00:00Z",
+        "observed_time_source": "gateway_utc",
+        "radio_rx_monotonic_us": "1234567890",
+        "buffered": false,
+        "target_gw_id": 1,
+        "raw_frame_hex": "45001122334455010000006401020304050607080102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
+        "rssi": -85,
+        "snr": 7.5
+      }
+    },
+    {
+      "id": "JOIN-HELLO-INVALID-HEX-LENGTH",
+      "schema": "join-hello",
+      "valid": false,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:202",
+        "gateway_id": "gw01",
+        "gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+        "event_seq": "202",
+        "observed_at": "2026-11-07T08:00:00Z",
+        "observed_time_source": "gateway_utc",
+        "radio_rx_monotonic_us": "1234567890",
+        "buffered": false,
+        "target_gw_id": 1,
+        "raw_frame_hex": "4500112233445501000000640102030405060708",
+        "rssi": -85,
+        "snr": 7.5
+      }
+    },
+    {
+      "id": "JOIN-HELLO-RESERVED-TARGET-GW",
+      "schema": "join-hello",
+      "valid": false,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:203",
+        "gateway_id": "gw01",
+        "gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+        "event_seq": "203",
+        "observed_at": "2026-11-07T08:00:00Z",
+        "observed_time_source": "gateway_utc",
+        "radio_rx_monotonic_us": "1234567890",
+        "buffered": false,
+        "target_gw_id": 255,
+        "raw_frame_hex": "45001122334455010000006401020304050607080102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
+        "rssi": -85,
+        "snr": 7.5
+      }
+    },
+    {
+      "id": "JOIN-HELLO-UNKNOWN-TIME-HAS-TIMESTAMP",
+      "schema": "join-hello",
+      "valid": false,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:204",
+        "gateway_id": "gw01",
+        "gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+        "event_seq": "204",
+        "observed_at": "2026-11-07T08:00:00Z",
+        "observed_time_source": "unknown",
+        "radio_rx_monotonic_us": "1234567890",
+        "buffered": false,
+        "target_gw_id": 1,
+        "raw_frame_hex": "45001122334455010000006401020304050607080102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
+        "rssi": -85,
+        "snr": 7.5
+      }
+    },
+    {
+      "id": "JOIN-HELLO-MALFORMED-EVENT-ID",
+      "schema": "join-hello",
+      "valid": false,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "invalid_event_id_format",
+        "gateway_id": "gw01",
+        "gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+        "event_seq": "205",
+        "observed_at": "2026-11-07T08:00:00Z",
+        "observed_time_source": "gateway_utc",
+        "radio_rx_monotonic_us": "1234567890",
+        "buffered": false,
+        "target_gw_id": 1,
+        "raw_frame_hex": "45001122334455010000006401020304050607080102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
+        "rssi": -85,
+        "snr": 7.5
+      }
     }
   ]
 }
