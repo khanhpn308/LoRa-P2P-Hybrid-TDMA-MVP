@@ -109,7 +109,7 @@ func (s *PostgresEventStorage) RecordEvent(ctx context.Context, event *domain.Ev
 			ConflictReason:    "CONFLICTING_PAYLOAD_HASH",
 			ExpectedSHA256:    existingHash,
 			ConflictingSHA256: payloadHash[:],
-			RawPayload:        fmt.Sprintf("node_id=%d, slot_id=%d, ch1=%d, ch2=%d, ch3=%d", event.NodeID, event.Data.SlotID, event.Data.Ch1Raw, event.Data.Ch2Raw, event.Data.Ch3Raw),
+			RawPayload:        fmt.Sprintf("node_id=%d, event_ref=%d, event_code=%d, event_value=%d", event.NodeID, event.Data.EventRef, event.Data.EventCode, event.Data.EventValue),
 		})
 		if qErr != nil {
 			return nil, fmt.Errorf("%w: failed to record quarantine: %v", ErrConflictingPayload, qErr)
@@ -126,17 +126,17 @@ func (s *PostgresEventStorage) RecordEvent(ctx context.Context, event *domain.Ev
 		INSERT INTO events (
 			event_id, gateway_id, gateway_epoch, event_seq, node_id, superframe_seq,
 			seq_num, schedule_version, severity, observed_at, observed_time_source,
-			radio_rx_monotonic_us, buffered, radio_ack_sent, slot_id, sensor_status_mask,
-			ch1_raw, ch2_raw, ch3_raw, battery_mv, node_duty_permille,
+			radio_rx_monotonic_us, buffered, radio_ack_sent, event_ref, event_code, event_value,
+			slot_id, ch1_raw,
 			trigger_channel, trigger_observed_raw, trigger_threshold_raw,
 			raw_payload_sha256, ack_status
 		) VALUES (
 			$1, $2, $3, $4, $5, $6,
 			$7, $8, $9, $10, $11,
-			$12, $13, $14, $15, $16,
-			$17, $18, $19, $20, $21,
-			$22, $23, $24,
-			$25, $26
+			$12, $13, $14, $15, $16, $17,
+			$18, $19,
+			$20, $21, $22,
+			$23, $24
 		) RETURNING id;
 	`
 
@@ -167,13 +167,11 @@ func (s *PostgresEventStorage) RecordEvent(ctx context.Context, event *domain.Ev
 		event.RadioRxMonotonicUS,
 		event.Buffered,
 		event.RadioAckSent,
-		int(event.Data.SlotID),
-		int(event.Data.SensorStatusMask),
-		int(event.Data.Ch1Raw),
-		int(event.Data.Ch2Raw),
-		int(event.Data.Ch3Raw),
-		int(event.Data.BatteryMv),
-		int(event.Data.NodeDutyPermille),
+		int64(event.Data.EventRef),
+		int(event.Data.EventCode),
+		int(event.Data.EventValue),
+		int(event.Data.EventRef),
+		int(event.Data.EventValue),
 		triggerChan,
 		triggerObs,
 		triggerThresh,
@@ -264,13 +262,9 @@ func (s *PostgresEventStorage) GetEvent(ctx context.Context, gatewayID, eventID 
 
 	e.NodeID = uint8(nodeID)
 	e.SeqNum = uint8(seqNum)
-	e.Data.SlotID = uint8(slotID)
-	e.Data.SensorStatusMask = uint8(mask)
-	e.Data.Ch1Raw = int16(ch1)
-	e.Data.Ch2Raw = uint16(ch2)
-	e.Data.Ch3Raw = uint16(ch3)
-	e.Data.BatteryMv = uint16(bat)
-	e.Data.NodeDutyPermille = uint16(duty)
+	e.Data.EventRef = uint32(slotID)
+	e.Data.EventCode = 1
+	e.Data.EventValue = int16(ch1)
 	e.Severity = domain.EventSeverity(sev)
 	e.ObservedTimeSource = domain.TimeSource(timeSrc)
 	e.AckStatus = domain.AckStatus(ackStat)

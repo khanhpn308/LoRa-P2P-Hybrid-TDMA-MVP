@@ -14,6 +14,9 @@
           "gateway_id": "gw01",
           "node_id": 1,
           "alert_id": "123",
+          "event_ref": 42,
+          "event_code": 1,
+          "event_value": 1,
           "severity": "P0_EMERGENCY",
           "triggered_at": "2026-10-20T08:00:00Z"
         }
@@ -32,6 +35,9 @@
           "gateway_id": "gw01",
           "node_id": 1,
           "alert_id": "123",
+          "event_ref": 42,
+          "event_code": 1,
+          "event_value": 1,
           "severity": "P0_EMERGENCY",
           "triggered_at": "2026-10-20T08:00:00Z"
         }
@@ -50,6 +56,9 @@
           "gateway_id": "gw01",
           "node_id": 1,
           "alert_id": "123",
+          "event_ref": 42,
+          "event_code": 1,
+          "event_value": 1,
           "severity": "P0_EMERGENCY",
           "triggered_at": "2026-10-20T08:00:00Z"
         }
@@ -207,6 +216,9 @@
           "gateway_id": "gw01",
           "node_id": 1,
           "alert_id": "123",
+          "event_ref": 42,
+          "event_code": 1,
+          "event_value": 1,
           "severity": "P0_EMERGENCY",
           "triggered_at": "2026-10-20T08:00:00Z"
         }

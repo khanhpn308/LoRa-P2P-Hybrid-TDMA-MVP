@@ -1,7 +1,6 @@
 package api_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -57,6 +56,16 @@ func (m *mockChannelRepo) ListChannels(ctx context.Context, planVersion string) 
 	return res, nil
 }
 
+func (m *mockChannelRepo) GetActiveAllocationByGateway(ctx context.Context, gatewayID string) (*domain.ChannelAllocation, error) {
+	if err := domain.ValidateGatewayID(gatewayID); err != nil {
+		return nil, err
+	}
+	if alloc, ok := m.allocs[gatewayID]; ok {
+		return alloc, nil
+	}
+	return nil, domain.ErrAllocationNotFound
+}
+
 func (m *mockChannelRepo) AllocateChannel(ctx context.Context, req domain.AllocateRequest) (*domain.ChannelAllocation, error) {
 	if err := domain.ValidateGatewayID(req.GatewayID); err != nil {
 		return nil, err
@@ -73,7 +82,7 @@ func (m *mockChannelRepo) AllocateChannel(ctx context.Context, req domain.Alloca
 
 	if existing, ok := m.allocs[req.GatewayID]; ok {
 		if existing.RequestID == req.RequestID && existing.ChannelID == req.ChannelID {
-			return existing, nil // Idempotent
+			return existing, nil // Idempotent replay
 		}
 		return nil, domain.ErrGatewayAlreadyAllocated
 	}
@@ -133,7 +142,7 @@ func TestListChannelsEndpoint(t *testing.T) {
 	handler.RegisterRoutes(mux)
 
 	t.Run("default plan version", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/rf/channels", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/channels", nil)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -141,24 +150,21 @@ func TestListChannelsEndpoint(t *testing.T) {
 			t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
 		}
 
-		var resp api.ChannelListResponseDTO
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		var channels []api.ChannelInfoDTO
+		if err := json.Unmarshal(rec.Body.Bytes(), &channels); err != nil {
 			t.Fatalf("unmarshal response: %v", err)
 		}
 
-		if resp.ChannelPlanVersion != domain.ChannelPlanVN920V1 {
-			t.Errorf("expected plan %s, got %s", domain.ChannelPlanVN920V1, resp.ChannelPlanVersion)
+		if len(channels) != domain.ChannelCountVN920 {
+			t.Errorf("expected %d channels, got %d", domain.ChannelCountVN920, len(channels))
 		}
-		if len(resp.Channels) != domain.ChannelCountVN920 {
-			t.Errorf("expected %d channels, got %d", domain.ChannelCountVN920, len(resp.Channels))
-		}
-		if !strings.Contains(resp.RegulatoryNotice, "ERP") {
-			t.Errorf("missing regulatory notice in response")
+		if channels[0].ChannelID != "CH00" || channels[0].FrequencyHz != 920250000 || channels[0].BandwidthHz != 125000 {
+			t.Errorf("unexpected channel 0 info: %+v", channels[0])
 		}
 	})
 
 	t.Run("invalid plan version query", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/rf/channels?plan_version=UNKNOWN_PLAN", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/channels?plan_version=UNKNOWN_PLAN", nil)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -175,38 +181,55 @@ func TestAllocateChannelEndpoint(t *testing.T) {
 	handler.RegisterRoutes(mux)
 
 	t.Run("successful allocation", func(t *testing.T) {
-		body := `{"gateway_id":"gw01","channel_id":"CH00","channel_plan_version":"VN920_V1","request_id":"req-1"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/rf/channels/allocate", strings.NewReader(body))
+		body := `{"channel_id":"CH00"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/gateways/gw01/channels/request", strings.NewReader(body))
+		req.Header.Set("X-Idempotency-Key", "req-1")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("expected 201 Created, got %d: %s", rec.Code, rec.Body.String())
 		}
 
-		var alloc domain.ChannelAllocation
+		var alloc api.ChannelAllocationDTO
 		if err := json.Unmarshal(rec.Body.Bytes(), &alloc); err != nil {
 			t.Fatalf("unmarshal response: %v", err)
 		}
-		if alloc.ChannelID != "CH00" || alloc.GatewayID != "gw01" || alloc.Status != domain.StatusAllocated {
+		if alloc.ChannelID != "CH00" || alloc.GatewayID != "gw01" || alloc.State != domain.StatusAllocated {
 			t.Errorf("unexpected allocation: %+v", alloc)
+		}
+		if alloc.FrequencyHz != 920250000 || alloc.BandwidthHz != 125000 {
+			t.Errorf("unexpected frequency or bandwidth: %+v", alloc)
+		}
+	})
+
+	t.Run("missing idempotency key", func(t *testing.T) {
+		body := `{"channel_id":"CH01"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/gateways/gw02/channels/request", strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request for missing idempotency key, got %d", rec.Code)
 		}
 	})
 
 	t.Run("idempotent replay", func(t *testing.T) {
-		body := `{"gateway_id":"gw01","channel_id":"CH00","channel_plan_version":"VN920_V1","request_id":"req-1"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/rf/channels/allocate", strings.NewReader(body))
+		body := `{"channel_id":"CH00"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/gateways/gw01/channels/request", strings.NewReader(body))
+		req.Header.Set("X-Idempotency-Key", "req-1")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200 OK for idempotent request, got %d", rec.Code)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("expected 201 Created for idempotent request, got %d", rec.Code)
 		}
 	})
 
 	t.Run("gateway already holds a channel", func(t *testing.T) {
-		body := `{"gateway_id":"gw01","channel_id":"CH01","channel_plan_version":"VN920_V1","request_id":"req-2"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/rf/channels/allocate", strings.NewReader(body))
+		body := `{"channel_id":"CH01"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/gateways/gw01/channels/request", strings.NewReader(body))
+		req.Header.Set("X-Idempotency-Key", "req-2")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -219,8 +242,9 @@ func TestAllocateChannelEndpoint(t *testing.T) {
 	})
 
 	t.Run("channel already in use by another gateway", func(t *testing.T) {
-		body := `{"gateway_id":"gw02","channel_id":"CH00","channel_plan_version":"VN920_V1","request_id":"req-3"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/rf/channels/allocate", strings.NewReader(body))
+		body := `{"channel_id":"CH00"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/gateways/gw02/channels/request", strings.NewReader(body))
+		req.Header.Set("X-Idempotency-Key", "req-3")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -233,8 +257,9 @@ func TestAllocateChannelEndpoint(t *testing.T) {
 	})
 
 	t.Run("invalid channel", func(t *testing.T) {
-		body := `{"gateway_id":"gw02","channel_id":"CH99","channel_plan_version":"VN920_V1","request_id":"req-4"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/rf/channels/allocate", strings.NewReader(body))
+		body := `{"channel_id":"CH99"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/gateways/gw02/channels/request", strings.NewReader(body))
+		req.Header.Set("X-Idempotency-Key", "req-4")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -244,8 +269,9 @@ func TestAllocateChannelEndpoint(t *testing.T) {
 	})
 
 	t.Run("rejects unknown json fields (SE-004)", func(t *testing.T) {
-		body := `{"gateway_id":"gw02","channel_id":"CH01","channel_plan_version":"VN920_V1","request_id":"req-5","injected":"evil"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/rf/channels/allocate", strings.NewReader(body))
+		body := `{"channel_id":"CH01","injected":"evil"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/gateways/gw02/channels/request", strings.NewReader(body))
+		req.Header.Set("X-Idempotency-Key", "req-5")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -255,13 +281,61 @@ func TestAllocateChannelEndpoint(t *testing.T) {
 	})
 
 	t.Run("rejects payload exceeding size limit", func(t *testing.T) {
-		oversized := `{"gateway_id":"gw02","channel_id":"CH01","channel_plan_version":"VN920_V1","request_id":"` + strings.Repeat("x", 5000) + `"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/rf/channels/allocate", strings.NewReader(oversized))
+		oversized := `{"channel_id":"CH01","filler":"` + strings.Repeat("x", 5000) + `"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/gateways/gw02/channels/request", strings.NewReader(oversized))
+		req.Header.Set("X-Idempotency-Key", "req-6")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected 400 Bad Request for oversized payload, got %d", rec.Code)
+		}
+	})
+}
+
+func TestGetChannelEndpoint(t *testing.T) {
+	repo := newMockRepo()
+	handler := api.NewChannelHandler(repo)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// Allocate CH02 to gw01
+	_, err := repo.AllocateChannel(context.Background(), domain.AllocateRequest{
+		GatewayID:          "gw01",
+		ChannelID:          "CH02",
+		ChannelPlanVersion: domain.ChannelPlanVN920V1,
+		RequestID:          "req-alloc-1",
+		GrantedBy:          "test",
+	})
+	if err != nil {
+		t.Fatalf("setup allocation failed: %v", err)
+	}
+
+	t.Run("successful get assignment", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/gateways/gw01/channel", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var alloc api.ChannelAllocationDTO
+		if err := json.Unmarshal(rec.Body.Bytes(), &alloc); err != nil {
+			t.Fatalf("unmarshal response: %v", err)
+		}
+		if alloc.GatewayID != "gw01" || alloc.ChannelID != "CH02" || alloc.State != domain.StatusAllocated {
+			t.Errorf("unexpected allocation: %+v", alloc)
+		}
+	})
+
+	t.Run("channel not allocated", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/gateways/gw99/channel", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected 404 Not Found, got %d", rec.Code)
 		}
 	})
 }
@@ -285,8 +359,7 @@ func TestReleaseChannelEndpoint(t *testing.T) {
 	}
 
 	t.Run("successful release", func(t *testing.T) {
-		body := `{"gateway_id":"gw01","channel_id":"CH01","request_id":"req-rel-1","reason":"schedule_deactivated"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/rf/channels/release", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/gateways/gw01/channel", nil)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -294,18 +367,17 @@ func TestReleaseChannelEndpoint(t *testing.T) {
 			t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
 		}
 
-		var alloc domain.ChannelAllocation
-		if err := json.Unmarshal(rec.Body.Bytes(), &alloc); err != nil {
+		var rel api.ChannelReleaseResponseDTO
+		if err := json.Unmarshal(rec.Body.Bytes(), &rel); err != nil {
 			t.Fatalf("unmarshal response: %v", err)
 		}
-		if alloc.Status != domain.StatusReleased || alloc.ReleaseReason != "schedule_deactivated" {
-			t.Errorf("unexpected released alloc: %+v", alloc)
+		if rel.Status != domain.StatusReleased || rel.GatewayID != "gw01" || rel.ChannelID != "CH01" {
+			t.Errorf("unexpected released alloc: %+v", rel)
 		}
 	})
 
 	t.Run("release non-allocated channel", func(t *testing.T) {
-		body := `{"gateway_id":"gw01","channel_id":"CH01","request_id":"req-rel-2"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/rf/channels/release", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/gateways/gw01/channel", nil)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 

@@ -38,6 +38,6 @@ Các tệp trong thư mục này định nghĩa giao diện để Firmware Node,
 
 ## Trạng thái
 
-- **Radio MAC V2 (0.3.0-draft):** Đã căn chỉnh baseline MVP (PR #205, PR #206); Join CAD bất đồng bộ (tối đa 3 lần thử lại), khe DATA W500ms + G50ms (chu kỳ 600ms/Node, 15 slots 9000ms), khe READY R400ms + G50ms (chu kỳ 500ms/Node) trong Migration theo yêu cầu, Beacon 0x43 32B HMAC-SHA256-128 trong Maintenance (~300s). HIL #169 tiếp tục đo kiểm thực địa độc lập.
-- **MQTT / REST / WebSocket V2 (Issue #128, #221):** Đồng bộ hóa schema sự kiện, hủy bỏ telemetry định kỳ, tích hợp cấp phát kênh VN920_V1, bổ sung schema relay UP_JOIN_HELLO 0x45 68B, cập nhật validator kiểm tra hình học lịch V2 và bộ test tương thích.
+- **Radio MAC V2 (0.3.0-draft):** Đã căn chỉnh baseline MVP (PR #205, PR #206); Join CAD bất đồng bộ (tối đa 3 lần thử lại), khe DATA W500ms + G50ms (chu kỳ 600ms/Node, 15 slots 9000ms), khe READY R400ms + G50ms (chu kỳ 500ms/Node) trong Migration theo yêu cầu, Beacon 0x43 32B HMAC-SHA256-128 trong Maintenance (~300s). Bãi bỏ hoàn toàn countdown 3->2->1 theo DEC-MH-05, D05, #208. HIL #169 tiếp tục đo kiểm thực địa độc lập.
+- **MQTT / REST / WebSocket V2 (Issue #128, #221, #232):** Đồng bộ hóa schema sự kiện UP_EVENT 0x41 (`event_ref`, `event_code`, `event_value`), hủy bỏ telemetry định kỳ và countdown schedule, chuẩn hóa REST route cấp phát kênh VN920_V1 (`/api/v1/channels`, `/api/v1/gateways/{gw_id}/channel*`), bổ sung schema relay UP_JOIN_HELLO 0x45 68B, cập nhật validator kiểm tra hình học lịch V2 và bộ test tương thích.
 - Bất đồng và lộ trình kỹ thuật được cập nhật tại [OPEN_DECISIONS.md](OPEN_DECISIONS.md).

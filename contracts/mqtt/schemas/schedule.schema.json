@@ -113,7 +113,6 @@
     "expires_at",
     "profile_id",
     "superframe_ms",
-    "min_announce_superframes",
     "slots"
   ],
   "description": "DRAFT MQTT v1 payload; schema checks local shape, not topic authorization, replay, clock freshness, state transitions or MQTT properties. Cross-team review pending (Issue #14)."

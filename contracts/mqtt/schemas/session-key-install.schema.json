@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:loratdma:mqtt:session-key-install:1.1-draft",
-  "title": "Gateway session key installation (proposed MQTT 5.0 contract)",
-  "description": "DRAFT proposal from Owner-approved key-install principles; JSON Schema validation is NOT proof of AES-GCM authenticity, authorization, freshness or key persistence.",
+  "title": "Gateway session key installation (legacy V1 contract)",
+  "description": "LEGACY_HISTORICAL_V1: Historical V1 session key installation schema (PR #123) maintained for backward compatibility. In V2 architecture (Umbrella #125, Issue #128, Gate G4), ephemeral X25519 ECDH shared secret Z is established at the edge, and Backend remains Zero-Knowledge; this contract will be superseded by Session Binding Ticket V2. JSON Schema validation is NOT proof of AES-GCM authenticity, authorization, freshness or key persistence.",
   "type": "object",
   "additionalProperties": false,
   "properties": {

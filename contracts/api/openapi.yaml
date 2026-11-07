@@ -889,6 +889,9 @@ components:
         - "alert_id"
         - "node_id"
         - "gateway_id"
+        - "event_ref"
+        - "event_code"
+        - "event_value"
         - "severity"
         - "triggered_at"
         - "received_at"
@@ -905,6 +908,21 @@ components:
         gateway_id:
           type: "string"
           pattern: "^[A-Za-z0-9_-]{1,32}$"
+        event_ref:
+          type: "integer"
+          minimum: 0
+          maximum: 4294967295
+          description: "Monotonic local event reference (4B u32) from UP_EVENT 0x41"
+        event_code:
+          type: "integer"
+          minimum: 0
+          maximum: 255
+          description: "Violation/alarm category code (1B u8, button press = 0x01)"
+        event_value:
+          type: "integer"
+          minimum: -32768
+          maximum: 32767
+          description: "Sensor measurement reading at violation (2B i16, button press = 1)"
         severity:
           type: "string"
           enum:
@@ -1037,6 +1055,7 @@ components:
           type: "integer"
           minimum: 3
           maximum: 30
+          description: "DEPRECATED_HISTORICAL: Legacy 3-2-1 countdown superframes parameter; superseded by V2 on-demand Maintenance schedule cutover (PR #206, #208)."
     CommandRequest:
       type: "object"
       additionalProperties: false

@@ -107,13 +107,9 @@
         "seq_num": 51,
         "schedule_version": 5,
         "data": {
-          "slot_id": 1,
-          "sensor_status_mask": 0,
-          "ch1_raw": 2575,
-          "ch2_raw": 620,
-          "ch3_raw": 50,
-          "battery_mv": 3600,
-          "node_duty_permille": 6
+          "event_ref": 1,
+          "event_code": 1,
+          "event_value": 1
         },
         "severity": "P0_EMERGENCY",
         "radio_ack_sent": true
@@ -138,13 +134,9 @@
         "seq_num": 51,
         "schedule_version": 5,
         "data": {
-          "slot_id": 1,
-          "sensor_status_mask": 0,
-          "ch1_raw": 2575,
-          "ch2_raw": 620,
-          "ch3_raw": 50,
-          "battery_mv": 3600,
-          "node_duty_permille": 6
+          "event_ref": 1,
+          "event_code": 1,
+          "event_value": 1
         },
         "severity": "CRITICAL",
         "radio_ack_sent": true

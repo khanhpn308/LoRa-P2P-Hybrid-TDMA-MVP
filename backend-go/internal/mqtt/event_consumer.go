@@ -44,15 +44,11 @@ type AlertEventPayload struct {
 	RadioAckSent       bool                 `json:"radio_ack_sent"`
 }
 
-// AlertDataPayload represents sensor payload metrics.
+// AlertDataPayload represents sensor payload metrics mapped from UP_EVENT (0x41 26B).
 type AlertDataPayload struct {
-	SlotID           uint8  `json:"slot_id"`
-	SensorStatusMask uint8  `json:"sensor_status_mask"`
-	Ch1Raw           int16  `json:"ch1_raw"`
-	Ch2Raw           uint16 `json:"ch2_raw"`
-	Ch3Raw           uint16 `json:"ch3_raw"`
-	BatteryMv        uint16 `json:"battery_mv"`
-	NodeDutyPermille uint16 `json:"node_duty_permille"`
+	EventRef   uint32 `json:"event_ref"`
+	EventCode  uint8  `json:"event_code"`
+	EventValue int16  `json:"event_value"`
 }
 
 // AlertTriggerPayload represents trigger threshold metrics.
@@ -241,13 +237,9 @@ func (ec *EventConsumer) processMessage(ctx context.Context, msg IngestMessage) 
 		Buffered:           wire.Buffered,
 		RadioAckSent:       wire.RadioAckSent,
 		Data: domain.EventData{
-			SlotID:           wire.Data.SlotID,
-			SensorStatusMask: wire.Data.SensorStatusMask,
-			Ch1Raw:           wire.Data.Ch1Raw,
-			Ch2Raw:           wire.Data.Ch2Raw,
-			Ch3Raw:           wire.Data.Ch3Raw,
-			BatteryMv:        wire.Data.BatteryMv,
-			NodeDutyPermille: wire.Data.NodeDutyPermille,
+			EventRef:   wire.Data.EventRef,
+			EventCode:  wire.Data.EventCode,
+			EventValue: wire.Data.EventValue,
 		},
 		AckStatus: domain.AckStatusUnacknowledged,
 	}

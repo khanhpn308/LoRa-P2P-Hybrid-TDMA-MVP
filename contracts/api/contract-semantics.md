@@ -27,12 +27,18 @@
   - Idempotent request using `X-Idempotency-Key`.
   - Rejects with `409 Conflict` if the channel is already allocated to another Gateway, or if the Gateway already holds a different channel.
   - Returns `201 Created` with `ChannelAllocation` containing `allocation_generation` (monotonic uint32) and `rf_authorized: false`.
+- **`GET /api/v1/gateways/{gw_id}/channel`:**
+  - Reads the currently allocated VN920 channel for the specified Gateway. Returns 200 with `ChannelAllocation` or 404 if not allocated.
 - **`DELETE /api/v1/gateways/{gw_id}/channel`:**
   - ADMIN only. Releases the channel assignment.
   - **Release Safety Guard:** Rejects with `409 Conflict` if the Gateway has an `ACTIVE` TDMA schedule, unless `force=true` query parameter is explicitly provided.
 - **State Hierarchy Invariant:**
   `CHANNEL_ALLOCATED` $\to$ `SCHEDULE_STAGED` $\to$ `SCHEDULE_ACTIVE` $\to$ `RF_AUTHORIZED`.
   Channel allocation is a prerequisite for TDMA scheduling, but channel allocation alone **never authorizes RF transmission**.
+
+- **Alert & Realtime Event Synchronization (Issue #232):**
+  - REST entity `Alert` and WSS `ALERT_TRIGGERED` contain `event_ref` (u32), `event_code` (u8, button press = 0x01), and `event_value` (i16, button press = 1), matching the discrete payload of `UP_EVENT` 0x41 (26B).
+  - Countdown parameter `min_announce_superframes` in `GenerateScheduleRequest` is marked `deprecated: true` per Owner Decision #208. Schedule migration occurs on-demand during Maintenance cycles.
 
 ## WSS / state continuity
 

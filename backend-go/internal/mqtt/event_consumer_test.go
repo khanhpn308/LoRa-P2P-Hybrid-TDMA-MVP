@@ -100,13 +100,9 @@ func makeValidWirePayload() []byte {
 		ScheduleVersion:    1,
 		Severity:           "P1_HIGH",
 		Data: mqtt.AlertDataPayload{
-			SlotID:           1,
-			SensorStatusMask: 0,
-			Ch1Raw:           2000,
-			Ch2Raw:           100,
-			Ch3Raw:           50,
-			BatteryMv:        3300,
-			NodeDutyPermille: 5,
+			EventRef:   1,
+			EventCode:  1,
+			EventValue: 1,
 		},
 		Trigger: &mqtt.AlertTriggerPayload{
 			Channel:      1,
@@ -186,7 +182,7 @@ func TestEventConsumer_ConflictingPayloadDetected(t *testing.T) {
 	// Change payload business metric under same event_id
 	var wire mqtt.AlertEventPayload
 	_ = json.Unmarshal(payload1, &wire)
-	wire.Data.Ch1Raw = 9999
+	wire.Data.EventValue = 9999
 	payload2, _ := json.Marshal(wire)
 
 	msg2 := mqtt.IngestMessage{
