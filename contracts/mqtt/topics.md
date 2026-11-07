@@ -41,7 +41,7 @@ QoS1 có thể giao trùng và sai thứ tự; không có cam kết latency, exa
 
 ## 3. Transaction lịch TDMA
 
-Backend: `PROPOSED → SENT → STAGED → ACTIVE` hoặc `REJECTED / EXPIRED`; Gateway: validate → stage shadow NVS → announce ≥`min_announce_superframes` chu kỳ hoàn chỉnh → activate tại ranh giới superframe → report.
+Backend: `PROPOSED → SENT → STAGED → ACTIVE` hoặc `REJECTED / EXPIRED`; Gateway: validate → stage shadow NVS → chuyển đổi lịch V2 trong chu kỳ Maintenance on-demand qua `DOWN_SCHED_PREPARE` (80B) $\to$ 100% `UP_SCHED_READY 0x4C` (41B) $\to$ `DOWN_SCHED_DECISION` (80B) COMMIT tại $K_{\text{TARGET}}$ (bãi bỏ hoàn toàn cơ chế countdown $3 \to 2 \to 1$ qua Beacon và Schedule Lease theo DEC-MH-05, D05, #208 / PR #206) → report `ACTIVE_REPORT`.
 
 - `STAGE_ACK`: Gateway đã validate/persist; **không** chứng minh các Node nhận được lịch và **không** cho Backend cập nhật ACTIVE.
 - `VERIFY_NACK`: từ chối với `reason_code`; active trước đó giữ nguyên.

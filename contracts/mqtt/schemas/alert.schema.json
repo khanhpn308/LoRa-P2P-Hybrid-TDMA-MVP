@@ -93,49 +93,41 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "slot_id",
-        "sensor_status_mask",
-        "ch1_raw",
-        "ch2_raw",
-        "ch3_raw",
-        "battery_mv",
-        "node_duty_permille"
+        "event_ref",
+        "event_code",
+        "event_value"
       ],
       "properties": {
-        "slot_id": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 15
-        },
-        "sensor_status_mask": {
+        "event_ref": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 255
+          "maximum": 4294967295,
+          "description": "Monotonic local event reference (4B u32) from UP_EVENT 0x41"
         },
-        "ch1_raw": {
+        "event_code": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "description": "Violation/alarm category code (1B u8, button press = 0x01)"
+        },
+        "event_value": {
           "type": "integer",
           "minimum": -32768,
-          "maximum": 32767
+          "maximum": 32767,
+          "description": "Sensor measurement reading at violation (2B i16, button press = 1)"
         },
-        "ch2_raw": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 65535
-        },
-        "ch3_raw": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 65535
-        },
-        "battery_mv": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 65535
-        },
-        "node_duty_permille": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 1000
+        "observed_at": {
+          "oneOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Mapped from 4B u32 Unix timestamp in 0x41 plaintext (null when unclocked 0xFFFFFFFF)"
         }
       }
     },

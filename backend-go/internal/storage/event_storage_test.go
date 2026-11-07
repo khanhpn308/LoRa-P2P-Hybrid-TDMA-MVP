@@ -34,13 +34,9 @@ func validStorageEvent() *domain.Event {
 		Buffered:           false,
 		RadioAckSent:       true,
 		Data: domain.EventData{
-			SlotID:           1,
-			SensorStatusMask: 0,
-			Ch1Raw:           2500,
-			Ch2Raw:           500,
-			Ch3Raw:           300,
-			BatteryMv:        3300,
-			NodeDutyPermille: 10,
+			EventRef:   1,
+			EventCode:  1,
+			EventValue: 1,
 		},
 		Trigger: &domain.EventTrigger{
 			Channel:      1,
@@ -116,8 +112,8 @@ func TestGetEvent_Success(t *testing.T) {
 	if evt.EventID != "gw01:550e8400-e29b-41d4-a716-446655440000:42" {
 		t.Fatalf("unexpected event_id: %s", evt.EventID)
 	}
-	if evt.NodeID != 1 || evt.Data.SlotID != 1 {
-		t.Fatalf("unexpected node or slot ID: node=%d, slot=%d", evt.NodeID, evt.Data.SlotID)
+	if evt.NodeID != 1 || evt.Data.EventRef != 1 {
+		t.Fatalf("unexpected node or event ref: node=%d, event_ref=%d", evt.NodeID, evt.Data.EventRef)
 	}
 }
 

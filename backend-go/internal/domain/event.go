@@ -56,15 +56,11 @@ var (
 	ErrMissingRadioACK       = errors.New("radio_ack_sent must be true for verified UP_EVENT ingestion")
 )
 
-// EventData contains measured sensor metrics mapped from UP_EVENT (0x41 26B).
+// EventData contains event fields mapped from UP_EVENT (0x41 26B).
 type EventData struct {
-	SlotID           uint8
-	SensorStatusMask uint8
-	Ch1Raw           int16
-	Ch2Raw           uint16
-	Ch3Raw           uint16
-	BatteryMv        uint16
-	NodeDutyPermille uint16
+	EventRef   uint32
+	EventCode  uint8
+	EventValue int16
 }
 
 // EventTrigger optionally describes the specific limit violation that generated the event.
@@ -131,10 +127,6 @@ func (e *Event) Validate() error {
 		return fmt.Errorf("%w: %d", ErrInvalidNodeID, e.NodeID)
 	}
 
-	if e.Data.SlotID < 1 || e.Data.SlotID > 15 {
-		return fmt.Errorf("%w: %d", ErrInvalidSlotID, e.Data.SlotID)
-	}
-
 	switch e.Severity {
 	case SeverityP0Emergency, SeverityP1High, SeverityP2Medium, SeverityP3Normal:
 	default:
@@ -160,10 +152,6 @@ func (e *Event) Validate() error {
 
 	if !e.RadioAckSent {
 		return ErrMissingRadioACK
-	}
-
-	if e.Data.NodeDutyPermille > 1000 {
-		return fmt.Errorf("%w: %d", ErrInvalidDutyCycle, e.Data.NodeDutyPermille)
 	}
 
 	if e.Trigger != nil {
@@ -199,18 +187,12 @@ func (e *Event) ComputePayloadSHA256() [32]byte {
 		h.Write([]byte(e.ObservedAt.UTC().Format(time.RFC3339Nano)))
 	}
 
-	// Data metrics
-	h.Write([]byte{e.Data.SlotID, e.Data.SensorStatusMask})
+	// Data metrics (UP_EVENT 0x41 26B)
+	binary.BigEndian.PutUint32(b4[:], e.Data.EventRef)
+	h.Write(b4[:])
+	h.Write([]byte{e.Data.EventCode})
 	var b2 [2]byte
-	binary.BigEndian.PutUint16(b2[:], uint16(e.Data.Ch1Raw))
-	h.Write(b2[:])
-	binary.BigEndian.PutUint16(b2[:], e.Data.Ch2Raw)
-	h.Write(b2[:])
-	binary.BigEndian.PutUint16(b2[:], e.Data.Ch3Raw)
-	h.Write(b2[:])
-	binary.BigEndian.PutUint16(b2[:], e.Data.BatteryMv)
-	h.Write(b2[:])
-	binary.BigEndian.PutUint16(b2[:], e.Data.NodeDutyPermille)
+	binary.BigEndian.PutUint16(b2[:], uint16(e.Data.EventValue))
 	h.Write(b2[:])
 
 	// Trigger

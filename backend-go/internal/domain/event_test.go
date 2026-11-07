@@ -32,13 +32,9 @@ func validTestEvent() *domain.Event {
 		Buffered:           false,
 		RadioAckSent:       true,
 		Data: domain.EventData{
-			SlotID:           1,
-			SensorStatusMask: 0,
-			Ch1Raw:           2500,
-			Ch2Raw:           500,
-			Ch3Raw:           300,
-			BatteryMv:        3300,
-			NodeDutyPermille: 10,
+			EventRef:   1,
+			EventCode:  1,
+			EventValue: 1,
 		},
 		Trigger: &domain.EventTrigger{
 			Channel:      1,
@@ -114,24 +110,6 @@ func TestEvent_Validation_InvalidNodeID(t *testing.T) {
 	}
 }
 
-func TestEvent_Validation_InvalidSlotID(t *testing.T) {
-	evt := validTestEvent()
-	evt.Data.SlotID = 16
-
-	if err := evt.Validate(); err == nil {
-		t.Fatalf("expected error for slot_id=16")
-	}
-}
-
-func TestEvent_Validation_DutyCycleExceeded(t *testing.T) {
-	evt := validTestEvent()
-	evt.Data.NodeDutyPermille = 1001
-
-	if err := evt.Validate(); err == nil {
-		t.Fatalf("expected error for node_duty_permille > 1000")
-	}
-}
-
 func TestEvent_ComputePayloadSHA256_DifferentPayloadDiffers(t *testing.T) {
 	evt1 := validTestEvent()
 	evt2 := validTestEvent()
@@ -139,7 +117,7 @@ func TestEvent_ComputePayloadSHA256_DifferentPayloadDiffers(t *testing.T) {
 	hash1 := evt1.ComputePayloadSHA256()
 
 	// Change a business measurement
-	evt2.Data.Ch1Raw = 9999
+	evt2.Data.EventValue = 9999
 	hash2 := evt2.ComputePayloadSHA256()
 
 	if bytes.Equal(hash1[:], hash2[:]) {

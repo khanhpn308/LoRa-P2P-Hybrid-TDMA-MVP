@@ -184,7 +184,6 @@
     "rf_duty_permille",
     "free_heap_bytes",
     "offline_queue_count",
-    "offline_dropped_telemetry",
     "offline_dropped_alert",
     "node_count"
   ],
