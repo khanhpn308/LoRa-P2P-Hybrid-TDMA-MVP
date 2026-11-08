@@ -133,15 +133,52 @@ allowed; they contain no private key. Output contains locations and reasons
 only. This is not an arbitrary-secret detector or a full-history scan. Run it
 again after staging. Ignored and untracked local secret files are not read.
 
+## Stop and cleanup
+
 Stop the manually started project, preserving data:
 
 ```bash
-docker compose --env-file .env -f deploy/compose.yaml --profile tls --profile dev-insecure down
+docker compose --env-file .env -f deploy/compose.yaml --profile tls --profile dev-insecure --profile fullstack down
 ```
 
 Adding `-v` permanently deletes that project's database and MQTT volumes. Remove
 local test certificates and `.env` only when no longer needed. Do not delete
 shared CA material.
+
+## Full-stack Containerization (Backend & Web Dashboard)
+
+Issue #266 integrates full-stack containerization for local execution and end-to-end verification:
+- **`backend`**: Go Modular Monolith (`backend-go`), multi-stage Alpine build, non-root user (`appuser:appgroup`), automated PostgreSQL schema migrations, exposed at `127.0.0.1:8080`.
+- **`web-dashboard`**: Next.js 16 standalone output (`clients/web-dashboard`), multi-stage Node 22 Alpine build, non-root user (`nextjs:nodejs`), exposed at `127.0.0.1:3000`.
+
+### Start Full-stack with Docker Compose
+
+Ensure `.env` is configured with `POSTGRES_PASSWORD`, `POSTGRES_USER`, and `POSTGRES_DB`:
+
+```bash
+# Validate Compose configuration without leaking secrets
+docker compose --env-file .env -f deploy/compose.yaml --profile fullstack config -q
+
+# Build and start the full-stack services (PostgreSQL, Backend, Web Dashboard)
+docker compose --env-file .env -f deploy/compose.yaml --profile fullstack up -d --build
+
+# Verify container health and running status
+docker compose --env-file .env -f deploy/compose.yaml --profile fullstack ps
+
+# Check backend migration & server logs
+docker compose --env-file .env -f deploy/compose.yaml logs -f backend
+
+# Check web dashboard logs
+docker compose --env-file .env -f deploy/compose.yaml logs -f web-dashboard
+```
+
+### Stop Full-stack Services
+
+```bash
+docker compose --env-file .env -f deploy/compose.yaml --profile fullstack down
+```
+To also remove persistent database and broker volumes, append `-v`.
+
 
 Human Security Audit still needs to assess CA issuance/revocation/rotation,
 Backend identity privileges, Docker daemon/network access and deployment on the

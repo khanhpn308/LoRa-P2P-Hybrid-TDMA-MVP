@@ -1,0 +1,10 @@
+.git
+.next
+node_modules
+out
+tests
+coverage
+*.log
+.env*.local
+Dockerfile
+.dockerignore
