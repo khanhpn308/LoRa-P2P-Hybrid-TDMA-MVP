@@ -1,3 +1,4 @@
+#include <inttypes.h>
 #include <string.h>
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -141,7 +142,8 @@ static void gateway_tdma_master_task(void *pvParameters)
         /* Wait for superframe epoch notification or run periodically */
         (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(10000));
 
-        ESP_LOGD(TAG, "Starting Superframe sequence #%lu", (unsigned long)s_tdma_engine.superframe_seq);
+        ESP_LOGI(TAG, "Starting Superframe sequence #%" PRIu32 " (Broadcasting DOWN_SYNC_BEACON 32B)",
+                 s_tdma_engine.superframe_seq);
         esp_err_t err = gateway_tdma_run_superframe(&s_tdma_engine);
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "Superframe cycle returned warning: %s", esp_err_to_name(err));
@@ -210,7 +212,11 @@ void app_main(void)
 
     // Initialize Gateway V2 Join Relay Engine
     gateway_v2_join_config_t join_cfg = {
+#ifdef CONFIG_GATEWAY_TARGET_GW_ID
+        .target_gw_id = (uint8_t)CONFIG_GATEWAY_TARGET_GW_ID,
+#else
         .target_gw_id = 1,
+#endif
         .network_id = 100,
     };
     snprintf(join_cfg.gateway_id, sizeof(join_cfg.gateway_id), "%s", transport_cfg.gateway_id);
@@ -233,6 +239,9 @@ void app_main(void)
     // Configure Gateway TDMA Master Engine
     gateway_tdma_config_t cfg;
     ESP_ERROR_CHECK(gateway_tdma_get_default_config(&cfg));
+#ifdef CONFIG_GATEWAY_TARGET_GW_ID
+    cfg.gw_id = (uint8_t)CONFIG_GATEWAY_TARGET_GW_ID;
+#endif
     cfg.key_lookup_fn = hal_session_key_lookup;
 
     gateway_tdma_radio_hal_t hal = {

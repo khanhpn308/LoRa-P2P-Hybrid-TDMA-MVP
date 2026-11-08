@@ -1,5 +1,17 @@
 #include "gateway_tdma_master.h"
 #include <string.h>
+#include <inttypes.h>
+#include "esp_log.h"
+
+static const char *TAG = "gw_tdma_master";
+
+/* Default project test keys (used when unprovisioned in development) */
+static const uint8_t DEFAULT_K_BEACON[32] = {
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+    0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+    0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+    0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20
+};
 
 const char *gateway_tdma_state_to_str(gateway_tdma_state_t state)
 {
@@ -25,6 +37,7 @@ esp_err_t gateway_tdma_get_default_config(gateway_tdma_config_t *out_cfg)
     out_cfg->gw_id = 1U;
     out_cfg->sched_ver = 1U;
     out_cfg->beacon_key_id = 1U;
+    (void)memcpy(out_cfg->k_beacon, DEFAULT_K_BEACON, sizeof(out_cfg->k_beacon));
     out_cfg->slot_count = GW_TDMA_MAX_DATA_SLOTS;
     out_cfg->slot_duration_ms = GW_TDMA_DEFAULT_SLOT_DURATION_MS;
     out_cfg->slot_guard_ms = GW_TDMA_DEFAULT_GUARD_MS;
@@ -141,6 +154,8 @@ esp_err_t gateway_tdma_run_superframe(gateway_tdma_engine_t *engine)
     if (airtime_err != ESP_OK) {
         /* Fail-closed: airtime budget exhausted -> suppress Beacon emission */
         engine->beacon_blocked_count++;
+        ESP_LOGW(TAG, "Beacon TX suppressed fail-closed: airtime duty limit reached (%s)",
+                 esp_err_to_name(airtime_err));
     } else {
         uint8_t beacon_buf[32];
         uint32_t epoch_sec = engine->hal.get_time_ms() / 1000U;
@@ -173,7 +188,14 @@ esp_err_t gateway_tdma_run_superframe(gateway_tdma_engine_t *engine)
             if (tx_err == ESP_OK) {
                 (void)airtime_policy_record_tx(engine->cfg.packet_toa_beacon_ms);
                 engine->beacon_tx_count++;
+                ESP_LOGI(TAG, "Beacon TX successful: SF_SEQ=%" PRIu32 ", GW_ID=%u, SchedVer=%u, Maint=%u (32B on-air)",
+                         engine->superframe_seq, engine->cfg.gw_id, engine->cfg.sched_ver,
+                         engine->is_maintenance ? 1U : 0U);
+            } else {
+                ESP_LOGE(TAG, "Beacon radio_tx failed: %s", esp_err_to_name(tx_err));
             }
+        } else {
+            ESP_LOGE(TAG, "Beacon HMAC computation failed: %s", esp_err_to_name(hmac_err));
         }
     }
 
