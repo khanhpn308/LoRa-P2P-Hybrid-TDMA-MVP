@@ -32,7 +32,7 @@ static gateway_tdma_engine_t s_tdma_engine;
 static TaskHandle_t s_tdma_task_handle = NULL;
 static esp_timer_handle_t s_epoch_timer = NULL;
 
-#define GATEWAY_TASK_STACK_SIZE_BYTES (12288U)
+#define GATEWAY_TASK_STACK_SIZE_BYTES (16384U)
 static StackType_t s_gateway_task_stack[GATEWAY_TASK_STACK_SIZE_BYTES];
 static StaticTask_t s_gateway_task_tcb;
 
