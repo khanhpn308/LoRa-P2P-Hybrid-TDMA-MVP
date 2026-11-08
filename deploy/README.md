@@ -156,21 +156,43 @@ Issue #266 integrates full-stack containerization for local execution and end-to
 Ensure `.env` is configured with `POSTGRES_PASSWORD`, `POSTGRES_USER`, and `POSTGRES_DB`:
 
 ```bash
-# Validate Compose configuration without leaking secrets
-docker compose --env-file .env -f deploy/compose.yaml --profile fullstack config -q
+# 1. Build frontend với API URL mới (hoặc khi thay đổi NEXT_PUBLIC_API_URL):
+docker compose --env-file .env -f deploy/compose.yaml build web-dashboard
 
-# Build and start the full-stack services (PostgreSQL, Backend, Web Dashboard)
-docker compose --env-file .env -f deploy/compose.yaml --profile fullstack up -d --build
+# 2. Khởi chạy toàn bộ hệ thống (PostgreSQL, Backend, Frontend):
+docker compose --env-file .env -f deploy/compose.yaml --profile fullstack up -d
 
-# Verify container health and running status
-docker compose --env-file .env -f deploy/compose.yaml --profile fullstack ps
+# 3. Kiểm tra trạng thái và sức khỏe các container:
+docker compose --env-file .env -f deploy/compose.yaml ps
 
-# Check backend migration & server logs
+# Xem log Backend & migrations:
 docker compose --env-file .env -f deploy/compose.yaml logs -f backend
 
-# Check web dashboard logs
+# Xem log Web Dashboard:
 docker compose --env-file .env -f deploy/compose.yaml logs -f web-dashboard
 ```
+
+### External & LAN Access (Laptop & Mobile)
+
+Khi cần truy cập từ các thiết bị ngoài trong cùng mạng Wi-Fi/LAN (điện thoại, ESP32 Gateway):
+1. Cấu hình biến môi trường trong file `.env`:
+   - `NEXT_PUBLIC_API_URL=http://<LAN_IP>:8080` (ví dụ `http://192.168.88.113:8080`).
+   - `BACKEND_PORT_BIND=0.0.0.0:8080`
+   - `WEB_PORT_BIND=0.0.0.0:3000`
+   - *(Lưu ý: Luôn giữ `POSTGRES_PORT_BIND=127.0.0.1:5432` để bảo mật CSDL)*.
+2. Build lại frontend và khởi chạy:
+   ```bash
+   docker compose --env-file .env -f deploy/compose.yaml build web-dashboard
+   docker compose --env-file .env -f deploy/compose.yaml --profile fullstack up -d
+   ```
+3. Mở cổng trên Windows Defender Firewall (chạy PowerShell quyền Administrator trên Windows):
+   ```powershell
+   New-NetFirewallRule -DisplayName "WSL-Docker-Inbound" -Direction Inbound -LocalPort 3000,8080,1883,8883 -Protocol TCP -Action Allow
+   New-NetFirewallHyperVRule -Name "WSL Docker" -DisplayName "WSL Docker" -Direction Inbound -LocalPorts 3000,8080,1883,8883 -Protocol TCP -Action Allow
+   ```
+4. Địa chỉ truy cập:
+   - **Từ chính máy tính laptop:** `http://localhost:3000`
+   - **Từ thiết bị bên ngoài (Điện thoại/Tablet cùng mạng Wi-Fi):** `http://<LAN_IP>:3000` (ví dụ `http://192.168.88.113:3000`)
 
 ### Stop Full-stack Services
 

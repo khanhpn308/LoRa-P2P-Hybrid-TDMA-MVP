@@ -17,12 +17,33 @@ export class ApiClientError extends Error {
 /**
  * Resolves the Backend REST API base URL.
  * Defaults to http://localhost:8080 for local development.
+ * If accessed via localhost, always targets localhost backend to avoid WSL2 host loopback drops.
  */
 export function getApiBaseUrl(): string {
+  let backendPort = "8080";
+  if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_API_URL) {
+    try {
+      const parsed = new URL(process.env.NEXT_PUBLIC_API_URL);
+      if (parsed.port) {
+        backendPort = parsed.port;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  if (typeof window !== "undefined" && window.location) {
+    if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+      return `${window.location.protocol}//${window.location.hostname}:${backendPort}`;
+    }
+  }
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_API_URL) {
     return process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, "");
   }
-  return "http://localhost:8080";
+  if (typeof window !== "undefined" && window.location) {
+    return `${window.location.protocol}//${window.location.hostname}:${backendPort}`;
+  }
+  return `http://localhost:${backendPort}`;
 }
 
 /**
