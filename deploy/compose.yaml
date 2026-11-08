@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
     ports:
-      - "127.0.0.1:5432:5432"
+      - "${POSTGRES_PORT_BIND:-127.0.0.1:5432}:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
@@ -42,6 +42,53 @@ services:
         bind:
           create_host_path: false
       - mqtt_data:/mosquitto/data
+    networks: [local]
+
+  backend:
+    build:
+      context: ../backend-go
+      dockerfile: Dockerfile
+    profiles: ["fullstack", "backend"]
+    environment:
+      PORT: "8080"
+      DATABASE_URL: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+      MQTT_HOST: ${MQTT_HOST:-mqtt-dev}
+      MQTT_PORT: ${MQTT_PORT:-1883}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-default-dev-jwt-secret-key-min-32-bytes-secure!!}
+    ports:
+      - "${BACKEND_PORT_BIND:-127.0.0.1:8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks: [local]
+
+  web-dashboard:
+    build:
+      context: ../clients/web-dashboard
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+    profiles: ["fullstack", "frontend"]
+    environment:
+      PORT: "3000"
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+    ports:
+      - "${WEB_PORT_BIND:-127.0.0.1:3000}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
     networks: [local]
 
 volumes:

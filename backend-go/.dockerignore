@@ -1,0 +1,8 @@
+.git
+.dockerignore
+Dockerfile
+*_test.go
+coverage.out
+server
+*.log
+.tmp
