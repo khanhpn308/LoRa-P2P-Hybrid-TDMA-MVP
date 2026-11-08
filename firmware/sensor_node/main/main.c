@@ -14,6 +14,7 @@
 #include "node_crypto.h"
 #include "node_tdma_client.h"
 #include "node_v2_join.h"
+#include "oled_ssd1306.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "sensor_node";
@@ -187,6 +188,24 @@ void app_main(void)
                     ESP_LOGW(TAG, "Failed to enqueue event: %s (FIFO dropped count: %" PRIu32 ")",
                              esp_err_to_name(push_err), node_event_fifo_get_dropped_count(&s_event_fifo));
                 }
+
+                /* Local OLED display update for confirmed button event (Issue #271) */
+#if CONFIG_OLED_SSD1306_ENABLE
+                oled_ssd1306_dev_t oled_dev;
+                oled_ssd1306_config_t oled_cfg;
+                (void)oled_ssd1306_get_default_config(&oled_cfg);
+                oled_cfg.button_gpio = (gpio_num_t)CONFIG_NODE_BUTTON_GPIO;
+                esp_err_t oled_err = oled_ssd1306_init(&oled_dev, &oled_cfg);
+                if (oled_err == ESP_OK) {
+                    oled_err = oled_ssd1306_display_event(&oled_dev, rand_val, now_sec, s_button_events);
+                    if (oled_err != ESP_OK) {
+                        ESP_LOGW(TAG, "OLED display event failed: %s", esp_err_to_name(oled_err));
+                    }
+                    (void)oled_ssd1306_deinit(&oled_dev);
+                } else {
+                    ESP_LOGW(TAG, "OLED init failed: %s (non-fatal, continuing event flow)", esp_err_to_name(oled_err));
+                }
+#endif
             } else {
                 ESP_LOGW(TAG, "Transient wake without qualified button press (bounce/noise filtered)");
             }
