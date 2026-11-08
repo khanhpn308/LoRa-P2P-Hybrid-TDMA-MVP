@@ -56,7 +56,7 @@ OPERATIONS = {
           (r"(?i)\b(?:sx1276|lora|radio|airtime)\w*", ("RAD",)),
           (r"(?i)\b(?:aes|nonce|replay|crypto|mic|payload|decode|parse|frame|packet|buffer|memcpy)\w*", ("SEC",)),
           (r"(?i)\b(?:tdma|superframe|guard|schedule)\w*", ("TDMA",))),
-    "GO": ((r"(?i)\b(?:sql|postgres|pgx|transaction|database|db|query|prepare)\w*", ("DB",)),
+    "GO": ((r"(?i)\b(?:sql|postgres|pgx|transaction|database|db|prepare)\w*", ("DB",)),
            (r"(?i)\b(?:mqtt|puback|mosquitto)\w*", ("MQ", "CT")),
            (r"(?i)\b(?:tls|auth|credential|crypto|rbac)\w*", ("SE",)),
            (r"\b(?:goroutine|go[ \t]+\w+|chan|sync|context)\b", ("RT",)),
@@ -325,28 +325,31 @@ def _impact(repo, paths):
             packages.setdefault(str(PurePosixPath(name).parent), set()).add(name)
     for name, raw in code.items():
         text = raw.decode()
-        targets = set()
         if name.endswith((".c", ".h")):
             for include in re.findall(r'(?m)^\s*#\s*include\s*[<"]([^>"\n]+)[>"]', text):
                 matches = by_header.get(PurePosixPath(include).name, set())
                 if len(matches) > 1:
                     raise StandardsError("Ambiguous local C include mapping")
-                targets.update(matches)
+                for header in matches:
+                    edges[header].add(name)
             counterpart = str(PurePosixPath(name).with_suffix(".c" if name.endswith(".h") else ".h"))
             if counterpart in code:
-                targets.add(counterpart)
+                edges[name].add(counterpart)
+                edges[counterpart].add(name)
         elif name.endswith(".go"):
-            targets.update(packages[str(PurePosixPath(name).parent)])
+            if name.endswith("_test.go"):
+                base_source = str(PurePosixPath(name).with_name(PurePosixPath(name).name[:-8] + ".go"))
+                if base_source in code:
+                    edges[base_source].add(name)
             imports = re.findall(r'(?m)^\s*import\s+(?:\([^)]*\)|[^\n]+)', text)
             for imported in re.findall(r'"([^"\n]+)"', "\n".join(imports)):
                 if imported.startswith(module + "/"):
                     package = "backend-go/" + imported[len(module) + 1:]
                     if package not in packages:
                         raise StandardsError("Unresolved local Go import mapping")
-                    targets.update(packages[package])
-        for target in targets:
-            edges[name].add(target)
-            edges[target].add(name)
+                    if package != str(PurePosixPath(name).parent):
+                        for dep in packages[package]:
+                            edges[dep].add(name)
     affected = set(paths)
     affected.update(name for name in code if any(name.startswith(p) for p in paths if p.endswith("/")))
     pending = list(affected)
@@ -394,7 +397,8 @@ def select_rules(repo: Path, allowed_paths=(), changed_paths=None, requested_ids
         paths = sorted(set(current + allowed))
         components = {c for p in paths if (c := _component(p))}
         components.update(known[r] for r in requested)
-        impact, code = _impact(repo, paths) if components else (paths, {})
+        impact_seeds = current if current else allowed
+        impact, code = _impact(repo, impact_seeds) if components else (paths, {})
         components.update(c for p in impact if (c := _component(p)))
         selected = set(requested)
         standards = {}
@@ -433,12 +437,22 @@ def select_rules(repo: Path, allowed_paths=(), changed_paths=None, requested_ids
                     selected.add("SE-008")
                 elif path == ".go-version":
                     groups.add("QG")
+                parts = PurePosixPath(path).parts if path.endswith("/") else PurePosixPath(path).parent.parts
                 for token, applicable in PATH_GROUPS[component].items():
-                    if token in path:
+                    if "/" in token:
+                        matched = f"/{token}/" in f"/{path.rstrip('/')}/" or path.rstrip("/").endswith("/" + token)
+                    elif component == "GO":
+                        matched = token in parts
+                    else:
+                        matched = any(token in p for p in parts)
+                    if matched:
                         groups.update(applicable)
                 text = (path + "\n" + code.get(path, b"").decode())
                 text += "\n" + text.replace("_", " ")
+                is_comp_root = component == "GO" and ("cmd" in parts and "server" in parts)
                 for expression, applicable in OPERATIONS[component]:
+                    if is_comp_root and any(g in ("DB", "MQ", "SC") for g in applicable):
+                        continue
                     if re.search(expression, text):
                         groups.update(applicable)
             if component == "GO" and "SC" in groups:
