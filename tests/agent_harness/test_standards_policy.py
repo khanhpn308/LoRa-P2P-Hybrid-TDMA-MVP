@@ -443,6 +443,146 @@ class RoutingTests(PolicyFixture):
         self.assertNotIn("GO", result["standards"]["standards"])
         self.assertLess(len(result["standards"]["rules"]), 104)
 
+    def test_composition_root_main_wires_without_pulling_unrelated_packages(self):
+        """Issue #267 AC-1: Composition root wiring does not pull untouched packages into selection."""
+        self.write("backend-go/internal/storage/storage.go", "package storage\nfunc QueryDB() {}\n")
+        self.write("backend-go/internal/mqtt/mqtt.go", "package mqtt\nfunc PubMQTT() {}\n")
+        self.write("backend-go/internal/scheduler/scheduler.go", "package scheduler\nfunc Plan() {}\n")
+        self.write("backend-go/internal/feature/feature.go", "package feature\nfunc Run() {}\n")
+        self.write("backend-go/internal/feature/feature_test.go", "package feature\nfunc TestRun() {}\n")
+        self.write("backend-go/cmd/server/main.go", (
+            "package main\n\nimport (\n"
+            '    "database/sql"\n'
+            '    "example.org/project/internal/storage"\n'
+            '    "example.org/project/internal/mqtt"\n'
+            '    "example.org/project/internal/scheduler"\n'
+            '    "example.org/project/internal/feature"\n)\n\n'
+            'func main() { println("starting") }\n'
+        ))
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        # Modifying main.go and internal/feature/
+        self.write("backend-go/cmd/server/main.go", (
+            "package main\n\nimport (\n"
+            '    "database/sql"\n'
+            '    "example.org/project/internal/storage"\n'
+            '    "example.org/project/internal/mqtt"\n'
+            '    "example.org/project/internal/scheduler"\n'
+            '    "example.org/project/internal/feature"\n)\n\n'
+            'func main() { println("feature wired") }\n'
+        ))
+        self.write("backend-go/internal/feature/feature.go", 'package feature\nfunc Run() { println("updated") }\n')
+
+        selection = self.select(["backend-go/cmd/server/main.go", "backend-go/internal/feature/"])
+        selected_ids = set(selection["selected_ids"])
+        groups = {r.split("-")[0] for r in selected_ids}
+
+        # AC-1: Bounded count < 128, strictly < 100% of standard (148)
+        self.assertLess(len(selected_ids), 128)
+        self.assertLess(len(selected_ids), 148)
+        # Untouched packages (storage/DB, mqtt/MQ, scheduler/SC) are NOT pulled in
+        self.assertNotIn("DB", groups)
+        self.assertNotIn("MQ", groups)
+        self.assertNotIn("SC", groups)
+        # Impact paths must not contain untouched files
+        self.assertNotIn("backend-go/internal/storage/storage.go", selection["impact_paths"])
+        self.assertNotIn("backend-go/internal/mqtt/mqtt.go", selection["impact_paths"])
+        self.assertNotIn("backend-go/internal/scheduler/scheduler.go", selection["impact_paths"])
+        self.assertIn("backend-go/cmd/server/main.go", selection["impact_paths"])
+        self.assertIn("backend-go/internal/feature/feature.go", selection["impact_paths"])
+        self.assertIn("backend-go/internal/feature/feature_test.go", selection["impact_paths"])
+        self.assertIn("TS-001", selected_ids)
+
+    def test_composition_root_alone_selects_bounded_subset(self):
+        """Issue #267 AC-2: cmd/server/main.go wiring tasks return bounded valid rule selection."""
+        self.write("backend-go/internal/storage/storage.go", "package storage\nfunc QueryDB() {}\n")
+        self.write("backend-go/internal/mqtt/mqtt.go", "package mqtt\nfunc PubMQTT() {}\n")
+        self.write("backend-go/cmd/server/main.go", (
+            "package main\n\nimport (\n"
+            '    "database/sql"\n'
+            '    "example.org/project/internal/storage"\n'
+            '    "example.org/project/internal/mqtt"\n)\n\n'
+            'func main() { println("starting") }\n'
+        ))
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        self.write("backend-go/cmd/server/main.go", (
+            "package main\n\nimport (\n"
+            '    "database/sql"\n'
+            '    "example.org/project/internal/storage"\n'
+            '    "example.org/project/internal/mqtt"\n)\n\n'
+            'func main() { println("wired up") }\n'
+        ))
+        selection = self.select(["backend-go/cmd/server/main.go"])
+        selected_ids = set(selection["selected_ids"])
+        groups = {r.split("-")[0] for r in selected_ids}
+
+        self.assertLess(len(selected_ids), 128)
+        self.assertLess(len(selected_ids), 148)
+        self.assertNotIn("DB", groups)
+        self.assertNotIn("MQ", groups)
+        self.assertNotIn("SC", groups)
+        self.assertEqual(selection["impact_paths"], ["backend-go/cmd/server/main.go"])
+
+    def test_url_query_in_http_handler_does_not_select_database_rules(self):
+        """Issue #267: r.URL.Query() in HTTP handler does not trigger database (DB) rules."""
+        self.write("backend-go/internal/api/handler.go", (
+            "package api\n\nimport \"net/http\"\n\n"
+            "func Handle(w http.ResponseWriter, r *http.Request) {\n"
+            '    ticket := r.URL.Query().Get("ticket")\n'
+            "    _ = ticket\n}\n"
+            'func toURL(url string, query string) string { return url + "?" + query }\n'
+        ))
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        self.write("backend-go/internal/api/handler.go", (
+            "package api\n\nimport \"net/http\"\n\n"
+            "func Handle(w http.ResponseWriter, r *http.Request) {\n"
+            '    ticket := r.URL.Query().Get("ticket")\n'
+            "    w.Write([]byte(ticket))\n}\n"
+        ))
+        selection = self.select(["backend-go/internal/api/handler.go"])
+        selected_ids = set(selection["selected_ids"])
+        groups = {r.split("-")[0] for r in selected_ids}
+        self.assertNotIn("DB", groups)
+
+    def test_entire_standard_selection_is_forbidden_fails_closed(self):
+        """Issue #267 AC-3: Genuine attempts to select all groups/rules fail closed."""
+        for pkg in ("storage", "mqtt", "scheduler", "telemetry", "alert", "api"):
+            self.write(f"backend-go/internal/{pkg}/{pkg}.go", f"package {pkg}\n")
+        self.write("backend-go/cmd/server/main.go", "package main\n")
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        with self.assertRaises(policy.StandardsError) as exc:
+            self.select(["backend-go/"])
+        self.assertIn("Entire standard selection is forbidden; split scope", str(exc.exception))
+
+    def test_sibling_api_tests_do_not_leak_cross_dependencies(self):
+        """Issue #267: api_test packages in same directory do not couple unrelated handlers."""
+        self.write("backend-go/internal/api/alert_handler.go", "package api\nfunc Alert() {}\n")
+        self.write("backend-go/internal/api/alert_handler_test.go", (
+            'package api_test\nimport "example.org/project/internal/api"\n'
+            "func TestAlert() { api.Alert() }\n"
+        ))
+        self.write("backend-go/internal/api/ws_handler.go", "package api\nfunc WS() {}\n")
+        self.write("backend-go/internal/api/ws_handler_test.go", (
+            'package api_test\nimport "example.org/project/internal/api"\n'
+            "func TestWS() { api.WS() }\n"
+        ))
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        self.write("backend-go/internal/api/ws_handler.go", 'package api\nfunc WS() { println("ws"); }\n')
+        selection = self.select(["backend-go/internal/api/ws_handler.go"])
+        self.assertIn("backend-go/internal/api/ws_handler.go", selection["impact_paths"])
+        self.assertIn("backend-go/internal/api/ws_handler_test.go", selection["impact_paths"])
+        self.assertNotIn("backend-go/internal/api/alert_handler.go", selection["impact_paths"])
+        self.assertNotIn("backend-go/internal/api/alert_handler_test.go", selection["impact_paths"])
+
 
 class ComplianceGateTests(PolicyFixture):
     def setUp(self):
