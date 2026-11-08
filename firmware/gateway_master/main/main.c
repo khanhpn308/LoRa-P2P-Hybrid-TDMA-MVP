@@ -32,8 +32,8 @@ static gateway_tdma_engine_t s_tdma_engine;
 static TaskHandle_t s_tdma_task_handle = NULL;
 static esp_timer_handle_t s_epoch_timer = NULL;
 
-#define GATEWAY_TASK_STACK_WORDS (3072U)
-static StackType_t s_gateway_task_stack[GATEWAY_TASK_STACK_WORDS];
+#define GATEWAY_TASK_STACK_SIZE_BYTES (12288U)
+static StackType_t s_gateway_task_stack[GATEWAY_TASK_STACK_SIZE_BYTES];
 static StaticTask_t s_gateway_task_tcb;
 
 /* Hardware and Radio HAL Callbacks */
@@ -163,6 +163,8 @@ static esp_err_t process_join_packet(const uint8_t *payload, size_t length, int1
                     &grant_len
                 );
                 if (h_err == ESP_OK) {
+                    /* Allow Node time to switch from TX to RXSINGLE (RF turnaround margin) */
+                    vTaskDelay(pdMS_TO_TICKS(40));
                     ESP_LOGI(TAG, "[JOIN TX] Transmitting DOWN_JOIN_GRANT (%zu bytes) to Node on 920.250 MHz (CH0)...", grant_len);
                     esp_err_t tx_err = sx1276_tx(grant_buf, (uint8_t)grant_len, pdMS_TO_TICKS(300));
                     if (tx_err == ESP_OK) {
@@ -193,6 +195,8 @@ static esp_err_t process_join_packet(const uint8_t *payload, size_t length, int1
                     &finish_len
                 );
                 if (c_err == ESP_OK) {
+                    /* Allow Node time to switch from TX to RXSINGLE (RF turnaround margin) */
+                    vTaskDelay(pdMS_TO_TICKS(40));
                     ESP_LOGI(TAG, "[JOIN TX] Transmitting DOWN_JOIN_FINISH (%zu bytes) to Node #%u on 920.250 MHz (CH0)...", finish_len, payload[2]);
                     esp_err_t tx_err = sx1276_tx(finish_buf, (uint8_t)finish_len, pdMS_TO_TICKS(300));
                     if (tx_err == ESP_OK) {
@@ -385,7 +389,7 @@ void app_main(void)
     s_tdma_task_handle = xTaskCreateStatic(
         gateway_tdma_master_task,
         "gw_tdma_master",
-        GATEWAY_TASK_STACK_WORDS,
+        GATEWAY_TASK_STACK_SIZE_BYTES,
         NULL,
         5, /* Priority */
         s_gateway_task_stack,

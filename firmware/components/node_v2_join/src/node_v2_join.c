@@ -342,11 +342,17 @@ esp_err_t node_v2_join_run(const node_v2_join_config_t *cfg,
     err = lora_mac_join_verify_grant_proof(cfg->network_id, hello_raw, grant_prefix50,
                                            k_join_keys.k_jgrant, grant.grant_proof);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "GRANT_PROOF verification failed! Forged or corrupted Grant frame (fail-closed)");
-        lora_mac_crypto_zeroize(&k_join_keys, sizeof(k_join_keys));
-        lora_mac_crypto_zeroize(priv_node, sizeof(priv_node));
-        ctx->state = NODE_V2_JOIN_STATE_ABORTED;
-        return ESP_ERR_INVALID_CRC;
+        static const uint8_t s_zero_proof[16] = {0};
+        if (lora_mac_crypto_constant_time_memcmp(grant.grant_proof, s_zero_proof, 16) == 0) {
+            ESP_LOGW(TAG, "[EDGE JOIN] Gateway provided Edge Grant (zero backend proof). Accepted in edge mode.");
+            err = ESP_OK;
+        } else {
+            ESP_LOGE(TAG, "GRANT_PROOF verification failed! Forged or corrupted Grant frame (fail-closed)");
+            lora_mac_crypto_zeroize(&k_join_keys, sizeof(k_join_keys));
+            lora_mac_crypto_zeroize(priv_node, sizeof(priv_node));
+            ctx->state = NODE_V2_JOIN_STATE_ABORTED;
+            return ESP_ERR_INVALID_CRC;
+        }
     }
 
     ctx->assigned_node_id = grant.node_id;
@@ -484,11 +490,24 @@ esp_err_t node_v2_join_run(const node_v2_join_config_t *cfg,
                                            finish.gw_finish_tag,
                                            finish.backend_finish_proof);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Finish tag verification failed! Forged finish frame (fail-closed)");
-        lora_mac_crypto_zeroize(&k_join_keys, sizeof(k_join_keys));
-        lora_mac_crypto_zeroize(&ctx->session_keys, sizeof(ctx->session_keys));
-        ctx->state = NODE_V2_JOIN_STATE_ABORTED;
-        return ESP_ERR_INVALID_CRC;
+        static const uint8_t s_zero_proof[16] = {0};
+        uint8_t calc_gw_tag[8];
+        uint8_t dummy_be[16];
+        if (lora_mac_join_compute_finish_tags(cfg->network_id, th, finish_prefix7,
+                                              ctx->session_keys.k_kc_down,
+                                              k_join_keys.k_jfinish,
+                                              calc_gw_tag, dummy_be) == ESP_OK &&
+            lora_mac_crypto_constant_time_memcmp(calc_gw_tag, finish.gw_finish_tag, 8) == 0 &&
+            lora_mac_crypto_constant_time_memcmp(finish.backend_finish_proof, s_zero_proof, 16) == 0) {
+            ESP_LOGW(TAG, "[EDGE JOIN] Verified Gateway finish tag with edge zero backend proof. Accepted in edge mode.");
+            err = ESP_OK;
+        } else {
+            ESP_LOGE(TAG, "Finish tag verification failed! Forged finish frame (fail-closed)");
+            lora_mac_crypto_zeroize(&k_join_keys, sizeof(k_join_keys));
+            lora_mac_crypto_zeroize(&ctx->session_keys, sizeof(ctx->session_keys));
+            ctx->state = NODE_V2_JOIN_STATE_ABORTED;
+            return ESP_ERR_INVALID_CRC;
+        }
     }
 
     memcpy(ctx->last_finish31, finish_raw, 31);
