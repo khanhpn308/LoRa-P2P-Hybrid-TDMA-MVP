@@ -13,8 +13,8 @@ extern "C" {
 
 #define NODE_V2_JOIN_MAX_CAD_RETRIES       (3U)
 #define NODE_V2_JOIN_DEFAULT_BACKOFF_MS    (50U)
-#define NODE_V2_JOIN_GRANT_TIMEOUT_MS      (1000U)
-#define NODE_V2_JOIN_FINISH_TIMEOUT_MS     (1000U)
+#define NODE_V2_JOIN_GRANT_TIMEOUT_MS      (2000U)
+#define NODE_V2_JOIN_FINISH_TIMEOUT_MS     (2000U)
 #define NODE_V2_JOIN_NVS_NAMESPACE         "node_join"
 #define NODE_V2_JOIN_NVS_KEY_COUNTER       "join_ctr"
 

@@ -253,7 +253,16 @@ esp_err_t gateway_tdma_run_superframe(gateway_tdma_engine_t *engine)
             /* Frame received: enter process state */
             engine->state = GW_TDMA_STATE_SLOT_PROCESS;
 
-            if (!engine->is_maintenance) {
+            ESP_LOGI(TAG, "[RF RX SLOT #%u] Frame received: %zu bytes, Type=0x%02X, RSSI=%d dBm, SNR=%.1f dB | Freq=920.250 MHz (CH0)",
+                     slot, rx_len, rx_buf[0], (int)rssi, (double)snr / 4.0);
+
+            if (rx_buf[0] == LORA_MAC_V2_TYPE_UP_JOIN_HELLO ||
+                rx_buf[0] == LORA_MAC_V2_TYPE_UP_JOIN_KEY_CONF ||
+                rx_buf[0] == LORA_MAC_V2_TYPE_UP_JOIN_READY) {
+                if (engine->cfg.join_frame_fn != NULL) {
+                    (void)engine->cfg.join_frame_fn(rx_buf, rx_len, rssi, snr);
+                }
+            } else if (!engine->is_maintenance) {
                 /* --- Normal Superframe: Expect UP_EVENT (0x41, 26 octets) --- */
                 if (rx_len != LORA_MAC_V2_LEN_UP_EVENT) {
                     engine->corrupted_packet_count++;

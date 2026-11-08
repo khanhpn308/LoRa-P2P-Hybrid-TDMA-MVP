@@ -268,7 +268,7 @@ menu "SX1276 LoRa Transceiver Configuration"
 
         config SX1276_HOST_RX_BUFFER_SIZE
             int "Host RX Frame Buffer Capacity (bytes)"
-            default 64
+            default 128
             range 16 256
             help
                 Static buffer size per frame. Packets exceeding this size are dropped before copy.

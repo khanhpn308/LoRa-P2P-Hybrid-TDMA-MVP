@@ -163,6 +163,7 @@ esp_err_t node_v2_join_run(const node_v2_join_config_t *cfg,
     uint8_t confirm_raw[LORA_MAC_V2_LEN_UP_JOIN_KEY_CONF];
     uint8_t finish_raw[LORA_MAC_V2_LEN_DOWN_JOIN_FINISH];
     uint8_t ready_raw[LORA_MAC_V2_LEN_UP_JOIN_READY];
+    uint8_t rx_tmp[128];
 
     memset(priv_node, 0, sizeof(priv_node));
     memset(pub_node, 0, sizeof(pub_node));
@@ -279,8 +280,10 @@ esp_err_t node_v2_join_run(const node_v2_join_config_t *cfg,
     /* Final serialization of full 68B frame */
     (void)lora_mac_v2_up_join_hello_serialize(&hello, hello_raw, sizeof(hello_raw), &written);
 
-    ESP_LOGI(TAG, "Transmitting UP_JOIN_HELLO (68B) on RF channel (Counter: %u, Target GW: %u)...",
-             (unsigned int)join_counter, hello.target_gw_id);
+    ESP_LOGI(TAG, "[RF TX] Transmitting UP_JOIN_HELLO (68B) on Freq=920.250 MHz (CH0) | Ctr=%u, TargetGW=%u, NetID=%" PRIu32 ", MAC=%02X:%02X:%02X:%02X:%02X:%02X",
+             (unsigned int)join_counter, hello.target_gw_id, cfg->network_id,
+             cfg->device_mac[0], cfg->device_mac[1], cfg->device_mac[2],
+             cfg->device_mac[3], cfg->device_mac[4], cfg->device_mac[5]);
     err = hal->radio_tx(hello_raw, LORA_MAC_V2_LEN_UP_JOIN_HELLO, 200U);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Radio TX failed for Hello: %s", esp_err_to_name(err));
@@ -294,20 +297,24 @@ esp_err_t node_v2_join_run(const node_v2_join_config_t *cfg,
      * Step 4: Phase 2 (DOWN_JOIN_GRANT 0x46, 66B)
      * ------------------------------------------------------------- */
     ctx->state = NODE_V2_JOIN_STATE_GRANT_RX;
+    ESP_LOGI(TAG, "[RF RX] Listening for DOWN_JOIN_GRANT on Freq=920.250 MHz (CH0) for %u ms...",
+             (unsigned int)cfg->grant_listen_timeout_ms);
     if (hal->radio_rx_single != NULL) {
         (void)hal->radio_rx_single(cfg->grant_listen_timeout_ms);
     }
 
     size_t rx_len = 0;
-    err = hal->radio_read_frame(grant_raw, &rx_len, cfg->grant_listen_timeout_ms);
+    err = hal->radio_read_frame(rx_tmp, &rx_len, cfg->grant_listen_timeout_ms);
     if (err != ESP_OK || rx_len != LORA_MAC_V2_LEN_DOWN_JOIN_GRANT) {
-        ESP_LOGW(TAG, "Grant reception failed or timed out (len: %zu, expected 66): %s",
+        ESP_LOGW(TAG, "[RF RX TIMEOUT] Grant reception timed out (len: %zu, expected 66B) on Freq=920.250 MHz: %s",
                  rx_len, esp_err_to_name(err));
         lora_mac_crypto_zeroize(&k_join_keys, sizeof(k_join_keys));
         lora_mac_crypto_zeroize(priv_node, sizeof(priv_node));
         ctx->state = NODE_V2_JOIN_STATE_ABORTED;
         return (err == ESP_OK) ? ESP_ERR_INVALID_SIZE : err;
     }
+    memcpy(grant_raw, rx_tmp, LORA_MAC_V2_LEN_DOWN_JOIN_GRANT);
+    ESP_LOGI(TAG, "[RF RX] Received DOWN_JOIN_GRANT (%zu bytes) on Freq=920.250 MHz (CH0)", rx_len);
 
     lora_mac_v2_down_join_grant_t grant;
     err = lora_mac_v2_down_join_grant_deserialize(grant_raw, rx_len, &grant);
@@ -411,7 +418,7 @@ esp_err_t node_v2_join_run(const node_v2_join_config_t *cfg,
 
     (void)lora_mac_v2_up_join_key_confirm_serialize(&conf, confirm_raw, sizeof(confirm_raw), &written);
 
-    ESP_LOGI(TAG, "Transmitting UP_JOIN_KEY_CONFIRM (31B) to Gateway #%u...", conf.gw_id);
+    ESP_LOGI(TAG, "[RF TX] Transmitting UP_JOIN_KEY_CONFIRM (31B) to Gateway #%u on Freq=920.250 MHz (CH0)...", conf.gw_id);
     err = hal->radio_tx(confirm_raw, LORA_MAC_V2_LEN_UP_JOIN_KEY_CONF, 100U);
     if (err != ESP_OK) {
         lora_mac_crypto_zeroize(&k_join_keys, sizeof(k_join_keys));
@@ -424,19 +431,23 @@ esp_err_t node_v2_join_run(const node_v2_join_config_t *cfg,
      * Step 6: Phase 4a (DOWN_JOIN_FINISH 0x48, 31B)
      * ------------------------------------------------------------- */
     ctx->state = NODE_V2_JOIN_STATE_FINISH_RX;
+    ESP_LOGI(TAG, "[RF RX] Listening for DOWN_JOIN_FINISH on Freq=920.250 MHz (CH0) for %u ms...",
+             (unsigned int)cfg->finish_listen_timeout_ms);
     if (hal->radio_rx_single != NULL) {
         (void)hal->radio_rx_single(cfg->finish_listen_timeout_ms);
     }
 
     rx_len = 0;
-    err = hal->radio_read_frame(finish_raw, &rx_len, cfg->finish_listen_timeout_ms);
+    err = hal->radio_read_frame(rx_tmp, &rx_len, cfg->finish_listen_timeout_ms);
     if (err != ESP_OK || rx_len != LORA_MAC_V2_LEN_DOWN_JOIN_FINISH) {
-        ESP_LOGW(TAG, "Finish reception failed or timed out: %s", esp_err_to_name(err));
+        ESP_LOGW(TAG, "[RF RX TIMEOUT] Finish reception timed out on Freq=920.250 MHz: %s", esp_err_to_name(err));
         lora_mac_crypto_zeroize(&k_join_keys, sizeof(k_join_keys));
         lora_mac_crypto_zeroize(&ctx->session_keys, sizeof(ctx->session_keys));
         ctx->state = NODE_V2_JOIN_STATE_ABORTED;
         return (err == ESP_OK) ? ESP_ERR_INVALID_SIZE : err;
     }
+    memcpy(finish_raw, rx_tmp, LORA_MAC_V2_LEN_DOWN_JOIN_FINISH);
+    ESP_LOGI(TAG, "[RF RX] Received DOWN_JOIN_FINISH (%zu bytes) on Freq=920.250 MHz (CH0)", rx_len);
 
     lora_mac_v2_down_join_finish_t finish;
     err = lora_mac_v2_down_join_finish_deserialize(finish_raw, rx_len, &finish);

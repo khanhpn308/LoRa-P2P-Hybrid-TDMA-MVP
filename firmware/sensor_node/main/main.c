@@ -4,6 +4,9 @@
 #include "esp_sleep.h"
 #include "esp_timer.h"
 #include "esp_random.h"
+#include "esp_mac.h"
+#include "nvs_flash.h"
+#include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "sx1276_driver.h"
@@ -89,7 +92,17 @@ void app_main(void)
 
     bool radio_initialized = false;
 
-    /* 1. Initialize persistent FIFO on first boot / cold start */
+    /* 1. Initialize NVS flash for monotonic join counter and credentials storage */
+    esp_err_t nvs_ret = nvs_flash_init();
+    if (nvs_ret == ESP_ERR_NVS_NO_FREE_PAGES || nvs_ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        (void)nvs_flash_erase();
+        nvs_ret = nvs_flash_init();
+    }
+    if (nvs_ret != ESP_OK) {
+        ESP_LOGE(TAG, "NVS flash initialization failed: %s", esp_err_to_name(nvs_ret));
+    }
+
+    /* 2. Initialize persistent FIFO on first boot / cold start */
     if (!s_fifo_initialized) {
         esp_err_t fifo_err = node_event_fifo_init(&s_event_fifo, 0, 1);
         if (fifo_err == ESP_OK) {
@@ -100,7 +113,7 @@ void app_main(void)
         }
     }
 
-    /* 2. Configure TDMA Client parameters from Kconfig / defaults */
+    /* 3. Configure TDMA Client parameters from Kconfig / defaults */
     node_tdma_client_config_t tdma_cfg;
     (void)node_tdma_client_get_default_config(&tdma_cfg);
 #ifdef CONFIG_NODE_TDMA_NODE_ID
@@ -116,22 +129,56 @@ void app_main(void)
     tdma_cfg.clock_drift_ppm = (uint32_t)CONFIG_NODE_TDMA_CLOCK_DRIFT_PPM;
 #endif
 
-    if (!s_tdma_initialized) {
-        esp_err_t tdma_init_err = node_tdma_client_init(&tdma_cfg, &s_tdma_state);
-        if (tdma_init_err == ESP_OK) {
-            s_tdma_initialized = true;
-            ESP_LOGI(TAG, "Node TDMA Client initialized for Node ID #%u (Slot #%u)",
-                     tdma_cfg.node_id, tdma_cfg.node_id);
-        } else {
-            ESP_LOGE(TAG, "Failed to initialize TDMA Client state: %s", esp_err_to_name(tdma_init_err));
-        }
-    }
-
+    /* 4. Configure Node V2 Join subsystem */
     if (!s_join_initialized) {
         (void)node_v2_join_init(&s_join_ctx);
         s_join_initialized = true;
         ESP_LOGI(TAG, "Sensor Node V2 Join subsystem initialized (State: %s)",
                  node_v2_join_state_to_str(s_join_ctx.state));
+    } else if (s_join_ctx.state == NODE_V2_JOIN_STATE_ABORTED && !s_join_ctx.radio_permanently_locked) {
+        /* Allow retry on new boot / wake event */
+        s_join_ctx.state = NODE_V2_JOIN_STATE_UNJOINED;
+        ESP_LOGI(TAG, "Join state reset from ABORTED to UNJOINED for retry");
+    }
+
+    node_v2_join_config_t join_cfg;
+    (void)node_v2_join_get_default_config(&join_cfg);
+
+    /* Read provisioned device MAC and credentials from nvs_sec if present */
+    nvs_handle_t sec_handle;
+    esp_err_t sec_err = nvs_open("nvs_sec", NVS_READONLY, &sec_handle);
+    if (sec_err == ESP_OK) {
+        size_t mac_len = sizeof(join_cfg.device_mac);
+        if (nvs_get_blob(sec_handle, "device_mac", join_cfg.device_mac, &mac_len) == ESP_OK) {
+            ESP_LOGI(TAG, "Loaded provisioned device MAC: %02x%02x%02x%02x%02x%02x",
+                     join_cfg.device_mac[0], join_cfg.device_mac[1], join_cfg.device_mac[2],
+                     join_cfg.device_mac[3], join_cfg.device_mac[4], join_cfg.device_mac[5]);
+        }
+        size_t k_len = sizeof(join_cfg.k_join);
+        if (nvs_get_blob(sec_handle, "k_join", join_cfg.k_join, &k_len) == ESP_OK) {
+            ESP_LOGI(TAG, "Loaded provisioned K_JOIN from nvs_sec");
+        }
+        size_t kb_len = sizeof(tdma_cfg.k_beacon);
+        if (nvs_get_blob(sec_handle, "k_beacon", tdma_cfg.k_beacon, &kb_len) == ESP_OK) {
+            ESP_LOGI(TAG, "Loaded provisioned K_BEACON from nvs_sec");
+        }
+        uint32_t net_id = 0;
+        if (nvs_get_u32(sec_handle, "network_id", &net_id) == ESP_OK) {
+            join_cfg.network_id = net_id;
+        }
+        nvs_close(sec_handle);
+    } else {
+        (void)esp_read_mac(join_cfg.device_mac, ESP_MAC_WIFI_STA);
+        ESP_LOGI(TAG, "Using factory Wi-Fi MAC: %02x%02x%02x%02x%02x%02x",
+                 join_cfg.device_mac[0], join_cfg.device_mac[1], join_cfg.device_mac[2],
+                 join_cfg.device_mac[3], join_cfg.device_mac[4], join_cfg.device_mac[5]);
+    }
+
+    /* Bind established session keys if already joined */
+    if (s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
+        tdma_cfg.node_id = s_join_ctx.assigned_node_id;
+        (void)memcpy(tdma_cfg.k_session_up, s_join_ctx.session_keys.k_session_up, 16);
+        (void)memcpy(tdma_cfg.k_session_down, s_join_ctx.session_keys.k_session_dl, 16);
     }
 
     node_v2_join_radio_hal_t join_hal = {
@@ -144,9 +191,8 @@ void app_main(void)
         .get_time_ms = prod_get_time_ms,
         .delay_ms = prod_delay_ms,
     };
-    (void)join_hal;
 
-    /* 3. Initialize Airtime Policy & Crypto subsystem */
+    /* 5. Initialize Airtime Policy & Crypto subsystem */
 #ifdef CONFIG_NODE_TDMA_AIRTIME_PERMILLE
     (void)airtime_policy_init((uint16_t)CONFIG_NODE_TDMA_AIRTIME_PERMILLE);
 #else
@@ -154,7 +200,7 @@ void app_main(void)
 #endif
     (void)node_crypto_init();
 
-    /* 4. Initialize button driver from Kconfig settings */
+    /* 6. Initialize button driver from Kconfig settings */
     button_driver_t btn_driver;
     button_config_t btn_cfg = {
         .gpio_num = (gpio_num_t)CONFIG_NODE_BUTTON_GPIO,
@@ -168,7 +214,7 @@ void app_main(void)
         ESP_LOGE(TAG, "Button driver initialization failed: %s", esp_err_to_name(btn_err));
     }
 
-    /* 5. Identify wake-up cause and service button events */
+    /* 7. Identify wake-up cause and service button events */
     button_wakeup_cause_t wake_cause = button_driver_get_wakeup_cause();
     switch (wake_cause) {
         case BUTTON_CAUSE_EXT0_BUTTON: {
@@ -229,12 +275,83 @@ void app_main(void)
             break;
     }
 
+    /* 8. Over-the-Air V2 Join Handshake Campaign if node is UNJOINED */
+    if (s_join_ctx.state != NODE_V2_JOIN_STATE_INSTALLED_INACTIVE && !s_join_ctx.radio_permanently_locked) {
+        if (!radio_initialized) {
+            ESP_LOGI(TAG, "Initializing SX1276 radio for OTA V2 Join Handshake");
+            esp_err_t sx_err = sx1276_init(NULL, NULL);
+            if (sx_err != ESP_OK) {
+                ESP_LOGE(TAG, "SX1276 initialization failed for join: %s", esp_err_to_name(sx_err));
+            } else {
+                radio_initialized = true;
+            }
+        }
+
+        if (radio_initialized) {
+            ESP_LOGI(TAG, "==================================================");
+            ESP_LOGI(TAG, "[JOIN MODE] Node UNJOINED - Operating in STANDBY retry loop until joined");
+            ESP_LOGI(TAG, "[RF PHY CONFIG] Freq: 920.250 MHz | Channel: 0 (VN920) | SF: 7 | BW: 125 kHz | CR: 4/5 | Preamble: 8 | SyncWord: 0x12 | PA: PA_BOOST (+14 dBm)");
+            ESP_LOGI(TAG, "[RF IDENTITY] Node MAC: %02X:%02X:%02X:%02X:%02X:%02X | Target GW: %u | Network ID: %" PRIu32,
+                     join_cfg.device_mac[0], join_cfg.device_mac[1], join_cfg.device_mac[2],
+                     join_cfg.device_mac[3], join_cfg.device_mac[4], join_cfg.device_mac[5],
+                     join_cfg.target_gw_id, join_cfg.network_id);
+            ESP_LOGI(TAG, "==================================================");
+
+            uint32_t join_attempt = 0;
+            while (s_join_ctx.state != NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
+                if (s_join_ctx.radio_permanently_locked) {
+                    ESP_LOGE(TAG, "[JOIN LOCKOUT] Radio permanently locked due to counter rollback anomaly! Halting.");
+                    break;
+                }
+
+                join_attempt++;
+                ESP_LOGI(TAG, "[JOIN] >>> Starting Join Attempt #%" PRIu32 " on Freq=920.250 MHz (CH0) <<<", join_attempt);
+
+                esp_err_t join_err = node_v2_join_run(&join_cfg, &join_hal, &s_join_ctx);
+                if (join_err == ESP_OK && s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
+                    ESP_LOGI(TAG, "==================================================");
+                    ESP_LOGI(TAG, ">>> V2 JOIN HANDSHAKE SUCCESSFUL! <<<");
+                    ESP_LOGI(TAG, "Assigned Node ID: #%u | State: %s",
+                             s_join_ctx.assigned_node_id, node_v2_join_state_to_str(s_join_ctx.state));
+                    ESP_LOGI(TAG, "==================================================");
+                    tdma_cfg.node_id = s_join_ctx.assigned_node_id;
+                    (void)memcpy(tdma_cfg.k_session_up, s_join_ctx.session_keys.k_session_up, 16);
+                    (void)memcpy(tdma_cfg.k_session_down, s_join_ctx.session_keys.k_session_dl, 16);
+                    break;
+                }
+
+                ESP_LOGW(TAG, "[JOIN FAILED] Attempt #%" PRIu32 " failed: %s (State: %s)",
+                         join_attempt, esp_err_to_name(join_err), node_v2_join_state_to_str(s_join_ctx.state));
+
+                /* Keep radio in STANDBY mode between join retries */
+                (void)prod_radio_standby();
+                s_join_ctx.state = NODE_V2_JOIN_STATE_UNJOINED;
+
+                uint32_t backoff_ms = 2000U + (esp_random() % 1000U);
+                ESP_LOGI(TAG, "[STANDBY] Radio standing by on 920.250 MHz. Retrying Join in %" PRIu32 " ms...", backoff_ms);
+                vTaskDelay(pdMS_TO_TICKS(backoff_ms));
+            }
+        }
+    }
+
+    /* Initialize TDMA Client state once node ID is assigned */
+    if (!s_tdma_initialized && s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
+        esp_err_t tdma_init_err = node_tdma_client_init(&tdma_cfg, &s_tdma_state);
+        if (tdma_init_err == ESP_OK) {
+            s_tdma_initialized = true;
+            ESP_LOGI(TAG, "Node TDMA Client initialized for Node ID #%u (Slot #%u)",
+                     tdma_cfg.node_id, tdma_cfg.node_id);
+        } else {
+            ESP_LOGE(TAG, "Failed to initialize TDMA Client state: %s", esp_err_to_name(tdma_init_err));
+        }
+    }
+
     size_t pending_events = node_event_fifo_get_pending_count(&s_event_fifo);
     ESP_LOGI(TAG, "FIFO State: Pending Events = %zu, Dropped Events = %" PRIu32,
              pending_events, node_event_fifo_get_dropped_count(&s_event_fifo));
 
-    /* 6. Execute TDMA Slot Client cycle if pending events exist */
-    if (pending_events > 0U) {
+    /* 9. Execute TDMA Slot Client cycle if joined and pending events exist */
+    if (s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE && pending_events > 0U) {
         if (!radio_initialized) {
             ESP_LOGI(TAG, "Initializing SX1276 radio for TDMA transmission cycle");
             esp_err_t sx_err = sx1276_init(NULL, NULL);
@@ -263,25 +380,34 @@ void app_main(void)
                      node_tdma_state_to_str(s_tdma_state.state),
                      node_event_fifo_get_pending_count(&s_event_fifo));
         }
+    } else if (s_join_ctx.state != NODE_V2_JOIN_STATE_INSTALLED_INACTIVE && pending_events > 0U) {
+        ESP_LOGW(TAG, "Node is not yet joined (State: %s). TDMA event transmission deferred until joined.",
+                 node_v2_join_state_to_str(s_join_ctx.state));
     }
 
-    /* 7. Ensure radio is sleeping before entering Deep-Sleep */
+    /* 10. Ensure radio is sleeping before entering Deep-Sleep */
     if (radio_initialized) {
         (void)sx1276_sleep();
     }
 
-    /* 7. Prepare for Deep-Sleep */
-    if (btn_driver.is_initialized) {
-        button_driver_arm_sleep(&btn_driver);
-    }
+    /* 11. Enter Deep-Sleep ONLY after successful Join */
+    if (s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
+        if (btn_driver.is_initialized) {
+            button_driver_arm_sleep(&btn_driver);
+        }
 
 #if CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC > 0
-    ESP_LOGI(TAG, "Enabling Timer Wakeup in %d seconds", CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC);
-    esp_sleep_enable_timer_wakeup((uint64_t)CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC * 1000000ULL);
+        ESP_LOGI(TAG, "Enabling Timer Wakeup in %d seconds", CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC);
+        esp_sleep_enable_timer_wakeup((uint64_t)CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC * 1000000ULL);
 #endif
 
-    ESP_LOGI(TAG, "Entering Deep-Sleep mode. Press button on GPIO %d to wake up...", CONFIG_NODE_BUTTON_GPIO);
-    ESP_LOGI(TAG, "==================================================");
+        ESP_LOGI(TAG, "Node is JOINED. Entering Deep-Sleep mode. Press button on GPIO %d to wake up...", CONFIG_NODE_BUTTON_GPIO);
+        ESP_LOGI(TAG, "==================================================");
 
-    esp_deep_sleep_start();
+        esp_deep_sleep_start();
+    } else {
+        ESP_LOGE(TAG, "[SAFETY] Node is not joined (State: %s). Suspending task instead of deep sleep.",
+                 node_v2_join_state_to_str(s_join_ctx.state));
+        vTaskSuspend(NULL);
+    }
 }

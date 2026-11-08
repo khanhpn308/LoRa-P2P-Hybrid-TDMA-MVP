@@ -6,6 +6,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "lora_mac.h"
 #include "sx1276_driver.h"
 #include "session_key_store.h"
 #include "gateway_transport.h"
@@ -31,7 +32,7 @@ static gateway_tdma_engine_t s_tdma_engine;
 static TaskHandle_t s_tdma_task_handle = NULL;
 static esp_timer_handle_t s_epoch_timer = NULL;
 
-#define GATEWAY_TASK_STACK_WORDS (2048U)
+#define GATEWAY_TASK_STACK_WORDS (3072U)
 static StackType_t s_gateway_task_stack[GATEWAY_TASK_STACK_WORDS];
 static StaticTask_t s_gateway_task_tcb;
 
@@ -133,20 +134,141 @@ static void gateway_epoch_timer_cb(void *arg)
     }
 }
 
+static esp_err_t process_join_packet(const uint8_t *payload, size_t length, int16_t rssi, int8_t snr)
+{
+    if (payload == NULL || length == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    uint8_t msg_type = payload[0];
+    uint64_t now_us = (uint64_t)esp_timer_get_time();
+    float snr_f = (float)snr / 4.0f;
+
+    switch (msg_type) {
+        case LORA_MAC_V2_TYPE_UP_JOIN_HELLO: {
+            if (length == LORA_MAC_V2_LEN_UP_JOIN_HELLO) {
+                ESP_LOGI(TAG, "[JOIN RX] Received UP_JOIN_HELLO (68B): MAC=%02X:%02X:%02X:%02X:%02X:%02X, RSSI=%d dBm, SNR=%.1f dB | Freq=920.250 MHz (CH0)",
+                         payload[1], payload[2], payload[3], payload[4], payload[5], payload[6],
+                         rssi, (double)snr_f);
+                uint8_t grant_buf[LORA_MAC_V2_LEN_DOWN_JOIN_GRANT];
+                size_t grant_len = 0;
+                esp_err_t h_err = gateway_v2_join_handle_hello(
+                    &s_join_engine,
+                    payload,
+                    length,
+                    rssi,
+                    snr_f,
+                    now_us,
+                    NULL, /* edge grant (no backend proof in MVP) */
+                    grant_buf,
+                    &grant_len
+                );
+                if (h_err == ESP_OK) {
+                    ESP_LOGI(TAG, "[JOIN TX] Transmitting DOWN_JOIN_GRANT (%zu bytes) to Node on 920.250 MHz (CH0)...", grant_len);
+                    esp_err_t tx_err = sx1276_tx(grant_buf, (uint8_t)grant_len, pdMS_TO_TICKS(300));
+                    if (tx_err == ESP_OK) {
+                        ESP_LOGI(TAG, "[JOIN TX] DOWN_JOIN_GRANT transmitted successfully");
+                    } else {
+                        ESP_LOGE(TAG, "[JOIN TX] Failed to transmit DOWN_JOIN_GRANT: %s", esp_err_to_name(tx_err));
+                    }
+                } else {
+                    ESP_LOGW(TAG, "[JOIN] Failed to handle UP_JOIN_HELLO: %s", esp_err_to_name(h_err));
+                }
+                return h_err;
+            }
+            break;
+        }
+
+        case LORA_MAC_V2_TYPE_UP_JOIN_KEY_CONF: {
+            if (length == LORA_MAC_V2_LEN_UP_JOIN_KEY_CONF) {
+                ESP_LOGI(TAG, "[JOIN RX] Received UP_JOIN_KEY_CONFIRM (31B) from Node #%u: RSSI=%d dBm, SNR=%.1f dB | Freq=920.250 MHz (CH0)",
+                         payload[2], rssi, (double)snr_f);
+                uint8_t finish_buf[LORA_MAC_V2_LEN_DOWN_JOIN_FINISH];
+                size_t finish_len = 0;
+                esp_err_t c_err = gateway_v2_join_handle_confirm(
+                    &s_join_engine,
+                    payload,
+                    length,
+                    NULL, /* edge finish */
+                    finish_buf,
+                    &finish_len
+                );
+                if (c_err == ESP_OK) {
+                    ESP_LOGI(TAG, "[JOIN TX] Transmitting DOWN_JOIN_FINISH (%zu bytes) to Node #%u on 920.250 MHz (CH0)...", finish_len, payload[2]);
+                    esp_err_t tx_err = sx1276_tx(finish_buf, (uint8_t)finish_len, pdMS_TO_TICKS(300));
+                    if (tx_err == ESP_OK) {
+                        ESP_LOGI(TAG, "[JOIN TX] DOWN_JOIN_FINISH transmitted successfully");
+                    } else {
+                        ESP_LOGE(TAG, "[JOIN TX] Failed to transmit DOWN_JOIN_FINISH: %s", esp_err_to_name(tx_err));
+                    }
+                } else {
+                    ESP_LOGW(TAG, "[JOIN] Failed to handle UP_JOIN_KEY_CONFIRM: %s", esp_err_to_name(c_err));
+                }
+                return c_err;
+            }
+            break;
+        }
+
+        case LORA_MAC_V2_TYPE_UP_JOIN_READY: {
+            if (length == LORA_MAC_V2_LEN_UP_JOIN_READY) {
+                ESP_LOGI(TAG, "[JOIN RX] Received UP_JOIN_READY (31B) from Node #%u: RSSI=%d dBm, SNR=%.1f dB | Freq=920.250 MHz (CH0)",
+                         payload[2], rssi, (double)snr_f);
+                esp_err_t r_err = gateway_v2_join_handle_ready(
+                    &s_join_engine,
+                    payload,
+                    length
+                );
+                if (r_err == ESP_OK) {
+                    ESP_LOGI(TAG, "[JOIN SUCCESS] Node #%u Join complete! Session committed in INSTALLED_INACTIVE state.", payload[2]);
+                } else {
+                    ESP_LOGW(TAG, "[JOIN] Failed to handle UP_JOIN_READY: %s", esp_err_to_name(r_err));
+                }
+                return r_err;
+            }
+            break;
+        }
+
+        default:
+            ESP_LOGD(TAG, "[RF RX] Non-join frame: type=0x%02X, len=%zu", msg_type, length);
+            break;
+    }
+    return ESP_OK;
+}
+
 static void gateway_tdma_master_task(void *pvParameters)
 {
     (void)pvParameters;
-    ESP_LOGI(TAG, "Gateway TDMA Master Task running");
+    ESP_LOGI(TAG, "Gateway TDMA Master Task running (Continuous RX active on 920.250 MHz CH0)");
+
+    /* Start in continuous RX to listen for OTA join handshakes */
+    (void)sx1276_start_rx_continuous();
 
     while (1) {
-        /* Wait for superframe epoch notification or run periodically */
-        (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(10000));
+        /* Check if epoch timer triggered a superframe */
+        uint32_t notified = ulTaskNotifyTake(pdTRUE, 0);
+        if (notified > 0) {
+            /* Superframe epoch reached: Stop continuous RX and run TDMA superframe */
+            (void)sx1276_stop_rx();
 
-        ESP_LOGI(TAG, "Starting Superframe sequence #%" PRIu32 " (Broadcasting DOWN_SYNC_BEACON 32B)",
-                 s_tdma_engine.superframe_seq);
-        esp_err_t err = gateway_tdma_run_superframe(&s_tdma_engine);
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "Superframe cycle returned warning: %s", esp_err_to_name(err));
+            ESP_LOGI(TAG, "Starting Superframe sequence #%" PRIu32 " (Broadcasting DOWN_SYNC_BEACON on 920.250 MHz CH0)",
+                     s_tdma_engine.superframe_seq);
+            esp_err_t err = gateway_tdma_run_superframe(&s_tdma_engine);
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "Superframe cycle returned warning: %s", esp_err_to_name(err));
+            }
+
+            /* Superframe completed: return to continuous RX for OTA Join */
+            (void)sx1276_start_rx_continuous();
+            continue;
+        }
+
+        /* Check for incoming LoRa packet with 20ms wait */
+        sx1276_rx_frame_t rx_frame;
+        esp_err_t rx_err = sx1276_read_frame(&rx_frame, pdMS_TO_TICKS(20));
+        if (rx_err == ESP_OK && rx_frame.length > 0) {
+            ESP_LOGI(TAG, "[RF RX IDLE] Frame received: len=%u B, Type=0x%02X, RSSI=%d dBm, SNR=%.1f dB | Freq=920.250 MHz (CH0)",
+                     rx_frame.length, rx_frame.payload[0], rx_frame.rssi_dbm, (float)rx_frame.snr_db_quarter / 4.0f);
+            (void)process_join_packet(rx_frame.payload, rx_frame.length, rx_frame.rssi_dbm, rx_frame.snr_db_quarter);
+            (void)sx1276_start_rx_continuous();
         }
     }
 }
@@ -243,6 +365,7 @@ void app_main(void)
     cfg.gw_id = (uint8_t)CONFIG_GATEWAY_TARGET_GW_ID;
 #endif
     cfg.key_lookup_fn = hal_session_key_lookup;
+    cfg.join_frame_fn = process_join_packet;
 
     gateway_tdma_radio_hal_t hal = {
         .radio_tx = hal_radio_tx,

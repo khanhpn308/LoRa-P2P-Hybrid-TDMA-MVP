@@ -81,6 +81,14 @@ typedef esp_err_t (*gateway_tdma_key_lookup_fn)(uint8_t node_id,
                                                 uint8_t out_nonce_prefix[8]);
 
 /**
+ * @brief Callback for Join frames received during TDMA slots
+ */
+typedef esp_err_t (*gateway_tdma_rx_frame_fn)(const uint8_t *payload,
+                                              size_t length,
+                                              int16_t rssi,
+                                              int8_t snr);
+
+/**
  * @brief Gateway TDMA Master Engine Configuration
  */
 typedef struct {
@@ -99,6 +107,7 @@ typedef struct {
     uint32_t packet_toa_ack_ms;                      /**< ToA budget for ACK */
     gateway_node_key_entry_t static_keys[GW_TDMA_MAX_DATA_SLOTS + 1U]; /**< Node keys 1..15 */
     gateway_tdma_key_lookup_fn key_lookup_fn;        /**< Dynamic key lookup callback (optional) */
+    gateway_tdma_rx_frame_fn   join_frame_fn;        /**< Callback for Join frames during slots */
 } gateway_tdma_config_t;
 
 /**
