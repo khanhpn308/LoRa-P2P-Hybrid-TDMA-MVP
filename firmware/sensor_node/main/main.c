@@ -45,7 +45,13 @@ static esp_err_t prod_radio_tx(const uint8_t *payload, uint8_t length, uint32_t 
 
 static esp_err_t prod_radio_rx_single(uint32_t timeout_ms)
 {
-    return sx1276_start_rx_single(pdMS_TO_TICKS(timeout_ms));
+    (void)timeout_ms;
+    /* Purge any stale frames from the RX queue before opening the reception window */
+    sx1276_rx_frame_t stale;
+    while (sx1276_read_frame(&stale, 0) == ESP_OK) {
+        /* drain */
+    }
+    return sx1276_start_rx_continuous();
 }
 
 static esp_err_t prod_radio_read_frame(uint8_t *out_buf, size_t *out_len, uint32_t wait_ms)
@@ -81,6 +87,163 @@ static void prod_delay_ms(uint32_t ms)
 {
     if (ms > 0) {
         vTaskDelay(pdMS_TO_TICKS(ms));
+    }
+}
+
+static esp_err_t node_cad_event_tx_and_ack(const node_tdma_client_config_t *cfg,
+                                           node_event_fifo_t *fifo)
+{
+    if (cfg == NULL || fifo == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    node_event_fifo_item_t event_item;
+    esp_err_t peek_err = node_event_fifo_peek_pending(fifo, &event_item);
+    if (peek_err != ESP_OK) {
+        ESP_LOGD(TAG, "No pending event in FIFO");
+        return ESP_OK;
+    }
+
+    ESP_LOGI(TAG, "==================================================");
+    ESP_LOGI(TAG, ">>> CAD + RANDOM BACKOFF EVENT TRANSMISSION <<<");
+    ESP_LOGI(TAG, "Pending Event: Ref=%" PRIu32 ", Code=%u, Value=%" PRIu32,
+             event_item.event_ref, event_item.event_code, event_item.event_value);
+    ESP_LOGI(TAG, "==================================================");
+
+    /* 1. CAD with exponential random backoff (up to 3 retries) */
+    bool channel_clear = false;
+    uint32_t backoff_base_ms = 20U;
+    for (uint8_t attempt = 1; attempt <= 3; attempt++) {
+        bool activity = false;
+        esp_err_t cad_err = sx1276_cad(&activity, pdMS_TO_TICKS(50));
+        if (cad_err == ESP_OK && !activity) {
+            channel_clear = true;
+            ESP_LOGI(TAG, "[CAD] Channel CLEAR on attempt #%u (Freq=920.250 MHz CH0)", attempt);
+            break;
+        }
+        uint32_t backoff_ms = backoff_base_ms + (esp_random() % (backoff_base_ms * 2U));
+        ESP_LOGW(TAG, "[CAD] Channel BUSY on attempt #%u, backing off %" PRIu32 " ms...", attempt, backoff_ms);
+        vTaskDelay(pdMS_TO_TICKS(backoff_ms));
+        backoff_base_ms *= 2U;
+    }
+
+    if (!channel_clear) {
+        ESP_LOGE(TAG, "[CAD] Channel persistently busy after 3 retries; deferring event transmission");
+        return ESP_ERR_TIMEOUT;
+    }
+
+    /* 2. Assemble and encrypt UP_EVENT (26 bytes) */
+    uint32_t uplink_counter = ++s_tdma_state.uplink_frame_counter;
+    lora_mac_v2_header_t hdr = {
+        .ver_type = LORA_MAC_V2_TYPE_UP_EVENT,
+        .node_id = cfg->node_id,
+        .session_sel = cfg->session_sel,
+        .frame_counter = uplink_counter,
+    };
+    uint8_t raw_hdr[7];
+    size_t hdr_written = 0U;
+    (void)lora_mac_v2_header_encode(&hdr, raw_hdr, sizeof(raw_hdr), &hdr_written);
+
+    uint8_t nonce[13];
+    (void)lora_mac_v2_build_nonce(cfg->session_nonce_prefix, LORA_MAC_V2_DIR_UPLINK, uplink_counter, nonce);
+
+    lora_mac_v2_up_event_t up_evt = {
+        .event_ref = event_item.event_ref,
+        .event_time = event_item.event_time,
+        .event_code = event_item.event_code,
+        .event_value = event_item.event_value,
+    };
+    uint8_t pt[11];
+    size_t pt_written = 0U;
+    (void)lora_mac_v2_up_event_serialize(&up_evt, pt, sizeof(pt), &pt_written);
+
+    uint8_t ct[11];
+    uint8_t ccm_tag[8];
+    esp_err_t enc_err = node_crypto_encrypt_up_event(cfg->k_session_up,
+                                                     nonce,
+                                                     raw_hdr, sizeof(raw_hdr),
+                                                     pt, sizeof(pt),
+                                                     ct, ccm_tag);
+    node_crypto_zeroize(pt, sizeof(pt));
+    if (enc_err != ESP_OK) {
+        ESP_LOGE(TAG, "UP_EVENT encryption failed: %s", esp_err_to_name(enc_err));
+        return enc_err;
+    }
+
+    uint8_t wire_tx[26];
+    (void)memcpy(&wire_tx[0], raw_hdr, 7);
+    (void)memcpy(&wire_tx[7], ct, 11);
+    (void)memcpy(&wire_tx[18], ccm_tag, 8);
+
+    /* 3. Transmit UP_EVENT immediately */
+    ESP_LOGI(TAG, "[EVENT TX] Transmitting UP_EVENT (26B, Node #%u, Ctr=%" PRIu32 ") on 920.250 MHz...",
+             hdr.node_id, uplink_counter);
+    esp_err_t tx_err = sx1276_tx(wire_tx, sizeof(wire_tx), pdMS_TO_TICKS(150));
+    if (tx_err != ESP_OK) {
+        ESP_LOGE(TAG, "[EVENT TX] Transmission failed: %s", esp_err_to_name(tx_err));
+        return tx_err;
+    }
+    ESP_LOGI(TAG, "[EVENT TX] Transmitted UP_EVENT successfully. Listening for DOWN_EVENT_ACK...");
+
+    /* 4. Open RX window to wait for DOWN_EVENT_ACK (timeout: 400 ms) */
+    (void)prod_radio_rx_single(400);
+    uint8_t ack_buf[64];
+    size_t ack_len = 0U;
+    esp_err_t ack_rx_err = prod_radio_read_frame(ack_buf, &ack_len, 400);
+    (void)sx1276_standby();
+
+    bool ack_valid = false;
+    if (ack_rx_err == ESP_OK && ack_len >= LORA_MAC_V2_LEN_DOWN_EVENT_ACK) {
+        lora_mac_v2_header_t ack_hdr;
+        if (lora_mac_v2_header_parse(ack_buf, ack_len, &ack_hdr) == ESP_OK &&
+            ack_hdr.ver_type == LORA_MAC_V2_TYPE_DOWN_EVENT_ACK &&
+            ack_hdr.node_id == cfg->node_id) {
+
+            uint8_t dl_nonce[13];
+            (void)lora_mac_v2_build_nonce(cfg->session_nonce_prefix,
+                                          LORA_MAC_V2_DIR_DOWNLINK,
+                                          ack_hdr.frame_counter,
+                                          dl_nonce);
+
+            uint8_t dl_pt[4];
+            if (node_crypto_decrypt_down_ack(cfg->k_session_down,
+                                             dl_nonce,
+                                             ack_buf, 7U,
+                                             &ack_buf[7], 4U,
+                                             &ack_buf[11],
+                                             dl_pt) == ESP_OK) {
+                lora_mac_v2_down_event_ack_t ack_payload;
+                if (lora_mac_v2_down_event_ack_deserialize(dl_pt, 4U, &ack_payload) == ESP_OK &&
+                    ack_payload.event_ref == event_item.event_ref) {
+                    ack_valid = true;
+                    ESP_LOGI(TAG, "==================================================");
+                    ESP_LOGI(TAG, ">>> DOWN_EVENT_ACK RECEIVED & VERIFIED! <<< (Ref: %" PRIu32 ")",
+                             ack_payload.event_ref);
+                    ESP_LOGI(TAG, "==================================================");
+                } else {
+                    ESP_LOGW(TAG, "ACK event_ref mismatch (received %" PRIu32 ", expected %" PRIu32 ")",
+                             ack_payload.event_ref, event_item.event_ref);
+                }
+                node_crypto_zeroize(dl_pt, sizeof(dl_pt));
+            } else {
+                ESP_LOGW(TAG, "DOWN_EVENT_ACK decryption/MIC check failed");
+            }
+        } else {
+            ESP_LOGW(TAG, "Corrupted ACK header received");
+        }
+    } else {
+        ESP_LOGW(TAG, "ACK timeout or missing (err: %s, len: %zu)", esp_err_to_name(ack_rx_err), ack_len);
+    }
+
+    if (ack_valid) {
+        (void)node_event_fifo_ack(fifo, event_item.event_ref);
+        ESP_LOGI(TAG, "Event Ref #%" PRIu32 " ACKed and removed from FIFO. Remaining pending: %zu",
+                 event_item.event_ref, node_event_fifo_get_pending_count(fifo));
+        return ESP_OK;
+    } else {
+        (void)node_event_fifo_record_retry(fifo, event_item.event_ref);
+        ESP_LOGW(TAG, "Event Ref #%" PRIu32 " preserved in FIFO for retry", event_item.event_ref);
+        return ESP_ERR_TIMEOUT;
     }
 }
 
@@ -350,10 +513,10 @@ void app_main(void)
     ESP_LOGI(TAG, "FIFO State: Pending Events = %zu, Dropped Events = %" PRIu32,
              pending_events, node_event_fifo_get_dropped_count(&s_event_fifo));
 
-    /* 9. Execute TDMA Slot Client cycle if joined and pending events exist */
+    /* 9. Execute CAD + Random Backoff Event Transmission if joined and pending events exist */
     if (s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE && pending_events > 0U) {
         if (!radio_initialized) {
-            ESP_LOGI(TAG, "Initializing SX1276 radio for TDMA transmission cycle");
+            ESP_LOGI(TAG, "Initializing SX1276 radio for Event transmission");
             esp_err_t sx_err = sx1276_init(NULL, NULL);
             if (sx_err != ESP_OK) {
                 ESP_LOGE(TAG, "SX1276 initialization failed: %s", esp_err_to_name(sx_err));
@@ -363,21 +526,9 @@ void app_main(void)
         }
 
         if (radio_initialized) {
-            node_tdma_radio_hal_t hal = {
-                .radio_tx = prod_radio_tx,
-                .radio_rx_single = prod_radio_rx_single,
-                .radio_read_frame = prod_radio_read_frame,
-                .radio_sleep = prod_radio_sleep,
-                .radio_standby = prod_radio_standby,
-                .get_time_ms = prod_get_time_ms,
-                .delay_ms = prod_delay_ms,
-            };
-
-            ESP_LOGI(TAG, "Executing TDMA transmission cycle for %zu pending event(s)...", pending_events);
-            esp_err_t cycle_err = node_tdma_client_run_cycle(&tdma_cfg, &hal, &s_tdma_state, &s_event_fifo);
-            ESP_LOGI(TAG, "TDMA cycle completed (status: %s, client state: %s, remaining pending: %zu)",
+            esp_err_t cycle_err = node_cad_event_tx_and_ack(&tdma_cfg, &s_event_fifo);
+            ESP_LOGI(TAG, "CAD Event cycle finished (status: %s, remaining pending: %zu)",
                      esp_err_to_name(cycle_err),
-                     node_tdma_state_to_str(s_tdma_state.state),
                      node_event_fifo_get_pending_count(&s_event_fifo));
         }
     } else if (s_join_ctx.state != NODE_V2_JOIN_STATE_INSTALLED_INACTIVE && pending_events > 0U) {

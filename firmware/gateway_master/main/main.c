@@ -14,8 +14,12 @@
 #include "sdkconfig.h"
 #include "airtime_policy.h"
 #include "gateway_tdma_master.h"
+#include "gateway_crypto.h"
 
 static const char *TAG = "gateway_master";
+static const uint8_t DEFAULT_NONCE_PREFIX[8] = {
+    0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57
+};
 static gateway_v2_join_engine_t s_join_engine;
 
 static void on_downlink_session_key(const uint8_t *data, size_t len)
@@ -108,6 +112,9 @@ static esp_err_t hal_session_key_lookup(uint8_t node_id,
     sk_session_record_t rec;
     esp_err_t err = session_key_store_get_active(node_id, &rec);
     if (err != ESP_OK) {
+        err = session_key_store_get_staging(node_id, &rec);
+    }
+    if (err != ESP_OK) {
         return err;
     }
     if (out_session_sel != NULL) {
@@ -120,7 +127,12 @@ static esp_err_t hal_session_key_lookup(uint8_t node_id,
         (void)memcpy(out_k_session_dl, rec.k_session_dl, 16);
     }
     if (out_nonce_prefix != NULL) {
-        (void)memcpy(out_nonce_prefix, rec.session_id, 8);
+        static const uint8_t s_all_zeros[8] = {0};
+        if (memcmp(rec.session_id, s_all_zeros, 8) == 0) {
+            (void)memcpy(out_nonce_prefix, DEFAULT_NONCE_PREFIX, 8);
+        } else {
+            (void)memcpy(out_nonce_prefix, rec.session_id, 8);
+        }
     }
     return ESP_OK;
 }
@@ -227,6 +239,115 @@ static esp_err_t process_join_packet(const uint8_t *payload, size_t length, int1
                     ESP_LOGW(TAG, "[JOIN] Failed to handle UP_JOIN_READY: %s", esp_err_to_name(r_err));
                 }
                 return r_err;
+            }
+            break;
+        }
+
+        case LORA_MAC_V2_TYPE_UP_EVENT: {
+            if (length == LORA_MAC_V2_LEN_UP_EVENT) {
+                lora_mac_v2_header_t hdr;
+                esp_err_t hdr_err = lora_mac_v2_header_parse(payload, length, &hdr);
+                if (hdr_err != ESP_OK || hdr.ver_type != LORA_MAC_V2_TYPE_UP_EVENT) {
+                    ESP_LOGW(TAG, "[EVENT RX] Invalid UP_EVENT header");
+                    return ESP_ERR_INVALID_ARG;
+                }
+
+                uint8_t k_session_up[16];
+                uint8_t k_session_dl[16];
+                uint8_t nonce_prefix[8];
+                memcpy(nonce_prefix, DEFAULT_NONCE_PREFIX, sizeof(nonce_prefix));
+                esp_err_t key_err = hal_session_key_lookup(hdr.node_id, NULL, k_session_up, k_session_dl, nonce_prefix);
+                if (key_err != ESP_OK) {
+                    /* Fallback to in-memory pending joins */
+                    size_t slot_idx = (size_t)(hdr.node_id - 1);
+                    if (slot_idx < GATEWAY_V2_JOIN_MAX_PENDING_SESSIONS && s_join_engine.pending_joins[slot_idx].active) {
+                        memcpy(k_session_up, s_join_engine.pending_joins[slot_idx].session_keys.k_session_up, 16);
+                        memcpy(k_session_dl, s_join_engine.pending_joins[slot_idx].session_keys.k_session_dl, 16);
+                        key_err = ESP_OK;
+                    }
+                }
+                if (key_err != ESP_OK) {
+                    ESP_LOGW(TAG, "[EVENT RX] Unknown keys for Node #%u", hdr.node_id);
+                    return key_err;
+                }
+
+                uint8_t nonce[13];
+                (void)lora_mac_v2_build_nonce(nonce_prefix, LORA_MAC_V2_DIR_UPLINK, hdr.frame_counter, nonce);
+
+                uint8_t pt[11];
+                esp_err_t dec_err = gateway_crypto_decrypt_up_event(k_session_up,
+                                                                    nonce,
+                                                                    payload, 7U,
+                                                                    &payload[7], 11U,
+                                                                    &payload[18],
+                                                                    pt);
+                if (dec_err != ESP_OK) {
+                    ESP_LOGW(TAG, "[EVENT RX] Decryption/MIC verification failed for Node #%u", hdr.node_id);
+                    return dec_err;
+                }
+
+                lora_mac_v2_up_event_t up_ev;
+                (void)lora_mac_v2_up_event_deserialize(pt, 11U, &up_ev);
+                ESP_LOGI(TAG, "==================================================");
+                ESP_LOGI(TAG, ">>> VALID UP_EVENT RECEIVED! <<< Node #%u: Ref=%" PRIu32 ", Code=%u, Val=%u | RSSI=%d dBm, SNR=%.1f dB",
+                         hdr.node_id, up_ev.event_ref, up_ev.event_code, up_ev.event_value, rssi, (double)snr_f);
+                ESP_LOGI(TAG, "==================================================");
+
+                /* Commit to WAL */
+                gateway_wal_event_t wal_ev = {
+                    .node_id = hdr.node_id,
+                    .session_sel = hdr.session_sel,
+                    .frame_counter = hdr.frame_counter,
+                    .event_ref = up_ev.event_ref,
+                    .event_time = up_ev.event_time,
+                    .event_code = up_ev.event_code,
+                    .event_value = up_ev.event_value,
+                    .received_at_ms = (uint32_t)(esp_timer_get_time() / 1000ULL),
+                    .rssi_dbm = rssi,
+                    .snr_db_quarter = snr,
+                };
+                (void)gateway_wal_push(&s_tdma_engine.wal, &wal_ev);
+
+                /* Small turnaround delay before sending ACK */
+                vTaskDelay(pdMS_TO_TICKS(20));
+
+                uint8_t ack_packet[19];
+                lora_mac_v2_header_t ack_hdr = {
+                    .ver_type = LORA_MAC_V2_TYPE_DOWN_EVENT_ACK,
+                    .node_id = hdr.node_id,
+                    .session_sel = hdr.session_sel,
+                    .frame_counter = ++s_tdma_engine.downlink_frame_counter,
+                };
+                size_t ack_hdr_written = 0;
+                (void)lora_mac_v2_header_encode(&ack_hdr, ack_packet, 19U, &ack_hdr_written);
+
+                lora_mac_v2_down_event_ack_t ack_payload = {
+                    .event_ref = up_ev.event_ref,
+                };
+                uint8_t ack_pt[4];
+                size_t pt_written = 0;
+                (void)lora_mac_v2_down_event_ack_serialize(&ack_payload, ack_pt, 4U, &pt_written);
+
+                uint8_t dl_nonce[13];
+                (void)lora_mac_v2_build_nonce(nonce_prefix, LORA_MAC_V2_DIR_DOWNLINK, ack_hdr.frame_counter, dl_nonce);
+
+                esp_err_t enc_err = gateway_crypto_encrypt_down_ack(k_session_dl,
+                                                                    dl_nonce,
+                                                                    ack_packet, 7U,
+                                                                    ack_pt, 4U,
+                                                                    &ack_packet[7],
+                                                                    &ack_packet[11]);
+                if (enc_err == ESP_OK) {
+                    ESP_LOGI(TAG, "[EVENT ACK TX] Sending DOWN_EVENT_ACK (19B) for Ref=%" PRIu32 " to Node #%u...",
+                             up_ev.event_ref, hdr.node_id);
+                    esp_err_t tx_ack_err = sx1276_tx(ack_packet, 19U, pdMS_TO_TICKS(100));
+                    if (tx_ack_err == ESP_OK) {
+                        ESP_LOGI(TAG, "[EVENT ACK TX] DOWN_EVENT_ACK transmitted successfully");
+                    } else {
+                        ESP_LOGE(TAG, "[EVENT ACK TX] Failed to transmit ACK: %s", esp_err_to_name(tx_ack_err));
+                    }
+                }
+                return ESP_OK;
             }
             break;
         }
@@ -404,8 +525,9 @@ void app_main(void)
     };
     ret = esp_timer_create(&timer_args, &s_epoch_timer);
     if (ret == ESP_OK) {
-        ESP_ERROR_CHECK(esp_timer_start_periodic(s_epoch_timer, 10000000ULL)); /* 10 seconds */
-        ESP_LOGI(TAG, "High-resolution hardware timer active (10s period)");
+        /* In CAD + Random Backoff mode, disable periodic 10s superframe timer so Gateway stays in Continuous RX 24/7 */
+        /* ESP_ERROR_CHECK(esp_timer_start_periodic(s_epoch_timer, 10000000ULL)); */
+        ESP_LOGI(TAG, "Gateway operational in 24/7 Continuous RX mode (CAD + Random Backoff Event MAC)");
     } else {
         ESP_LOGE(TAG, "Failed to create esp_timer: %s", esp_err_to_name(ret));
     }
