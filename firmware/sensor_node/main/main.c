@@ -87,6 +87,8 @@ void app_main(void)
     ESP_LOGI(TAG, "==================================================");
     ESP_LOGI(TAG, "Starting Sensor Node Boot #%" PRIu32 " (ESP-IDF v6.1 / HW-001)", s_boot_count);
 
+    bool radio_initialized = false;
+
     /* 1. Initialize persistent FIFO on first boot / cold start */
     if (!s_fifo_initialized) {
         esp_err_t fifo_err = node_event_fifo_init(&s_event_fifo, 0, 1);
@@ -209,16 +211,10 @@ void app_main(void)
             } else {
                 ESP_LOGW(TAG, "Transient wake without qualified button press (bounce/noise filtered)");
             }
-            /* Re-initialize SX1276 after sleep wake */
-            esp_err_t reinit_err = sx1276_reinit_after_wake();
-            if (reinit_err != ESP_OK) {
-                ESP_LOGW(TAG, "Radio reinit after wake returned: %s", esp_err_to_name(reinit_err));
-            }
             break;
         }
         case BUTTON_CAUSE_TIMER:
             ESP_LOGI(TAG, "[WAKE CAUSE] Periodic Timer Wakeup (Maintenance/Sync Check)");
-            (void)sx1276_reinit_after_wake();
             break;
         default:
             ESP_LOGI(TAG, "[WAKE CAUSE] Power-On Reset or Software Restart");
@@ -228,6 +224,7 @@ void app_main(void)
                 ESP_LOGW(TAG, "SX1276 init returned: %s (safe standby default)", esp_err_to_name(sx_err));
             } else {
                 ESP_LOGI(TAG, "SX1276 initialized successfully in STANDBY mode");
+                radio_initialized = true;
             }
             break;
     }
@@ -238,24 +235,38 @@ void app_main(void)
 
     /* 6. Execute TDMA Slot Client cycle if pending events exist */
     if (pending_events > 0U) {
-        node_tdma_radio_hal_t hal = {
-            .radio_tx = prod_radio_tx,
-            .radio_rx_single = prod_radio_rx_single,
-            .radio_read_frame = prod_radio_read_frame,
-            .radio_sleep = prod_radio_sleep,
-            .radio_standby = prod_radio_standby,
-            .get_time_ms = prod_get_time_ms,
-            .delay_ms = prod_delay_ms,
-        };
+        if (!radio_initialized) {
+            ESP_LOGI(TAG, "Initializing SX1276 radio for TDMA transmission cycle");
+            esp_err_t sx_err = sx1276_init(NULL, NULL);
+            if (sx_err != ESP_OK) {
+                ESP_LOGE(TAG, "SX1276 initialization failed: %s", esp_err_to_name(sx_err));
+            } else {
+                radio_initialized = true;
+            }
+        }
 
-        ESP_LOGI(TAG, "Executing TDMA transmission cycle for %zu pending event(s)...", pending_events);
-        esp_err_t cycle_err = node_tdma_client_run_cycle(&tdma_cfg, &hal, &s_tdma_state, &s_event_fifo);
-        ESP_LOGI(TAG, "TDMA cycle completed (status: %s, client state: %s, remaining pending: %zu)",
-                 esp_err_to_name(cycle_err),
-                 node_tdma_state_to_str(s_tdma_state.state),
-                 node_event_fifo_get_pending_count(&s_event_fifo));
-    } else {
-        /* No pending events: ensure radio is put to sleep */
+        if (radio_initialized) {
+            node_tdma_radio_hal_t hal = {
+                .radio_tx = prod_radio_tx,
+                .radio_rx_single = prod_radio_rx_single,
+                .radio_read_frame = prod_radio_read_frame,
+                .radio_sleep = prod_radio_sleep,
+                .radio_standby = prod_radio_standby,
+                .get_time_ms = prod_get_time_ms,
+                .delay_ms = prod_delay_ms,
+            };
+
+            ESP_LOGI(TAG, "Executing TDMA transmission cycle for %zu pending event(s)...", pending_events);
+            esp_err_t cycle_err = node_tdma_client_run_cycle(&tdma_cfg, &hal, &s_tdma_state, &s_event_fifo);
+            ESP_LOGI(TAG, "TDMA cycle completed (status: %s, client state: %s, remaining pending: %zu)",
+                     esp_err_to_name(cycle_err),
+                     node_tdma_state_to_str(s_tdma_state.state),
+                     node_event_fifo_get_pending_count(&s_event_fifo));
+        }
+    }
+
+    /* 7. Ensure radio is sleeping before entering Deep-Sleep */
+    if (radio_initialized) {
         (void)sx1276_sleep();
     }
 

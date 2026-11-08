@@ -73,7 +73,7 @@ esp_err_t sx1276_init(const sx1276_hw_config_t *hw_conf,
 esp_err_t sx1276_reinit_after_wake(void)
 {
     ESP_LOGI(TAG, "Reinitializing SX1276 after ESP32 deep-sleep wake");
-    return sx1276_owner_reinit_after_wake();
+    return sx1276_init(NULL, NULL);
 }
 
 esp_err_t sx1276_sleep(void)
