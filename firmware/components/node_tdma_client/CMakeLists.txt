@@ -1,0 +1,12 @@
+idf_component_register(
+    SRCS
+        "src/node_tdma_client.c"
+        "src/node_crypto.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        lora_mac
+        airtime_policy
+        tdma_common
+        mbedtls
+)

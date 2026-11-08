@@ -33,16 +33,30 @@ class TestFirmwareV2Unit(unittest.TestCase):
         cls.airtime_policy_inc = cls.repo_root / "firmware" / "components" / "airtime_policy" / "include"
         cls.session_key_store_inc = cls.repo_root / "firmware" / "components" / "session_key_store" / "include"
         cls.gateway_transport_inc = cls.repo_root / "firmware" / "components" / "gateway_transport" / "include"
-        cls.sensor_node_main_dir = cls.repo_root / "firmware" / "sensor_node" / "main"
-        cls.gateway_master_main_dir = cls.repo_root / "firmware" / "gateway_master" / "main"
+
+        cls.node_tdma_dir = cls.repo_root / "firmware" / "components" / "node_tdma_client"
+        cls.node_tdma_inc = cls.node_tdma_dir / "include"
+        cls.node_crypto_c = cls.node_tdma_dir / "src" / "node_crypto.c"
+        cls.node_tdma_client_c = cls.node_tdma_dir / "src" / "node_tdma_client.c"
+
+        cls.node_v2_join_dir = cls.repo_root / "firmware" / "components" / "node_v2_join"
+        cls.node_v2_join_inc = cls.node_v2_join_dir / "include"
+        cls.node_v2_join_c = cls.node_v2_join_dir / "src" / "node_v2_join.c"
+
+        cls.gw_tdma_dir = cls.repo_root / "firmware" / "components" / "gateway_tdma_master"
+        cls.gw_tdma_inc = cls.gw_tdma_dir / "include"
+        cls.gateway_wal_c = cls.gw_tdma_dir / "src" / "gateway_wal.c"
+        cls.gateway_crypto_c = cls.gw_tdma_dir / "src" / "gateway_crypto.c"
+        cls.gateway_tdma_master_c = cls.gw_tdma_dir / "src" / "gateway_tdma_master.c"
+
+        cls.gw_v2_join_dir = cls.repo_root / "firmware" / "components" / "gateway_v2_join"
+        cls.gw_v2_join_inc = cls.gw_v2_join_dir / "include"
+        cls.gateway_v2_join_c = cls.gw_v2_join_dir / "src" / "gateway_v2_join.c"
 
         cls.tdma_common_c = cls.repo_root / "firmware" / "components" / "tdma_common" / "src" / "tdma_common.c"
         cls.airtime_policy_c = cls.repo_root / "firmware" / "components" / "airtime_policy" / "src" / "airtime_policy.c"
-        cls.node_crypto_c = cls.sensor_node_main_dir / "node_crypto.c"
-        cls.node_tdma_client_c = cls.sensor_node_main_dir / "node_tdma_client.c"
-        cls.node_v2_join_c = cls.sensor_node_main_dir / "node_v2_join.c"
-        cls.gateway_v2_join_c = cls.gateway_master_main_dir / "gateway_v2_join.c"
         cls.mock_nvs_c = cls.repo_root / "tests" / "unit" / "mock_nvs.c"
+        cls.test_gateway_tdma_engine_c = cls.repo_root / "tests" / "unit" / "test_gateway_tdma_engine.c"
 
         assert cls.lora_mac_c.is_file(), f"Source not found: {cls.lora_mac_c}"
         assert cls.lora_mac_join_crypto_c.is_file(), f"Source not found: {cls.lora_mac_join_crypto_c}"
@@ -58,13 +72,6 @@ class TestFirmwareV2Unit(unittest.TestCase):
         assert cls.node_v2_join_c.is_file(), f"Source not found: {cls.node_v2_join_c}"
         assert cls.gateway_v2_join_c.is_file(), f"Source not found: {cls.gateway_v2_join_c}"
         assert cls.mock_nvs_c.is_file(), f"Source not found: {cls.mock_nvs_c}"
-
-        cls.gateway_master_main_dir = cls.repo_root / "firmware" / "gateway_master" / "main"
-        cls.gateway_wal_c = cls.gateway_master_main_dir / "gateway_wal.c"
-        cls.gateway_crypto_c = cls.gateway_master_main_dir / "gateway_crypto.c"
-        cls.gateway_tdma_master_c = cls.gateway_master_main_dir / "gateway_tdma_master.c"
-        cls.test_gateway_tdma_engine_c = cls.repo_root / "tests" / "unit" / "test_gateway_tdma_engine.c"
-
         assert cls.gateway_wal_c.is_file(), f"Source not found: {cls.gateway_wal_c}"
         assert cls.gateway_crypto_c.is_file(), f"Source not found: {cls.gateway_crypto_c}"
         assert cls.gateway_tdma_master_c.is_file(), f"Source not found: {cls.gateway_tdma_master_c}"
@@ -165,7 +172,7 @@ class TestFirmwareV2Unit(unittest.TestCase):
                 f"-I{self.mock_inc}",
                 f"-I{self.tdma_common_inc}",
                 f"-I{self.airtime_policy_inc}",
-                f"-I{self.sensor_node_main_dir}",
+                f"-I{self.node_tdma_inc}",
                 str(self.lora_mac_c),
                 str(self.node_event_fifo_c),
                 str(self.tdma_common_c),
@@ -214,7 +221,7 @@ class TestFirmwareV2Unit(unittest.TestCase):
                 f"-I{self.mock_inc}",
                 f"-I{self.tdma_common_inc}",
                 f"-I{self.airtime_policy_inc}",
-                f"-I{self.gateway_master_main_dir}",
+                f"-I{self.gw_tdma_inc}",
                 str(self.lora_mac_c),
                 str(self.node_event_fifo_c),
                 str(self.tdma_common_c),
@@ -263,8 +270,8 @@ class TestFirmwareV2Unit(unittest.TestCase):
                 "-std=c11",
                 f"-I{self.c_inc}",
                 f"-I{self.mock_inc}",
-                f"-I{self.sensor_node_main_dir}",
-                f"-I{self.gateway_master_main_dir}",
+                f"-I{self.node_v2_join_inc}",
+                f"-I{self.gw_v2_join_inc}",
                 f"-I{self.session_key_store_inc}",
                 f"-I{self.gateway_transport_inc}",
                 str(self.lora_mac_c),

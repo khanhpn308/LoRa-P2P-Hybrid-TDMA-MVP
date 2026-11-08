@@ -1,0 +1,10 @@
+idf_component_register(
+    SRCS
+        "src/gateway_v2_join.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        lora_mac
+        gateway_transport
+        session_key_store
+)

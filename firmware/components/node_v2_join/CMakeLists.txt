@@ -1,0 +1,9 @@
+idf_component_register(
+    SRCS
+        "src/node_v2_join.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        lora_mac
+        nvs_flash
+)

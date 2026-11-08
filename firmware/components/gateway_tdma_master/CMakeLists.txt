@@ -1,0 +1,14 @@
+idf_component_register(
+    SRCS
+        "src/gateway_tdma_master.c"
+        "src/gateway_crypto.c"
+        "src/gateway_wal.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        lora_mac
+        airtime_policy
+        tdma_common
+        mbedtls
+        esp_timer
+)
