@@ -3,6 +3,7 @@
 #include "esp_log.h"
 #include "esp_sleep.h"
 #include "esp_timer.h"
+#include "esp_random.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "sx1276_driver.h"
@@ -175,12 +176,13 @@ void app_main(void)
                 s_button_events++;
                 uint32_t event_ref = 0;
                 uint32_t now_sec = (uint32_t)(esp_timer_get_time() / 1000000ULL);
+                int16_t rand_val = (int16_t)(80 + (esp_random() % 21));
 
-                /* Event Code 0x01 = Manual Button Trigger, Value 1 = Pressed */
-                esp_err_t push_err = node_event_fifo_push(&s_event_fifo, now_sec, 0x01, 1, &event_ref);
+                /* Event Code 0x01 = Manual Button Trigger, Value = rand_val (80..100) */
+                esp_err_t push_err = node_event_fifo_push(&s_event_fifo, now_sec, 0x01, rand_val, &event_ref);
                 if (push_err == ESP_OK) {
-                    ESP_LOGI(TAG, ">>> EVENT ENQUEUED <<< Ref: %" PRIu32 ", Total button events: %" PRIu32,
-                             event_ref, s_button_events);
+                    ESP_LOGI(TAG, ">>> EVENT ENQUEUED <<< Ref: %" PRIu32 ", Value: %d, Total button events: %" PRIu32,
+                             event_ref, (int)rand_val, s_button_events);
                 } else {
                     ESP_LOGW(TAG, "Failed to enqueue event: %s (FIFO dropped count: %" PRIu32 ")",
                              esp_err_to_name(push_err), node_event_fifo_get_dropped_count(&s_event_fifo));
