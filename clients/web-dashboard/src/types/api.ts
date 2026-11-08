@@ -181,13 +181,96 @@ export interface ChannelAllocation {
 }
 
 // ==========================================
-// 7. Generic API Types
+// 7. Provisioning Contracts (Issue #242)
+// ==========================================
+
+export interface DeviceProvisionRequest {
+  network_id: number;
+  device_mac: string;
+  k_join: string;
+  generation?: number;
+  initial_join_counter?: number;
+}
+
+export interface DeviceProvisionResponse {
+  device_mac: string;
+  network_id: number;
+  generation: number;
+  status: string;
+  created_at: string;
+}
+
+export interface AcknowledgeAlertRequest {
+  acknowledged_by?: string;
+}
+
+// ==========================================
+// 8. Realtime WebSocket Contracts (Issue #15, #251)
+// ==========================================
+
+export type RealtimeEventType =
+  | "ALERT_TRIGGERED"
+  | "SCHEDULE_STATE_CHANGED"
+  | "GATEWAY_STATUS_CHANGED"
+  | "TELEMETRY_UPDATE"
+  | "COMMAND_STATE_CHANGED";
+
+export type WsConnectionState =
+  | "CONNECTING"
+  | "CONNECTED"
+  | "RECONNECTING"
+  | "DISCONNECTED";
+
+export interface AlertTriggeredPayload {
+  gateway_id: string;
+  node_id: number;
+  alert_id: string;
+  event_ref: number;
+  event_code: number;
+  event_value: number;
+  severity: AlertSeverity;
+  triggered_at: string | null;
+}
+
+export interface ScheduleStateChangedPayload {
+  gateway_id: string;
+  schedule_id: string;
+  version: number;
+  state: ScheduleState;
+}
+
+export interface GatewayStatusChangedPayload {
+  gateway_id: string;
+  mode: GatewayMode;
+  last_seen_at: string | null;
+}
+
+export interface TelemetryUpdatePayload {
+  gateway_id: string;
+  node_id: number;
+  reading_id: string;
+  event_id: string;
+  observed_at: string | null;
+  data: Record<string, unknown>;
+}
+
+export interface RealtimeEnvelope<T = unknown> {
+  schema_version: string;
+  event_id: string;
+  type: RealtimeEventType;
+  emitted_at: string;
+  cursor?: string | null;
+  payload: T;
+}
+
+// ==========================================
+// 9. Generic API Types
 // ==========================================
 
 export interface ApiError {
   code: string;
   message: string;
-  request_id: string;
+  request_id?: string;
   details?: Record<string, unknown>;
 }
 

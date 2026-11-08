@@ -1,9 +1,11 @@
 "use client";
 
-import React, { use, Suspense } from "react";
+import React, { useState, useEffect, use, Suspense } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
+import { getNode } from "@/lib/api/nodes";
+import { getAlerts } from "@/lib/api/alerts";
 import {
   ArrowLeft,
   ChevronRight,
@@ -152,7 +154,7 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
   const rawId = decodeURIComponent(unwrappedParams.id || "N-012");
   const router = useRouter();
 
-  const node: NodeDetailView = KNOWN_NODE_DETAILS[rawId] || {
+  const initialNode: NodeDetailView = KNOWN_NODE_DETAILS[rawId] || {
     node_id: parseInt(rawId.replace(/\D/g, "") || "1", 10),
     gateway_id: "GW-01",
     name: `Node ${rawId}`,
@@ -170,7 +172,38 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
     firmware_version: "ESP-IDF v6.1 · Node-TDMA v2.1",
   };
 
-  const events: Alert[] = MOCK_NODE_EVENTS[rawId] || [];
+  const [node, setNode] = useState<NodeDetailView>(initialNode);
+  const [events, setEvents] = useState<Alert[]>(MOCK_NODE_EVENTS[rawId] || []);
+
+  useEffect(() => {
+    async function loadRealNode() {
+      const realNode = await getNode(rawId);
+      if (realNode) {
+        setNode((prev) => ({
+          ...prev,
+          node_id: realNode.node_id,
+          gateway_id: realNode.gateway_id,
+          name: realNode.name || prev.name,
+          assigned_slot_id: realNode.assigned_slot_id,
+          last_seen_at: realNode.last_seen_at,
+          status: realNode.status,
+          connected: realNode.status === "ONLINE",
+          operating: realNode.status === "ONLINE" && realNode.assigned_slot_id !== null,
+          state: realNode.status === "ONLINE" ? (realNode.assigned_slot_id !== null ? "NORMAL" : "MAINTENANCE") : "OFFLINE",
+        }));
+      }
+      try {
+        const numId = parseInt(rawId.replace(/\D/g, "") || "1", 10);
+        const alertsResp = await getAlerts({ node_id: numId });
+        if (alertsResp && alertsResp.items && alertsResp.items.length > 0) {
+          setEvents(alertsResp.items);
+        }
+      } catch {
+        // preserve baseline
+      }
+    }
+    loadRealNode();
+  }, [rawId]);
 
   const getSeverityBadge = (severity: AlertSeverity) => {
     switch (severity) {

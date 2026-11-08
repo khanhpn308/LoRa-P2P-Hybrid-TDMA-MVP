@@ -2,7 +2,10 @@
 
 import React from "react";
 import Link from "next/link";
-import { Radio, Moon, Sun, Bell } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Radio, Moon, Sun, Bell, LogOut, User as UserIcon } from "lucide-react";
+import { useRealtime } from "@/lib/realtime/RealtimeContext";
+import { useAuth } from "@/lib/auth/AuthContext";
 
 interface HeaderProps {
   darkMode?: boolean;
@@ -13,6 +16,66 @@ export const Header: React.FC<HeaderProps> = ({
   darkMode = false,
   onToggleDarkMode,
 }) => {
+  const router = useRouter();
+  const { connectionState, reconnectCount } = useRealtime();
+  const { user, role, logout, isAuthenticated } = useAuth();
+
+  const handleLogout = () => {
+    logout();
+    router.push("/login");
+  };
+
+  const renderWsBadge = () => {
+    switch (connectionState) {
+      case "CONNECTED":
+        return (
+          <div
+            className="hidden sm:inline-flex items-center gap-2 text-xs text-text-secondary px-2.5 py-1 bg-canvas border border-border rounded"
+            title="Đã kết nối an toàn với WebSocket Realtime Hub"
+          >
+            <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+            <span className="font-medium text-text-primary">Realtime: Đã kết nối</span>
+          </div>
+        );
+      case "RECONNECTING":
+        return (
+          <div
+            className="hidden sm:inline-flex items-center gap-2 text-xs text-text-secondary px-2.5 py-1 bg-canvas border border-border rounded"
+            title={`Đang tự động kết nối lại WebSocket Hub (Lần thử: ${reconnectCount})`}
+          >
+            <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0 animate-pulse" />
+            <span className="font-medium text-amber-600 dark:text-amber-400">
+              Đang kết nối lại ({reconnectCount})...
+            </span>
+          </div>
+        );
+      case "CONNECTING":
+        return (
+          <div
+            className="hidden sm:inline-flex items-center gap-2 text-xs text-text-secondary px-2.5 py-1 bg-canvas border border-border rounded"
+            title="Đang mở bắt tay Single-Use Ticket qua WebSocket Hub"
+          >
+            <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0 animate-pulse" />
+            <span className="font-medium text-interactive">Đang kết nối...</span>
+          </div>
+        );
+      case "DISCONNECTED":
+      default:
+        return (
+          <div
+            className="hidden sm:inline-flex items-center gap-2 text-xs text-text-secondary px-2.5 py-1 bg-canvas border border-border rounded"
+            title="Chưa kết nối tới WebSocket Hub (Yêu cầu đăng nhập hợp lệ)"
+          >
+            <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" />
+            <span className="font-medium text-text-secondary">Realtime: Ngắt kết nối</span>
+          </div>
+        );
+    }
+  };
+
+  const initials = user?.username ? user.username.slice(0, 2).toUpperCase() : "AD";
+  const displayRole = role || "ADMIN";
+
   return (
     <header className="h-[56px] w-full bg-chrome border-b border-border flex items-center justify-between px-6 select-none shrink-0 z-20">
       {/* Brand Lockup: IIoT LoRa Network + Trạm giám sát (DESIGN.md §6) */}
@@ -32,16 +95,10 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      {/* Right Controls: System Health Pill + Theme Toggle + User Profile */}
-      <div className="flex items-center gap-4">
-        {/* System Health Status Pill */}
-        <div
-          className="hidden sm:inline-flex items-center gap-2 text-xs text-text-secondary px-2.5 py-1 bg-canvas border border-border rounded"
-          title="Hệ thống đang đồng bộ liên tục với mạng LoRa TDMA"
-        >
-          <span className="w-2 h-2 rounded-full bg-state-active shrink-0 animate-pulse" />
-          <span className="font-medium text-text-primary">Hệ thống bình thường</span>
-        </div>
+      {/* Right Controls: Realtime WS Status + Theme Toggle + User Profile + Logout */}
+      <div className="flex items-center gap-3 sm:gap-4">
+        {/* Realtime WebSocket Status Badge */}
+        {renderWsBadge()}
 
         {/* Theme Toggle */}
         <button
@@ -55,34 +112,60 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
 
         {/* Notification Bell */}
-        <button
-          type="button"
+        <Link
+          href="/monitoring"
           className="w-9 h-9 rounded-lg flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-canvas transition-colors border border-transparent hover:border-border relative"
-          title="Thông báo sự cố"
+          title="Xem danh sách cảnh báo sự cố"
           aria-label="Notifications"
         >
           <Bell className="w-4 h-4" />
           <span className="absolute top-2 right-2 w-1.5 h-1.5 rounded-full bg-state-critical" />
-        </button>
+        </Link>
 
         <div className="h-5 w-[1px] bg-border" />
 
-        {/* User Profile */}
-        <Link
-          href="/users/admin01"
-          className="flex items-center gap-2 pl-1 cursor-pointer hover:opacity-85 transition-opacity"
-          title="Xem chi tiết tài khoản Quản trị viên"
-        >
-          <div className="w-7 h-7 rounded-full bg-border text-text-secondary flex items-center justify-center text-xs font-semibold">
-            AD
+        {/* User Profile & Role */}
+        {isAuthenticated ? (
+          <div className="flex items-center gap-2">
+            <Link
+              href="/users"
+              className="flex items-center gap-2 pl-1 cursor-pointer hover:opacity-85 transition-opacity"
+              title={`Tài khoản: ${user?.username || "admin"} (${displayRole})`}
+            >
+              <div className="w-7 h-7 rounded-full bg-border text-text-secondary flex items-center justify-center text-xs font-semibold">
+                {initials}
+              </div>
+              <div className="hidden md:flex flex-col text-left">
+                <span className="text-xs font-medium text-text-primary leading-tight">
+                  {user?.username || "Quản trị viên"}
+                </span>
+                <span className="text-[10px] text-text-secondary tracking-tight">
+                  {displayRole}
+                </span>
+              </div>
+            </Link>
+
+            {/* Logout button */}
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-text-secondary hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors border border-transparent hover:border-rose-200 dark:hover:border-rose-900"
+              title="Đăng xuất khỏi hệ thống"
+              aria-label="Logout"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+            </button>
           </div>
-          <span className="text-xs font-medium text-text-primary hidden md:inline">
-            Quản trị viên
-          </span>
-        </Link>
+        ) : (
+          <Link
+            href="/login"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-interactive text-white rounded hover:bg-interactive-hover transition-colors"
+          >
+            <UserIcon className="w-3.5 h-3.5" />
+            <span>Đăng nhập</span>
+          </Link>
+        )}
       </div>
     </header>
   );
 };
-
-
