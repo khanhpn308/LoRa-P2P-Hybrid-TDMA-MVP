@@ -32,148 +32,31 @@ interface NodeDetailView extends NodeSummary {
   firmware_version: string;
 }
 
-const KNOWN_NODE_DETAILS: Record<string, NodeDetailView> = {
-  "N-012": {
-    node_id: 12,
-    gateway_id: "GW-01",
-    name: "Node Trạm Ép A1",
-    area: "Khu A - Phân xưởng Ép",
-    assigned_slot_id: 2,
-    connected: true,
-    operating: true,
-    state: "FAULT",
-    last_event_type: "UP_EVENT: Báo động nút khẩn cấp (0x01)",
-    last_seen_at: "2026-11-08T03:08:12Z",
-    last_rssi_dbm: -78,
-    last_snr_db: 8.5,
-    battery_mv: 3280,
-    status: "ONLINE",
-    firmware_version: "ESP-IDF v6.1 · Node-TDMA v2.1",
-  },
-  "N-008": {
-    node_id: 8,
-    gateway_id: "GW-02",
-    name: "Node Trạm Bơm B1",
-    area: "Khu B - Trạm Bơm & Thủy lực",
-    assigned_slot_id: 3,
-    connected: true,
-    operating: true,
-    state: "FAULT",
-    last_event_type: "UP_EVENT: Cảnh báo áp suất vượt ngưỡng (0x02)",
-    last_seen_at: "2026-11-08T03:07:45Z",
-    last_rssi_dbm: -82,
-    last_snr_db: 7.2,
-    battery_mv: 3340,
-    status: "ONLINE",
-    firmware_version: "ESP-IDF v6.1 · Node-TDMA v2.1",
-  },
-  "N-015": {
-    node_id: 15,
-    gateway_id: "GW-01",
-    name: "Node Trạm Ép A2",
-    area: "Khu A - Phân xưởng Ép",
-    assigned_slot_id: null,
-    connected: false,
-    operating: false,
-    state: "OFFLINE",
-    last_event_type: "UP_EVENT: Mất đồng bộ lịch TDMA",
-    last_seen_at: "2026-11-07T22:15:00Z",
-    last_rssi_dbm: null,
-    last_snr_db: null,
-    battery_mv: 2950,
-    status: "OFFLINE",
-    firmware_version: "ESP-IDF v6.1 · Node-TDMA v2.1",
-  },
-  "N-021": {
-    node_id: 21,
-    gateway_id: "GW-03",
-    name: "Node Kho Lạnh C1",
-    area: "Khu C - Kho lạnh Công nghiệp",
-    assigned_slot_id: 5,
-    connected: true,
-    operating: true,
-    state: "NORMAL",
-    last_event_type: "UP_EVENT: Báo cáo định kỳ sức khỏe (0x41)",
-    last_seen_at: "2026-11-08T03:08:30Z",
-    last_rssi_dbm: -74,
-    last_snr_db: 9.8,
-    battery_mv: 3310,
-    status: "ONLINE",
-    firmware_version: "ESP-IDF v6.1 · Node-TDMA v2.1",
-  },
-};
-
-const MOCK_NODE_EVENTS: Record<string, Alert[]> = {
-  "N-012": [
-    {
-      alert_id: "1001",
-      node_id: 12,
-      gateway_id: "GW-01",
-      event_ref: 1042,
-      event_code: 1, // Button Emergency Press
-      event_value: 1,
-      severity: "P0_EMERGENCY",
-      triggered_at: "2026-11-08T02:55:10Z",
-      received_at: "2026-11-08T02:55:11Z",
-      ack_status: "UNACKNOWLEDGED",
-      acked_at: null,
-    },
-    {
-      alert_id: "982",
-      node_id: 12,
-      gateway_id: "GW-01",
-      event_ref: 1010,
-      event_code: 1,
-      event_value: 1,
-      severity: "P0_EMERGENCY",
-      triggered_at: "2026-11-07T14:20:00Z",
-      received_at: "2026-11-07T14:20:01Z",
-      ack_status: "ACKNOWLEDGED",
-      acked_at: "2026-11-07T14:21:30Z",
-    },
-  ],
-  "N-008": [
-    {
-      alert_id: "1002",
-      node_id: 8,
-      gateway_id: "GW-02",
-      event_ref: 871,
-      event_code: 2,
-      event_value: 1850,
-      severity: "P1_HIGH",
-      triggered_at: "2026-11-08T02:40:15Z",
-      received_at: "2026-11-08T02:40:16Z",
-      ack_status: "UNACKNOWLEDGED",
-      acked_at: null,
-    },
-  ],
-};
-
 function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
   const unwrappedParams = use(params);
   const rawId = decodeURIComponent(unwrappedParams.id || "N-012");
   const router = useRouter();
 
-  const initialNode: NodeDetailView = KNOWN_NODE_DETAILS[rawId] || {
+  const initialNode: NodeDetailView = {
     node_id: parseInt(rawId.replace(/\D/g, "") || "1", 10),
-    gateway_id: "GW-01",
+    gateway_id: "--",
     name: `Node ${rawId}`,
-    area: "Khu vực A - Phân xưởng Ép",
-    assigned_slot_id: 1,
-    connected: true,
-    operating: true,
-    state: "NORMAL",
-    last_event_type: "UP_EVENT: Báo cáo định kỳ sức khỏe (0x41)",
-    last_seen_at: "2026-11-08T03:00:00Z",
-    last_rssi_dbm: -80,
-    last_snr_db: 8.0,
-    battery_mv: 3300,
-    status: "ONLINE",
-    firmware_version: "ESP-IDF v6.1 · Node-TDMA v2.1",
+    area: "Khu vực cảm biến",
+    assigned_slot_id: null,
+    connected: false,
+    operating: false,
+    state: "OFFLINE",
+    last_event_type: "Chưa có sự kiện",
+    last_seen_at: null,
+    last_rssi_dbm: null,
+    last_snr_db: null,
+    battery_mv: 0,
+    status: "OFFLINE",
+    firmware_version: "ESP-IDF v6.1 · Node-TDMA",
   };
 
   const [node, setNode] = useState<NodeDetailView>(initialNode);
-  const [events, setEvents] = useState<Alert[]>(MOCK_NODE_EVENTS[rawId] || []);
+  const [events, setEvents] = useState<Alert[]>([]);
 
   useEffect(() => {
     async function loadRealNode() {
@@ -195,11 +78,13 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
       try {
         const numId = parseInt(rawId.replace(/\D/g, "") || "1", 10);
         const alertsResp = await getAlerts({ node_id: numId });
-        if (alertsResp && alertsResp.items && alertsResp.items.length > 0) {
+        if (alertsResp && alertsResp.items) {
           setEvents(alertsResp.items);
+        } else {
+          setEvents([]);
         }
       } catch {
-        // preserve baseline
+        setEvents([]);
       }
     }
     loadRealNode();

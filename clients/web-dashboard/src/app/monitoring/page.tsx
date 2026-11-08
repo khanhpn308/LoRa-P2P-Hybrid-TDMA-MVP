@@ -37,190 +37,6 @@ export interface FaultEvent {
   acknowledged_at: string | null;
 }
 
-// 12 events matching exactly with Overview KPI counts (8 Temp, 4 Speed, areas distributed accurately)
-const INITIAL_EVENTS: FaultEvent[] = [
-  {
-    id: "EV-001",
-    node_id: 12,
-    timestamp: "06/11/2026 12:25:30",
-    rawTimestamp: 1793952330,
-    area: "Khu A - Phân xưởng Ép",
-    gateway: "GW-01",
-    node: "N-012",
-    faultType: "Nhiệt độ",
-    severity: "P0_EMERGENCY",
-    thresholdValue: "85,4 °C",
-    duration: "90 s",
-    ack_status: "UNACKNOWLEDGED",
-    acknowledged_at: null,
-  },
-  {
-    id: "EV-002",
-    node_id: 8,
-    timestamp: "06/11/2026 12:20:15",
-    rawTimestamp: 1793952015,
-    area: "Khu B - Trạm Bơm & Thủy lực",
-    gateway: "GW-02",
-    node: "N-008",
-    faultType: "Tốc độ",
-    severity: "P1_HIGH",
-    thresholdValue: "1.850 rpm",
-    duration: "32 s",
-    ack_status: "UNACKNOWLEDGED",
-    acknowledged_at: null,
-  },
-  {
-    id: "EV-003",
-    node_id: 15,
-    timestamp: "06/11/2026 11:45:08",
-    rawTimestamp: 1793949908,
-    area: "Khu A - Phân xưởng Ép",
-    gateway: "GW-01",
-    node: "N-015",
-    faultType: "Nhiệt độ",
-    severity: "P0_EMERGENCY",
-    thresholdValue: "92,1 °C",
-    duration: "120 s",
-    ack_status: "ACKNOWLEDGED",
-    acknowledged_at: "06/11/2026 11:48:10",
-  },
-  {
-    id: "EV-004",
-    node_id: 21,
-    timestamp: "06/11/2026 10:32:18",
-    rawTimestamp: 1793945538,
-    area: "Khu C - Kho lạnh Công nghiệp",
-    gateway: "GW-03",
-    node: "N-021",
-    faultType: "Tốc độ",
-    severity: "P1_HIGH",
-    thresholdValue: "1.920 rpm",
-    duration: "45 s",
-    ack_status: "UNACKNOWLEDGED",
-    acknowledged_at: null,
-  },
-  {
-    id: "EV-005",
-    node_id: 6,
-    timestamp: "06/11/2026 09:15:42",
-    rawTimestamp: 1793940942,
-    area: "Khu B - Trạm Bơm & Thủy lực",
-    gateway: "GW-02",
-    node: "N-006",
-    faultType: "Nhiệt độ",
-    severity: "P2_MEDIUM",
-    thresholdValue: "83,7 °C",
-    duration: "18 s",
-    ack_status: "ACKNOWLEDGED",
-    acknowledged_at: "06/11/2026 09:18:00",
-  },
-  {
-    id: "EV-006",
-    node_id: 11,
-    timestamp: "06/11/2026 08:41:10",
-    rawTimestamp: 1793938870,
-    area: "Khu A - Phân xưởng Ép",
-    gateway: "GW-01",
-    node: "N-011",
-    faultType: "Tốc độ",
-    severity: "P2_MEDIUM",
-    thresholdValue: "1.780 rpm",
-    duration: "64 s",
-    ack_status: "ACKNOWLEDGED",
-    acknowledged_at: "06/11/2026 08:45:22",
-  },
-  {
-    id: "EV-007",
-    node_id: 24,
-    timestamp: "06/11/2026 08:12:05",
-    rawTimestamp: 1793937125,
-    area: "Khu C - Kho lạnh Công nghiệp",
-    gateway: "GW-03",
-    node: "N-024",
-    faultType: "Nhiệt độ",
-    severity: "P0_EMERGENCY",
-    thresholdValue: "-1,2 °C",
-    duration: "210 s",
-    ack_status: "UNACKNOWLEDGED",
-    acknowledged_at: null,
-  },
-  {
-    id: "EV-008",
-    node_id: 4,
-    timestamp: "06/11/2026 07:55:19",
-    rawTimestamp: 1793936119,
-    area: "Khu A - Phân xưởng Ép",
-    gateway: "GW-01",
-    node: "N-004",
-    faultType: "Nhiệt độ",
-    severity: "P1_HIGH",
-    thresholdValue: "88,9 °C",
-    duration: "75 s",
-    ack_status: "ACKNOWLEDGED",
-    acknowledged_at: "06/11/2026 08:00:05",
-  },
-  {
-    id: "EV-009",
-    node_id: 18,
-    timestamp: "06/11/2026 07:30:44",
-    rawTimestamp: 1793934644,
-    area: "Khu B - Trạm Bơm & Thủy lực",
-    gateway: "GW-02",
-    node: "N-018",
-    faultType: "Tốc độ",
-    severity: "P1_HIGH",
-    thresholdValue: "2.040 rpm",
-    duration: "50 s",
-    ack_status: "UNACKNOWLEDGED",
-    acknowledged_at: null,
-  },
-  {
-    id: "EV-010",
-    node_id: 29,
-    timestamp: "06/11/2026 06:45:00",
-    rawTimestamp: 1793931900,
-    area: "Khu C - Kho lạnh Công nghiệp",
-    gateway: "GW-03",
-    node: "N-029",
-    faultType: "Nhiệt độ",
-    severity: "P2_MEDIUM",
-    thresholdValue: "4,5 °C",
-    duration: "140 s",
-    ack_status: "ACKNOWLEDGED",
-    acknowledged_at: "06/11/2026 06:50:00",
-  },
-  {
-    id: "EV-011",
-    node_id: 9,
-    timestamp: "06/11/2026 06:10:33",
-    rawTimestamp: 1793929833,
-    area: "Khu A - Phân xưởng Ép",
-    gateway: "GW-01",
-    node: "N-009",
-    faultType: "Nhiệt độ",
-    severity: "P2_MEDIUM",
-    thresholdValue: "81,2 °C",
-    duration: "30 s",
-    ack_status: "ACKNOWLEDGED",
-    acknowledged_at: "06/11/2026 06:15:00",
-  },
-  {
-    id: "EV-012",
-    node_id: 3,
-    timestamp: "06/11/2026 05:22:18",
-    rawTimestamp: 1793926938,
-    area: "Khu B - Trạm Bơm & Thủy lực",
-    gateway: "GW-02",
-    node: "N-003",
-    faultType: "Tốc độ",
-    severity: "P1_HIGH",
-    thresholdValue: "1.810 rpm",
-    duration: "25 s",
-    ack_status: "UNACKNOWLEDGED",
-    acknowledged_at: null,
-  },
-];
-
 function MonitoringContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -232,7 +48,7 @@ function MonitoringContent() {
   const initialArea = searchParams.get("area") || "all";
 
   const [activeRoute, setActiveRoute] = useState<NavItemKey>("monitoring");
-  const [events, setEvents] = useState<FaultEvent[]>(INITIAL_EVENTS);
+  const [events, setEvents] = useState<FaultEvent[]>([]);
   const [selectedArea, setSelectedArea] = useState<string>(initialArea);
   const [selectedFaultType, setSelectedFaultType] = useState<string>(
     initialType === "temp" ? "Nhiệt độ" : initialType === "speed" ? "Tốc độ" : "all"
@@ -250,7 +66,7 @@ function MonitoringContent() {
     setIsLoading(true);
     try {
       const resp = await getAlerts({ limit: 50 });
-      if (resp && resp.items && resp.items.length > 0) {
+      if (resp && resp.items) {
         const mapped: FaultEvent[] = resp.items.map((a) => {
           const isTemp = a.event_code === 1;
           const trigger = a.trigger;
@@ -282,9 +98,11 @@ function MonitoringContent() {
           };
         });
         setEvents(mapped);
+      } else {
+        setEvents([]);
       }
     } catch {
-      // Backend not yet populated, keep baseline
+      setEvents([]);
     } finally {
       const now = new Date();
       setLastUpdated(now.toTimeString().split(" ")[0] || "--:--:--");

@@ -24,47 +24,18 @@ interface MetricSnapshot {
   faults: { total: number; temp: number; speed: number };
 }
 
-const AREA_METRICS: Record<string, { name: string; data: MetricSnapshot }> = {
-  all: {
-    name: "Tất cả khu vực",
-    data: {
-      gateway: { connected: 8, total: 10, operating: 7 },
-      node: { connected: 180, total: 200, operating: 175 },
-      faults: { total: 12, temp: 8, speed: 4 },
-    },
-  },
-  "khu-a": {
-    name: "Khu A - Phân xưởng Ép",
-    data: {
-      gateway: { connected: 3, total: 3, operating: 3 },
-      node: { connected: 60, total: 64, operating: 58 },
-      faults: { total: 5, temp: 4, speed: 1 },
-    },
-  },
-  "khu-b": {
-    name: "Khu B - Trạm Bơm & Thủy lực",
-    data: {
-      gateway: { connected: 2, total: 2, operating: 2 },
-      node: { connected: 45, total: 48, operating: 44 },
-      faults: { total: 3, temp: 1, speed: 2 },
-    },
-  },
-  "khu-c": {
-    name: "Khu C - Kho lạnh Công nghiệp",
-    data: {
-      gateway: { connected: 2, total: 3, operating: 1 },
-      node: { connected: 50, total: 56, operating: 48 },
-      faults: { total: 4, temp: 3, speed: 1 },
-    },
-  },
-  "ngoai-troi": {
-    name: "Trạm Thu phát Ngoài trời",
-    data: {
-      gateway: { connected: 1, total: 2, operating: 1 },
-      node: { connected: 25, total: 32, operating: 25 },
-      faults: { total: 0, temp: 0, speed: 0 },
-    },
-  },
+const AREAS: Record<string, string> = {
+  all: "Tất cả khu vực",
+  "khu-a": "Khu A - Phân xưởng Ép",
+  "khu-b": "Khu B - Trạm Bơm & Thủy lực",
+  "khu-c": "Khu C - Kho lạnh Công nghiệp",
+  "ngoai-troi": "Trạm Thu phát Ngoài trời",
+};
+
+const EMPTY_SNAPSHOT: MetricSnapshot = {
+  gateway: { connected: 0, total: 0, operating: 0 },
+  node: { connected: 0, total: 0, operating: 0 },
+  faults: { total: 0, temp: 0, speed: 0 },
 };
 
 export default function OverviewPage() {
@@ -133,26 +104,24 @@ export default function OverviewPage() {
         });
       }
 
-      // If backend has real records, prioritize them; otherwise preserve baseline
-      if (nodeTotal > 0 || gwTotal > 0 || faultTotal > 0) {
-        setLiveMetrics({
-          gateway: {
-            connected: gwConnected,
-            total: Math.max(gwTotal, 1),
-            operating: gwOperating,
-          },
-          node: {
-            connected: nodeConnected,
-            total: Math.max(nodeTotal, 1),
-            operating: nodeOperating,
-          },
-          faults: {
-            total: faultTotal,
-            temp: faultTemp,
-            speed: faultSpeed,
-          },
-        });
-      }
+      // Always reflect actual counts from backend/database
+      setLiveMetrics({
+        gateway: {
+          connected: gwConnected,
+          total: gwTotal,
+          operating: gwOperating,
+        },
+        node: {
+          connected: nodeConnected,
+          total: nodeTotal,
+          operating: nodeOperating,
+        },
+        faults: {
+          total: faultTotal,
+          temp: faultTemp,
+          speed: faultSpeed,
+        },
+      });
     } catch {
       // Fallback to baseline metrics
     } finally {
@@ -176,7 +145,7 @@ export default function OverviewPage() {
         setTimeout(() => setToastMessage(null), 4000);
 
         setLiveMetrics((prev) => {
-          const current = prev || AREA_METRICS.all.data;
+          const current = prev || EMPTY_SNAPSHOT;
           const isTemp = payload.event_code === 1;
           return {
             ...current,
@@ -195,9 +164,8 @@ export default function OverviewPage() {
     };
   }, [fetchLiveMetrics, subscribe]);
 
-  const currentAreaName = AREA_METRICS[selectedArea]?.name ?? "Tất cả khu vực";
-  const baselineMetrics = AREA_METRICS[selectedArea]?.data ?? AREA_METRICS.all.data;
-  const currentMetrics = (selectedArea === "all" && liveMetrics) ? liveMetrics : baselineMetrics;
+  const currentAreaName = AREAS[selectedArea] ?? "Tất cả khu vực";
+  const currentMetrics = liveMetrics || EMPTY_SNAPSHOT;
 
   const showNavigationFeedback = (destination: string, filterStatus: string) => {
     setToastMessage(
@@ -270,9 +238,9 @@ export default function OverviewPage() {
                 }}
                 className="h-10 pl-3.5 pr-9 rounded-lg border border-border bg-surface text-text-primary text-sm font-medium focus:outline-none focus:border-interactive focus:ring-1 focus:ring-interactive appearance-none cursor-pointer shadow-none"
               >
-                {Object.entries(AREA_METRICS).map(([key, item]) => (
+                {Object.entries(AREAS).map(([key, item]) => (
                   <option key={key} value={key}>
-                    {item.name}
+                    {item}
                   </option>
                 ))}
               </select>

@@ -101,6 +101,11 @@ func (s *Service) ConsumeWsTicket(ticket string) (*Claims, bool) {
 	return s.ticketStore.ConsumeTicket(ticket)
 }
 
+// ListUsers retrieves all registered user profiles without secrets.
+func (s *Service) ListUsers(ctx context.Context) ([]*User, error) {
+	return s.repo.ListUsers(ctx)
+}
+
 // JWTService returns the underlying JWTService.
 func (s *Service) JWTService() *JWTService {
 	return s.jwtService

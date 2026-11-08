@@ -248,3 +248,54 @@ func TestHandler_WsTicket(t *testing.T) {
 		})
 	}
 }
+
+func TestHandler_ListUsers(t *testing.T) {
+	handler, svc, repo := setupTestHandler(t)
+	ctx := context.Background()
+
+	_ = repo.CreateUser(ctx, &auth.User{
+		Username: "admin_tester",
+		Role:     auth.RoleAdmin,
+		IsActive: true,
+	})
+
+	validToken, err := svc.JWTService().GenerateToken(&auth.User{
+		ID:       "u-admin",
+		Username: "admin_tester",
+		Role:     auth.RoleAdmin,
+		IsActive: true,
+	}, time.Hour)
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// Test authenticated request
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
+	req.Header.Set("Authorization", "Bearer "+validToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var users []*auth.User
+	if err := json.Unmarshal(rec.Body.Bytes(), &users); err != nil {
+		t.Fatalf("failed to decode users response: %v", err)
+	}
+	if len(users) != 1 || users[0].Username != "admin_tester" {
+		t.Fatalf("unexpected users returned: %+v", users)
+	}
+
+	// Test unauthenticated request
+	unauthReq := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
+	unauthRec := httptest.NewRecorder()
+	mux.ServeHTTP(unauthRec, unauthReq)
+
+	if unauthRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401 for unauthenticated request, got %d", unauthRec.Code)
+	}
+}

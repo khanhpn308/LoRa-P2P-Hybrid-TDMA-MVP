@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useMemo, Suspense } from "react";
+import React, { useState, useMemo, useEffect, useCallback, Suspense } from "react";
+import { useAuth } from "@/lib/auth/AuthContext";
 import { useSearchParams, useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { NavItemKey } from "@/components/layout/Sidebar";
@@ -40,63 +41,6 @@ export interface UserItem {
   lastLogin: string;
 }
 
-const INITIAL_USERS: UserItem[] = [
-  {
-    id: "U-001",
-    username: "admin01",
-    fullName: "Nguyễn Văn A",
-    email: "nguyen.vana@iiot-lora.vn",
-    role: "ADMIN",
-    status: "active",
-    lastLogin: "06/11/2026 12:15",
-  },
-  {
-    id: "U-002",
-    username: "operator02",
-    fullName: "Trần Văn B",
-    email: "tran.vanb@iiot-lora.vn",
-    role: "OPERATOR",
-    status: "active",
-    lastLogin: "06/11/2026 11:40",
-  },
-  {
-    id: "U-003",
-    username: "operator03",
-    fullName: "Lê Văn C",
-    email: "le.vanc@iiot-lora.vn",
-    role: "OPERATOR",
-    status: "active",
-    lastLogin: "05/11/2026 17:30",
-  },
-  {
-    id: "U-004",
-    username: "operator04",
-    fullName: "Phạm Văn D",
-    email: "pham.vand@iiot-lora.vn",
-    role: "OPERATOR",
-    status: "active",
-    lastLogin: "05/11/2026 16:45",
-  },
-  {
-    id: "U-005",
-    username: "viewer05",
-    fullName: "Hoàng Văn E",
-    email: "hoang.vane@iiot-lora.vn",
-    role: "VIEWER",
-    status: "active",
-    lastLogin: "04/11/2026 08:10",
-  },
-  {
-    id: "U-006",
-    username: "viewer06",
-    fullName: "Võ Văn F",
-    email: "vo.vanf@iiot-lora.vn",
-    role: "VIEWER",
-    status: "disabled",
-    lastLogin: "02/11/2026 09:30",
-  },
-];
-
 const ROLE_LABELS: Record<UserRole, { label: string; tag: string; description: string; badgeClass: string }> = {
   ADMIN: {
     label: "Quản trị viên (Super Admin)",
@@ -124,7 +68,7 @@ function UsersContent() {
   const initialRoleParam = searchParams.get("role") || "all";
 
   const [activeRoute, setActiveRoute] = useState<NavItemKey>("users");
-  const [users, setUsers] = useState<UserItem[]>(INITIAL_USERS);
+  const [users, setUsers] = useState<UserItem[]>([]);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [roleFilter, setRoleFilter] = useState<string>(initialRoleParam);
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -132,6 +76,42 @@ function UsersContent() {
   const [currentPage, setCurrentPage] = useState<number>(1);
 
   // Modal States
+  const { token } = useAuth();
+
+  const loadUsers = useCallback(async () => {
+    try {
+      const activeToken = token || (typeof window !== "undefined" ? localStorage.getItem("access_token") : null);
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (activeToken) {
+        headers["Authorization"] = `Bearer ${activeToken}`;
+      }
+      const res = await fetch("/api/v1/users", { headers });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          const mapped: UserItem[] = data.map((u: { id: number; username: string; role: string; is_active: boolean; created_at?: string }) => ({
+            id: `U-${String(u.id).padStart(3, "0")}`,
+            username: u.username,
+            fullName: u.username === "admin" ? "Quản trị viên Hệ thống" : (u.username === "operator01" ? "Trần Vận Hành" : "Người Xem Kiểm Toán"),
+            email: `${u.username}@iiot-lora.vn`,
+            role: (u.role as UserRole) || "VIEWER",
+            status: u.is_active ? "active" : "disabled",
+            lastLogin: u.created_at ? new Date(u.created_at).toLocaleDateString("vi-VN") : "Hôm nay",
+          }));
+          setUsers(mapped);
+          return;
+        }
+      }
+      setUsers([]);
+    } catch {
+      setUsers([]);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    loadUsers();
+  }, [loadUsers]);
+
   const [roleModalUser, setRoleModalUser] = useState<UserItem | null>(null);
   const [selectedNewRole, setSelectedNewRole] = useState<UserRole>("OPERATOR");
 

@@ -27,12 +27,29 @@ func (p *NoopMQTTPublisher) Publish(ctx context.Context, topic string, qos byte,
 	return nil
 }
 
+// corsMiddleware provides CORS headers and preflight handling for web client integration.
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, X-Idempotency-Key")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // BuildServeMux wires REST endpoints for health checks, operational monitoring, TDMA schedules, and realtime WSS.
 func BuildServeMux(
 	statusStore storage.StatusStorage,
 	offlineThreshold time.Duration,
 	schedHandler *api.ScheduleHandler,
 	wsHandler *api.WebSocketHandler,
+	authHandler *auth.Handler,
+	channelHandler *api.ChannelHandler,
+	alertHandler *api.AlertHandler,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
 
@@ -54,6 +71,21 @@ func BuildServeMux(
 		log.Println("Realtime WebSocket hub endpoint registered at GET /api/v1/ws/realtime.")
 	}
 
+	if authHandler != nil {
+		authHandler.RegisterRoutes(mux)
+		log.Println("Auth REST API registered.")
+	}
+
+	if channelHandler != nil {
+		channelHandler.RegisterRoutes(mux)
+		log.Println("Channel registry REST API registered.")
+	}
+
+	if alertHandler != nil {
+		alertHandler.RegisterRoutes(mux)
+		log.Println("Alerts REST API registered.")
+	}
+
 	return mux
 }
 
@@ -69,6 +101,9 @@ func main() {
 	var statusStore storage.StatusStorage
 	var scheduleRepo scheduler.ScheduleRepository
 	var channelRepo storage.ChannelRepository
+	var userRepo auth.UserRepository
+	var channelHandler *api.ChannelHandler
+	var alertHandler *api.AlertHandler
 
 	if dbURL != "" {
 		db, err := sql.Open("postgres", dbURL)
@@ -80,10 +115,22 @@ func main() {
 		statusStore = storage.NewPostgresStatusStorage(db)
 		scheduleRepo = storage.NewPostgresScheduleStorage(db)
 		channelRepo = storage.NewPostgresChannelRepository(db)
+		userRepo = auth.NewPostgresUserRepository(db)
+		eventStorage := storage.NewPostgresEventStorage(db)
+		channelHandler = api.NewChannelHandler(channelRepo)
+		alertHandler = api.NewAlertHandler(eventStorage)
 		log.Println("PostgreSQL persistent storage initialized.")
 	} else {
 		log.Println("DATABASE_URL not set; initializing thread-safe in-memory storage.")
 		scheduleRepo = scheduler.NewMemoryScheduleRepository()
+		userRepo = auth.NewInMemoryUserRepository()
+	}
+
+	// Seed / verify default test accounts (admin, operator01, viewer01)
+	if err := auth.SeedDefaultUsers(context.Background(), userRepo); err != nil {
+		log.Printf("Warning: failed to seed default users: %v", err)
+	} else {
+		log.Println("Default user accounts verified/seeded (admin, operator01, viewer01).")
 	}
 
 	// Initialize TDMA planner
@@ -109,7 +156,7 @@ func main() {
 	go hub.Run(hubCtx)
 
 	jwtSecret := os.Getenv("JWT_SECRET_KEY")
-	if jwtSecret == "" {
+	if len(jwtSecret) < 32 {
 		jwtSecret = "default-mvp-jwt-secret-key-minimum-32-bytes!!"
 	}
 	jwtService, err := auth.NewJWTService([]byte(jwtSecret))
@@ -117,17 +164,19 @@ func main() {
 		log.Fatalf("failed to initialize JWT service: %v", err)
 	}
 	ticketStore := auth.NewTicketStore()
+	authService := auth.NewService(userRepo, jwtService, ticketStore)
+	authHandler := auth.NewHandler(authService)
 
 	realtimeHandler := realtime.NewHandler(hub, ticketStore, jwtService,
 		realtime.WithAllowEmptyOrigin(true),
 	)
 	wsHandler := api.NewWebSocketHandler(realtimeHandler)
 
-	mux := BuildServeMux(statusStore, 5*time.Minute, schedHandler, wsHandler)
+	mux := BuildServeMux(statusStore, 5*time.Minute, schedHandler, wsHandler, authHandler, channelHandler, alertHandler)
 
 	srv := &http.Server{
 		Addr:         ":" + port,
-		Handler:      mux,
+		Handler:      corsMiddleware(mux),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,

@@ -34,161 +34,6 @@ export interface GatewayItem {
   channel: number;
 }
 
-// 10 Gateways matching strictly with Overview AREA_METRICS and VN920_V1 channel plan (920.25 - 922.75 MHz)
-// (Overall: 8 connected, 7 operating; 2 disconnected, 3 inactive)
-const INITIAL_GATEWAYS: GatewayItem[] = [
-  {
-    id: "GW-01",
-    name: "Gateway Phân xưởng Ép 1",
-    connected: true,
-    operating: true,
-    mode: "ACTIVE",
-    activeScheduleVersion: 4,
-    lastSeenAt: "2026-11-08T03:00:00Z",
-    rfDutyPermille: 12,
-    nodeCount: 30,
-    areaCount: 3,
-    primaryArea: "Khu A - Phân xưởng Ép",
-    frequency: "920.500 MHz (CH01)",
-    channel: 1,
-  },
-  {
-    id: "GW-02",
-    name: "Gateway Phân xưởng Ép 2",
-    connected: true,
-    operating: true,
-    mode: "ACTIVE",
-    activeScheduleVersion: 3,
-    lastSeenAt: "2026-11-08T03:00:00Z",
-    rfDutyPermille: 8,
-    nodeCount: 22,
-    areaCount: 2,
-    primaryArea: "Khu A - Phân xưởng Ép",
-    frequency: "920.750 MHz (CH02)",
-    channel: 2,
-  },
-  {
-    id: "GW-03",
-    name: "Gateway Trạm Đúc Ép A3",
-    connected: true,
-    operating: true,
-    mode: "ACTIVE",
-    activeScheduleVersion: 2,
-    lastSeenAt: "2026-11-08T03:00:00Z",
-    rfDutyPermille: 6,
-    nodeCount: 12,
-    areaCount: 2,
-    primaryArea: "Khu A - Phân xưởng Ép",
-    frequency: "921.000 MHz (CH03)",
-    channel: 3,
-  },
-  {
-    id: "GW-04",
-    name: "Gateway Trạm Bơm Thủy lực 1",
-    connected: true,
-    operating: true,
-    mode: "ACTIVE",
-    activeScheduleVersion: 3,
-    lastSeenAt: "2026-11-08T03:00:00Z",
-    rfDutyPermille: 9,
-    nodeCount: 25,
-    areaCount: 2,
-    primaryArea: "Khu B - Trạm Bơm & Thủy lực",
-    frequency: "921.250 MHz (CH04)",
-    channel: 4,
-  },
-  {
-    id: "GW-05",
-    name: "Gateway Trạm Bơm Thủy lực 2",
-    connected: true,
-    operating: true,
-    mode: "ACTIVE",
-    activeScheduleVersion: 2,
-    lastSeenAt: "2026-11-08T03:00:00Z",
-    rfDutyPermille: 7,
-    nodeCount: 20,
-    areaCount: 2,
-    primaryArea: "Khu B - Trạm Bơm & Thủy lực",
-    frequency: "921.500 MHz (CH05)",
-    channel: 5,
-  },
-  {
-    id: "GW-06",
-    name: "Gateway Kho Lạnh C1",
-    connected: true,
-    operating: true,
-    mode: "ACTIVE",
-    activeScheduleVersion: 4,
-    lastSeenAt: "2026-11-08T03:00:00Z",
-    rfDutyPermille: 11,
-    nodeCount: 30,
-    areaCount: 3,
-    primaryArea: "Khu C - Kho lạnh Công nghiệp",
-    frequency: "921.750 MHz (CH06)",
-    channel: 6,
-  },
-  {
-    id: "GW-07",
-    name: "Gateway Kho Lạnh C2",
-    connected: true,
-    operating: false,
-    mode: "AUTONOMOUS",
-    activeScheduleVersion: 2,
-    lastSeenAt: "2026-11-08T02:30:00Z",
-    rfDutyPermille: 4,
-    nodeCount: 20,
-    areaCount: 2,
-    primaryArea: "Khu C - Kho lạnh Công nghiệp",
-    frequency: "922.000 MHz (CH07)",
-    channel: 7,
-  },
-  {
-    id: "GW-08",
-    name: "Gateway Kho Lạnh C3 (Dự phòng)",
-    connected: false,
-    operating: false,
-    mode: "OFFLINE",
-    activeScheduleVersion: 0,
-    lastSeenAt: null,
-    rfDutyPermille: 0,
-    nodeCount: 0,
-    areaCount: 1,
-    primaryArea: "Khu C - Kho lạnh Công nghiệp",
-    frequency: "922.250 MHz (CH08)",
-    channel: 8,
-  },
-  {
-    id: "GW-09",
-    name: "Gateway Trạm Thu phát Ngoài trời 1",
-    connected: true,
-    operating: true,
-    mode: "ACTIVE",
-    activeScheduleVersion: 3,
-    lastSeenAt: "2026-11-08T03:00:00Z",
-    rfDutyPermille: 14,
-    nodeCount: 25,
-    areaCount: 2,
-    primaryArea: "Trạm Thu phát Ngoài trời",
-    frequency: "922.500 MHz (CH09)",
-    channel: 9,
-  },
-  {
-    id: "GW-10",
-    name: "Gateway Trạm Cột Thu phát 2",
-    connected: false,
-    operating: false,
-    mode: "FAULT",
-    activeScheduleVersion: 1,
-    lastSeenAt: "2026-11-07T18:00:00Z",
-    rfDutyPermille: 0,
-    nodeCount: 0,
-    areaCount: 1,
-    primaryArea: "Trạm Thu phát Ngoài trời",
-    frequency: "922.750 MHz (CH10)",
-    channel: 10,
-  },
-];
-
 function GatewaysContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -200,7 +45,7 @@ function GatewaysContent() {
   const initialQuery = searchParams.get("q") || "";
 
   const [activeRoute, setActiveRoute] = useState<NavItemKey>("gateways");
-  const [gateways, setGateways] = useState<GatewayItem[]>(INITIAL_GATEWAYS);
+  const [gateways, setGateways] = useState<GatewayItem[]>([]);
   const [searchQuery, setSearchQuery] = useState<string>(initialQuery);
   const [connFilter, setConnFilter] = useState<string>(initialConn);
   const [opsFilter, setOpsFilter] = useState<string>(initialOps);
@@ -212,26 +57,24 @@ function GatewaysContent() {
   const loadGateways = useCallback(async () => {
     try {
       const realGws = await getGateways();
-      if (realGws && realGws.length > 0) {
-        setGateways((prev) =>
-          prev.map((gw) => {
-            const found = realGws.find((rg) => rg.gateway_id === gw.id);
-            if (!found) return gw;
-            return {
-              ...gw,
-              connected: found.mode !== "OFFLINE",
-              operating: found.mode === "ACTIVE" || found.mode === "AUTONOMOUS",
-              mode: found.mode,
-              activeScheduleVersion: found.active_schedule_version,
-              lastSeenAt: found.last_seen_at,
-              rfDutyPermille: found.rf_duty_permille,
-              nodeCount: found.node_count,
-            };
-          })
-        );
-      }
+      const mapped: GatewayItem[] = (realGws || []).map((rg) => ({
+        id: rg.gateway_id,
+        name: rg.name || `Trạm ${rg.gateway_id}`,
+        connected: rg.mode !== "OFFLINE",
+        operating: rg.mode === "ACTIVE" || rg.mode === "AUTONOMOUS",
+        mode: rg.mode,
+        activeScheduleVersion: rg.active_schedule_version,
+        lastSeenAt: rg.last_seen_at,
+        rfDutyPermille: rg.rf_duty_permille,
+        nodeCount: rg.node_count,
+        areaCount: 1,
+        primaryArea: "Khu vực cảm biến",
+        frequency: `${rg.frequency_hz ? (rg.frequency_hz / 1e6).toFixed(3) : "920.500"} MHz`,
+        channel: typeof rg.channel_id === "string" ? parseInt(rg.channel_id.replace(/\D/g, "") || "1", 10) : Number(rg.channel_id) || 1,
+      }));
+      setGateways(mapped);
     } catch {
-      // Keep baseline on connection failure
+      setGateways([]);
     }
   }, []);
 

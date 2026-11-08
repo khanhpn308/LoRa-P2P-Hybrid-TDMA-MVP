@@ -26,6 +26,7 @@ func NewHandler(authService *Service) *Handler {
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/login", h.handleLogin)
 	mux.HandleFunc("POST /api/v1/auth/ws-ticket", h.handleWsTicket)
+	mux.HandleFunc("GET /api/v1/users", h.handleListUsers)
 }
 
 func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -106,6 +107,51 @@ func (h *Handler) handleWsTicket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeAuthJSON(w, http.StatusOK, ticketResp)
+}
+
+func (h *Handler) handleListUsers(w http.ResponseWriter, r *http.Request) {
+	// 1. Resolve caller claims either from context or directly from Bearer header
+	claims, ok := ClaimsFromContext(r.Context())
+	if !ok || claims == nil {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+			w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
+			writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing or malformed bearer token")
+			return
+		}
+
+		token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+		if token == "" {
+			w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
+			writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "empty bearer token")
+			return
+		}
+
+		var err error
+		claims, err = h.authService.JWTService().VerifyToken(token)
+		if err != nil {
+			w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
+			writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid or expired token")
+			return
+		}
+	}
+
+	if !IsValidRole(claims.Role) {
+		writeAuthError(w, http.StatusForbidden, "FORBIDDEN", "unauthorized role")
+		return
+	}
+
+	users, err := h.authService.ListUsers(r.Context())
+	if err != nil {
+		writeAuthError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list users")
+		return
+	}
+
+	if users == nil {
+		users = []*User{}
+	}
+
+	writeAuthJSON(w, http.StatusOK, users)
 }
 
 func writeAuthJSON(w http.ResponseWriter, status int, data any) {

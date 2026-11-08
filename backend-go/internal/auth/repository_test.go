@@ -57,16 +57,19 @@ func TestSeedDefaultAdmin(t *testing.T) {
 	repo := auth.NewInMemoryUserRepository()
 	ctx := context.Background()
 
-	admin, err := auth.SeedDefaultAdmin(ctx, repo, "$AdminSecret123!")
+	admin, err := auth.SeedDefaultAdmin(ctx, repo, "admin")
 	if err != nil {
 		t.Fatalf("failed to seed admin: %v", err)
 	}
 	if admin.Username != "admin" || admin.Role != auth.RoleAdmin {
 		t.Fatalf("admin user profile mismatch: %+v", admin)
 	}
+	if !auth.CheckPassword("admin", admin.PasswordHash) {
+		t.Fatalf("password check failed for seeded admin credentials")
+	}
 
 	// Calling seed again should be idempotent
-	admin2, err := auth.SeedDefaultAdmin(ctx, repo, "$AdminSecret123!")
+	admin2, err := auth.SeedDefaultAdmin(ctx, repo, "admin")
 	if err != nil {
 		t.Fatalf("idempotent seed failed: %v", err)
 	}

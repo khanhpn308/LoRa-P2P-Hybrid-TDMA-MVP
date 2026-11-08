@@ -57,20 +57,23 @@ export async function getGateways(): Promise<GatewayItem[]> {
         frequency_hz: assignedChannel?.frequency_hz || 920500000,
       });
     } catch {
-      // If gateway has never reported, provide default entry
-      results.push({
-        gateway_id: gwId,
-        mode: "OFFLINE",
-        active_schedule_version: 0,
-        last_seen_at: null,
-        rf_duty_permille: 0,
-        node_count: 0,
-        name: `Trạm điều hành ${gwId}`,
-        online: false,
-        operating: false,
-        channel_id: "CH01",
-        frequency_hz: 920500000,
-      });
+      // If gateway is not registered in the database, only include if actively assigned in channel table
+      const assignedChannel = channels.find((c) => c.assigned_gateway_id === gwId);
+      if (assignedChannel) {
+        results.push({
+          gateway_id: gwId,
+          mode: "OFFLINE",
+          active_schedule_version: 0,
+          last_seen_at: null,
+          rf_duty_permille: 0,
+          node_count: 0,
+          name: `Trạm điều hành ${gwId}`,
+          online: false,
+          operating: false,
+          channel_id: assignedChannel.channel_id,
+          frequency_hz: assignedChannel.frequency_hz,
+        });
+      }
     }
   }
 

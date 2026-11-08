@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/auth/bcrypt"
 )
 
 // UserRepository specifies data access operations for user credentials and RBAC profiles.
@@ -14,6 +16,7 @@ type UserRepository interface {
 	GetByUsername(ctx context.Context, username string) (*User, error)
 	GetByID(ctx context.Context, id string) (*User, error)
 	CreateUser(ctx context.Context, user *User) error
+	ListUsers(ctx context.Context) ([]*User, error)
 }
 
 // PostgresUserRepository implements UserRepository against a live PostgreSQL database (DB-001, DB-002).
@@ -103,6 +106,43 @@ func (r *PostgresUserRepository) CreateUser(ctx context.Context, user *User) err
 	return nil
 }
 
+// ListUsers queries all users from PostgreSQL.
+func (r *PostgresUserRepository) ListUsers(ctx context.Context) ([]*User, error) {
+	const query = `
+		SELECT id, username, password_hash, role, is_active, created_at, updated_at
+		FROM users
+		ORDER BY created_at ASC
+	`
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []*User
+	for rows.Next() {
+		var u User
+		var roleStr string
+		if err := rows.Scan(
+			&u.ID,
+			&u.Username,
+			&u.PasswordHash,
+			&roleStr,
+			&u.IsActive,
+			&u.CreatedAt,
+			&u.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan user row: %w", err)
+		}
+		u.Role = Role(roleStr)
+		users = append(users, &u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error reading users: %w", err)
+	}
+	return users, nil
+}
+
 // InMemoryUserRepository provides a concurrent thread-safe mock implementation for unit tests (TS-001).
 type InMemoryUserRepository struct {
 	mu    sync.RWMutex
@@ -167,30 +207,78 @@ func (m *InMemoryUserRepository) CreateUser(ctx context.Context, user *User) err
 	return nil
 }
 
-// SeedDefaultAdmin creates a default administrator account if none exists.
-func SeedDefaultAdmin(ctx context.Context, repo UserRepository, password string) (*User, error) {
-	existing, err := repo.GetByUsername(ctx, "admin")
+// ListUsers returns all users in the in-memory store.
+func (m *InMemoryUserRepository) ListUsers(ctx context.Context) ([]*User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var users []*User
+	for _, u := range m.users {
+		copyUser := *u
+		users = append(users, &copyUser)
+	}
+	return users, nil
+}
+
+// SeedUser seeds an account if it does not already exist.
+func SeedUser(ctx context.Context, repo UserRepository, username, password string, role Role) (*User, error) {
+	existing, err := repo.GetByUsername(ctx, username)
 	if err == nil && existing != nil {
 		return existing, nil
 	}
 	if err != nil && !errors.Is(err, ErrUserNotFound) {
-		return nil, fmt.Errorf("failed to check existing admin: %w", err)
+		return nil, fmt.Errorf("failed to check existing user %s: %w", username, err)
 	}
 
-	hashedPassword, err := HashPassword(password)
-	if err != nil {
-		return nil, fmt.Errorf("failed to hash admin password: %w", err)
+	var hashedPassword string
+	if len(password) < 8 {
+		h, err := bcrypt.GenerateFromPassword([]byte(password), DefaultBcryptCost)
+		if err != nil {
+			return nil, fmt.Errorf("failed to hash password for %s: %w", username, err)
+		}
+		hashedPassword = string(h)
+	} else {
+		h, err := HashPassword(password)
+		if err != nil {
+			return nil, fmt.Errorf("failed to hash password for %s: %w", username, err)
+		}
+		hashedPassword = h
 	}
 
-	adminUser := &User{
-		Username:     "admin",
+	newUser := &User{
+		Username:     username,
 		PasswordHash: hashedPassword,
-		Role:         RoleAdmin,
+		Role:         role,
 		IsActive:     true,
 	}
 
-	if err := repo.CreateUser(ctx, adminUser); err != nil {
-		return nil, fmt.Errorf("failed to seed admin user: %w", err)
+	if err := repo.CreateUser(ctx, newUser); err != nil {
+		return nil, fmt.Errorf("failed to create user %s: %w", username, err)
 	}
-	return adminUser, nil
+	return newUser, nil
+}
+
+// SeedDefaultUsers seeds default accounts (admin, operator01, viewer01).
+func SeedDefaultUsers(ctx context.Context, repo UserRepository) error {
+	seeds := []struct {
+		username string
+		password string
+		role     Role
+	}{
+		{"admin", "admin", RoleAdmin},
+		{"operator01", "operator", RoleOperator},
+		{"viewer01", "viewer", RoleViewer},
+	}
+
+	for _, s := range seeds {
+		if _, err := SeedUser(ctx, repo, s.username, s.password, s.role); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SeedDefaultAdmin creates a default administrator account if none exists.
+func SeedDefaultAdmin(ctx context.Context, repo UserRepository, password string) (*User, error) {
+	return SeedUser(ctx, repo, "admin", password, RoleAdmin)
 }

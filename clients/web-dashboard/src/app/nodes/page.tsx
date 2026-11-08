@@ -49,238 +49,6 @@ export interface NewNodeRequest {
   relativeTime: string;
 }
 
-// Representative dataset of Connected Nodes
-// Corresponds with Overview AREA_METRICS (180 connected, 175 operating across 200 total)
-const INITIAL_CONNECTED_NODES: ConnectedNodeItem[] = [
-  {
-    id: "N-012",
-    node_id: 12,
-    gateway: "GW-01",
-    area: "Khu A - Phân xưởng Ép",
-    connected: true,
-    operating: true,
-    state: "FAULT",
-    battery_mv: 3280,
-    last_event_type: "UP_EVENT 0x41 (Nút khẩn)",
-    assigned_slot_id: 2,
-  },
-  {
-    id: "N-008",
-    node_id: 8,
-    gateway: "GW-02",
-    area: "Khu B - Trạm Bơm & Thủy lực",
-    connected: true,
-    operating: true,
-    state: "FAULT",
-    battery_mv: 3340,
-    last_event_type: "UP_EVENT 0x41 (Áp suất)",
-    assigned_slot_id: 3,
-  },
-  {
-    id: "N-015",
-    node_id: 15,
-    gateway: "GW-01",
-    area: "Khu A - Phân xưởng Ép",
-    connected: false,
-    operating: false,
-    state: "OFFLINE",
-    battery_mv: 2950,
-    last_event_type: "Mất đồng bộ TDMA",
-    assigned_slot_id: null,
-  },
-  {
-    id: "N-021",
-    node_id: 21,
-    gateway: "GW-03",
-    area: "Khu C - Kho lạnh Công nghiệp",
-    connected: true,
-    operating: true,
-    state: "NORMAL",
-    battery_mv: 3310,
-    last_event_type: "Báo cáo sức khỏe (0x41)",
-    assigned_slot_id: 5,
-  },
-  {
-    id: "N-006",
-    node_id: 6,
-    gateway: "GW-02",
-    area: "Khu B - Trạm Bơm & Thủy lực",
-    connected: true,
-    operating: false,
-    state: "MAINTENANCE",
-    battery_mv: 3250,
-    last_event_type: "Bảo trì định kỳ",
-    assigned_slot_id: 6,
-  },
-  {
-    id: "N-011",
-    node_id: 11,
-    gateway: "GW-01",
-    area: "Khu A - Phân xưởng Ép",
-    connected: true,
-    operating: true,
-    state: "NORMAL",
-    battery_mv: 3300,
-    last_event_type: "Báo cáo sức khỏe (0x41)",
-    assigned_slot_id: 7,
-  },
-  {
-    id: "N-024",
-    node_id: 24,
-    gateway: "GW-03",
-    area: "Khu C - Kho lạnh Công nghiệp",
-    connected: true,
-    operating: true,
-    state: "NORMAL",
-    battery_mv: 3320,
-    last_event_type: "Báo cáo sức khỏe (0x41)",
-    assigned_slot_id: 8,
-  },
-  {
-    id: "N-004",
-    node_id: 4,
-    gateway: "GW-01",
-    area: "Khu A - Phân xưởng Ép",
-    connected: true,
-    operating: true,
-    state: "NORMAL",
-    battery_mv: 3290,
-    last_event_type: "Báo cáo sức khỏe (0x41)",
-    assigned_slot_id: 4,
-  },
-  {
-    id: "N-018",
-    node_id: 18,
-    gateway: "GW-02",
-    area: "Khu B - Trạm Bơm & Thủy lực",
-    connected: true,
-    operating: true,
-    state: "NORMAL",
-    battery_mv: 3330,
-    last_event_type: "Báo cáo sức khỏe (0x41)",
-    assigned_slot_id: 9,
-  },
-  {
-    id: "N-029",
-    node_id: 29,
-    gateway: "GW-03",
-    area: "Khu C - Kho lạnh Công nghiệp",
-    connected: true,
-    operating: true,
-    state: "NORMAL",
-    battery_mv: 3280,
-    last_event_type: "Báo cáo sức khỏe (0x41)",
-    assigned_slot_id: 10,
-  },
-  {
-    id: "N-009",
-    node_id: 9,
-    gateway: "GW-01",
-    area: "Khu A - Phân xưởng Ép",
-    connected: true,
-    operating: true,
-    state: "NORMAL",
-    battery_mv: 3310,
-    last_event_type: "Báo cáo sức khỏe (0x41)",
-    assigned_slot_id: 11,
-  },
-  {
-    id: "N-003",
-    node_id: 3,
-    gateway: "GW-02",
-    area: "Khu B - Trạm Bơm & Thủy lực",
-    connected: true,
-    operating: true,
-    state: "NORMAL",
-    battery_mv: 3350,
-    last_event_type: "Báo cáo sức khỏe (0x41)",
-    assigned_slot_id: 1,
-  },
-  {
-    id: "N-035",
-    node_id: 35,
-    gateway: "GW-09",
-    area: "Trạm Thu phát Ngoài trời",
-    connected: true,
-    operating: true,
-    state: "NORMAL",
-    battery_mv: 3270,
-    last_event_type: "Báo cáo sức khỏe (0x41)",
-    assigned_slot_id: 12,
-  },
-  {
-    id: "N-038",
-    node_id: 38,
-    gateway: "GW-09",
-    area: "Trạm Thu phát Ngoài trời",
-    connected: false,
-    operating: false,
-    state: "OFFLINE",
-    battery_mv: 2880,
-    last_event_type: "Mất đồng bộ TDMA",
-    assigned_slot_id: null,
-  },
-];
-
-// Initial pending join requests (Custom LoRa P2P Device Provisioning with EUI-48 MAC)
-const INITIAL_NEW_NODES: NewNodeRequest[] = [
-  {
-    id: "NODE-JOIN-092",
-    device_mac: "00:1A:7D:DA:71:01",
-    gateway: "GW-01 (Trạm Bắc)",
-    area: "Khu A - Phân xưởng Ép",
-    rssi: "-96 dBm",
-    signalQuality: "Tốt",
-    snr: "+8.5 dB",
-    time: "14:28:10",
-    relativeTime: "2 phút trước",
-  },
-  {
-    id: "NODE-JOIN-093",
-    device_mac: "00:1A:7D:DA:71:02",
-    gateway: "GW-02 (Trạm Nam)",
-    area: "Khu B - Trạm Bơm & Thủy lực",
-    rssi: "-104 dBm",
-    signalQuality: "Khá",
-    snr: "+5.2 dB",
-    time: "14:22:45",
-    relativeTime: "8 phút trước",
-  },
-  {
-    id: "NODE-JOIN-094",
-    device_mac: "00:1A:7D:DA:71:03",
-    gateway: "GW-01 (Trạm Bắc)",
-    area: "Khu A - Phân xưởng Ép",
-    rssi: "-88 dBm",
-    signalQuality: "Tốt",
-    snr: "+10.1 dB",
-    time: "14:15:20",
-    relativeTime: "15 phút trước",
-  },
-  {
-    id: "NODE-JOIN-095",
-    device_mac: "00:1A:7D:DA:71:04",
-    gateway: "GW-03 (Trạm Đông)",
-    area: "Khu C - Kho lạnh Công nghiệp",
-    rssi: "-112 dBm",
-    signalQuality: "Yếu",
-    snr: "-2.4 dB",
-    time: "14:02:18",
-    relativeTime: "28 phút trước",
-  },
-  {
-    id: "NODE-JOIN-096",
-    device_mac: "00:1A:7D:DA:71:05",
-    gateway: "GW-02 (Trạm Nam)",
-    area: "Khu B - Trạm Bơm & Thủy lực",
-    rssi: "-99 dBm",
-    signalQuality: "Khá",
-    snr: "+6.8 dB",
-    time: "13:45:00",
-    relativeTime: "45 phút trước",
-  },
-];
-
 function NodesContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -295,7 +63,7 @@ function NodesContent() {
   const [activeTab, setActiveTab] = useState<"connected" | "new">(initialTab);
 
   // Tab 1 state: Connected Nodes
-  const [connectedNodes, setConnectedNodes] = useState<ConnectedNodeItem[]>(INITIAL_CONNECTED_NODES);
+  const [connectedNodes, setConnectedNodes] = useState<ConnectedNodeItem[]>([]);
   const [searchConnected, setSearchConnected] = useState<string>("");
   const [selectedGateway, setSelectedGateway] = useState<string>("ALL");
   const [selectedArea, setSelectedArea] = useState<string>("ALL");
@@ -305,7 +73,7 @@ function NodesContent() {
   const [currentPage, setCurrentPage] = useState<number>(1);
 
   // Tab 2 state: New Node Requests
-  const [newNodes, setNewNodes] = useState<NewNodeRequest[]>(INITIAL_NEW_NODES);
+  const [newNodes, setNewNodes] = useState<NewNodeRequest[]>([]);
   const [searchNew, setSearchNew] = useState<string>("");
 
   // Modal states
@@ -326,8 +94,8 @@ function NodesContent() {
 
   const loadNodes = useCallback(async () => {
     try {
-      const resp = await getNodes({ limit: 50 });
-      if (resp && resp.items && resp.items.length > 0) {
+      const resp = await getNodes({ limit: 100 });
+      if (resp && resp.items) {
         const mapped: ConnectedNodeItem[] = resp.items.map((n) => ({
           id: `N-${String(n.node_id).padStart(3, "0")}`,
           node_id: n.node_id,
@@ -341,9 +109,11 @@ function NodesContent() {
           assigned_slot_id: n.assigned_slot_id,
         }));
         setConnectedNodes(mapped);
+      } else {
+        setConnectedNodes([]);
       }
     } catch {
-      // Backend not yet populated, keep baseline
+      setConnectedNodes([]);
     }
   }, []);
 
@@ -906,7 +676,7 @@ function NodesContent() {
                 <button
                   type="button"
                   onClick={() => {
-                    setNewNodes(INITIAL_NEW_NODES);
+                    loadNodes();
                     showToast("Đã làm mới danh sách yêu cầu gia nhập.");
                   }}
                   className="h-10 px-3 bg-canvas hover:bg-surface border border-border text-text-primary rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
