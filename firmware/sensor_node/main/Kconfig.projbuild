@@ -1,90 +1,94 @@
-menu "Sensor Node Button Wakeup and Power Configuration"
+# Project-level configuration for Sensor Node
 
-    config NODE_BUTTON_GPIO
-        int "Wakeup Button GPIO Pin"
-        default 4
-        range 0 39
-        help
-            Select the GPIO pin connected to your external push button.
-            To wake up the ESP32 from Deep-Sleep via EXT0, the selected pin MUST be an RTC GPIO:
-            - Safe general RTC pins: GPIO 4, 13, 14, 15, 25, 32, 33.
-            - Input-only RTC pins (require external pull resistor): GPIO 34, 35, 36, 39.
-            - On-board BOOT button: GPIO 0.
-            CAUTION: Do NOT select pins reserved by SX1276 HW-001:
-            - SCK = GPIO 5
-            - MISO = GPIO 19
-            - MOSI = GPIO 27
-            - CS = GPIO 18
-            - RST = GPIO 23
-            - DIO0 = GPIO 26
-            or UART console pins (TX=1, RX=3).
+menu "Sensor Node Configuration"
 
-    config NODE_BUTTON_ACTIVE_LEVEL
-        int "Button Active Trigger Level (0=Active Low / Pull-Up, 1=Active High / Pull-Down)"
-        default 0
-        range 0 1
-        help
-            0: Active Low (button connects to GND when pressed, ESP32 enables internal pull-up if supported).
-            1: Active High (button connects to 3.3V when pressed, ESP32 enables internal pull-down if supported).
+    menu "Node Identity & Target Gateway"
+        config NODE_TDMA_NODE_ID
+            int "Node Network ID & Assigned Static TDMA Slot (1..15)"
+            default 1
+            range 1 15
+            help
+                Assigned static DATA slot index in the TDMA superframe (Slot #1 to #15).
 
-    config NODE_BUTTON_DEBOUNCE_MS
-        int "Software Debounce Duration (ms)"
-        default 50
-        range 5 500
-        help
-            Stable level duration required to qualify a valid button press and filter switch bouncing noise.
+        config NODE_TDMA_GATEWAY_ID
+            int "Expected Gateway Network ID"
+            default 1
+            range 1 254
+            help
+                Network Gateway ID emitting DOWN_SYNC_BEACON (0x43).
+    endmenu
 
-    config NODE_BUTTON_HOLD_TIME_MS
-        int "Minimum Press Hold Time (ms)"
-        default 20
-        range 5 200
-        help
-            Minimum duration the button must remain pressed to generate an event.
+    menu "Button Wakeup & Deep-Sleep Power"
+        config NODE_BUTTON_GPIO
+            int "Wakeup Button GPIO Pin"
+            default 4
+            range 0 39
+            help
+                Select the GPIO pin connected to your external push button.
+                To wake up the ESP32 from Deep-Sleep via EXT0, the selected pin MUST be an RTC GPIO:
+                - Safe general RTC pins: GPIO 4, 13, 14, 15, 25, 32, 33.
+                - Input-only RTC pins (require external pull resistor): GPIO 34, 35, 36, 39.
+                - On-board BOOT button: GPIO 0.
+                CAUTION: Do NOT select pins reserved by SX1276 HW-001:
+                - SCK = GPIO 5
+                - MISO = GPIO 19
+                - MOSI = GPIO 27
+                - CS = GPIO 18
+                - RST = GPIO 23
+                - DIO0 = GPIO 26
+                or UART console pins (TX=1, RX=3).
 
-    config NODE_DEEP_SLEEP_TIMEOUT_SEC
-        int "Periodic Deep-Sleep Fallback Wakeup Timer in seconds (0 = disabled)"
-        default 0
-        range 0 86400
-        help
-            If greater than 0, sets an RTC timer wakeup fallback in addition to the button EXT0 wakeup.
+        config NODE_BUTTON_ACTIVE_LEVEL
+            int "Button Active Trigger Level (0=Active Low / Pull-Up, 1=Active High / Pull-Down)"
+            default 0
+            range 0 1
+            help
+                0: Active Low (button connects to GND when pressed, ESP32 enables internal pull-up if supported).
+                1: Active High (button connects to 3.3V when pressed, ESP32 enables internal pull-down if supported).
 
-endmenu
+        config NODE_BUTTON_DEBOUNCE_MS
+            int "Software Debounce Duration (ms)"
+            default 50
+            range 5 500
+            help
+                Stable level duration required to qualify a valid button press and filter switch bouncing noise.
 
-menu "Sensor Node V2 TDMA Slot Client Configuration"
+        config NODE_BUTTON_HOLD_TIME_MS
+            int "Minimum Press Hold Time (ms)"
+            default 20
+            range 5 200
+            help
+                Minimum duration the button must remain pressed to generate an event.
 
-    config NODE_TDMA_NODE_ID
-        int "Node Network ID & Assigned Static TDMA Slot (1..15)"
-        default 1
-        range 1 15
-        help
-            Assigned static DATA slot index in the TDMA superframe (Slot #1 to #15).
+        config NODE_DEEP_SLEEP_TIMEOUT_SEC
+            int "Periodic Deep-Sleep Fallback Wakeup Timer in seconds (0 = disabled)"
+            default 0
+            range 0 86400
+            help
+                If greater than 0, sets an RTC timer wakeup fallback in addition to the button EXT0 wakeup.
+    endmenu
 
-    config NODE_TDMA_GATEWAY_ID
-        int "Expected Gateway Network ID"
-        default 1
-        range 1 254
-        help
-            Network Gateway ID emitting DOWN_SYNC_BEACON (0x43).
+    menu "TDMA Slot Client Timing & Airtime"
+        config NODE_TDMA_BEACON_TIMEOUT_MS
+            int "Beacon Reception Window Timeout (ms)"
+            default 500
+            range 100 5000
+            help
+                Duration the node listens for Gateway DOWN_SYNC_BEACON before marking as missed.
 
-    config NODE_TDMA_BEACON_TIMEOUT_MS
-        int "Beacon Reception Window Timeout (ms)"
-        default 500
-        range 100 5000
-        help
-            Duration the node listens for Gateway DOWN_SYNC_BEACON before marking as missed.
+        config NODE_TDMA_CLOCK_DRIFT_PPM
+            int "Local Crystal Oscillator Drift in PPM"
+            default 20
+            range 1 100
+            help
+                Assumed crystal drift in parts-per-million used to compute holdover guard.
 
-    config NODE_TDMA_CLOCK_DRIFT_PPM
-        int "Local Crystal Oscillator Drift in PPM"
-        default 20
-        range 1 100
-        help
-            Assumed crystal drift in parts-per-million used to compute holdover guard.
-
-    config NODE_TDMA_AIRTIME_PERMILLE
-        int "Regulatory Duty Cycle Permille Limit (10 = 1.0%)"
-        default 10
-        range 1 100
-        help
-            Pre-transmit duty cycle enforcement limit (1.0% = 10 permille).
+        config NODE_TDMA_AIRTIME_PERMILLE
+            int "Regulatory Duty Cycle Permille Limit (10 = 1.0%)"
+            default 10
+            range 1 100
+            help
+                Pre-transmit duty cycle enforcement limit (1.0% = 10 permille).
+    endmenu
 
 endmenu
