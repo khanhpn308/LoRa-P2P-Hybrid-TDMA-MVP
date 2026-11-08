@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
+import { AppProviders } from "@/components/providers/AppProviders";
 
 const inter = Inter({
   subsets: ["latin", "vietnamese"],
@@ -21,7 +22,9 @@ export default function RootLayout({
   return (
     <html lang="vi" className={inter.variable}>
       <body className="min-h-screen antialiased bg-canvas text-text-primary">
-        {children}
+        <AppProviders>
+          {children}
+        </AppProviders>
       </body>
     </html>
   );

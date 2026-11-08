@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, useEffect, Suspense } from "react";
+import React, { useState, useMemo, useEffect, useCallback, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
@@ -13,8 +13,13 @@ import {
   ArrowUpDown,
   CheckCircle2,
   Bell,
+  RefreshCw,
 } from "lucide-react";
-import { AlertSeverity, AlertAckStatus } from "@/types/api";
+import { AlertSeverity, AlertAckStatus, AlertTriggeredPayload } from "@/types/api";
+import { getAlerts, acknowledgeAlert as apiAcknowledgeAlert } from "@/lib/api/alerts";
+import { useAuth } from "@/lib/auth/AuthContext";
+import { useRealtime } from "@/lib/realtime/RealtimeContext";
+import { ApiClientError } from "@/lib/api/client";
 
 export interface FaultEvent {
   id: string; // alert_id
@@ -219,6 +224,8 @@ const INITIAL_EVENTS: FaultEvent[] = [
 function MonitoringContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { user, role } = useAuth();
+  const { subscribe } = useRealtime();
 
   // URL query params initialization (e.g. from Overview card navigation)
   const initialType = searchParams.get("type") || "all";
@@ -236,12 +243,91 @@ function MonitoringContent() {
   const [rowsPerPage, setRowsPerPage] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<string>("12:25:30");
+  const [lastUpdated, setLastUpdated] = useState<string>("--:--:--");
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+
+  const loadAlerts = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const resp = await getAlerts({ limit: 50 });
+      if (resp && resp.items && resp.items.length > 0) {
+        const mapped: FaultEvent[] = resp.items.map((a) => {
+          const isTemp = a.event_code === 1;
+          const trigger = a.trigger;
+          let threshold: string;
+          if (trigger) {
+            threshold = `${trigger.observed_raw} (ngưỡng ${trigger.threshold_raw})`;
+          } else if (isTemp) {
+            threshold = `${(a.event_value / 10).toFixed(1)} °C`;
+          } else {
+            threshold = `${a.event_value} rpm`;
+          }
+
+          const triggeredDate = a.triggered_at ? new Date(a.triggered_at) : new Date(a.received_at);
+
+          return {
+            id: a.alert_id,
+            node_id: a.node_id,
+            node: `N-${String(a.node_id).padStart(3, "0")}`,
+            gateway: a.gateway_id || "GW-01",
+            area: "Khu vực cảm biến",
+            timestamp: triggeredDate.toLocaleString("vi-VN"),
+            rawTimestamp: Math.floor(triggeredDate.getTime() / 1000),
+            faultType: isTemp ? "Nhiệt độ" : "Tốc độ",
+            severity: a.severity,
+            thresholdValue: threshold,
+            duration: "30 s",
+            ack_status: a.ack_status,
+            acknowledged_at: a.acked_at ? new Date(a.acked_at).toLocaleString("vi-VN") : null,
+          };
+        });
+        setEvents(mapped);
+      }
+    } catch {
+      // Backend not yet populated, keep baseline
+    } finally {
+      const now = new Date();
+      setLastUpdated(now.toTimeString().split(" ")[0] || "--:--:--");
+      setIsLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    const now = new Date();
-    setLastUpdated(now.toTimeString().split(" ")[0] || "12:25:30");
-  }, []);
+    loadAlerts();
+
+    // Listen for incoming alerts via WebSocket Hub
+    const unsubscribe = subscribe((envelope) => {
+      if (envelope.type === "ALERT_TRIGGERED") {
+        const payload = envelope.payload as AlertTriggeredPayload;
+        const now = new Date();
+        const isTemp = payload.event_code === 1;
+        const newEv: FaultEvent = {
+          id: payload.alert_id,
+          node_id: payload.node_id,
+          node: `N-${String(payload.node_id).padStart(3, "0")}`,
+          gateway: payload.gateway_id,
+          area: "Khu vực cảm biến",
+          timestamp: payload.triggered_at
+            ? new Date(payload.triggered_at).toLocaleString("vi-VN")
+            : now.toLocaleString("vi-VN"),
+          rawTimestamp: Math.floor(now.getTime() / 1000),
+          faultType: isTemp ? "Nhiệt độ" : "Tốc độ",
+          severity: payload.severity,
+          thresholdValue: isTemp ? `${(payload.event_value / 10).toFixed(1)} °C` : `${payload.event_value} rpm`,
+          duration: "10 s",
+          ack_status: "UNACKNOWLEDGED",
+          acknowledged_at: null,
+        };
+        setEvents((prev) => [newEv, ...prev.filter((e) => e.id !== newEv.id)]);
+        setToastMessage(`[Realtime] Cảnh báo mới từ ${newEv.node}: ${newEv.faultType} (${newEv.severity})`);
+        setTimeout(() => setToastMessage(null), 4000);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [loadAlerts, subscribe]);
 
   const handleRouteChange = (route: NavItemKey) => {
     setActiveRoute(route);
@@ -250,20 +336,38 @@ function MonitoringContent() {
     }
   };
 
-  const handleAcknowledgeAlert = (e: React.MouseEvent, alertId: string) => {
+  const handleAcknowledgeAlert = async (e: React.MouseEvent, alertId: string) => {
     e.stopPropagation();
-    const nowStr = new Date().toLocaleString("vi-VN");
-    setEvents((prev) =>
-      prev.map((ev) =>
-        ev.id === alertId
-          ? { ...ev, ack_status: "ACKNOWLEDGED", acknowledged_at: nowStr }
-          : ev
-      )
-    );
-    setToastMessage(`Đã xác nhận sự cố cảnh báo [${alertId}] thành công.`);
-    setTimeout(() => {
-      setToastMessage(null);
-    }, 3500);
+
+    // Client-side RBAC Guard (ADR-0005)
+    if (role === "VIEWER") {
+      setToastMessage("Quyền VIEWER chỉ có quyền xem, không được phép xác nhận cảnh báo.");
+      setTimeout(() => setToastMessage(null), 3500);
+      return;
+    }
+
+    try {
+      await apiAcknowledgeAlert(alertId, user?.username || "operator");
+      const nowStr = new Date().toLocaleString("vi-VN");
+      setEvents((prev) =>
+        prev.map((ev) =>
+          ev.id === alertId
+            ? { ...ev, ack_status: "ACKNOWLEDGED", acknowledged_at: nowStr }
+            : ev
+        )
+      );
+      setToastMessage(`Đã xác nhận sự cố cảnh báo [${alertId}] thành công.`);
+    } catch (err) {
+      if (err instanceof ApiClientError && err.status === 403) {
+        setToastMessage("Lỗi 403: Bạn không có quyền xác nhận cảnh báo này.");
+      } else {
+        setToastMessage(`Lỗi xác nhận cảnh báo: ${err instanceof Error ? err.message : "Thất bại"}`);
+      }
+    } finally {
+      setTimeout(() => {
+        setToastMessage(null);
+      }, 3500);
+    }
   };
 
   // Filtered & Sorted events
@@ -314,10 +418,13 @@ function MonitoringContent() {
           aria-label="Tiêu đề trang theo dõi"
           className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 min-h-[40px]"
         >
-          <div className="flex flex-wrap items-baseline gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-2xl font-semibold text-text-primary tracking-tight leading-8">
               Theo dõi
             </h1>
+            {isLoading && (
+              <RefreshCw className="w-4 h-4 text-interactive animate-spin" />
+            )}
             <span className="text-[13px] font-medium text-text-secondary">
               Sự kiện cảnh báo vượt ngưỡng thông số giám sát
             </span>
@@ -596,9 +703,18 @@ function MonitoringContent() {
                         {ev.ack_status === "UNACKNOWLEDGED" ? (
                           <button
                             type="button"
+                            disabled={role === "VIEWER"}
                             onClick={(e) => handleAcknowledgeAlert(e, ev.id)}
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-interactive hover:bg-btn-primary-hover text-white text-xs font-medium transition-colors cursor-pointer shadow-none"
-                            title="Xác nhận sự cố (POST /api/v1/alerts/{id}/acknowledge)"
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors shadow-none ${
+                              role === "VIEWER"
+                                ? "bg-border text-text-secondary cursor-not-allowed opacity-60"
+                                : "bg-interactive hover:bg-btn-primary-hover text-white cursor-pointer"
+                            }`}
+                            title={
+                              role === "VIEWER"
+                                ? "Quyền VIEWER không thể xác nhận sự cố"
+                                : "Xác nhận sự cố (POST /api/v1/alerts/{id}/acknowledge)"
+                            }
                           >
                             <Bell className="w-3.5 h-3.5" />
                             <span>Xác nhận</span>
