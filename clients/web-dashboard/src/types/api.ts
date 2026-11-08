@@ -29,10 +29,20 @@ export interface WsTicketResponse {
 export interface User {
   id: string;
   username: string;
+  full_name?: string;
+  email?: string;
   role: UserRole;
   is_active: boolean;
   created_at: string;
   updated_at?: string;
+}
+
+export interface CreateUserRequest {
+  username: string;
+  full_name?: string;
+  email?: string;
+  password: string;
+  role: UserRole;
 }
 
 // ==========================================
@@ -58,6 +68,8 @@ export interface GatewayStatus {
 
 export interface GatewayItem extends GatewayStatus {
   name: string;
+  location?: string;
+  ip_address?: string;
   online: boolean;
   operating: boolean;
   channel_id: string; // e.g. "CH01"

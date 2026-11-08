@@ -2,14 +2,20 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	_ "github.com/lib/pq"
 
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/api"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/auth"
@@ -41,7 +47,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// BuildServeMux wires REST endpoints for health checks, operational monitoring, TDMA schedules, and realtime WSS.
+// BuildServeMux wires REST endpoints for health checks, operational monitoring, TDMA schedules, device provisioning, and realtime WSS.
 func BuildServeMux(
 	statusStore storage.StatusStorage,
 	offlineThreshold time.Duration,
@@ -50,6 +56,7 @@ func BuildServeMux(
 	authHandler *auth.Handler,
 	channelHandler *api.ChannelHandler,
 	alertHandler *api.AlertHandler,
+	provisionHandler *api.ProvisionHandler,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
 
@@ -86,6 +93,11 @@ func BuildServeMux(
 		log.Println("Alerts REST API registered.")
 	}
 
+	if provisionHandler != nil {
+		provisionHandler.RegisterRoutes(mux)
+		log.Println("Device provisioning REST API registered at POST /api/v1/devices/provision.")
+	}
+
 	return mux
 }
 
@@ -102,6 +114,7 @@ func main() {
 	var scheduleRepo scheduler.ScheduleRepository
 	var channelRepo storage.ChannelRepository
 	var userRepo auth.UserRepository
+	var provisionRepo storage.ProvisionRepository
 	var channelHandler *api.ChannelHandler
 	var alertHandler *api.AlertHandler
 
@@ -119,11 +132,13 @@ func main() {
 		eventStorage := storage.NewPostgresEventStorage(db)
 		channelHandler = api.NewChannelHandler(channelRepo)
 		alertHandler = api.NewAlertHandler(eventStorage)
+		provisionRepo = storage.NewPostgresProvisionStorage(db)
 		log.Println("PostgreSQL persistent storage initialized.")
 	} else {
 		log.Println("DATABASE_URL not set; initializing thread-safe in-memory storage.")
 		scheduleRepo = scheduler.NewMemoryScheduleRepository()
 		userRepo = auth.NewInMemoryUserRepository()
+		provisionRepo = storage.NewMemoryProvisionStorage()
 	}
 
 	// Seed / verify default test accounts (admin, operator01, viewer01)
@@ -155,6 +170,35 @@ func main() {
 	defer cancelHub()
 	go hub.Run(hubCtx)
 
+	// Initialize MQTT Status Subscriber for live gateway tracking
+	var statusSub *mqtt.GatewayStatusSubscriber
+	if statusStore != nil {
+		mqttHost := os.Getenv("MQTT_HOST")
+		mqttPort := os.Getenv("MQTT_PORT")
+		if mqttPort == "" {
+			mqttPort = "1883"
+		}
+		resolvedHost := mqttHost
+		if resolvedHost == "" || resolvedHost == "localhost" {
+			resolvedHost = "127.0.0.1"
+		} else if resolvedHost == "mqtt-dev" {
+			if _, err := net.LookupHost("mqtt-dev"); err != nil {
+				if _, err2 := net.LookupHost("deploy-mqtt-dev-1"); err2 == nil {
+					resolvedHost = "deploy-mqtt-dev-1"
+				} else {
+					resolvedHost = "192.168.88.113"
+				}
+			}
+		}
+		brokerURI := fmt.Sprintf("tcp://%s:%s", resolvedHost, mqttPort)
+		statusSub = mqtt.NewGatewayStatusSubscriber(brokerURI, statusStore, hub)
+		if err := statusSub.Start(context.Background()); err != nil {
+			log.Printf("Warning: failed to start MQTT status subscriber: %v", err)
+		} else {
+			log.Printf("MQTT status subscriber initialized on %s", brokerURI)
+		}
+	}
+
 	jwtSecret := os.Getenv("JWT_SECRET_KEY")
 	if len(jwtSecret) < 32 {
 		jwtSecret = "default-mvp-jwt-secret-key-minimum-32-bytes!!"
@@ -172,7 +216,29 @@ func main() {
 	)
 	wsHandler := api.NewWebSocketHandler(realtimeHandler)
 
-	mux := BuildServeMux(statusStore, 5*time.Minute, schedHandler, wsHandler, authHandler, channelHandler, alertHandler)
+	jwtAuth := api.NewJWTAuthenticator(jwtService)
+
+	var provisionHandler *api.ProvisionHandler
+	if provisionRepo != nil {
+		var masterKey [32]byte
+		provisionKeyEnv := os.Getenv("DEVICE_PROVISION_MASTER_KEY")
+		if len(provisionKeyEnv) == 64 {
+			decoded, err := hex.DecodeString(provisionKeyEnv)
+			if err == nil && len(decoded) == 32 {
+				copy(masterKey[:], decoded)
+			}
+		} else if len(provisionKeyEnv) >= 32 {
+			copy(masterKey[:], []byte(provisionKeyEnv[:32]))
+		}
+		if masterKey == [32]byte{} {
+			h := sha256.Sum256([]byte(jwtSecret + ":provision:master:key"))
+			copy(masterKey[:], h[:])
+		}
+		keyWrapper := api.NewAESGCMKeyWrapper(masterKey)
+		provisionHandler = api.NewProvisionHandler(provisionRepo, keyWrapper, jwtAuth)
+	}
+
+	mux := BuildServeMux(statusStore, 5*time.Minute, schedHandler, wsHandler, authHandler, channelHandler, alertHandler, provisionHandler)
 
 	srv := &http.Server{
 		Addr:         ":" + port,
@@ -194,6 +260,9 @@ func main() {
 	<-stop
 
 	log.Println("shutting down server gracefully...")
+	if statusSub != nil {
+		statusSub.Stop()
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 

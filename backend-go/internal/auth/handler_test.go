@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -297,5 +298,138 @@ func TestHandler_ListUsers(t *testing.T) {
 
 	if unauthRec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected status 401 for unauthenticated request, got %d", unauthRec.Code)
+	}
+}
+
+func TestHandler_CreateUser(t *testing.T) {
+	handler, svc, repo := setupTestHandler(t)
+	ctx := context.Background()
+
+	_ = repo.CreateUser(ctx, &auth.User{
+		Username: "admin_tester",
+		Role:     auth.RoleAdmin,
+		IsActive: true,
+	})
+
+	adminToken, err := svc.JWTService().GenerateToken(&auth.User{
+		ID:       "u-admin",
+		Username: "admin_tester",
+		Role:     auth.RoleAdmin,
+		IsActive: true,
+	}, time.Hour)
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
+	viewerToken, err := svc.JWTService().GenerateToken(&auth.User{
+		ID:       "u-viewer",
+		Username: "viewer_tester",
+		Role:     auth.RoleViewer,
+		IsActive: true,
+	}, time.Hour)
+	if err != nil {
+		t.Fatalf("failed to generate viewer token: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// 1. Success creating user by ADMIN
+	payload := `{"username":"newoperator","full_name":"Nguyen Van New","email":"new@lora.vn","password":"validPassword123","role":"OPERATOR"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users", strings.NewReader(payload))
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var created auth.User
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if created.Username != "newoperator" || created.FullName != "Nguyen Van New" || created.Email != "new@lora.vn" || created.Role != auth.RoleOperator {
+		t.Fatalf("unexpected created user: %+v", created)
+	}
+
+	// 2. Duplicate user should return 409 Conflict
+	dupReq := httptest.NewRequest(http.MethodPost, "/api/v1/users", strings.NewReader(payload))
+	dupReq.Header.Set("Authorization", "Bearer "+adminToken)
+	dupRec := httptest.NewRecorder()
+	mux.ServeHTTP(dupRec, dupReq)
+
+	if dupRec.Code != http.StatusConflict {
+		t.Fatalf("expected status 409 for duplicate user, got %d", dupRec.Code)
+	}
+
+	// 3. Short password should return 400 Bad Request
+	shortPwPayload := `{"username":"user3","password":"123","role":"OPERATOR"}`
+	shortReq := httptest.NewRequest(http.MethodPost, "/api/v1/users", strings.NewReader(shortPwPayload))
+	shortReq.Header.Set("Authorization", "Bearer "+adminToken)
+	shortRec := httptest.NewRecorder()
+	mux.ServeHTTP(shortRec, shortReq)
+
+	if shortRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400 for short password, got %d", shortRec.Code)
+	}
+
+	// 4. Non-admin caller should return 403 Forbidden
+	nonAdminReq := httptest.NewRequest(http.MethodPost, "/api/v1/users", strings.NewReader(`{"username":"user4","password":"validPassword123"}`))
+	nonAdminReq.Header.Set("Authorization", "Bearer "+viewerToken)
+	nonAdminRec := httptest.NewRecorder()
+	mux.ServeHTTP(nonAdminRec, nonAdminReq)
+
+	if nonAdminRec.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403 for non-admin user, got %d", nonAdminRec.Code)
+	}
+}
+
+func TestHandler_GetUser(t *testing.T) {
+	handler, svc, repo := setupTestHandler(t)
+	ctx := context.Background()
+
+	_ = repo.CreateUser(ctx, &auth.User{
+		ID:       "uuid-001",
+		Username: "operator_bob",
+		FullName: "Bob Operator",
+		Email:    "bob@iiot.vn",
+		Role:     auth.RoleOperator,
+		IsActive: true,
+	})
+
+	validToken, _ := svc.JWTService().GenerateToken(&auth.User{
+		ID:       "uuid-admin",
+		Username: "admin_tester",
+		Role:     auth.RoleAdmin,
+		IsActive: true,
+	}, time.Hour)
+
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// 1. Get by username
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/operator_bob", nil)
+	req.Header.Set("Authorization", "Bearer "+validToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var u auth.User
+	_ = json.Unmarshal(rec.Body.Bytes(), &u)
+	if u.Username != "operator_bob" || u.FullName != "Bob Operator" {
+		t.Fatalf("unexpected user: %+v", u)
+	}
+
+	// 2. Get non-existent
+	notFoundReq := httptest.NewRequest(http.MethodGet, "/api/v1/users/nonexistent", nil)
+	notFoundReq.Header.Set("Authorization", "Bearer "+validToken)
+	notFoundRec := httptest.NewRecorder()
+	mux.ServeHTTP(notFoundRec, notFoundReq)
+
+	if notFoundRec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", notFoundRec.Code)
 	}
 }

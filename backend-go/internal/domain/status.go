@@ -89,6 +89,21 @@ type GatewayStatusView struct {
 	NodeCount             int     `json:"node_count"`
 }
 
+// GatewayItem represents a gateway entity aggregating registry metadata and operational status.
+type GatewayItem struct {
+	GatewayID             string  `json:"gateway_id"`
+	Name                  string  `json:"name"`
+	Location              string  `json:"location"`
+	IPAddress             string  `json:"ip_address,omitempty"`
+	Mode                  string  `json:"mode"`
+	ActiveScheduleVersion uint32  `json:"active_schedule_version"`
+	LastSeenAt            *string `json:"last_seen_at"`
+	RFDutyPermille        int     `json:"rf_duty_permille"`
+	NodeCount             int     `json:"node_count"`
+	ChannelID             string  `json:"channel_id"`
+	FrequencyHz           uint64  `json:"frequency_hz"`
+}
+
 // NodeFilter defines query filtering and cursor pagination options for node listings.
 type NodeFilter struct {
 	GatewayID string

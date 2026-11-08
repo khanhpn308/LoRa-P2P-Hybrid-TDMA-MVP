@@ -1,9 +1,12 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/domain"
@@ -31,8 +34,71 @@ func NewMonitoringHandler(store storage.StatusStorage, offlineThreshold time.Dur
 
 // RegisterRoutes registers the monitoring endpoints on the provided ServeMux.
 func (h *MonitoringHandler) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/v1/gateways", h.handleListGateways)
+	mux.HandleFunc("POST /api/v1/gateways", h.handleCreateGateway)
 	mux.HandleFunc("GET /api/v1/gateways/{gw_id}/status", h.handleGetGatewayStatus)
 	mux.HandleFunc("GET /api/v1/nodes", h.handleListNodes)
+}
+
+// handleListGateways returns all known gateways with live telemetry and registry metadata.
+func (h *MonitoringHandler) handleListGateways(w http.ResponseWriter, r *http.Request) {
+	gateways, err := h.store.ListGateways(r.Context())
+	if err != nil {
+		log.Printf("[MonitoringHandler] ListGateways error: %v", err)
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list gateways")
+		return
+	}
+
+	now := time.Now().UTC()
+	for _, gw := range gateways {
+		if gw.LastSeenAt != nil && h.offlineThreshold > 0 {
+			t, parseErr := time.Parse(time.RFC3339, *gw.LastSeenAt)
+			if parseErr == nil && now.Sub(t) > h.offlineThreshold {
+				gw.Mode = "OFFLINE"
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	if gateways == nil {
+		gateways = []*domain.GatewayItem{}
+	}
+	_ = json.NewEncoder(w).Encode(gateways)
+}
+
+type CreateGatewayDTO struct {
+	GatewayID string `json:"gateway_id"`
+	Name      string `json:"name"`
+	Location  string `json:"location"`
+	IPAddress string `json:"ip_address"`
+}
+
+// handleCreateGateway registers or updates a gateway metadata entry.
+func (h *MonitoringHandler) handleCreateGateway(w http.ResponseWriter, r *http.Request) {
+	var dto CreateGatewayDTO
+	if err := json.NewDecoder(r.Body).Decode(&dto); err != nil {
+		writeError(w, http.StatusBadRequest, "MALFORMED_JSON", "invalid JSON payload")
+		return
+	}
+
+	dto.GatewayID = strings.TrimSpace(dto.GatewayID)
+	if !domain.GatewayIDPattern.MatchString(dto.GatewayID) {
+		writeError(w, http.StatusUnprocessableEntity, "INVALID_GATEWAY_ID", "gateway_id must match ^[A-Za-z0-9_-]{1,32}$")
+		return
+	}
+
+	if err := h.store.CreateGateway(r.Context(), dto.GatewayID, dto.Name, dto.Location, dto.IPAddress); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to register gateway")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":     "CREATED",
+		"gateway_id": dto.GatewayID,
+	})
 }
 
 // handleGetGatewayStatus returns the last-known operational state of a Gateway.

@@ -20,6 +20,8 @@ var (
 type StatusStorage interface {
 	UpsertGatewayStatus(ctx context.Context, status *domain.GatewayStatusRecord) error
 	GetGatewayStatus(ctx context.Context, gatewayID string) (*domain.GatewayStatusRecord, error)
+	ListGateways(ctx context.Context) ([]*domain.GatewayItem, error)
+	CreateGateway(ctx context.Context, gatewayID, name, location, ipAddress string) error
 	ListNodes(ctx context.Context, filter domain.NodeFilter) (*domain.NodePage, error)
 }
 
@@ -146,6 +148,111 @@ func (s *PostgresStatusStorage) GetGatewayStatus(ctx context.Context, gatewayID 
 	rec.DroppedEventCount = dropped
 
 	return &rec, nil
+}
+
+// ListGateways retrieves all gateways known from the registry and/or live reporting.
+func (s *PostgresStatusStorage) ListGateways(ctx context.Context) ([]*domain.GatewayItem, error) {
+	const query = `
+		WITH all_gw_ids AS (
+			SELECT gateway_id FROM gateways
+			UNION
+			SELECT gateway_id FROM gateway_status
+			UNION
+			SELECT gateway_id FROM gateway_channel_allocations WHERE status = 'ALLOCATED'
+		)
+		SELECT
+			id.gateway_id AS gw_id,
+			COALESCE(g.name, CONCAT('Trạm điều hành ', id.gateway_id)) AS gw_name,
+			COALESCE(g.location, 'Khu vực chung') AS gw_loc,
+			COALESCE(g.ip_address, '') AS gw_ip,
+			COALESCE(s.mode, 'OFFLINE') AS gw_mode,
+			COALESCE(s.active_schedule_version, 0) AS sched_ver,
+			COALESCE(s.channel_id, a.channel_id, 'CH00') AS ch_id,
+			COALESCE(c.center_frequency_hz, 920250000) AS freq_hz,
+			COALESCE(s.rf_duty_permille, 0) AS duty,
+			COALESCE(s.node_count, 0) AS nodes,
+			s.last_seen_at
+		FROM all_gw_ids id
+		LEFT JOIN gateways g ON g.gateway_id = id.gateway_id
+		LEFT JOIN gateway_status s ON s.gateway_id = id.gateway_id
+		LEFT JOIN gateway_channel_allocations a ON a.gateway_id = id.gateway_id AND a.status = 'ALLOCATED'
+		LEFT JOIN rf_channels c ON c.channel_id = COALESCE(s.channel_id, a.channel_id, 'CH00')
+		ORDER BY gw_id ASC;
+	`
+
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query gateways: %w", err)
+	}
+	defer rows.Close()
+
+	var items []*domain.GatewayItem
+	for rows.Next() {
+		var item domain.GatewayItem
+		var lastSeen sql.NullTime
+		var schedVer int64
+		var freqHz int64
+
+		if err := rows.Scan(
+			&item.GatewayID,
+			&item.Name,
+			&item.Location,
+			&item.IPAddress,
+			&item.Mode,
+			&schedVer,
+			&item.ChannelID,
+			&freqHz,
+			&item.RFDutyPermille,
+			&item.NodeCount,
+			&lastSeen,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan gateway item: %w", err)
+		}
+
+		item.ActiveScheduleVersion = uint32(schedVer)
+		item.FrequencyHz = uint64(freqHz)
+		if lastSeen.Valid {
+			formatted := lastSeen.Time.UTC().Format(time.RFC3339)
+			item.LastSeenAt = &formatted
+		}
+
+		items = append(items, &item)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating gateways: %w", err)
+	}
+
+	return items, nil
+}
+
+// CreateGateway registers or updates a gateway in the metadata registry.
+func (s *PostgresStatusStorage) CreateGateway(ctx context.Context, gatewayID, name, location, ipAddress string) error {
+	if !domain.GatewayIDPattern.MatchString(gatewayID) {
+		return fmt.Errorf("%w: '%s'", domain.ErrInvalidGatewayID, gatewayID)
+	}
+	if name == "" {
+		name = fmt.Sprintf("Trạm điều hành %s", gatewayID)
+	}
+	if location == "" {
+		location = "Khu vực chung"
+	}
+
+	const query = `
+		INSERT INTO gateways (gateway_id, name, location, ip_address, updated_at)
+		VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+		ON CONFLICT (gateway_id) DO UPDATE SET
+			name = EXCLUDED.name,
+			location = EXCLUDED.location,
+			ip_address = EXCLUDED.ip_address,
+			updated_at = CURRENT_TIMESTAMP;
+	`
+
+	_, err := s.db.ExecContext(ctx, query, gatewayID, name, location, ipAddress)
+	if err != nil {
+		return fmt.Errorf("failed to upsert gateway registry: %w", err)
+	}
+	return nil
 }
 
 // ListNodes queries confirmed node health records with cursor pagination and optional gateway and status filters.

@@ -5,6 +5,7 @@ import { getNodes, getNode } from "../src/lib/api/nodes.ts";
 import { getAlerts, acknowledgeAlert } from "../src/lib/api/alerts.ts";
 import { getGatewayStatus, getChannels, getGateways } from "../src/lib/api/gateways.ts";
 import { provisionDevice } from "../src/lib/api/provisioning.ts";
+import { getUsers, getUser, createUser } from "../src/lib/api/users.ts";
 import { getWsBaseUrl } from "../src/lib/realtime/useWebSocketHub.ts";
 
 describe("Web Integration Services & Realtime Contracts", () => {
@@ -227,5 +228,83 @@ describe("Web Integration Services & Realtime Contracts", () => {
     assert.ok(gw01);
     assert.strictEqual(gw01?.online, true);
     assert.strictEqual(gw01?.operating, true);
+  });
+
+  test("GET /api/v1/users and POST /api/v1/users user management lifecycle", async () => {
+    let capturedMethod = "";
+    let capturedBody: Record<string, string> | null = null;
+
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      capturedMethod = init?.method || "GET";
+
+      if (capturedMethod === "POST" && url.includes("/api/v1/users")) {
+        capturedBody = JSON.parse(init?.body as string);
+        return new Response(
+          JSON.stringify({
+            id: "uuid-new-op",
+            username: capturedBody?.username,
+            full_name: capturedBody?.full_name,
+            email: capturedBody?.email,
+            role: capturedBody?.role,
+            is_active: true,
+            created_at: "2026-11-08T07:00:00Z",
+          }),
+          { status: 201, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url.includes("/api/v1/users/newoperator")) {
+        return new Response(
+          JSON.stringify({
+            id: "uuid-new-op",
+            username: "newoperator",
+            full_name: "Nguyen Van New",
+            email: "new@lora.vn",
+            role: "OPERATOR",
+            is_active: true,
+            created_at: "2026-11-08T07:00:00Z",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      return new Response(
+        JSON.stringify([
+          {
+            id: "uuid-admin",
+            username: "admin",
+            full_name: "Quản trị viên Hệ thống",
+            role: "ADMIN",
+            is_active: true,
+            created_at: "2026-11-08T03:00:00Z",
+          },
+        ]),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    };
+
+    // 1. List users
+    const userList = await getUsers();
+    assert.strictEqual(userList.length, 1);
+    assert.strictEqual(userList[0].username, "admin");
+
+    // 2. Create user with password
+    const created = await createUser({
+      username: "newoperator",
+      full_name: "Nguyen Van New",
+      email: "new@lora.vn",
+      password: "Password123!",
+      role: "OPERATOR",
+    });
+    assert.strictEqual(capturedMethod, "POST");
+    assert.strictEqual((capturedBody as Record<string, string> | null)?.username, "newoperator");
+    assert.strictEqual((capturedBody as Record<string, string> | null)?.password, "Password123!");
+    assert.strictEqual(created.username, "newoperator");
+
+    // 3. Get user details
+    const fetched = await getUser("newoperator");
+    assert.strictEqual(fetched.username, "newoperator");
+    assert.strictEqual(fetched.full_name, "Nguyen Van New");
   });
 });

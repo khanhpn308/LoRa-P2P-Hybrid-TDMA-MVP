@@ -20,6 +20,7 @@ secrets/
 *.out
 coverage/
 backend-go/bin/
+vendor/
 
 # React / Dart / Flutter
 **/node_modules/

@@ -47,6 +47,14 @@ func (m *mockStatusStorage) ListNodes(ctx context.Context, filter domain.NodeFil
 	}, nil
 }
 
+func (m *mockStatusStorage) ListGateways(ctx context.Context) ([]*domain.GatewayItem, error) {
+	return nil, nil
+}
+
+func (m *mockStatusStorage) CreateGateway(ctx context.Context, gatewayID, name, location, ipAddress string) error {
+	return nil
+}
+
 func validStatusPayload(gwID string) (string, []byte) {
 	epoch := "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 	seq := "100"

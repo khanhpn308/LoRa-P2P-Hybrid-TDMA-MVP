@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { NavItemKey } from "@/components/layout/Sidebar";
 import { GatewayMode, GatewayStatusChangedPayload } from "@/types/api";
-import { getGateways } from "@/lib/api/gateways";
+import { getGateways, createGateway } from "@/lib/api/gateways";
 import { useRealtime } from "@/lib/realtime/RealtimeContext";
 import {
   Search,
@@ -53,6 +53,11 @@ function GatewaysContent() {
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [showAddGatewayModal, setShowAddGatewayModal] = useState<boolean>(false);
+  const [newGwId, setNewGwId] = useState<string>("");
+  const [newGwName, setNewGwName] = useState<string>("");
+  const [newGwLocation, setNewGwLocation] = useState<string>("");
+  const [newGwIp, setNewGwIp] = useState<string>("");
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   const loadGateways = useCallback(async () => {
     try {
@@ -68,7 +73,7 @@ function GatewaysContent() {
         rfDutyPermille: rg.rf_duty_permille,
         nodeCount: rg.node_count,
         areaCount: 1,
-        primaryArea: "Khu vực cảm biến",
+        primaryArea: rg.location || "Khu vực chung",
         frequency: `${rg.frequency_hz ? (rg.frequency_hz / 1e6).toFixed(3) : "920.500"} MHz`,
         channel: typeof rg.channel_id === "string" ? parseInt(rg.channel_id.replace(/\D/g, "") || "1", 10) : Number(rg.channel_id) || 1,
       }));
@@ -466,53 +471,95 @@ function GatewaysContent() {
                 </button>
               </div>
 
-              <div className="space-y-3 text-xs">
-                <div>
-                  <label className="block font-medium text-text-primary mb-1">Mã trạm (ID)</label>
-                  <input
-                    type="text"
-                    defaultValue="GW-11"
-                    className="w-full h-10 px-3 bg-canvas border border-border rounded-lg text-text-primary font-mono text-sm focus:outline-none focus:border-interactive"
-                  />
-                </div>
-                <div>
-                  <label className="block font-medium text-text-primary mb-1">Khu vực phân công</label>
-                  <input
-                    type="text"
-                    defaultValue="Khu A - Phân xưởng Ép"
-                    className="w-full h-10 px-3 bg-canvas border border-border rounded-lg text-text-primary text-sm focus:outline-none focus:border-interactive"
-                  />
-                </div>
-                <div>
-                  <label className="block font-medium text-text-primary mb-1">Địa chỉ IP nội bộ</label>
-                  <input
-                    type="text"
-                    defaultValue="192.168.1.150"
-                    className="w-full h-10 px-3 bg-canvas border border-border rounded-lg text-text-primary font-mono text-sm focus:outline-none focus:border-interactive"
-                  />
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-2 pt-3 border-t border-border">
-                <button
-                  type="button"
-                  onClick={() => setShowAddGatewayModal(false)}
-                  className="h-9 px-4 rounded-lg border border-border bg-canvas hover:bg-canvas/80 text-text-secondary text-xs font-medium transition-colors cursor-pointer"
-                >
-                  Hủy
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (!newGwId.trim()) return;
+                  setIsSubmitting(true);
+                  try {
+                    await createGateway({
+                      gateway_id: newGwId.trim(),
+                      name: newGwName.trim() || `Trạm điều hành ${newGwId.trim()}`,
+                      location: newGwLocation.trim() || "Khu vực chung",
+                      ip_address: newGwIp.trim() || undefined,
+                    });
                     setShowAddGatewayModal(false);
-                    setToastMessage("Đã đăng ký trạm Gateway GW-11 vào hệ thống");
+                    setNewGwId("");
+                    setNewGwName("");
+                    setNewGwLocation("");
+                    setNewGwIp("");
+                    setToastMessage(`Đã thêm thành công Gateway ${newGwId.trim()}`);
                     setTimeout(() => setToastMessage(null), 3000);
-                  }}
-                  className="h-9 px-4 rounded-lg bg-interactive text-white text-xs font-medium hover:bg-interactive-hover transition-colors cursor-pointer"
-                >
-                  Thêm trạm
-                </button>
-              </div>
+                    await loadGateways();
+                  } catch (err: unknown) {
+                    setToastMessage(err instanceof Error ? err.message : "Thêm Gateway thất bại");
+                    setTimeout(() => setToastMessage(null), 3000);
+                  } finally {
+                    setIsSubmitting(false);
+                  }
+                }}
+              >
+                <div className="space-y-3 text-xs">
+                  <div>
+                    <label className="block font-medium text-text-primary mb-1">Mã trạm (ID) *</label>
+                    <input
+                      type="text"
+                      required
+                      value={newGwId}
+                      onChange={(e) => setNewGwId(e.target.value)}
+                      placeholder="VD: GW-01 hoặc gw-a"
+                      className="w-full h-10 px-3 bg-canvas border border-border rounded-lg text-text-primary font-mono text-sm focus:outline-none focus:border-interactive"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-medium text-text-primary mb-1">Tên trạm Gateway</label>
+                    <input
+                      type="text"
+                      value={newGwName}
+                      onChange={(e) => setNewGwName(e.target.value)}
+                      placeholder="VD: Trạm điều hành Khu A"
+                      className="w-full h-10 px-3 bg-canvas border border-border rounded-lg text-text-primary text-sm focus:outline-none focus:border-interactive"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-medium text-text-primary mb-1">Khu vực phân công</label>
+                    <input
+                      type="text"
+                      value={newGwLocation}
+                      onChange={(e) => setNewGwLocation(e.target.value)}
+                      placeholder="VD: Khu A - Phân xưởng Ép"
+                      className="w-full h-10 px-3 bg-canvas border border-border rounded-lg text-text-primary text-sm focus:outline-none focus:border-interactive"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-medium text-text-primary mb-1">Địa chỉ IP nội bộ</label>
+                    <input
+                      type="text"
+                      value={newGwIp}
+                      onChange={(e) => setNewGwIp(e.target.value)}
+                      placeholder="VD: 192.168.88.113"
+                      className="w-full h-10 px-3 bg-canvas border border-border rounded-lg text-text-primary font-mono text-sm focus:outline-none focus:border-interactive"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-4 mt-3 border-t border-border">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddGatewayModal(false)}
+                    className="h-9 px-4 rounded-lg border border-border bg-canvas hover:bg-canvas/80 text-text-secondary text-xs font-medium transition-colors cursor-pointer"
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    className="h-9 px-4 rounded-lg bg-interactive text-white text-xs font-medium hover:bg-interactive-hover transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {isSubmitting ? "Đang lưu..." : "Thêm trạm"}
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         )}

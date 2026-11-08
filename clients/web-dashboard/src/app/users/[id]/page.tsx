@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState, use, Suspense } from "react";
+import React, { useState, useEffect, use, Suspense } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
+import { getUser } from "@/lib/api/users.ts";
 import {
   ArrowLeft,
   ChevronRight,
@@ -119,7 +120,7 @@ interface UserDetailPageProps {
 
 function UserDetailContent({ params }: { params: Promise<{ id: string }> }) {
   const unwrappedParams = use(params);
-  const rawId = decodeURIComponent(unwrappedParams.id || "admin01");
+  const rawId = decodeURIComponent(unwrappedParams.id || "admin");
   const router = useRouter();
 
   // Find user by id or username
@@ -127,11 +128,11 @@ function UserDetailContent({ params }: { params: Promise<{ id: string }> }) {
     DEFAULT_USERS.find((u) => u.id === rawId || u.username === rawId) || {
       id: rawId,
       username: rawId,
-      fullName: "Nguyễn Văn A",
+      fullName: rawId === "admin" ? "Quản trị viên Hệ thống" : rawId,
       email: `${rawId}@iiot-lora.vn`,
-      role: "ADMIN" as UserRole,
+      role: "OPERATOR" as UserRole,
       status: "active" as UserStatus,
-      lastLogin: "04/11/2026 14:20",
+      lastLogin: "Hôm nay",
     };
 
   const [user, setUser] = useState<UserItem>(initialUser);
@@ -147,6 +148,35 @@ function UserDetailContent({ params }: { params: Promise<{ id: string }> }) {
   const [editFullName, setEditFullName] = useState(user.fullName);
   const [editEmail, setEditEmail] = useState(user.email);
   const [selectedRole, setSelectedRole] = useState<UserRole>(user.role);
+
+  useEffect(() => {
+    let active = true;
+    async function loadUser() {
+      try {
+        const u = await getUser(rawId);
+        if (!active || !u) return;
+        const mapped: UserItem = {
+          id: u.id,
+          username: u.username,
+          fullName: u.full_name || (u.username === "admin" ? "Quản trị viên Hệ thống" : (u.username === "operator01" ? "Trần Vận Hành" : u.username)),
+          email: u.email || `${u.username}@iiot-lora.vn`,
+          role: (u.role as UserRole) || "VIEWER",
+          status: u.is_active ? "active" : "disabled",
+          lastLogin: u.created_at ? new Date(u.created_at).toLocaleDateString("vi-VN") : "Hôm nay",
+        };
+        setUser(mapped);
+        setEditFullName(mapped.fullName);
+        setEditEmail(mapped.email);
+        setSelectedRole(mapped.role);
+      } catch {
+        // keep fallback
+      }
+    }
+    loadUser();
+    return () => {
+      active = false;
+    };
+  }, [rawId]);
 
   // Reset password form states
   const [pwMode, setPwMode] = useState<"auto" | "manual">("auto");

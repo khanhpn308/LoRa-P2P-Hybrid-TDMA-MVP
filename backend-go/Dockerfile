@@ -10,10 +10,6 @@ COPY . .
 # Support both OpenAPI standard /healthz and AC1 /api/v1/health in the compiled binary
 RUN sed -i 's|mux.HandleFunc("GET /healthz", h.handleHealthz)|mux.HandleFunc("GET /healthz", h.handleHealthz)\n\tmux.HandleFunc("GET /api/v1/health", h.handleHealthz)|g' internal/api/health_handler.go
 
-# Inject PostgreSQL database/sql driver and fetch dependency inside builder container
-RUN sed -i 's|"database/sql"|"database/sql"\n\t_ "github.com/lib/pq"|g' cmd/server/main.go && \
-    go get github.com/lib/pq
-
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /server ./cmd/server
 
 # Stage 2: Minimal runtime image

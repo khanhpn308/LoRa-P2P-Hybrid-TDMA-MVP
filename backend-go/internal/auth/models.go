@@ -31,11 +31,22 @@ func IsValidRole(r Role) bool {
 type User struct {
 	ID           string    `json:"id"`
 	Username     string    `json:"username"`
+	FullName     string    `json:"full_name"`
+	Email        string    `json:"email"`
 	PasswordHash string    `json:"-"`
 	Role         Role      `json:"role"`
 	IsActive     bool      `json:"is_active"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// CreateUserRequestDTO represents the payload for POST /api/v1/users.
+type CreateUserRequestDTO struct {
+	Username string `json:"username"`
+	FullName string `json:"full_name"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	Role     Role   `json:"role"`
 }
 
 // Claims represents JWT payload claims following ADR-0005.
@@ -71,6 +82,7 @@ type WsTicketResponseDTO struct {
 var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrUserNotFound       = errors.New("user not found")
+	ErrUserAlreadyExists  = errors.New("user already exists")
 	ErrUserInactive       = errors.New("user account is inactive")
 	ErrTokenExpired       = errors.New("token has expired")
 	ErrInvalidToken       = errors.New("invalid token")

@@ -32,7 +32,7 @@ func NewPostgresUserRepository(db *sql.DB) *PostgresUserRepository {
 // GetByUsername retrieves a user by exact username.
 func (r *PostgresUserRepository) GetByUsername(ctx context.Context, username string) (*User, error) {
 	const query = `
-		SELECT id, username, password_hash, role, is_active, created_at, updated_at
+		SELECT id, username, full_name, email, password_hash, role, is_active, created_at, updated_at
 		FROM users
 		WHERE username = $1
 	`
@@ -41,6 +41,8 @@ func (r *PostgresUserRepository) GetByUsername(ctx context.Context, username str
 	err := r.db.QueryRowContext(ctx, query, username).Scan(
 		&u.ID,
 		&u.Username,
+		&u.FullName,
+		&u.Email,
 		&u.PasswordHash,
 		&roleStr,
 		&u.IsActive,
@@ -60,7 +62,7 @@ func (r *PostgresUserRepository) GetByUsername(ctx context.Context, username str
 // GetByID retrieves a user by UUID.
 func (r *PostgresUserRepository) GetByID(ctx context.Context, id string) (*User, error) {
 	const query = `
-		SELECT id, username, password_hash, role, is_active, created_at, updated_at
+		SELECT id, username, full_name, email, password_hash, role, is_active, created_at, updated_at
 		FROM users
 		WHERE id = $1
 	`
@@ -69,6 +71,8 @@ func (r *PostgresUserRepository) GetByID(ctx context.Context, id string) (*User,
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&u.ID,
 		&u.Username,
+		&u.FullName,
+		&u.Email,
 		&u.PasswordHash,
 		&roleStr,
 		&u.IsActive,
@@ -91,11 +95,11 @@ func (r *PostgresUserRepository) CreateUser(ctx context.Context, user *User) err
 		return errors.New("user cannot be nil")
 	}
 	const query = `
-		INSERT INTO users (username, password_hash, role, is_active)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO users (username, full_name, email, password_hash, role, is_active)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, created_at, updated_at
 	`
-	err := r.db.QueryRowContext(ctx, query, user.Username, user.PasswordHash, string(user.Role), user.IsActive).Scan(
+	err := r.db.QueryRowContext(ctx, query, user.Username, user.FullName, user.Email, user.PasswordHash, string(user.Role), user.IsActive).Scan(
 		&user.ID,
 		&user.CreatedAt,
 		&user.UpdatedAt,
@@ -109,7 +113,7 @@ func (r *PostgresUserRepository) CreateUser(ctx context.Context, user *User) err
 // ListUsers queries all users from PostgreSQL.
 func (r *PostgresUserRepository) ListUsers(ctx context.Context) ([]*User, error) {
 	const query = `
-		SELECT id, username, password_hash, role, is_active, created_at, updated_at
+		SELECT id, username, full_name, email, password_hash, role, is_active, created_at, updated_at
 		FROM users
 		ORDER BY created_at ASC
 	`
@@ -126,6 +130,8 @@ func (r *PostgresUserRepository) ListUsers(ctx context.Context) ([]*User, error)
 		if err := rows.Scan(
 			&u.ID,
 			&u.Username,
+			&u.FullName,
+			&u.Email,
 			&u.PasswordHash,
 			&roleStr,
 			&u.IsActive,
@@ -221,7 +227,7 @@ func (m *InMemoryUserRepository) ListUsers(ctx context.Context) ([]*User, error)
 }
 
 // SeedUser seeds an account if it does not already exist.
-func SeedUser(ctx context.Context, repo UserRepository, username, password string, role Role) (*User, error) {
+func SeedUser(ctx context.Context, repo UserRepository, username, password string, role Role, details ...string) (*User, error) {
 	existing, err := repo.GetByUsername(ctx, username)
 	if err == nil && existing != nil {
 		return existing, nil
@@ -245,8 +251,19 @@ func SeedUser(ctx context.Context, repo UserRepository, username, password strin
 		hashedPassword = h
 	}
 
+	fullName := ""
+	email := ""
+	if len(details) > 0 {
+		fullName = details[0]
+	}
+	if len(details) > 1 {
+		email = details[1]
+	}
+
 	newUser := &User{
 		Username:     username,
+		FullName:     fullName,
+		Email:        email,
 		PasswordHash: hashedPassword,
 		Role:         role,
 		IsActive:     true,
@@ -263,15 +280,17 @@ func SeedDefaultUsers(ctx context.Context, repo UserRepository) error {
 	seeds := []struct {
 		username string
 		password string
+		fullName string
+		email    string
 		role     Role
 	}{
-		{"admin", "admin", RoleAdmin},
-		{"operator01", "operator", RoleOperator},
-		{"viewer01", "viewer", RoleViewer},
+		{"admin", "admin", "Quản trị viên Hệ thống", "admin@iiot-lora.vn", RoleAdmin},
+		{"operator01", "operator", "Trần Vận Hành", "operator01@iiot-lora.vn", RoleOperator},
+		{"viewer01", "viewer", "Người Xem Kiểm Toán", "viewer01@iiot-lora.vn", RoleViewer},
 	}
 
 	for _, s := range seeds {
-		if _, err := SeedUser(ctx, repo, s.username, s.password, s.role); err != nil {
+		if _, err := SeedUser(ctx, repo, s.username, s.password, s.role, s.fullName, s.email); err != nil {
 			return err
 		}
 	}

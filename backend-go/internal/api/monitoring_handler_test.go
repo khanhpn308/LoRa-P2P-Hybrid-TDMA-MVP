@@ -72,6 +72,14 @@ func (m *mockMonitoringStorage) ListNodes(ctx context.Context, filter domain.Nod
 	}, nil
 }
 
+func (m *mockMonitoringStorage) ListGateways(ctx context.Context) ([]*domain.GatewayItem, error) {
+	return nil, nil
+}
+
+func (m *mockMonitoringStorage) CreateGateway(ctx context.Context, gatewayID, name, location, ipAddress string) error {
+	return nil
+}
+
 func TestMonitoringHandler_GetGatewayStatus_Table(t *testing.T) {
 	now := time.Now().UTC()
 	staleTime := now.Add(-10 * time.Minute)

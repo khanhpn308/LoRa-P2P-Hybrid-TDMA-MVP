@@ -304,7 +304,9 @@ class ProvisioningConfig:
 def read_chip_mac(port: str, baud: int, esptool_path: Optional[str] = None) -> str:
     """Read factory eFuse MAC from ESP32 using esptool.py."""
     tool = find_esptool_path(esptool_path)
-    cmd = [sys.executable, tool, "--port", port, "--baud", str(baud), "read_mac"]
+    py_bin = Path(tool).parent / "python"
+    py_exec = str(py_bin) if py_bin.is_file() else sys.executable
+    cmd = [py_exec, tool, "--port", port, "--baud", str(baud), "read_mac"]
     logger.info("Reading ESP32 eFuse MAC from port %s via esptool...", port)
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15, check=False)
     if proc.returncode != 0:
@@ -325,8 +327,10 @@ def flash_device(
 ) -> None:
     """Flash credentials NVS partition and optional firmware binary via esptool.py."""
     tool = find_esptool_path(esptool_path)
+    py_bin = Path(tool).parent / "python"
+    py_exec = str(py_bin) if py_bin.is_file() else sys.executable
     cmd = [
-        sys.executable,
+        py_exec,
         tool,
         "--port",
         port,

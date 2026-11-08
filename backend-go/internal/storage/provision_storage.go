@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -155,4 +156,51 @@ func (s *PostgresProvisionStorage) ProvisionDevice(ctx context.Context, input *P
 		Status:     "ACTIVE",
 		CreatedAt:  createdAt.UTC(),
 	}, nil
+}
+
+// MemoryProvisionStorage implements ProvisionRepository in-memory for testing and non-database environments.
+type MemoryProvisionStorage struct {
+	mu      sync.Mutex
+	devices map[string]*ProvisionDeviceResult
+}
+
+// NewMemoryProvisionStorage constructs a new in-memory ProvisionRepository.
+func NewMemoryProvisionStorage() *MemoryProvisionStorage {
+	return &MemoryProvisionStorage{
+		devices: make(map[string]*ProvisionDeviceResult),
+	}
+}
+
+// ProvisionDevice registers the device in-memory with validation matching PostgreSQL behavior.
+func (s *MemoryProvisionStorage) ProvisionDevice(ctx context.Context, input *ProvisionDeviceInput) (*ProvisionDeviceResult, error) {
+	if input == nil {
+		return nil, fmt.Errorf("%w: input cannot be nil", ErrInvalidProvisionInput)
+	}
+	if input.NetworkID == 0 {
+		return nil, fmt.Errorf("%w: network_id must be positive", ErrInvalidProvisionInput)
+	}
+	if input.Generation == 0 {
+		input.Generation = 1
+	}
+	if len(input.KJoinWrapped) < 32 {
+		return nil, fmt.Errorf("%w: k_join_wrapped must be at least 32 bytes, got %d", ErrInvalidProvisionInput, len(input.KJoinWrapped))
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := fmt.Sprintf("%d:%x", input.NetworkID, input.DeviceMAC)
+	if _, exists := s.devices[key]; exists {
+		return nil, fmt.Errorf("%w: device already has active generation", ErrDeviceAlreadyProvisioned)
+	}
+
+	result := &ProvisionDeviceResult{
+		NetworkID:  input.NetworkID,
+		DeviceMAC:  input.DeviceMAC,
+		Generation: input.Generation,
+		Status:     "ACTIVE",
+		CreatedAt:  time.Now().UTC(),
+	}
+	s.devices[key] = result
+	return result, nil
 }

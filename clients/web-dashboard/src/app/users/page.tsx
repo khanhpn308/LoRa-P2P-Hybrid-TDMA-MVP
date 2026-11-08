@@ -27,6 +27,7 @@ import {
   Shield,
 } from "lucide-react";
 import { UserRole } from "@/types/api";
+import { getUsers, createUser } from "@/lib/api/users.ts";
 
 export type { UserRole };
 export type UserStatus = "active" | "disabled";
@@ -80,33 +81,25 @@ function UsersContent() {
 
   const loadUsers = useCallback(async () => {
     try {
-      const activeToken = token || (typeof window !== "undefined" ? localStorage.getItem("access_token") : null);
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (activeToken) {
-        headers["Authorization"] = `Bearer ${activeToken}`;
-      }
-      const res = await fetch("/api/v1/users", { headers });
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data)) {
-          const mapped: UserItem[] = data.map((u: { id: number; username: string; role: string; is_active: boolean; created_at?: string }) => ({
-            id: `U-${String(u.id).padStart(3, "0")}`,
-            username: u.username,
-            fullName: u.username === "admin" ? "Quản trị viên Hệ thống" : (u.username === "operator01" ? "Trần Vận Hành" : "Người Xem Kiểm Toán"),
-            email: `${u.username}@iiot-lora.vn`,
-            role: (u.role as UserRole) || "VIEWER",
-            status: u.is_active ? "active" : "disabled",
-            lastLogin: u.created_at ? new Date(u.created_at).toLocaleDateString("vi-VN") : "Hôm nay",
-          }));
-          setUsers(mapped);
-          return;
-        }
+      const data = await getUsers();
+      if (Array.isArray(data)) {
+        const mapped: UserItem[] = data.map((u) => ({
+          id: u.id,
+          username: u.username,
+          fullName: u.full_name || (u.username === "admin" ? "Quản trị viên Hệ thống" : (u.username === "operator01" ? "Trần Vận Hành" : u.username)),
+          email: u.email || `${u.username}@iiot-lora.vn`,
+          role: (u.role as UserRole) || "VIEWER",
+          status: u.is_active ? "active" : "disabled",
+          lastLogin: u.created_at ? new Date(u.created_at).toLocaleDateString("vi-VN") : "Hôm nay",
+        }));
+        setUsers(mapped);
+        return;
       }
       setUsers([]);
     } catch {
       setUsers([]);
     }
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     loadUsers();
@@ -129,6 +122,25 @@ function UsersContent() {
   const [newFullName, setNewFullName] = useState<string>("");
   const [newEmail, setNewEmail] = useState<string>("");
   const [newRole, setNewRole] = useState<UserRole>("OPERATOR");
+  const [newPassword, setNewPassword] = useState<string>("");
+  const [newConfirmPassword, setNewConfirmPassword] = useState<string>("");
+  const [showNewPassword, setShowNewPassword] = useState<boolean>(false);
+  const [showNewConfirmPassword, setShowNewConfirmPassword] = useState<boolean>(false);
+  const [isSubmittingUser, setIsSubmittingUser] = useState<boolean>(false);
+  const [addUserError, setAddUserError] = useState<string | null>(null);
+
+  const resetAddUserForm = () => {
+    setNewUsername("");
+    setNewFullName("");
+    setNewEmail("");
+    setNewRole("OPERATOR");
+    setNewPassword("");
+    setNewConfirmPassword("");
+    setShowNewPassword(false);
+    setShowNewConfirmPassword(false);
+    setAddUserError(null);
+    setIsSubmittingUser(false);
+  };
 
   // Toast feedback state
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -239,26 +251,43 @@ function UsersContent() {
     setStatusModalUser(null);
   };
 
-  const handleAddUser = (e: React.FormEvent) => {
+  const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newUsername.trim() || !newFullName.trim()) return;
+    if (!newUsername.trim() || !newFullName.trim()) {
+      setAddUserError("Vui lòng điền đầy đủ tên tài khoản và họ tên hiển thị.");
+      return;
+    }
+    if (newPassword.length < 8) {
+      setAddUserError("Mật khẩu phải có ít nhất 8 ký tự.");
+      return;
+    }
+    if (newPassword !== newConfirmPassword) {
+      setAddUserError("Mật khẩu xác nhận không trùng khớp.");
+      return;
+    }
 
-    const newUser: UserItem = {
-      id: `U-00${users.length + 1}`,
-      username: newUsername.trim().toLowerCase(),
-      fullName: newFullName.trim(),
-      email: newEmail.trim() || `${newUsername.trim().toLowerCase()}@iiot-lora.vn`,
-      role: newRole,
-      status: "active",
-      lastLogin: "Chưa đăng nhập",
-    };
+    setIsSubmittingUser(true);
+    setAddUserError(null);
 
-    setUsers((prev) => [newUser, ...prev]);
-    setShowAddUserModal(false);
-    setNewUsername("");
-    setNewFullName("");
-    setNewEmail("");
-    showToast(`Đã tạo tài khoản mới [${newUser.username}] (${newUser.fullName}) thành công!`);
+    try {
+      const created = await createUser({
+        username: newUsername.trim().toLowerCase(),
+        full_name: newFullName.trim(),
+        email: newEmail.trim() || `${newUsername.trim().toLowerCase()}@iiot-lora.vn`,
+        password: newPassword,
+        role: newRole,
+      });
+
+      await loadUsers();
+      setShowAddUserModal(false);
+      resetAddUserForm();
+      showToast(`Đã tạo tài khoản mới [${created.username}] (${created.full_name || created.username}) thành công!`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Không thể tạo tài khoản mới. Vui lòng thử lại.";
+      setAddUserError(msg);
+    } finally {
+      setIsSubmittingUser(false);
+    }
   };
 
   return (
@@ -414,7 +443,7 @@ function UsersContent() {
                         key={u.id}
                         onClick={(e) => {
                           if ((e.target as HTMLElement).closest("button")) return;
-                          router.push(`/users/${u.id}`);
+                          router.push(`/users/${u.username}`);
                         }}
                         title={`Xem chi tiết tài khoản ${u.username}`}
                         className="h-12 hover:bg-interactive-subtle/40 transition-colors group cursor-pointer"
@@ -1074,7 +1103,10 @@ function UsersContent() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setShowAddUserModal(false)}
+                  onClick={() => {
+                    setShowAddUserModal(false);
+                    resetAddUserForm();
+                  }}
                   className="w-8 h-8 rounded-lg flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface transition-colors cursor-pointer"
                 >
                   <X className="w-4 h-4" />
@@ -1082,7 +1114,14 @@ function UsersContent() {
               </div>
 
               {/* Body */}
-              <div className="p-6 flex flex-col gap-3.5 text-sm">
+              <div className="p-6 flex flex-col gap-3.5 text-sm max-h-[75vh] overflow-y-auto">
+                {addUserError && (
+                  <div className="p-3 rounded-lg bg-state-critical/10 border border-state-critical/20 flex items-center gap-2 text-state-critical text-xs">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>{addUserError}</span>
+                  </div>
+                )}
+
                 <div className="flex flex-col gap-1">
                   <label className="text-xs font-medium text-text-primary">
                     Tên tài khoản (Username) <span className="text-state-critical">*</span>
@@ -1140,26 +1179,118 @@ function UsersContent() {
                   </div>
                 </div>
 
-                <p className="text-[11px] text-text-secondary">
-                  Mật khẩu tạm thời sẽ được gửi qua email người dùng để kích hoạt tài khoản.
-                </p>
+                {/* Direct Password Input 1 */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-text-primary">
+                    Mật khẩu <span className="text-state-critical">*</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showNewPassword ? "text" : "password"}
+                      required
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="Nhập mật khẩu (tối thiểu 8 ký tự)"
+                      className="w-full h-10 pl-3 pr-10 rounded-lg bg-surface border border-border text-sm text-text-primary focus:outline-none focus:border-interactive focus:ring-1 focus:ring-interactive"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewPassword(!showNewPassword)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-secondary hover:text-text-primary p-1 cursor-pointer"
+                      title={showNewPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
+                    >
+                      {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  {newPassword.length > 0 && newPassword.length < 8 && (
+                    <span className="text-[11px] text-state-critical">
+                      Mật khẩu phải có ít nhất 8 ký tự ({newPassword.length}/8).
+                    </span>
+                  )}
+                </div>
+
+                {/* Direct Password Input 2 (Confirm) */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-text-primary">
+                    Nhập lại mật khẩu <span className="text-state-critical">*</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showNewConfirmPassword ? "text" : "password"}
+                      required
+                      value={newConfirmPassword}
+                      onChange={(e) => setNewConfirmPassword(e.target.value)}
+                      placeholder="Nhập lại mật khẩu để xác thực trùng khớp"
+                      className={`w-full h-10 pl-3 pr-10 rounded-lg bg-surface border text-sm text-text-primary focus:outline-none focus:ring-1 ${
+                        newConfirmPassword.length > 0
+                          ? newPassword === newConfirmPassword && newPassword.length >= 8
+                            ? "border-emerald-500 focus:border-emerald-500 focus:ring-emerald-500"
+                            : "border-state-critical focus:border-state-critical focus:ring-state-critical"
+                          : "border-border focus:border-interactive focus:ring-interactive"
+                      }`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewConfirmPassword(!showNewConfirmPassword)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-secondary hover:text-text-primary p-1 cursor-pointer"
+                      title={showNewConfirmPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
+                    >
+                      {showNewConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+
+                  {/* Matching Feedback */}
+                  {newConfirmPassword.length > 0 && (
+                    <div className="flex items-center gap-1.5 mt-0.5 text-[11px]">
+                      {newPassword === newConfirmPassword ? (
+                        <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-medium">
+                          <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                          <span>Mật khẩu trùng khớp</span>
+                        </span>
+                      ) : (
+                        <span className="text-state-critical flex items-center gap-1 font-medium">
+                          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                          <span>Mật khẩu nhập lại không trùng khớp</span>
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Footer */}
               <div className="px-6 py-4 border-t border-border bg-canvas flex items-center justify-end gap-3">
                 <button
                   type="button"
-                  onClick={() => setShowAddUserModal(false)}
+                  onClick={() => {
+                    setShowAddUserModal(false);
+                    resetAddUserForm();
+                  }}
                   className="h-10 px-4 rounded-lg border border-border bg-surface hover:bg-canvas text-text-primary text-xs font-medium transition-colors cursor-pointer"
                 >
                   Hủy bỏ
                 </button>
                 <button
                   type="submit"
-                  className="h-10 px-5 rounded-lg bg-interactive hover:bg-interactive-hover text-white text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-none"
+                  disabled={
+                    !newUsername.trim() ||
+                    !newFullName.trim() ||
+                    newPassword.length < 8 ||
+                    newPassword !== newConfirmPassword ||
+                    isSubmittingUser
+                  }
+                  className={`h-10 px-5 rounded-lg text-white text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-none ${
+                    newUsername.trim() &&
+                    newFullName.trim() &&
+                    newPassword.length >= 8 &&
+                    newPassword === newConfirmPassword &&
+                    !isSubmittingUser
+                      ? "bg-interactive hover:bg-interactive-hover cursor-pointer"
+                      : "bg-interactive/40 text-white/70 cursor-not-allowed"
+                  }`}
                 >
                   <Plus className="w-4 h-4" />
-                  <span>Tạo tài khoản</span>
+                  <span>{isSubmittingUser ? "Đang tạo..." : "Tạo tài khoản"}</span>
                 </button>
               </div>
             </form>

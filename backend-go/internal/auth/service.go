@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -104,6 +105,75 @@ func (s *Service) ConsumeWsTicket(ticket string) (*Claims, bool) {
 // ListUsers retrieves all registered user profiles without secrets.
 func (s *Service) ListUsers(ctx context.Context) ([]*User, error) {
 	return s.repo.ListUsers(ctx)
+}
+
+// CreateUser registers a new user with hashed credentials and assigned RBAC role.
+func (s *Service) CreateUser(ctx context.Context, req CreateUserRequestDTO) (*User, error) {
+	req.Username = strings.TrimSpace(req.Username)
+	if req.Username == "" || len(req.Username) > 64 {
+		return nil, fmt.Errorf("%w: username must be between 1 and 64 characters", ErrInvalidCredentials)
+	}
+
+	if len(req.Password) < 8 || len(req.Password) > 128 {
+		return nil, fmt.Errorf("%w: password must be between 8 and 128 characters", ErrInvalidCredentials)
+	}
+
+	if req.Role == "" {
+		req.Role = RoleOperator
+	}
+	if !IsValidRole(req.Role) {
+		return nil, fmt.Errorf("%w: invalid role %s", ErrInsufficientRole, req.Role)
+	}
+
+	existing, err := s.repo.GetByUsername(ctx, req.Username)
+	if err == nil && existing != nil {
+		return nil, ErrUserAlreadyExists
+	}
+	if err != nil && !errors.Is(err, ErrUserNotFound) {
+		return nil, fmt.Errorf("failed to verify username availability: %w", err)
+	}
+
+	hashedPassword, err := HashPassword(req.Password)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	newUser := &User{
+		Username:     req.Username,
+		FullName:     strings.TrimSpace(req.FullName),
+		Email:        strings.TrimSpace(req.Email),
+		PasswordHash: hashedPassword,
+		Role:         req.Role,
+		IsActive:     true,
+	}
+
+	if err := s.repo.CreateUser(ctx, newUser); err != nil {
+		return nil, fmt.Errorf("failed to create user in repository: %w", err)
+	}
+
+	return newUser, nil
+}
+
+// GetUser retrieves a user profile by UUID or username.
+func (s *Service) GetUser(ctx context.Context, idOrUsername string) (*User, error) {
+	idOrUsername = strings.TrimSpace(idOrUsername)
+	if idOrUsername == "" {
+		return nil, ErrUserNotFound
+	}
+
+	// 1. Try finding by ID
+	user, err := s.repo.GetByID(ctx, idOrUsername)
+	if err == nil && user != nil {
+		return user, nil
+	}
+
+	// 2. Fall back to username
+	user, err = s.repo.GetByUsername(ctx, idOrUsername)
+	if err == nil && user != nil {
+		return user, nil
+	}
+
+	return nil, ErrUserNotFound
 }
 
 // JWTService returns the underlying JWTService.

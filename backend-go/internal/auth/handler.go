@@ -27,6 +27,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/login", h.handleLogin)
 	mux.HandleFunc("POST /api/v1/auth/ws-ticket", h.handleWsTicket)
 	mux.HandleFunc("GET /api/v1/users", h.handleListUsers)
+	mux.HandleFunc("POST /api/v1/users", h.handleCreateUser)
+	mux.HandleFunc("GET /api/v1/users/{id}", h.handleGetUser)
 }
 
 func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -66,31 +68,41 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	writeAuthJSON(w, http.StatusOK, resp)
 }
 
-func (h *Handler) handleWsTicket(w http.ResponseWriter, r *http.Request) {
-	// 1. Resolve caller claims either from context (if AuthMiddleware was executed) or directly from Bearer header
+func (h *Handler) resolveClaims(w http.ResponseWriter, r *http.Request) (*Claims, bool) {
 	claims, ok := ClaimsFromContext(r.Context())
-	if !ok || claims == nil {
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
-			w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
-			writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing or malformed bearer token")
-			return
-		}
+	if ok && claims != nil {
+		return claims, true
+	}
 
-		token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
-		if token == "" {
-			w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
-			writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "empty bearer token")
-			return
-		}
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+		w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
+		writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing or malformed bearer token")
+		return nil, false
+	}
 
-		var err error
-		claims, err = h.authService.JWTService().VerifyToken(token)
-		if err != nil {
-			w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
-			writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid or expired token")
-			return
-		}
+	token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+	if token == "" {
+		w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
+		writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "empty bearer token")
+		return nil, false
+	}
+
+	var err error
+	claims, err = h.authService.JWTService().VerifyToken(token)
+	if err != nil {
+		w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
+		writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid or expired token")
+		return nil, false
+	}
+
+	return claims, true
+}
+
+func (h *Handler) handleWsTicket(w http.ResponseWriter, r *http.Request) {
+	claims, ok := h.resolveClaims(w, r)
+	if !ok {
+		return
 	}
 
 	// 2. Enforce RBAC: all authenticated roles (ADMIN, OPERATOR, VIEWER) are allowed per OpenAPI x-roles
@@ -110,30 +122,9 @@ func (h *Handler) handleWsTicket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleListUsers(w http.ResponseWriter, r *http.Request) {
-	// 1. Resolve caller claims either from context or directly from Bearer header
-	claims, ok := ClaimsFromContext(r.Context())
-	if !ok || claims == nil {
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
-			w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
-			writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing or malformed bearer token")
-			return
-		}
-
-		token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
-		if token == "" {
-			w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
-			writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "empty bearer token")
-			return
-		}
-
-		var err error
-		claims, err = h.authService.JWTService().VerifyToken(token)
-		if err != nil {
-			w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
-			writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid or expired token")
-			return
-		}
+	claims, ok := h.resolveClaims(w, r)
+	if !ok {
+		return
 	}
 
 	if !IsValidRole(claims.Role) {
@@ -152,6 +143,91 @@ func (h *Handler) handleListUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeAuthJSON(w, http.StatusOK, users)
+}
+
+func (h *Handler) handleCreateUser(w http.ResponseWriter, r *http.Request) {
+	claims, ok := h.resolveClaims(w, r)
+	if !ok {
+		return
+	}
+
+	if claims.Role != RoleAdmin {
+		writeAuthError(w, http.StatusForbidden, "FORBIDDEN", "only administrators can create users")
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxPayloadBytes+1))
+	if err != nil {
+		writeAuthError(w, http.StatusBadRequest, "INVALID_BODY", "failed to read request body")
+		return
+	}
+
+	var req CreateUserRequestDTO
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeAuthError(w, http.StatusBadRequest, "MALFORMED_JSON", err.Error())
+		return
+	}
+
+	req.Username = strings.TrimSpace(req.Username)
+	if req.Username == "" || len(req.Username) > 64 {
+		writeAuthError(w, http.StatusBadRequest, "INVALID_USERNAME", "username must be between 1 and 64 characters")
+		return
+	}
+
+	if len(req.Password) < 8 || len(req.Password) > 128 {
+		writeAuthError(w, http.StatusBadRequest, "INVALID_PASSWORD", "password must be between 8 and 128 characters")
+		return
+	}
+
+	if req.Role == "" {
+		req.Role = RoleOperator
+	}
+	if !IsValidRole(req.Role) {
+		writeAuthError(w, http.StatusBadRequest, "INVALID_ROLE", "role must be ADMIN, OPERATOR, or VIEWER")
+		return
+	}
+
+	createdUser, err := h.authService.CreateUser(r.Context(), req)
+	if err != nil {
+		if errors.Is(err, ErrUserAlreadyExists) {
+			writeAuthError(w, http.StatusConflict, "USER_EXISTS", "a user with this username already exists")
+			return
+		}
+		writeAuthError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to create user")
+		return
+	}
+
+	writeAuthJSON(w, http.StatusCreated, createdUser)
+}
+
+func (h *Handler) handleGetUser(w http.ResponseWriter, r *http.Request) {
+	claims, ok := h.resolveClaims(w, r)
+	if !ok {
+		return
+	}
+
+	if !IsValidRole(claims.Role) {
+		writeAuthError(w, http.StatusForbidden, "FORBIDDEN", "unauthorized role")
+		return
+	}
+
+	idOrUsername := strings.TrimSpace(r.PathValue("id"))
+	if idOrUsername == "" {
+		writeAuthError(w, http.StatusBadRequest, "INVALID_ID", "user id or username is required")
+		return
+	}
+
+	user, err := h.authService.GetUser(r.Context(), idOrUsername)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			writeAuthError(w, http.StatusNotFound, "NOT_FOUND", "user not found")
+			return
+		}
+		writeAuthError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to retrieve user")
+		return
+	}
+
+	writeAuthJSON(w, http.StatusOK, user)
 }
 
 func writeAuthJSON(w http.ResponseWriter, status int, data any) {

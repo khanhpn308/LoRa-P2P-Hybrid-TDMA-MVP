@@ -32,16 +32,16 @@ export function getApiBaseUrl(): string {
     }
   }
 
-  if (typeof window !== "undefined" && window.location) {
+  if (typeof window !== "undefined" && window.location && window.location.hostname) {
     if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
-      return `${window.location.protocol}//${window.location.hostname}:${backendPort}`;
+      return `${window.location.protocol || "http:"}//${window.location.hostname}:${backendPort}`;
     }
   }
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_API_URL) {
     return process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, "");
   }
-  if (typeof window !== "undefined" && window.location) {
-    return `${window.location.protocol}//${window.location.hostname}:${backendPort}`;
+  if (typeof window !== "undefined" && window.location && window.location.hostname) {
+    return `${window.location.protocol || "http:"}//${window.location.hostname}:${backendPort}`;
   }
   return `http://localhost:${backendPort}`;
 }
