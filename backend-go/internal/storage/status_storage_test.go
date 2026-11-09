@@ -71,14 +71,14 @@ func (s *mockStatusStmt) Query(args []driver.Value) (driver.Rows, error) {
 					"gateway_id", "gateway_epoch", "mode", "active_schedule_version",
 					"channel_id", "rf_duty_permille", "node_count", "free_heap_bytes",
 					"offline_queue_count", "pending_event_count", "dropped_event_count",
-					"last_seen_at", "updated_at",
+					"updated_at",
 				},
 				data: [][]driver.Value{
 					{
 						"gw-01", "a1b2c3d4-e5f6-7890-abcd-ef1234567890", "ACTIVE", int64(10),
 						ch, 50, 4, int64(200000),
 						int64(0), 1, "0",
-						time.Now().UTC(), time.Now().UTC(),
+						time.Now().UTC(),
 					},
 				},
 			}, nil
@@ -89,41 +89,40 @@ func (s *mockStatusStmt) Query(args []driver.Value) (driver.Rows, error) {
 
 	// 2. ListNodes
 	if strings.Contains(q, "from node_health nh") {
-		now := time.Now().UTC()
 		if s.state == "empty_nodes" {
 			return &mockStatusRows{
-				cols: []string{"node_id", "gateway_id", "health_status", "last_seen_at"},
+				cols: []string{"node_id", "gateway_id", "health_status"},
 				data: nil,
 			}, nil
 		}
 		if s.state == "paginated_page1" {
 			// Return 3 rows when limit=2 (+1 extra to trigger next_cursor)
 			return &mockStatusRows{
-				cols: []string{"node_id", "gateway_id", "health_status", "last_seen_at"},
+				cols: []string{"node_id", "gateway_id", "health_status"},
 				data: [][]driver.Value{
-					{1, "gw-01", "ONLINE", now},
-					{2, "gw-01", "ONLINE", now},
-					{3, "gw-01", "OFFLINE", now},
+					{1, "gw-01", "ONLINE"},
+					{2, "gw-01", "ONLINE"},
+					{3, "gw-01", "OFFLINE"},
 				},
 			}, nil
 		}
 		if s.state == "last_page" {
 			// Return 2 rows when limit=2 (no extra row)
 			return &mockStatusRows{
-				cols: []string{"node_id", "gateway_id", "health_status", "last_seen_at"},
+				cols: []string{"node_id", "gateway_id", "health_status"},
 				data: [][]driver.Value{
-					{3, "gw-01", "OFFLINE", now},
-					{4, "gw-01", "UNSYNCED", now},
+					{3, "gw-01", "OFFLINE"},
+					{4, "gw-01", "UNSYNCED"},
 				},
 			}, nil
 		}
 
 		// Default nodes
 		return &mockStatusRows{
-			cols: []string{"node_id", "gateway_id", "health_status", "last_seen_at"},
+			cols: []string{"node_id", "gateway_id", "health_status"},
 			data: [][]driver.Value{
-				{1, "gw-01", "ONLINE", now},
-				{2, "gw-01", "OFFLINE", now},
+				{1, "gw-01", "ONLINE"},
+				{2, "gw-01", "OFFLINE"},
 			},
 		}, nil
 	}

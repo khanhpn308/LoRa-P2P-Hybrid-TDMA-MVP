@@ -51,6 +51,11 @@ esp_err_t gateway_wifi_stop(void);
 esp_err_t gateway_wifi_deinit(void);
 
 /**
+ * @brief Get current connected AP RSSI in dBm.
+ */
+int8_t gateway_wifi_get_rssi(void);
+
+/**
  * @brief Check if WiFi station is connected with an assigned IP.
  *
  * @return true if connected and IP obtained.

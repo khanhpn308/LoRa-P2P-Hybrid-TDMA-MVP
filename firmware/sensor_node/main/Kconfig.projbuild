@@ -61,11 +61,12 @@ menu "Sensor Node Configuration"
                 Minimum duration the button must remain pressed to generate an event.
 
         config NODE_DEEP_SLEEP_TIMEOUT_SEC
-            int "Periodic Deep-Sleep Fallback Wakeup Timer in seconds (0 = disabled)"
-            default 0
+            int "Periodic Deep-Sleep Fallback Wakeup Timer in seconds (0 = disabled, default 300 for 5-min liveness)"
+            default 300
             range 0 86400
             help
                 If greater than 0, sets an RTC timer wakeup fallback in addition to the button EXT0 wakeup.
+                Default 300 (5 minutes) matches the node liveness heartbeat reporting cycle.
     endmenu
 
     menu "TDMA Slot Client Timing & Airtime"

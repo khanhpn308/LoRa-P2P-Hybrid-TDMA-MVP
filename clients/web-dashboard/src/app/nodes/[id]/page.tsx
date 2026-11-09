@@ -1,11 +1,13 @@
 "use client";
 
-import React, { useState, useEffect, use, Suspense } from "react";
+import React, { useState, useEffect, use, useMemo, Suspense } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { getNode } from "@/lib/api/nodes";
 import { getAlerts } from "@/lib/api/alerts";
+import { useRealtime } from "@/lib/realtime/RealtimeContext";
+import { TimeSeriesChart, TimeSeriesPoint } from "@/components/charts/TimeSeriesChart";
 import {
   ArrowLeft,
   ChevronRight,
@@ -17,7 +19,7 @@ import {
   CheckCircle2,
   Bell,
 } from "lucide-react";
-import { NodeSummary, Alert, AlertSeverity, AlertAckStatus } from "@/types/api";
+import { NodeSummary, Alert, AlertSeverity, AlertAckStatus, AlertTriggeredPayload } from "@/types/api";
 
 interface NodeDetailProps {
   params: Promise<{ id: string }>;
@@ -36,6 +38,7 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
   const unwrappedParams = use(params);
   const rawId = decodeURIComponent(unwrappedParams.id || "N-012");
   const router = useRouter();
+  const { subscribe } = useRealtime();
 
   const initialNode: NodeDetailView = {
     node_id: parseInt(rawId.replace(/\D/g, "") || "1", 10),
@@ -50,9 +53,9 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
     last_seen_at: null,
     last_rssi_dbm: null,
     last_snr_db: null,
-    battery_mv: 0,
+    battery_mv: 3300,
     status: "OFFLINE",
-    firmware_version: "ESP-IDF v6.1 · Node-TDMA",
+    firmware_version: "ESP-IDF v6.1 · P2P CSMA/CAD",
   };
 
   const [node, setNode] = useState<NodeDetailView>(initialNode);
@@ -71,8 +74,8 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
           last_seen_at: realNode.last_seen_at,
           status: realNode.status,
           connected: realNode.status === "ONLINE",
-          operating: realNode.status === "ONLINE" && realNode.assigned_slot_id !== null,
-          state: realNode.status === "ONLINE" ? (realNode.assigned_slot_id !== null ? "NORMAL" : "MAINTENANCE") : "OFFLINE",
+          operating: realNode.status === "ONLINE",
+          state: realNode.status === "ONLINE" ? "NORMAL" : "OFFLINE",
         }));
       }
       try {
@@ -88,7 +91,54 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
       }
     }
     loadRealNode();
-  }, [rawId]);
+
+    const unsubscribe = subscribe((envelope) => {
+      if (envelope.type === "ALERT_TRIGGERED") {
+        const payload = envelope.payload as AlertTriggeredPayload;
+        const currentNumId = parseInt(rawId.replace(/\D/g, "") || "1", 10);
+        if (payload.node_id === currentNumId) {
+          // Prepend new realtime alert
+          const newAlert: Alert = {
+            alert_id: payload.alert_id,
+            node_id: payload.node_id,
+            gateway_id: payload.gateway_id,
+            event_ref: payload.event_ref || 0,
+            event_code: payload.event_code,
+            event_value: payload.event_value,
+            severity: payload.severity,
+            ack_status: "UNACKNOWLEDGED",
+            triggered_at: payload.triggered_at || new Date().toISOString(),
+            received_at: payload.triggered_at || new Date().toISOString(),
+            acked_at: null,
+          };
+          setEvents((prev) => [newAlert, ...prev]);
+          setNode((prev) => ({
+            ...prev,
+            connected: true,
+            operating: true,
+            state: "NORMAL",
+            last_seen_at: null,
+            last_event_type: `Mã ${payload.event_code} (Giá trị: ${payload.event_value})`,
+          }));
+        }
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [rawId, subscribe]);
+
+  const chartData: TimeSeriesPoint[] = useMemo(() => {
+    return events.map((ev) => ({
+      id: ev.alert_id,
+      timestamp: ev.triggered_at || ev.received_at,
+      value: ev.event_value,
+      code: ev.event_code,
+      name: ev.event_code === 1 ? "Báo động nút nhấn (0x01)" : `Sự kiện 0x${ev.event_code.toString(16).padStart(2, "0").toUpperCase()}`,
+      severity: ev.severity,
+    }));
+  }, [events]);
 
   const getSeverityBadge = (severity: AlertSeverity) => {
     switch (severity) {
@@ -190,19 +240,19 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
 
       {/* 4 Standard Device Cards (Zero-Shadow Baseline, DESIGN.md §4) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        {/* Card 1: Định danh & Khe TDMA */}
+        {/* Card 1: Giao thức & Định danh */}
         <div className="bg-chrome rounded-lg p-5 border border-border flex flex-col justify-between">
           <div className="flex items-center justify-between text-text-secondary">
-            <span className="text-xs font-medium">Khe TDMA gán</span>
+            <span className="text-xs font-medium">Giao thức MAC</span>
             <Cpu className="w-4 h-4 text-interactive" />
           </div>
           <div className="my-2">
-            <span className="text-3xl font-semibold font-mono tabular-nums text-text-primary tracking-tight">
-              {node.assigned_slot_id !== null ? `Slot ${node.assigned_slot_id}` : "Chưa gán"}
+            <span className="text-2xl font-semibold font-mono tabular-nums text-text-primary tracking-tight">
+              P2P CSMA/CAD
             </span>
           </div>
           <div className="text-xs text-text-secondary font-mono">
-            Node ID: {node.node_id} (0x{node.node_id.toString(16).padStart(2, "0").toUpperCase()})
+            Node ID: #{node.node_id} (0x{node.node_id.toString(16).padStart(2, "0").toUpperCase()})
           </div>
         </div>
 
@@ -240,21 +290,30 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
           </div>
         </div>
 
-        {/* Card 4: Lần cuối nhìn thấy */}
+        {/* Card 4: Tổng sự kiện thu nhận */}
         <div className="bg-chrome rounded-lg p-5 border border-border flex flex-col justify-between">
           <div className="flex items-center justify-between text-text-secondary">
-            <span className="text-xs font-medium">Lần cuối nhìn thấy</span>
-            <Clock className="w-4 h-4 text-text-secondary" />
+            <span className="text-xs font-medium">Tổng sự kiện</span>
+            <Radio className="w-4 h-4 text-text-secondary" />
           </div>
           <div className="my-2">
-            <span className="text-base font-semibold font-mono tabular-nums text-text-primary">
-              {node.last_seen_at ? new Date(node.last_seen_at).toLocaleTimeString("vi-VN") : "N/A"}
+            <span className="text-2xl font-bold font-mono tabular-nums text-text-primary">
+              {events.length}
             </span>
           </div>
-          <div className="text-xs text-text-secondary font-mono truncate" title={node.last_seen_at || ""}>
-            {node.last_seen_at || "Chưa có dữ liệu"}
+          <div className="text-xs text-text-secondary font-mono truncate">
+            {events.length > 0 ? "Thu nhận sự kiện realtime" : "Chưa có sự kiện"}
           </div>
         </div>
+      </div>
+
+      {/* Visual Time Series Event Chart */}
+      <div className="mb-6">
+        <TimeSeriesChart
+          title="Biểu đồ sự kiện đo cảm biến theo thời gian"
+          description={`Chuỗi dữ liệu thu nhận qua LoRa P2P từ Node #${node.node_id}`}
+          data={chartData}
+        />
       </div>
 
       {/* Discrete Event Logs Section (Event-Only V2 Architecture) */}

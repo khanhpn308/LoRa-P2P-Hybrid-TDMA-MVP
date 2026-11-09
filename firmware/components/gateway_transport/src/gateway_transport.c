@@ -29,6 +29,8 @@ static gateway_transport_status_t s_status = GATEWAY_TRANSPORT_STATUS_DISCONNECT
 
 static gateway_downlink_session_key_cb_t s_session_key_cb = NULL;
 static gateway_downlink_schedule_cb_t s_schedule_cb = NULL;
+static gateway_downlink_join_grant_cb_t s_join_grant_cb = NULL;
+static gateway_transport_status_cb_t s_transport_status_cb = NULL;
 
 static uint32_t s_dropped_events = 0;
 static uint32_t s_published_events = 0;
@@ -78,6 +80,10 @@ static void transport_task(void *pvParameters)
                 break;
             case GATEWAY_MSG_TYPE_SCHEDULE_ACK:
                 suffix = "uplink/schedule-ack";
+                retain = 0;
+                break;
+            case GATEWAY_MSG_TYPE_HEARTBEAT:
+                suffix = "uplink/heartbeat";
                 retain = 0;
                 break;
             default:
@@ -148,6 +154,9 @@ static void on_mqtt_status(bool connected)
             set_status(GATEWAY_TRANSPORT_STATUS_WIFI_CONNECTING);
         }
     }
+    if (s_transport_status_cb) {
+        s_transport_status_cb(connected);
+    }
 }
 
 static void on_mqtt_downlink(const char *topic, size_t topic_len,
@@ -174,6 +183,10 @@ static void on_mqtt_downlink(const char *topic, size_t topic_len,
     } else if (strstr(topic_buf, "downlink/schedule") != NULL) {
         if (s_schedule_cb) {
             s_schedule_cb(data, data_len);
+        }
+    } else if (strstr(topic_buf, "downlink/join-grant") != NULL) {
+        if (s_join_grant_cb) {
+            s_join_grant_cb(data, data_len);
         }
     } else {
         ESP_LOGW(TAG, "Unhandled downlink topic: %s", topic_buf);
@@ -338,6 +351,32 @@ esp_err_t gateway_transport_register_schedule_callback(gateway_downlink_schedule
     return ESP_OK;
 }
 
+esp_err_t gateway_transport_register_join_grant_callback(gateway_downlink_join_grant_cb_t cb)
+{
+#ifdef ESP_PLATFORM
+    if (s_state_mutex && xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        s_join_grant_cb = cb;
+        xSemaphoreGive(s_state_mutex);
+        return ESP_OK;
+    }
+#endif
+    s_join_grant_cb = cb;
+    return ESP_OK;
+}
+
+esp_err_t gateway_transport_register_status_callback(gateway_transport_status_cb_t cb)
+{
+#ifdef ESP_PLATFORM
+    if (s_state_mutex && xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        s_transport_status_cb = cb;
+        xSemaphoreGive(s_state_mutex);
+        return ESP_OK;
+    }
+#endif
+    s_transport_status_cb = cb;
+    return ESP_OK;
+}
+
 esp_err_t gateway_transport_publish_event(const uint8_t *payload, size_t len)
 {
     return enqueue_outbound(GATEWAY_MSG_TYPE_EVENT, payload, len);
@@ -356,6 +395,11 @@ esp_err_t gateway_transport_publish_join_relay(const uint8_t *payload, size_t le
 esp_err_t gateway_transport_publish_status(const uint8_t *payload, size_t len)
 {
     return enqueue_outbound(GATEWAY_MSG_TYPE_STATUS, payload, len);
+}
+
+esp_err_t gateway_transport_publish_heartbeat(const uint8_t *payload, size_t len)
+{
+    return enqueue_outbound(GATEWAY_MSG_TYPE_HEARTBEAT, payload, len);
 }
 
 esp_err_t gateway_transport_publish_schedule_ack(const uint8_t *payload, size_t len)
@@ -393,6 +437,11 @@ uint32_t gateway_transport_get_published_count(void)
 uint32_t gateway_transport_get_queued_count(void)
 {
     return s_queued_events;
+}
+
+int8_t gateway_transport_get_wifi_rssi(void)
+{
+    return gateway_wifi_get_rssi();
 }
 
 esp_err_t gateway_transport_deinit(void)

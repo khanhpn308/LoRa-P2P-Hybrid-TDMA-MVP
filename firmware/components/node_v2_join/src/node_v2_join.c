@@ -305,6 +305,9 @@ esp_err_t node_v2_join_run(const node_v2_join_config_t *cfg,
 
     size_t rx_len = 0;
     err = hal->radio_read_frame(rx_tmp, &rx_len, cfg->grant_listen_timeout_ms);
+    if (hal->radio_standby != NULL) {
+        (void)hal->radio_standby();
+    }
     if (err != ESP_OK || rx_len != LORA_MAC_V2_LEN_DOWN_JOIN_GRANT) {
         ESP_LOGW(TAG, "[RF RX TIMEOUT] Grant reception timed out (len: %zu, expected 66B) on Freq=920.250 MHz: %s",
                  rx_len, esp_err_to_name(err));
@@ -445,6 +448,9 @@ esp_err_t node_v2_join_run(const node_v2_join_config_t *cfg,
 
     rx_len = 0;
     err = hal->radio_read_frame(rx_tmp, &rx_len, cfg->finish_listen_timeout_ms);
+    if (hal->radio_standby != NULL) {
+        (void)hal->radio_standby();
+    }
     if (err != ESP_OK || rx_len != LORA_MAC_V2_LEN_DOWN_JOIN_FINISH) {
         ESP_LOGW(TAG, "[RF RX TIMEOUT] Finish reception timed out on Freq=920.250 MHz: %s", esp_err_to_name(err));
         lora_mac_crypto_zeroize(&k_join_keys, sizeof(k_join_keys));

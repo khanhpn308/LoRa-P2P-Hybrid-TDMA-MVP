@@ -20,6 +20,7 @@ import (
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/api"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/auth"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/mqtt"
+	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/presence"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/realtime"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/scheduler"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/storage"
@@ -57,6 +58,8 @@ func BuildServeMux(
 	channelHandler *api.ChannelHandler,
 	alertHandler *api.AlertHandler,
 	provisionHandler *api.ProvisionHandler,
+	joinReqHandler *api.JoinRequestHandler,
+	presenceTracker *presence.Tracker,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
 
@@ -64,7 +67,7 @@ func BuildServeMux(
 	healthHandler.RegisterRoutes(mux)
 
 	if statusStore != nil {
-		monitoringHandler := api.NewMonitoringHandler(statusStore, offlineThreshold)
+		monitoringHandler := api.NewMonitoringHandler(statusStore, offlineThreshold, presenceTracker)
 		monitoringHandler.RegisterRoutes(mux)
 	}
 
@@ -98,6 +101,11 @@ func BuildServeMux(
 		log.Println("Device provisioning REST API registered at POST /api/v1/devices/provision.")
 	}
 
+	if joinReqHandler != nil {
+		joinReqHandler.RegisterRoutes(mux)
+		log.Println("Device join request approval REST API registered at /api/v1/devices/requests.")
+	}
+
 	return mux
 }
 
@@ -115,6 +123,8 @@ func main() {
 	var channelRepo storage.ChannelRepository
 	var userRepo auth.UserRepository
 	var provisionRepo storage.ProvisionRepository
+	var eventStorage *storage.PostgresEventStorage
+	var joinReqStore storage.JoinRequestStorage
 	var channelHandler *api.ChannelHandler
 	var alertHandler *api.AlertHandler
 
@@ -129,7 +139,8 @@ func main() {
 		scheduleRepo = storage.NewPostgresScheduleStorage(db)
 		channelRepo = storage.NewPostgresChannelRepository(db)
 		userRepo = auth.NewPostgresUserRepository(db)
-		eventStorage := storage.NewPostgresEventStorage(db)
+		eventStorage = storage.NewPostgresEventStorage(db)
+		joinReqStore = storage.NewPostgresJoinRequestStorage(db)
 		channelHandler = api.NewChannelHandler(channelRepo)
 		alertHandler = api.NewAlertHandler(eventStorage)
 		provisionRepo = storage.NewPostgresProvisionStorage(db)
@@ -171,6 +182,8 @@ func main() {
 	go hub.Run(hubCtx)
 
 	// Initialize MQTT Status Subscriber for live gateway tracking
+	presenceTracker := presence.NewTracker()
+
 	var statusSub *mqtt.GatewayStatusSubscriber
 	if statusStore != nil {
 		mqttHost := os.Getenv("MQTT_HOST")
@@ -191,12 +204,17 @@ func main() {
 			}
 		}
 		brokerURI := fmt.Sprintf("tcp://%s:%s", resolvedHost, mqttPort)
-		statusSub = mqtt.NewGatewayStatusSubscriber(brokerURI, statusStore, hub)
+		statusSub = mqtt.NewGatewayStatusSubscriber(brokerURI, statusStore, hub, eventStorage, joinReqStore, presenceTracker)
 		if err := statusSub.Start(context.Background()); err != nil {
 			log.Printf("Warning: failed to start MQTT status subscriber: %v", err)
 		} else {
 			log.Printf("MQTT status subscriber initialized on %s", brokerURI)
 		}
+	}
+
+	var joinReqHandler *api.JoinRequestHandler
+	if joinReqStore != nil {
+		joinReqHandler = api.NewJoinRequestHandler(joinReqStore, statusSub)
 	}
 
 	jwtSecret := os.Getenv("JWT_SECRET_KEY")
@@ -238,7 +256,7 @@ func main() {
 		provisionHandler = api.NewProvisionHandler(provisionRepo, keyWrapper, jwtAuth)
 	}
 
-	mux := BuildServeMux(statusStore, 5*time.Minute, schedHandler, wsHandler, authHandler, channelHandler, alertHandler, provisionHandler)
+	mux := BuildServeMux(statusStore, 5*time.Minute, schedHandler, wsHandler, authHandler, channelHandler, alertHandler, provisionHandler, joinReqHandler, presenceTracker)
 
 	srv := &http.Server{
 		Addr:         ":" + port,
