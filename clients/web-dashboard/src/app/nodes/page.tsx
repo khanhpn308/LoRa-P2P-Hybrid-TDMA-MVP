@@ -4,7 +4,7 @@ import React, { useState, useMemo, useEffect, useCallback, Suspense } from "reac
 import { useSearchParams, useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { NavItemKey } from "@/components/layout/Sidebar";
-import { getNodes, getDeviceJoinRequests, approveDeviceJoinRequest, rejectDeviceJoinRequest } from "@/lib/api/nodes";
+import { getNodes, getDeviceJoinRequests, approveDeviceJoinRequest, rejectDeviceJoinRequest, deleteNode } from "@/lib/api/nodes";
 import { provisionDevice } from "@/lib/api/provisioning";
 import { useAuth } from "@/lib/auth/AuthContext";
 import { useRealtime } from "@/lib/realtime/RealtimeContext";
@@ -23,6 +23,7 @@ import {
   CheckCheck,
   ShieldCheck,
   AlertTriangle,
+  Trash2,
 } from "lucide-react";
 
 export interface ConnectedNodeItem {
@@ -83,6 +84,8 @@ function NodesContent() {
   const [rejectingNode, setRejectingNode] = useState<NewNodeRequest | null>(null);
   const [approveFormName, setApproveFormName] = useState<string>("");
   const [approveFormArea, setApproveFormArea] = useState<string>("Khu A - Phân xưởng Ép");
+  const [deletingNode, setDeletingNode] = useState<ConnectedNodeItem | null>(null);
+  const [isDeletingNode, setIsDeletingNode] = useState<boolean>(false);
 
   // Toast feedback state
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -92,6 +95,21 @@ function NodesContent() {
     setTimeout(() => {
       setToastMessage(null);
     }, 3500);
+  };
+
+  const handleConfirmDeleteNode = async () => {
+    if (!deletingNode) return;
+    try {
+      setIsDeletingNode(true);
+      await deleteNode(deletingNode.node_id);
+      showToast(`Đã xóa thành công Node [${deletingNode.id}].`);
+      setDeletingNode(null);
+      await loadNodes();
+    } catch (err) {
+      showToast(`Lỗi khi xóa Node: ${err instanceof Error ? err.message : "Thất bại"}`);
+    } finally {
+      setIsDeletingNode(false);
+    }
   };
 
   const loadNodes = useCallback(async () => {
@@ -497,16 +515,21 @@ function NodesContent() {
                       <th scope="col" className="py-2.5 px-4 font-semibold" style={{ width: "18%" }}>
                         Kết nối
                       </th>
-                      <th scope="col" className="py-2.5 pr-6 pl-4 font-semibold" style={{ width: "18%" }}>
+                      <th scope="col" className="py-2.5 px-4 font-semibold" style={{ width: role === "ADMIN" ? "16%" : "18%" }}>
                         Hoạt động
                       </th>
+                      {role === "ADMIN" && (
+                        <th scope="col" className="py-2.5 pr-6 pl-2 font-semibold text-right" style={{ width: "12%" }}>
+                          Thao tác
+                        </th>
+                      )}
                     </tr>
                   </thead>
 
                   <tbody className="divide-y divide-border text-sm">
                     {paginatedConnectedNodes.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="h-32 text-center text-text-secondary text-sm">
+                        <td colSpan={role === "ADMIN" ? 6 : 5} className="h-32 text-center text-text-secondary text-sm">
                           Không tìm thấy Node nào phù hợp với bộ lọc.
                         </td>
                       </tr>
@@ -554,8 +577,8 @@ function NodesContent() {
                             )}
                           </td>
 
-                          {/* 5. Hoạt động + Chevron */}
-                          <td className="py-3 pr-6 pl-4">
+                          {/* 5. Hoạt động */}
+                          <td className="py-3 px-4">
                             <div className="flex items-center justify-between">
                               {node.operating ? (
                                 <div className="inline-flex items-center gap-2">
@@ -572,9 +595,30 @@ function NodesContent() {
                                   </span>
                                 </div>
                               )}
-                              <ChevronRight className="w-4 h-4 text-text-secondary group-hover:text-interactive group-hover:translate-x-0.5 transition-all shrink-0" />
+                              {role !== "ADMIN" && (
+                                <ChevronRight className="w-4 h-4 text-text-secondary group-hover:text-interactive group-hover:translate-x-0.5 transition-all shrink-0" />
+                              )}
                             </div>
                           </td>
+
+                          {/* 6. Thao tác xóa an toàn (Chỉ ADMIN) */}
+                          {role === "ADMIN" && (
+                            <td className="py-3 pr-6 pl-2 text-right" onClick={(e) => e.stopPropagation()}>
+                              <div className="inline-flex items-center justify-end gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setDeletingNode(node)}
+                                  title={`Xóa Node ${node.id}`}
+                                  aria-label={`Xóa Node ${node.id}`}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-state-critical bg-state-critical/10 hover:bg-state-critical hover:text-white rounded border border-state-critical/20 transition-colors cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span>Xóa</span>
+                                </button>
+                                <ChevronRight className="w-4 h-4 text-text-secondary group-hover:text-interactive group-hover:translate-x-0.5 transition-all shrink-0" />
+                              </div>
+                            </td>
+                          )}
                         </tr>
                       ))
                     )}
@@ -1054,6 +1098,62 @@ function NodesContent() {
                 >
                   <X className="w-4 h-4" />
                   <span>Xác nhận từ chối</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Confirmation Modal for Safe Node Deletion (Issue #293) */}
+        {deletingNode && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-node-modal-title"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          >
+            <div className="bg-surface border border-border rounded-xl shadow-none max-w-md w-full p-6 space-y-4">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-full bg-state-critical/10 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5 text-state-critical" />
+                </div>
+                <div className="space-y-1">
+                  <h3 id="delete-node-modal-title" className="text-base font-semibold text-text-primary">
+                    Xác nhận xóa Node
+                  </h3>
+                  <p className="text-sm text-text-secondary">
+                    Bạn có chắc chắn muốn xóa và gỡ bỏ node{" "}
+                    <span className="font-mono text-interactive font-semibold">{deletingNode.id}</span> (Trạm{" "}
+                    <span className="font-semibold text-text-primary">{deletingNode.gateway}</span>)?
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3 bg-state-critical/5 border border-state-critical/20 rounded-lg text-xs text-state-critical space-y-1">
+                <div className="font-semibold flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5" /> Cảnh báo rủi ro thiết bị:
+                </div>
+                <div>
+                  Hành động này sẽ ngắt kết nối, gỡ toàn bộ cấu hình node và thu hồi slot TDMA khỏi hệ thống.
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+                <button
+                  type="button"
+                  onClick={() => setDeletingNode(null)}
+                  disabled={isDeletingNode}
+                  className="h-9 px-4 rounded-lg border border-border bg-canvas hover:bg-canvas/80 text-text-secondary text-xs font-medium transition-colors cursor-pointer"
+                >
+                  Hủy bỏ
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDeleteNode}
+                  disabled={isDeletingNode}
+                  className="h-9 px-4 rounded-lg bg-state-critical hover:bg-state-critical/90 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer flex items-center gap-2 disabled:opacity-50"
+                >
+                  {isDeletingNode ? "Đang xóa..." : "Xác nhận xóa"}
                 </button>
               </div>
             </div>

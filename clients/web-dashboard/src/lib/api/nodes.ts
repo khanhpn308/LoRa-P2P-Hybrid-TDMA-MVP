@@ -87,3 +87,14 @@ export async function rejectDeviceJoinRequest(id: number): Promise<{ status: str
     method: "POST",
   });
 }
+
+/**
+ * Deletes / removes a node from topology, schedule slots, and health/device registry via DELETE /api/v1/nodes/{node_id}.
+ */
+export async function deleteNode(nodeId: number | string): Promise<void> {
+  const cleanId = typeof nodeId === "number" ? nodeId : nodeId.trim();
+  await apiFetch<{ status: string; node_id: string | number }>(`/api/v1/nodes/${cleanId}`, {
+    method: "DELETE",
+  });
+}
+
