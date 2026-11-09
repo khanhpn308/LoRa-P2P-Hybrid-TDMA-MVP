@@ -12,7 +12,7 @@ import (
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/storage"
 )
 
-// DownlinkPublisher publishes downlinks to Gateways via MQTT.
+// DownlinkPublisher publishes downlinks to Gateways.
 type DownlinkPublisher interface {
 	PublishJoinGrant(ctx context.Context, gatewayID string, deviceMAC string, nodeID int) error
 }
@@ -141,7 +141,7 @@ func (h *JoinRequestHandler) handleApprove(w http.ResponseWriter, r *http.Reques
 	// Dispatch downlink to Gateway if publisher configured
 	if h.publisher != nil && req.AssignedNodeID != nil {
 		if err := h.publisher.PublishJoinGrant(r.Context(), req.GatewayID, req.DeviceMAC, *req.AssignedNodeID); err != nil {
-			log.Printf("[JoinRequestHandler] Warning: failed to dispatch MQTT join-grant downlink: %v", err)
+			log.Printf("[JoinRequestHandler] Warning: failed to dispatch join-grant downlink: %v", err)
 		} else {
 			log.Printf("[JoinRequestHandler] Dispatched join grant downlink: gw=%s mac=%s node_id=%d", req.GatewayID, req.DeviceMAC, *req.AssignedNodeID)
 		}
