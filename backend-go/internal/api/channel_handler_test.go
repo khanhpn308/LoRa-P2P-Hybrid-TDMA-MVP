@@ -11,7 +11,6 @@ import (
 
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/api"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/domain"
-	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/scheduler"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/storage"
 )
 
@@ -424,7 +423,7 @@ type mockScheduleGuard struct {
 
 func (m *mockScheduleGuard) CanChangeGatewayChannel(ctx context.Context, gatewayID string) error {
 	if m.blockedGateway != "" && gatewayID == m.blockedGateway {
-		return scheduler.ErrActiveScheduleOnChannel
+		return api.ErrActiveScheduleOnChannel
 	}
 	return nil
 }
