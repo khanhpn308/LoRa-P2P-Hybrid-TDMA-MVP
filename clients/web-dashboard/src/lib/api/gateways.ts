@@ -85,6 +85,19 @@ export interface CreateGatewayInput {
 }
 
 /**
+ * Retrieves a single registered gateway by ID.
+ */
+export async function getGateway(gwId: string): Promise<GatewayItem | null> {
+  try {
+    const list = await getGateways();
+    const found = list.find((g) => g.gateway_id === gwId);
+    return found || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Registers a new gateway in the system database via POST /api/v1/gateways.
  */
 export async function createGateway(input: CreateGatewayInput): Promise<void> {
