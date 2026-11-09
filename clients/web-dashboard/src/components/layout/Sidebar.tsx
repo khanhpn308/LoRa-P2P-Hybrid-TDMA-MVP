@@ -14,6 +14,7 @@ import {
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
+import { useAuth } from "@/lib/auth/AuthContext";
 
 export type NavItemKey =
   | "overview"
@@ -38,6 +39,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const router = useRouter();
   const pathname = usePathname();
+  const { role } = useAuth();
 
   // Deduce active route from pathname if not provided
   const activeRoute =
@@ -58,7 +60,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const isManagementActive =
     activeRoute === "gateways" ||
     activeRoute === "nodes" ||
-    activeRoute === "users";
+    (role === "ADMIN" && activeRoute === "users");
   const [managementExpanded, setManagementExpanded] = useState<boolean>(true);
 
   const handleNavigate = (route: NavItemKey, path?: string) => {
@@ -167,18 +169,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <span className="truncate">Node</span>
               </button>
 
-              <button
-                type="button"
-                onClick={() => handleNavigate("users", "/users")}
-                className={`w-full h-8 px-2.5 rounded-md flex items-center gap-2.5 text-xs font-medium transition-colors ${
-                  activeRoute === "users"
-                    ? "bg-sidebar-selected text-interactive font-semibold"
-                    : "text-text-secondary hover:text-text-primary hover:bg-canvas"
-                }`}
-              >
-                <Users className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">Người dùng</span>
-              </button>
+              {role === "ADMIN" && (
+                <button
+                  type="button"
+                  onClick={() => handleNavigate("users", "/users")}
+                  className={`w-full h-8 px-2.5 rounded-md flex items-center gap-2.5 text-xs font-medium transition-colors ${
+                    activeRoute === "users"
+                      ? "bg-sidebar-selected text-interactive font-semibold"
+                      : "text-text-secondary hover:text-text-primary hover:bg-canvas"
+                  }`}
+                >
+                  <Users className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">Người dùng</span>
+                </button>
+              )}
             </div>
           )}
         </div>

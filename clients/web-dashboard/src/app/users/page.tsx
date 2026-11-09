@@ -11,6 +11,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ShieldCheck,
+  ShieldAlert,
   KeyRound,
   UserX,
   UserCheck,
@@ -25,6 +26,7 @@ import {
   User,
   Shield,
 } from "lucide-react";
+import { useAuth } from "@/lib/auth/AuthContext";
 import { UserRole } from "@/types/api";
 import { getUsers, createUser, updateUserStatus, updateUserRole, resetUserPassword } from "@/lib/api/users.ts";
 import { ApiClientError } from "@/lib/api/client.ts";
@@ -66,6 +68,7 @@ const ROLE_LABELS: Record<UserRole, { label: string; tag: string; description: s
 function UsersContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { role, isLoading } = useAuth();
   const initialRoleParam = searchParams.get("role") || "all";
 
   const [activeRoute, setActiveRoute] = useState<NavItemKey>("users");
@@ -101,8 +104,10 @@ function UsersContent() {
   }, []);
 
   useEffect(() => {
-    loadUsers();
-  }, [loadUsers]);
+    if (role === "ADMIN") {
+      loadUsers();
+    }
+  }, [role, loadUsers]);
 
   const [roleModalUser, setRoleModalUser] = useState<UserItem | null>(null);
   const [selectedNewRole, setSelectedNewRole] = useState<UserRole>("OPERATOR");
@@ -312,6 +317,44 @@ function UsersContent() {
       setIsSubmittingUser(false);
     }
   };
+
+  if (isLoading) {
+    return (
+      <AppShell activeRoute={activeRoute} onRouteChange={handleRouteChange}>
+        <div className="flex flex-col items-center justify-center min-h-[400px] text-text-secondary">
+          <div className="w-6 h-6 border-2 border-interactive border-t-transparent rounded-full animate-spin mb-3" />
+          <p className="text-sm">Đang xác thực thông tin tài khoản...</p>
+        </div>
+      </AppShell>
+    );
+  }
+
+  if (role !== "ADMIN") {
+    return (
+      <AppShell activeRoute={activeRoute} onRouteChange={handleRouteChange}>
+        <div className="flex flex-col items-center justify-center min-h-[460px] text-center p-6 bg-surface rounded-xl border border-border mt-4">
+          <div className="w-16 h-16 rounded-full bg-state-critical/10 flex items-center justify-center text-state-critical mb-4">
+            <ShieldAlert className="w-8 h-8" />
+          </div>
+          <h1 className="text-xl font-bold text-text-primary mb-2">
+            403 - Bạn không có quyền truy cập trang quản trị tài khoản
+          </h1>
+          <p className="text-sm text-text-secondary max-w-md mb-6 leading-relaxed">
+            Khu vực Quản lý Người dùng chỉ dành riêng cho tài khoản có vai trò Quản trị viên (ADMIN). Vui lòng liên hệ quản trị viên hệ thống nếu bạn cần cấp quyền truy cập.
+          </p>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => router.push("/")}
+              className="h-9 px-4 rounded-lg bg-interactive hover:bg-interactive-hover text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer"
+            >
+              Quay về Trang chủ
+            </button>
+          </div>
+        </div>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell activeRoute={activeRoute} onRouteChange={handleRouteChange}>

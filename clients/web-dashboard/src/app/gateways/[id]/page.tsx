@@ -231,6 +231,7 @@ function GatewayDetailContent({ params }: { params: Promise<{ id: string }> }) {
   };
 
   const handleConfirmDelete = async () => {
+    if (role !== "ADMIN") return;
     try {
       setIsDeleting(true);
       await deleteGateway(rawId);
@@ -539,7 +540,7 @@ function GatewayDetailContent({ params }: { params: Promise<{ id: string }> }) {
       </div>
 
       {/* Confirmation Modal for Safe Gateway Deletion (Issue #293) */}
-      {showDeleteModal && (
+      {showDeleteModal && role === "ADMIN" && (
         <div
           role="dialog"
           aria-modal="true"
