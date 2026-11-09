@@ -9,7 +9,9 @@
 #include <string.h>
 #include "esp_err.h"
 #include "lora_mac.h"
+#include "lora_mac_crypto.h"
 #include "unity.h"
+
 
 TEST_CASE("lora_mac init returns ESP_OK", "[lora_mac]")
 {
@@ -162,4 +164,129 @@ TEST_CASE("lora_mac header encode negative tests", "[lora_mac]")
     lora_mac_header_t bad_hdr = valid_hdr;
     bad_hdr.payload_len = (uint8_t)(LORA_MAC_MAX_PAYLOAD_LEN + 1U);
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_SIZE, lora_mac_header_encode(&bad_hdr, wire_buf, sizeof(wire_buf), &written));
+}
+
+TEST_CASE("lora_mac crypto init returns ESP_OK", "[lora_mac][crypto]")
+{
+    TEST_ASSERT_EQUAL(ESP_OK, lora_mac_crypto_init());
+}
+
+TEST_CASE("lora_mac AES-CCM-8 UP_EVENT encryption and decryption roundtrip", "[lora_mac][crypto]")
+{
+    const uint8_t key[16] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                             0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10};
+    const uint8_t nonce[13] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11,
+                               0x01, 0x00, 0x00, 0x00, 0x01};
+    const uint8_t aad[7] = {0x41, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01};
+    const uint8_t plaintext[11] = "EVENT_ALERT";
+    uint8_t ciphertext[11] = {0};
+    uint8_t tag[8] = {0};
+
+    esp_err_t err = lora_mac_crypto_encrypt_up_event(key, nonce, aad, sizeof(aad),
+                                                    plaintext, sizeof(plaintext),
+                                                    ciphertext, tag);
+    TEST_ASSERT_EQUAL(ESP_OK, err);
+
+    uint8_t decrypted[11] = {0};
+    err = lora_mac_crypto_decrypt_up_event(key, nonce, aad, sizeof(aad),
+                                          ciphertext, sizeof(ciphertext),
+                                          tag, decrypted);
+    TEST_ASSERT_EQUAL(ESP_OK, err);
+    TEST_ASSERT_EQUAL_MEMORY(plaintext, decrypted, sizeof(plaintext));
+
+    /* Corrupted tag check */
+    tag[0] ^= 0x55U;
+    err = lora_mac_crypto_decrypt_up_event(key, nonce, aad, sizeof(aad),
+                                          ciphertext, sizeof(ciphertext),
+                                          tag, decrypted);
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_CRC, err);
+    tag[0] ^= 0x55U; /* restore */
+
+    /* Corrupted ciphertext check */
+    ciphertext[0] ^= 0xAAU;
+    err = lora_mac_crypto_decrypt_up_event(key, nonce, aad, sizeof(aad),
+                                          ciphertext, sizeof(ciphertext),
+                                          tag, decrypted);
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_CRC, err);
+}
+
+TEST_CASE("lora_mac AES-CCM-8 DOWN_EVENT_ACK encryption and decryption roundtrip", "[lora_mac][crypto]")
+{
+    const uint8_t key[16] = {0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
+                             0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x30};
+    const uint8_t nonce[13] = {0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80,
+                               0x02, 0x00, 0x00, 0x00, 0x05};
+    const uint8_t aad[7] = {0x42, 0x01, 0x00, 0x00, 0x00, 0x00, 0x05};
+    const uint8_t plaintext[4] = {0x00, 0x00, 0x00, 0x2A}; /* event_ref = 42 */
+    uint8_t ciphertext[4] = {0};
+    uint8_t tag[8] = {0};
+
+    esp_err_t err = lora_mac_crypto_encrypt_down_ack(key, nonce, aad, sizeof(aad),
+                                                     plaintext, sizeof(plaintext),
+                                                     ciphertext, tag);
+    TEST_ASSERT_EQUAL(ESP_OK, err);
+
+    uint8_t decrypted[4] = {0};
+    err = lora_mac_crypto_decrypt_down_ack(key, nonce, aad, sizeof(aad),
+                                           ciphertext, sizeof(ciphertext),
+                                           tag, decrypted);
+    TEST_ASSERT_EQUAL(ESP_OK, err);
+    TEST_ASSERT_EQUAL_MEMORY(plaintext, decrypted, sizeof(plaintext));
+
+    /* Corrupted tag check */
+    tag[7] ^= 0x01U;
+    err = lora_mac_crypto_decrypt_down_ack(key, nonce, aad, sizeof(aad),
+                                           ciphertext, sizeof(ciphertext),
+                                           tag, decrypted);
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_CRC, err);
+}
+
+TEST_CASE("lora_mac Beacon HMAC computation and verification", "[lora_mac][crypto]")
+{
+    const uint8_t k_beacon[32] = {
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00,
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10
+    };
+    const uint8_t header[16] = {
+        0x43, 0x01, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00,
+        0x00, 0x01, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00
+    };
+    uint8_t tag[16] = {0};
+
+    esp_err_t err = lora_mac_crypto_compute_beacon_hmac(k_beacon, header, sizeof(header), tag);
+    TEST_ASSERT_EQUAL(ESP_OK, err);
+
+    err = lora_mac_crypto_verify_beacon_hmac(k_beacon, header, sizeof(header), tag);
+    TEST_ASSERT_EQUAL(ESP_OK, err);
+
+    /* Tamper with tag */
+    tag[0] ^= 0xFFU;
+    err = lora_mac_crypto_verify_beacon_hmac(k_beacon, header, sizeof(header), tag);
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_CRC, err);
+}
+
+TEST_CASE("lora_mac crypto zeroize and negative bounds checks", "[lora_mac][crypto]")
+{
+    uint8_t sensitive[16] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+                             0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    lora_mac_crypto_zeroize(sensitive, sizeof(sensitive));
+    for (size_t i = 0; i < sizeof(sensitive); i++) {
+        TEST_ASSERT_EQUAL_HEX8(0x00, sensitive[i]);
+    }
+
+    uint8_t dummy[16] = {0};
+    uint8_t tag[8] = {0};
+    /* NULL pointer checks */
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, lora_mac_crypto_encrypt_up_event(NULL, dummy, dummy, 7, dummy, 11, dummy, tag));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, lora_mac_crypto_decrypt_up_event(dummy, NULL, dummy, 7, dummy, 11, tag, dummy));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, lora_mac_crypto_compute_beacon_hmac(NULL, dummy, 16, dummy));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, lora_mac_crypto_verify_beacon_hmac(dummy, dummy, 0, tag));
+
+    /* Bounds checking: oversized payloads and AADs */
+    uint8_t oversized_buf[64] = {0};
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, lora_mac_crypto_ccm_encrypt(dummy, dummy, dummy, 7, oversized_buf, 49, dummy, tag));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, lora_mac_crypto_ccm_decrypt(dummy, dummy, dummy, 7, oversized_buf, 49, tag, dummy));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, lora_mac_crypto_ccm_encrypt(dummy, dummy, oversized_buf, 49, dummy, 4, dummy, tag));
 }
