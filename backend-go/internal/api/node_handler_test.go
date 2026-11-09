@@ -63,7 +63,7 @@ func TestNodeHandler_ListNodes_Success(t *testing.T) {
 
 	handler := api.NewNodeHandler(repo)
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterListNodesRoute(mux)
 
 	req := httptest.NewRequest("GET", "/api/v1/nodes", nil)
 	rec := httptest.NewRecorder()
@@ -92,21 +92,45 @@ func TestNodeHandler_GetNodeTelemetry_Gone410(t *testing.T) {
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
-	req := httptest.NewRequest("GET", "/api/v1/nodes/5/telemetry", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusGone {
-		t.Fatalf("expected 410 Gone for deprecated telemetry, got: %d", rec.Code)
+	testCases := []struct {
+		name   string
+		nodeID string
+	}{
+		{name: "node 1 (issue 303 AC)", nodeID: "1"},
+		{name: "node 5", nodeID: "5"},
+		{name: "node 254 (max valid)", nodeID: "254"},
 	}
 
-	var resp api.DeprecatedTelemetryResponseDTO
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("failed to parse response: %v", err)
-	}
+	expectedCode := "TELEMETRY_PERIODIC_MODE_DEPRECATED"
+	expectedMsg := "Periodic application telemetry and SET_PERIODIC_MODE cease as current business flows. Event-Only V2 alerts arrive via ALERT_TRIGGERED."
 
-	if resp.Code != "DEPRECATED_HISTORICAL" {
-		t.Fatalf("expected DEPRECATED_HISTORICAL, got: %s", resp.Code)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/api/v1/nodes/"+tc.nodeID+"/telemetry", nil)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusGone {
+				t.Fatalf("expected 410 Gone for deprecated telemetry, got: %d", rec.Code)
+			}
+
+			contentType := rec.Header().Get("Content-Type")
+			if contentType != "application/json; charset=utf-8" {
+				t.Fatalf("expected content-type 'application/json; charset=utf-8', got: %s", contentType)
+			}
+
+			var resp api.DeprecatedTelemetryResponseDTO
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("failed to parse response: %v", err)
+			}
+
+			if resp.Code != expectedCode {
+				t.Fatalf("expected code %q, got: %s", expectedCode, resp.Code)
+			}
+			if resp.Message != expectedMsg {
+				t.Fatalf("expected message %q, got: %q", expectedMsg, resp.Message)
+			}
+		})
 	}
 }
 
@@ -116,11 +140,27 @@ func TestNodeHandler_GetNodeTelemetry_InvalidNodeID(t *testing.T) {
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
-	req := httptest.NewRequest("GET", "/api/v1/nodes/999/telemetry", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+	testCases := []struct {
+		name   string
+		nodeID string
+	}{
+		{name: "zero node_id", nodeID: "0"},
+		{name: "negative node_id", nodeID: "-1"},
+		{name: "exceeds max node_id 255", nodeID: "255"},
+		{name: "large out-of-range node_id 999", nodeID: "999"},
+		{name: "alphanumeric node_id", nodeID: "abc"},
+		{name: "encoded space node_id", nodeID: "%20"},
+	}
 
-	if rec.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("expected 422 Unprocessable Entity, got: %d", rec.Code)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/api/v1/nodes/"+tc.nodeID+"/telemetry", nil)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("expected 422 Unprocessable Entity, got: %d", rec.Code)
+			}
+		})
 	}
 }
