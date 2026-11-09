@@ -80,7 +80,6 @@ describe("Web Integration Services & Realtime Contracts", () => {
               node_id: 12,
               gateway_id: "GW-01",
               name: "Node-12",
-              assigned_slot_id: 2,
               last_seen_at: "2026-11-08T03:00:00Z",
               status: "ONLINE",
             },

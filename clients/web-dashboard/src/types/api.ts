@@ -86,7 +86,6 @@ export interface NodeSummary {
   node_id: number; // 1..254
   gateway_id: string;
   name?: string;
-  assigned_slot_id: number | null; // 1..15
   last_seen_at: string | null;
   last_rssi_dbm: number | null;
   last_snr_db: number | null;
