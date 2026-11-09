@@ -29,6 +29,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/users", h.handleListUsers)
 	mux.HandleFunc("POST /api/v1/users", h.handleCreateUser)
 	mux.HandleFunc("GET /api/v1/users/{id}", h.handleGetUser)
+	mux.HandleFunc("PATCH /api/v1/users/{id}", h.handleUpdateUser)
+	mux.HandleFunc("PUT /api/v1/users/{id}", h.handleUpdateUser)
+	mux.HandleFunc("PUT /api/v1/users/{id}/password", h.handleUpdatePassword)
+	mux.HandleFunc("PATCH /api/v1/users/{id}/password", h.handleUpdatePassword)
 }
 
 func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -57,7 +61,11 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.authService.Login(r.Context(), req)
 	if err != nil {
-		if errors.Is(err, ErrInvalidCredentials) || errors.Is(err, ErrUserNotFound) || errors.Is(err, ErrUserInactive) {
+		if errors.Is(err, ErrUserInactive) {
+			writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "user account is inactive")
+			return
+		}
+		if errors.Is(err, ErrInvalidCredentials) || errors.Is(err, ErrUserNotFound) {
 			writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid credentials")
 			return
 		}
@@ -228,6 +236,118 @@ func (h *Handler) handleGetUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeAuthJSON(w, http.StatusOK, user)
+}
+
+func (h *Handler) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
+	claims, ok := h.resolveClaims(w, r)
+	if !ok {
+		return
+	}
+
+	if claims.Role != RoleAdmin {
+		writeAuthError(w, http.StatusForbidden, "FORBIDDEN", "only administrators can update users")
+		return
+	}
+
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeAuthError(w, http.StatusBadRequest, "INVALID_ID", "user id is required")
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxPayloadBytes+1))
+	if err != nil {
+		writeAuthError(w, http.StatusBadRequest, "INVALID_BODY", "failed to read request body")
+		return
+	}
+
+	var req UpdateUserRequestDTO
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeAuthError(w, http.StatusBadRequest, "MALFORMED_JSON", err.Error())
+		return
+	}
+
+	if req.Role != nil && !IsValidRole(*req.Role) {
+		writeAuthError(w, http.StatusBadRequest, "INVALID_ROLE", "role must be ADMIN, OPERATOR, or VIEWER")
+		return
+	}
+
+	updatedUser, err := h.authService.UpdateUser(r.Context(), id, req)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			writeAuthError(w, http.StatusNotFound, "NOT_FOUND", "user not found")
+			return
+		}
+		if errors.Is(err, ErrInsufficientRole) {
+			writeAuthError(w, http.StatusBadRequest, "INVALID_ROLE", err.Error())
+			return
+		}
+		writeAuthError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to update user")
+		return
+	}
+
+	writeAuthJSON(w, http.StatusOK, updatedUser)
+}
+
+func (h *Handler) handleUpdatePassword(w http.ResponseWriter, r *http.Request) {
+	claims, ok := h.resolveClaims(w, r)
+	if !ok {
+		return
+	}
+
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeAuthError(w, http.StatusBadRequest, "INVALID_ID", "user id is required")
+		return
+	}
+
+	targetUser, err := h.authService.GetUser(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			writeAuthError(w, http.StatusNotFound, "NOT_FOUND", "user not found")
+			return
+		}
+		writeAuthError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to resolve user")
+		return
+	}
+
+	isSelf := (claims.Sub != "" && claims.Sub == targetUser.ID) || (claims.Username != "" && claims.Username == targetUser.Username)
+	if claims.Role != RoleAdmin && !isSelf {
+		writeAuthError(w, http.StatusForbidden, "FORBIDDEN", "insufficient permissions to reset password")
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxPayloadBytes+1))
+	if err != nil {
+		writeAuthError(w, http.StatusBadRequest, "INVALID_BODY", "failed to read request body")
+		return
+	}
+
+	var req UpdatePasswordRequestDTO
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeAuthError(w, http.StatusBadRequest, "MALFORMED_JSON", err.Error())
+		return
+	}
+
+	if len(req.Password) < 8 || len(req.Password) > 128 {
+		writeAuthError(w, http.StatusBadRequest, "INVALID_PASSWORD", "password must be between 8 and 128 characters")
+		return
+	}
+
+	if err := h.authService.UpdatePassword(r.Context(), targetUser.ID, req.Password); err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			writeAuthError(w, http.StatusNotFound, "NOT_FOUND", "user not found")
+			return
+		}
+		if errors.Is(err, ErrInvalidCredentials) {
+			writeAuthError(w, http.StatusBadRequest, "INVALID_PASSWORD", err.Error())
+			return
+		}
+		writeAuthError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to update password")
+		return
+	}
+
+	writeAuthJSON(w, http.StatusOK, map[string]string{"message": "password updated successfully"})
 }
 
 func writeAuthJSON(w http.ResponseWriter, status int, data any) {

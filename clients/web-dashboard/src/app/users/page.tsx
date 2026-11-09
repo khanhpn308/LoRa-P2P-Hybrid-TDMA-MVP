@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useMemo, useEffect, useCallback, Suspense } from "react";
-import { useAuth } from "@/lib/auth/AuthContext";
 import { useSearchParams, useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { NavItemKey } from "@/components/layout/Sidebar";
@@ -27,7 +26,8 @@ import {
   Shield,
 } from "lucide-react";
 import { UserRole } from "@/types/api";
-import { getUsers, createUser } from "@/lib/api/users.ts";
+import { getUsers, createUser, updateUserStatus, updateUserRole, resetUserPassword } from "@/lib/api/users.ts";
+import { ApiClientError } from "@/lib/api/client.ts";
 
 export type { UserRole };
 export type UserStatus = "active" | "disabled";
@@ -77,7 +77,6 @@ function UsersContent() {
   const [currentPage, setCurrentPage] = useState<number>(1);
 
   // Modal States
-  const { token } = useAuth();
 
   const loadUsers = useCallback(async () => {
     try {
@@ -190,15 +189,21 @@ function UsersContent() {
     setSelectedNewRole(user.role);
   };
 
-  const confirmRoleChange = () => {
+  const confirmRoleChange = async () => {
     if (!roleModalUser) return;
-    setUsers((prev) =>
-      prev.map((u) => (u.id === roleModalUser.id ? { ...u, role: selectedNewRole } : u))
-    );
-    showToast(
-      `Đã cập nhật vai trò cho [${roleModalUser.username}] thành [${ROLE_LABELS[selectedNewRole].label.split(" (")[0]}].`
-    );
-    setRoleModalUser(null);
+    try {
+      await updateUserRole(roleModalUser.id || roleModalUser.username, selectedNewRole);
+      setUsers((prev) =>
+        prev.map((u) => (u.id === roleModalUser.id ? { ...u, role: selectedNewRole } : u))
+      );
+      showToast(
+        `Đã cập nhật vai trò cho [${roleModalUser.username}] thành [${ROLE_LABELS[selectedNewRole].label.split(" (")[0]}].`
+      );
+      setRoleModalUser(null);
+    } catch (err) {
+      const msg = err instanceof ApiClientError ? err.message : (err instanceof Error ? err.message : "Đổi vai trò thất bại");
+      showToast(`Lỗi: ${msg}`);
+    }
   };
 
   const openPasswordModal = (user: UserItem) => {
@@ -227,28 +232,46 @@ function UsersContent() {
     setTimeout(() => setCopiedPassword(false), 2000);
   };
 
-  const confirmPasswordReset = () => {
+  const confirmPasswordReset = async () => {
     if (!passwordModalUser) return;
-    showToast(`Đã cấp lại mật khẩu bảo mật cho tài khoản [${passwordModalUser.username}].`);
-    setPasswordModalUser(null);
+    const pwdToSet = passwordMode === "auto" ? generatedPassword : manualPassword.trim();
+    if (pwdToSet.length < 8) {
+      showToast("Mật khẩu phải có ít nhất 8 ký tự.");
+      return;
+    }
+    try {
+      await resetUserPassword(passwordModalUser.id || passwordModalUser.username, pwdToSet);
+      showToast(`Đã cấp lại mật khẩu bảo mật cho tài khoản [${passwordModalUser.username}].`);
+      setPasswordModalUser(null);
+    } catch (err) {
+      const msg = err instanceof ApiClientError ? err.message : (err instanceof Error ? err.message : "Đặt lại mật khẩu thất bại");
+      showToast(`Lỗi: ${msg}`);
+    }
   };
 
   const openStatusModal = (user: UserItem) => {
     setStatusModalUser(user);
   };
 
-  const confirmStatusToggle = () => {
+  const confirmStatusToggle = async () => {
     if (!statusModalUser) return;
-    const newStatus: UserStatus = statusModalUser.status === "active" ? "disabled" : "active";
-    setUsers((prev) =>
-      prev.map((u) => (u.id === statusModalUser.id ? { ...u, status: newStatus } : u))
-    );
-    showToast(
-      newStatus === "active"
-        ? `Đã kích hoạt lại tài khoản [${statusModalUser.username}].`
-        : `Đã vô hiệu hóa tài khoản [${statusModalUser.username}].`
-    );
-    setStatusModalUser(null);
+    const nextActive = statusModalUser.status !== "active";
+    try {
+      const updated = await updateUserStatus(statusModalUser.id || statusModalUser.username, nextActive);
+      const newStatus: UserStatus = updated.is_active ? "active" : "disabled";
+      setUsers((prev) =>
+        prev.map((u) => (u.id === statusModalUser.id ? { ...u, status: newStatus } : u))
+      );
+      showToast(
+        newStatus === "active"
+          ? `Đã kích hoạt lại tài khoản [${statusModalUser.username}].`
+          : `Đã vô hiệu hóa tài khoản [${statusModalUser.username}].`
+      );
+      setStatusModalUser(null);
+    } catch (err) {
+      const msg = err instanceof ApiClientError ? err.message : (err instanceof Error ? err.message : "Cập nhật trạng thái thất bại");
+      showToast(`Lỗi: ${msg}`);
+    }
   };
 
   const handleAddUser = async (e: React.FormEvent) => {

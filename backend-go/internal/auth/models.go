@@ -49,6 +49,19 @@ type CreateUserRequestDTO struct {
 	Role     Role   `json:"role"`
 }
 
+// UpdateUserRequestDTO represents the payload for PATCH/PUT /api/v1/users/{id}.
+type UpdateUserRequestDTO struct {
+	FullName *string `json:"full_name,omitempty"`
+	Email    *string `json:"email,omitempty"`
+	Role     *Role   `json:"role,omitempty"`
+	IsActive *bool   `json:"is_active,omitempty"`
+}
+
+// UpdatePasswordRequestDTO represents the payload for PUT/PATCH /api/v1/users/{id}/password.
+type UpdatePasswordRequestDTO struct {
+	Password string `json:"password"`
+}
+
 // Claims represents JWT payload claims following ADR-0005.
 type Claims struct {
 	Sub      string `json:"sub"`

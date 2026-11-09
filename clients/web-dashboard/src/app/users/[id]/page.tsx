@@ -4,7 +4,8 @@ import React, { useState, useEffect, use, Suspense } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
-import { getUser } from "@/lib/api/users.ts";
+import { getUser, updateUser, updateUserStatus, updateUserRole, resetUserPassword } from "@/lib/api/users.ts";
+import { ApiClientError } from "@/lib/api/client.ts";
 import {
   ArrowLeft,
   ChevronRight,
@@ -137,6 +138,8 @@ function UserDetailContent({ params }: { params: Promise<{ id: string }> }) {
 
   const [user, setUser] = useState<UserItem>(initialUser);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Modal States
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -190,23 +193,48 @@ function UserDetailContent({ params }: { params: Promise<{ id: string }> }) {
     setTimeout(() => setToastMessage(null), 3000);
   };
 
-  const handleSaveEdit = () => {
-    setUser((prev) => ({
-      ...prev,
-      fullName: editFullName.trim() || prev.fullName,
-      email: editEmail.trim() || prev.email,
-    }));
-    setIsEditModalOpen(false);
-    showToast(`Đã cập nhật thông tin tài khoản ${user.username}`);
+  const handleSaveEdit = async () => {
+    setActionError(null);
+    setIsSubmitting(true);
+    try {
+      const updated = await updateUser(user.id || user.username, {
+        full_name: editFullName.trim(),
+        email: editEmail.trim(),
+      });
+      setUser((prev) => ({
+        ...prev,
+        fullName: updated.full_name || editFullName.trim(),
+        email: updated.email || editEmail.trim(),
+      }));
+      setIsEditModalOpen(false);
+      showToast(`Đã cập nhật thông tin tài khoản ${user.username}`);
+    } catch (err) {
+      const msg = err instanceof ApiClientError ? err.message : (err instanceof Error ? err.message : "Cập nhật thông tin thất bại");
+      setActionError(msg);
+      showToast(`Lỗi: ${msg}`);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleSaveRole = () => {
-    setUser((prev) => ({
-      ...prev,
-      role: selectedRole,
-    }));
-    setIsRoleModalOpen(false);
-    showToast(`Đã đổi vai trò của ${user.username} thành ${ROLE_LABELS[selectedRole].label}`);
+  const handleSaveRole = async () => {
+    setActionError(null);
+    setIsSubmitting(true);
+    try {
+      const updated = await updateUserRole(user.id || user.username, selectedRole);
+      setUser((prev) => ({
+        ...prev,
+        role: (updated.role as UserRole) || selectedRole,
+      }));
+      setIsRoleModalOpen(false);
+      showToast(`Đã đổi vai trò của ${user.username} thành ${ROLE_LABELS[selectedRole].label}`);
+    } catch (err) {
+      const msg = err instanceof ApiClientError ? err.message : (err instanceof Error ? err.message : "Đổi vai trò thất bại");
+      setActionError(msg);
+      showToast(`Lỗi: ${msg}`);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleGenerateRandomPassword = () => {
@@ -218,14 +246,31 @@ function UserDetailContent({ params }: { params: Promise<{ id: string }> }) {
     setGeneratedPassword(pwd);
   };
 
-  const handleSaveResetPw = () => {
-    setIsResetPwModalOpen(false);
-    setManualPassword("");
-    showToast(
-      pwMode === "auto"
-        ? `Đã đặt lại mật khẩu mới cho ${user.username}`
-        : `Mật khẩu mới đã được cập nhật trực tiếp cho ${user.username}`
-    );
+  const handleSaveResetPw = async () => {
+    setActionError(null);
+    const pwdToSet = pwMode === "auto" ? generatedPassword : manualPassword.trim();
+    if (pwdToSet.length < 8) {
+      setActionError("Mật khẩu phải có độ dài tối thiểu 8 ký tự.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await resetUserPassword(user.id || user.username, pwdToSet);
+      setIsResetPwModalOpen(false);
+      setManualPassword("");
+      showToast(
+        pwMode === "auto"
+          ? `Đã đặt lại mật khẩu mới cho ${user.username}`
+          : `Mật khẩu mới đã được cập nhật trực tiếp cho ${user.username}`
+      );
+    } catch (err) {
+      const msg = err instanceof ApiClientError ? err.message : (err instanceof Error ? err.message : "Đặt lại mật khẩu thất bại");
+      setActionError(msg);
+      showToast(`Lỗi: ${msg}`);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleCopyPassword = () => {
@@ -234,18 +279,30 @@ function UserDetailContent({ params }: { params: Promise<{ id: string }> }) {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleToggleStatus = () => {
-    const nextStatus: UserStatus = user.status === "active" ? "disabled" : "active";
-    setUser((prev) => ({
-      ...prev,
-      status: nextStatus,
-    }));
-    setIsToggleStatusModalOpen(false);
-    showToast(
-      nextStatus === "disabled"
-        ? `Đã vô hiệu hóa tài khoản ${user.username}`
-        : `Đã kích hoạt lại tài khoản ${user.username}`
-    );
+  const handleToggleStatus = async () => {
+    setActionError(null);
+    const nextActive = user.status !== "active";
+    setIsSubmitting(true);
+    try {
+      const updated = await updateUserStatus(user.id || user.username, nextActive);
+      const nextStatus: UserStatus = updated.is_active ? "active" : "disabled";
+      setUser((prev) => ({
+        ...prev,
+        status: nextStatus,
+      }));
+      setIsToggleStatusModalOpen(false);
+      showToast(
+        nextStatus === "disabled"
+          ? `Đã vô hiệu hóa tài khoản ${user.username}`
+          : `Đã kích hoạt lại tài khoản ${user.username}`
+      );
+    } catch (err) {
+      const msg = err instanceof ApiClientError ? err.message : (err instanceof Error ? err.message : "Cập nhật trạng thái thất bại");
+      setActionError(msg);
+      showToast(`Lỗi: ${msg}`);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const currentRoleMeta = ROLE_LABELS[user.role];
@@ -308,6 +365,7 @@ function UserDetailContent({ params }: { params: Promise<{ id: string }> }) {
               <button
                 type="button"
                 onClick={() => {
+                  setActionError(null);
                   setEditFullName(user.fullName);
                   setEditEmail(user.email);
                   setIsEditModalOpen(true);
@@ -322,6 +380,7 @@ function UserDetailContent({ params }: { params: Promise<{ id: string }> }) {
               <button
                 type="button"
                 onClick={() => {
+                  setActionError(null);
                   setSelectedRole(user.role);
                   setIsRoleModalOpen(true);
                 }}
@@ -335,6 +394,7 @@ function UserDetailContent({ params }: { params: Promise<{ id: string }> }) {
               <button
                 type="button"
                 onClick={() => {
+                  setActionError(null);
                   handleGenerateRandomPassword();
                   setIsResetPwModalOpen(true);
                 }}
@@ -347,7 +407,10 @@ function UserDetailContent({ params }: { params: Promise<{ id: string }> }) {
               {/* Button 4: Vô hiệu hóa / Kích hoạt tài khoản */}
               <button
                 type="button"
-                onClick={() => setIsToggleStatusModalOpen(true)}
+                onClick={() => {
+                  setActionError(null);
+                  setIsToggleStatusModalOpen(true);
+                }}
                 className={`h-9 px-3 text-xs font-medium rounded-lg border flex items-center gap-1.5 transition-colors ${
                   user.status === "active"
                     ? "bg-canvas border-red-200 dark:border-red-900/60 text-state-critical hover:bg-red-50 dark:hover:bg-red-950/40"
@@ -460,6 +523,12 @@ function UserDetailContent({ params }: { params: Promise<{ id: string }> }) {
             </div>
 
             <div className="space-y-4">
+              {actionError && (
+                <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-xs text-state-critical flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>{actionError}</span>
+                </div>
+              )}
               <div>
                 <label className="text-xs font-medium text-text-secondary mb-1 block">Tài khoản</label>
                 <input
@@ -495,16 +564,18 @@ function UserDetailContent({ params }: { params: Promise<{ id: string }> }) {
               <button
                 type="button"
                 onClick={() => setIsEditModalOpen(false)}
-                className="h-9 px-4 rounded-lg border border-border text-xs font-medium text-text-secondary hover:bg-canvas"
+                disabled={isSubmitting}
+                className="h-9 px-4 rounded-lg border border-border text-xs font-medium text-text-secondary hover:bg-canvas disabled:opacity-50"
               >
                 Hủy
               </button>
               <button
                 type="button"
                 onClick={handleSaveEdit}
-                className="h-9 px-4 rounded-lg bg-interactive hover:bg-interactive-hover text-white text-xs font-medium"
+                disabled={isSubmitting}
+                className="h-9 px-4 rounded-lg bg-interactive hover:bg-interactive-hover disabled:opacity-50 text-white text-xs font-medium"
               >
-                Lưu thay đổi
+                {isSubmitting ? "Đang lưu..." : "Lưu thay đổi"}
               </button>
             </div>
           </div>
@@ -528,6 +599,13 @@ function UserDetailContent({ params }: { params: Promise<{ id: string }> }) {
                 <X className="w-4 h-4" />
               </button>
             </div>
+
+            {actionError && (
+              <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-xs text-state-critical flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{actionError}</span>
+              </div>
+            )}
 
             <p className="text-xs text-text-secondary">
               Chọn vai trò mới cho tài khoản <strong className="font-mono text-text-primary">{user.username}</strong>:
@@ -570,16 +648,18 @@ function UserDetailContent({ params }: { params: Promise<{ id: string }> }) {
               <button
                 type="button"
                 onClick={() => setIsRoleModalOpen(false)}
-                className="h-9 px-4 rounded-lg border border-border text-xs font-medium text-text-secondary hover:bg-canvas"
+                disabled={isSubmitting}
+                className="h-9 px-4 rounded-lg border border-border text-xs font-medium text-text-secondary hover:bg-canvas disabled:opacity-50"
               >
                 Hủy
               </button>
               <button
                 type="button"
                 onClick={handleSaveRole}
-                className="h-9 px-4 rounded-lg bg-interactive hover:bg-interactive-hover text-white text-xs font-medium"
+                disabled={isSubmitting}
+                className="h-9 px-4 rounded-lg bg-interactive hover:bg-interactive-hover disabled:opacity-50 text-white text-xs font-medium"
               >
-                Cập nhật vai trò
+                {isSubmitting ? "Đang cập nhật..." : "Cập nhật vai trò"}
               </button>
             </div>
           </div>
@@ -603,6 +683,13 @@ function UserDetailContent({ params }: { params: Promise<{ id: string }> }) {
                 <X className="w-4 h-4" />
               </button>
             </div>
+
+            {actionError && (
+              <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-xs text-state-critical flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{actionError}</span>
+              </div>
+            )}
 
             <div className="flex items-center gap-2 p-1 bg-canvas border border-border rounded-lg">
               <button
@@ -688,17 +775,18 @@ function UserDetailContent({ params }: { params: Promise<{ id: string }> }) {
               <button
                 type="button"
                 onClick={() => setIsResetPwModalOpen(false)}
-                className="h-9 px-4 rounded-lg border border-border text-xs font-medium text-text-secondary hover:bg-canvas"
+                disabled={isSubmitting}
+                className="h-9 px-4 rounded-lg border border-border text-xs font-medium text-text-secondary hover:bg-canvas disabled:opacity-50"
               >
                 Hủy
               </button>
               <button
                 type="button"
                 onClick={handleSaveResetPw}
-                disabled={pwMode === "manual" && manualPassword.length < 6}
+                disabled={isSubmitting || (pwMode === "manual" && manualPassword.length < 8)}
                 className="h-9 px-4 rounded-lg bg-interactive hover:bg-interactive-hover disabled:opacity-50 text-white text-xs font-medium"
               >
-                Xác nhận đặt lại
+                {isSubmitting ? "Đang xử lý..." : "Xác nhận đặt lại"}
               </button>
             </div>
           </div>
@@ -725,6 +813,13 @@ function UserDetailContent({ params }: { params: Promise<{ id: string }> }) {
               </button>
             </div>
 
+            {actionError && (
+              <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-xs text-state-critical flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{actionError}</span>
+              </div>
+            )}
+
             <p className="text-xs text-text-secondary leading-relaxed">
               {user.status === "active" ? (
                 <>
@@ -745,20 +840,26 @@ function UserDetailContent({ params }: { params: Promise<{ id: string }> }) {
               <button
                 type="button"
                 onClick={() => setIsToggleStatusModalOpen(false)}
-                className="h-9 px-4 rounded-lg border border-border text-xs font-medium text-text-secondary hover:bg-canvas"
+                disabled={isSubmitting}
+                className="h-9 px-4 rounded-lg border border-border text-xs font-medium text-text-secondary hover:bg-canvas disabled:opacity-50"
               >
                 Hủy bỏ
               </button>
               <button
                 type="button"
                 onClick={handleToggleStatus}
-                className={`h-9 px-4 rounded-lg text-white text-xs font-medium ${
+                disabled={isSubmitting}
+                className={`h-9 px-4 rounded-lg text-white text-xs font-medium disabled:opacity-50 ${
                   user.status === "active"
                     ? "bg-red-600 hover:bg-red-700"
                     : "bg-emerald-600 hover:bg-emerald-700"
                 }`}
               >
-                {user.status === "active" ? "Xác nhận vô hiệu hóa" : "Kích hoạt tài khoản"}
+                {isSubmitting
+                  ? "Đang xử lý..."
+                  : user.status === "active"
+                  ? "Xác nhận vô hiệu hóa"
+                  : "Kích hoạt tài khoản"}
               </button>
             </div>
           </div>

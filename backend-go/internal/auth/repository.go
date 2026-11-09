@@ -17,6 +17,8 @@ type UserRepository interface {
 	GetByID(ctx context.Context, id string) (*User, error)
 	CreateUser(ctx context.Context, user *User) error
 	ListUsers(ctx context.Context) ([]*User, error)
+	UpdateUser(ctx context.Context, id string, req UpdateUserRequestDTO) (*User, error)
+	UpdatePassword(ctx context.Context, id string, newPasswordHash string) error
 }
 
 // PostgresUserRepository implements UserRepository against a live PostgreSQL database (DB-001, DB-002).
@@ -149,6 +151,69 @@ func (r *PostgresUserRepository) ListUsers(ctx context.Context) ([]*User, error)
 	return users, nil
 }
 
+// UpdateUser updates specific user fields in PostgreSQL using parameterized queries (DB-001, DB-002).
+func (r *PostgresUserRepository) UpdateUser(ctx context.Context, id string, req UpdateUserRequestDTO) (*User, error) {
+	var roleVal *string
+	if req.Role != nil {
+		s := string(*req.Role)
+		roleVal = &s
+	}
+
+	const query = `
+		UPDATE users
+		SET full_name = COALESCE($2, full_name),
+		    email = COALESCE($3, email),
+		    role = COALESCE($4, role),
+		    is_active = COALESCE($5, is_active),
+		    updated_at = NOW()
+		WHERE id::text = $1 OR username = $1
+		RETURNING id, username, full_name, email, password_hash, role, is_active, created_at, updated_at
+	`
+	var u User
+	var roleStr string
+	err := r.db.QueryRowContext(ctx, query, id, req.FullName, req.Email, roleVal, req.IsActive).Scan(
+		&u.ID,
+		&u.Username,
+		&u.FullName,
+		&u.Email,
+		&u.PasswordHash,
+		&roleStr,
+		&u.IsActive,
+		&u.CreatedAt,
+		&u.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrUserNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to update user: %w", err)
+	}
+	u.Role = Role(roleStr)
+	return &u, nil
+}
+
+// UpdatePassword updates a user's password hash in PostgreSQL using parameterized queries (DB-001, DB-002).
+func (r *PostgresUserRepository) UpdatePassword(ctx context.Context, id string, newPasswordHash string) error {
+	const query = `
+		UPDATE users
+		SET password_hash = $2,
+		    updated_at = NOW()
+		WHERE id::text = $1 OR username = $1
+	`
+	res, err := r.db.ExecContext(ctx, query, id, newPasswordHash)
+	if err != nil {
+		return fmt.Errorf("failed to update user password: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to verify password update: %w", err)
+	}
+	if rows == 0 {
+		return ErrUserNotFound
+	}
+	return nil
+}
+
 // InMemoryUserRepository provides a concurrent thread-safe mock implementation for unit tests (TS-001).
 type InMemoryUserRepository struct {
 	mu    sync.RWMutex
@@ -224,6 +289,61 @@ func (m *InMemoryUserRepository) ListUsers(ctx context.Context) ([]*User, error)
 		users = append(users, &copyUser)
 	}
 	return users, nil
+}
+
+// UpdateUser updates user fields in memory.
+func (m *InMemoryUserRepository) UpdateUser(ctx context.Context, id string, req UpdateUserRequestDTO) (*User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var target *User
+	for _, u := range m.users {
+		if u.ID == id || u.Username == id {
+			target = u
+			break
+		}
+	}
+	if target == nil {
+		return nil, ErrUserNotFound
+	}
+
+	if req.FullName != nil {
+		target.FullName = *req.FullName
+	}
+	if req.Email != nil {
+		target.Email = *req.Email
+	}
+	if req.Role != nil {
+		target.Role = *req.Role
+	}
+	if req.IsActive != nil {
+		target.IsActive = *req.IsActive
+	}
+	target.UpdatedAt = time.Now().UTC()
+
+	copyUser := *target
+	return &copyUser, nil
+}
+
+// UpdatePassword updates user password hash in memory.
+func (m *InMemoryUserRepository) UpdatePassword(ctx context.Context, id string, newPasswordHash string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var target *User
+	for _, u := range m.users {
+		if u.ID == id || u.Username == id {
+			target = u
+			break
+		}
+	}
+	if target == nil {
+		return ErrUserNotFound
+	}
+
+	target.PasswordHash = newPasswordHash
+	target.UpdatedAt = time.Now().UTC()
+	return nil
 }
 
 // SeedUser seeds an account if it does not already exist.

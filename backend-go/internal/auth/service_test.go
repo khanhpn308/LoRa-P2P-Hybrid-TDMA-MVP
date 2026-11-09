@@ -174,3 +174,174 @@ func TestService_WsTicket(t *testing.T) {
 		t.Fatal("expected second consumption of same ticket to fail")
 	}
 }
+
+func TestService_UpdateUser(t *testing.T) {
+	svc, repo := setupTestAuthService(t)
+	ctx := context.Background()
+
+	hash, err := auth.HashPassword("$ValidPassword123")
+	if err != nil {
+		t.Fatalf("failed to hash password: %v", err)
+	}
+
+	user := &auth.User{
+		ID:           "test-user-01",
+		Username:     "update_target",
+		FullName:     "Original Name",
+		Email:        "original@example.com",
+		PasswordHash: hash,
+		Role:         auth.RoleViewer,
+		IsActive:     true,
+	}
+	if err := repo.CreateUser(ctx, user); err != nil {
+		t.Fatalf("failed to seed user: %v", err)
+	}
+
+	// 1. Update full name and email
+	newName := "Updated Name"
+	newEmail := "updated@example.com"
+	updated, err := svc.UpdateUser(ctx, "update_target", auth.UpdateUserRequestDTO{
+		FullName: &newName,
+		Email:    &newEmail,
+	})
+	if err != nil {
+		t.Fatalf("failed to update user details: %v", err)
+	}
+	if updated.FullName != newName || updated.Email != newEmail {
+		t.Errorf("expected %s, %s; got %s, %s", newName, newEmail, updated.FullName, updated.Email)
+	}
+
+	// 2. Update role
+	newRole := auth.RoleAdmin
+	updated, err = svc.UpdateUser(ctx, "update_target", auth.UpdateUserRequestDTO{
+		Role: &newRole,
+	})
+	if err != nil {
+		t.Fatalf("failed to update user role: %v", err)
+	}
+	if updated.Role != auth.RoleAdmin {
+		t.Errorf("expected role ADMIN, got %s", updated.Role)
+	}
+
+	// 3. Deactivate user
+	inactive := false
+	updated, err = svc.UpdateUser(ctx, "update_target", auth.UpdateUserRequestDTO{
+		IsActive: &inactive,
+	})
+	if err != nil {
+		t.Fatalf("failed to deactivate user: %v", err)
+	}
+	if updated.IsActive != false {
+		t.Error("expected user to be inactive")
+	}
+
+	// 4. Verify login is blocked when inactive
+	_, err = svc.Login(ctx, auth.LoginRequestDTO{
+		Username: "update_target",
+		Password: "$ValidPassword123",
+	})
+	if err == nil {
+		t.Fatal("expected inactive user login to fail, got nil")
+	}
+
+	// 5. Reactivate user
+	active := true
+	updated, err = svc.UpdateUser(ctx, "update_target", auth.UpdateUserRequestDTO{
+		IsActive: &active,
+	})
+	if err != nil {
+		t.Fatalf("failed to reactivate user: %v", err)
+	}
+	if updated.IsActive != true {
+		t.Error("expected user to be active")
+	}
+
+	// 6. Verify login works again
+	loginResp, err := svc.Login(ctx, auth.LoginRequestDTO{
+		Username: "update_target",
+		Password: "$ValidPassword123",
+	})
+	if err != nil {
+		t.Fatalf("expected login to succeed after reactivation: %v", err)
+	}
+	if loginResp.AccessToken == "" {
+		t.Error("expected non-empty token")
+	}
+
+	// 7. Error case: nonexistent user
+	_, err = svc.UpdateUser(ctx, "nonexistent_user", auth.UpdateUserRequestDTO{
+		FullName: &newName,
+	})
+	if err == nil {
+		t.Fatal("expected error for nonexistent user, got nil")
+	}
+
+	// 8. Error case: invalid role
+	invalidRole := auth.Role("SUPERUSER")
+	_, err = svc.UpdateUser(ctx, "update_target", auth.UpdateUserRequestDTO{
+		Role: &invalidRole,
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid role, got nil")
+	}
+}
+
+func TestService_UpdatePassword(t *testing.T) {
+	svc, repo := setupTestAuthService(t)
+	ctx := context.Background()
+
+	hash, err := auth.HashPassword("$OldPassword123")
+	if err != nil {
+		t.Fatalf("failed to hash password: %v", err)
+	}
+
+	user := &auth.User{
+		ID:           "test-user-pw",
+		Username:     "password_target",
+		FullName:     "PW Target",
+		Email:        "pw@example.com",
+		PasswordHash: hash,
+		Role:         auth.RoleOperator,
+		IsActive:     true,
+	}
+	if err := repo.CreateUser(ctx, user); err != nil {
+		t.Fatalf("failed to seed user: %v", err)
+	}
+
+	// 1. Successful password update
+	newPass := "$BrandNewP@ssw0rd!"
+	if err := svc.UpdatePassword(ctx, "password_target", newPass); err != nil {
+		t.Fatalf("failed to update password: %v", err)
+	}
+
+	// Old password must fail
+	_, err = svc.Login(ctx, auth.LoginRequestDTO{
+		Username: "password_target",
+		Password: "$OldPassword123",
+	})
+	if err == nil {
+		t.Fatal("expected old password to fail, but it succeeded")
+	}
+
+	// New password must succeed
+	loginResp, err := svc.Login(ctx, auth.LoginRequestDTO{
+		Username: "password_target",
+		Password: newPass,
+	})
+	if err != nil {
+		t.Fatalf("expected login with new password to succeed: %v", err)
+	}
+	if loginResp.AccessToken == "" {
+		t.Error("expected valid access token")
+	}
+
+	// 2. Too short password (< 8 chars)
+	if err := svc.UpdatePassword(ctx, "password_target", "short"); err == nil {
+		t.Fatal("expected error for short password, got nil")
+	}
+
+	// 3. Nonexistent user
+	if err := svc.UpdatePassword(ctx, "ghost_user", "$NewValidPassword123"); err == nil {
+		t.Fatal("expected error for nonexistent user, got nil")
+	}
+}
