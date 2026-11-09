@@ -433,3 +433,230 @@ func TestHandler_GetUser(t *testing.T) {
 		t.Fatalf("expected 404, got %d", notFoundRec.Code)
 	}
 }
+
+func TestHandler_UpdateUser(t *testing.T) {
+	handler, svc, repo := setupTestHandler(t)
+	ctx := context.Background()
+
+	hash, _ := auth.HashPassword("$Password12345")
+	_ = repo.CreateUser(ctx, &auth.User{
+		ID:           "uuid-alice",
+		Username:     "alice",
+		FullName:     "Alice Smith",
+		Email:        "alice@example.com",
+		PasswordHash: hash,
+		Role:         auth.RoleViewer,
+		IsActive:     true,
+	})
+
+	adminToken, _ := svc.JWTService().GenerateToken(&auth.User{
+		ID:       "uuid-admin",
+		Username: "admin_user",
+		Role:     auth.RoleAdmin,
+		IsActive: true,
+	}, time.Hour)
+
+	operatorToken, _ := svc.JWTService().GenerateToken(&auth.User{
+		ID:       "uuid-operator",
+		Username: "operator_user",
+		Role:     auth.RoleOperator,
+		IsActive: true,
+	}, time.Hour)
+
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// 1. Admin updates Alice's full name, email, and role
+	body := `{"full_name":"Alice Jones","email":"alice.jones@example.com","role":"OPERATOR"}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/users/uuid-alice", bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var updated auth.User
+	_ = json.Unmarshal(rec.Body.Bytes(), &updated)
+	if updated.FullName != "Alice Jones" || updated.Email != "alice.jones@example.com" || updated.Role != auth.RoleOperator {
+		t.Fatalf("unexpected user state: %+v", updated)
+	}
+
+	// 2. Admin deactivates Alice
+	deactivateBody := `{"is_active":false}`
+	deactivateReq := httptest.NewRequest(http.MethodPatch, "/api/v1/users/alice", bytes.NewBufferString(deactivateBody))
+	deactivateReq.Header.Set("Authorization", "Bearer "+adminToken)
+	deactivateReq.Header.Set("Content-Type", "application/json")
+	deactivateRec := httptest.NewRecorder()
+	mux.ServeHTTP(deactivateRec, deactivateReq)
+
+	if deactivateRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", deactivateRec.Code, deactivateRec.Body.String())
+	}
+
+	// 3. Deactivated user cannot log in
+	loginBody := `{"username":"alice","password":"$Password12345"}`
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(loginBody))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+	mux.ServeHTTP(loginRec, loginReq)
+
+	if loginRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for inactive account, got %d: %s", loginRec.Code, loginRec.Body.String())
+	}
+	if !strings.Contains(loginRec.Body.String(), "inactive") {
+		t.Fatalf("expected message mentioning inactive, got: %s", loginRec.Body.String())
+	}
+
+	// 4. Admin reactivates Alice
+	reactivateBody := `{"is_active":true}`
+	reactivateReq := httptest.NewRequest(http.MethodPatch, "/api/v1/users/alice", bytes.NewBufferString(reactivateBody))
+	reactivateReq.Header.Set("Authorization", "Bearer "+adminToken)
+	reactivateReq.Header.Set("Content-Type", "application/json")
+	reactivateRec := httptest.NewRecorder()
+	mux.ServeHTTP(reactivateRec, reactivateReq)
+
+	if reactivateRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", reactivateRec.Code)
+	}
+
+	// 5. Reactivated user can log in again
+	loginReq2 := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(loginBody))
+	loginReq2.Header.Set("Content-Type", "application/json")
+	loginRec2 := httptest.NewRecorder()
+	mux.ServeHTTP(loginRec2, loginReq2)
+
+	if loginRec2.Code != http.StatusOK {
+		t.Fatalf("expected 200 for reactivated account, got %d: %s", loginRec2.Code, loginRec2.Body.String())
+	}
+
+	// 6. Non-admin operator cannot update users (403 Forbidden)
+	opReq := httptest.NewRequest(http.MethodPatch, "/api/v1/users/alice", bytes.NewBufferString(body))
+	opReq.Header.Set("Authorization", "Bearer "+operatorToken)
+	opReq.Header.Set("Content-Type", "application/json")
+	opRec := httptest.NewRecorder()
+	mux.ServeHTTP(opRec, opReq)
+
+	if opRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for non-admin, got %d", opRec.Code)
+	}
+
+	// 7. Unauthenticated request (401 Unauthorized)
+	unauthReq := httptest.NewRequest(http.MethodPatch, "/api/v1/users/alice", bytes.NewBufferString(body))
+	unauthRec := httptest.NewRecorder()
+	mux.ServeHTTP(unauthRec, unauthReq)
+
+	if unauthRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for unauthenticated request, got %d", unauthRec.Code)
+	}
+
+	// 8. Invalid role (400 Bad Request)
+	invalidRoleBody := `{"role":"SUPERUSER"}`
+	badRoleReq := httptest.NewRequest(http.MethodPatch, "/api/v1/users/alice", bytes.NewBufferString(invalidRoleBody))
+	badRoleReq.Header.Set("Authorization", "Bearer "+adminToken)
+	badRoleReq.Header.Set("Content-Type", "application/json")
+	badRoleRec := httptest.NewRecorder()
+	mux.ServeHTTP(badRoleRec, badRoleReq)
+
+	if badRoleRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid role, got %d", badRoleRec.Code)
+	}
+}
+
+func TestHandler_UpdatePassword(t *testing.T) {
+	handler, svc, repo := setupTestHandler(t)
+	ctx := context.Background()
+
+	oldPass := "$OldSecret123"
+	hash, _ := auth.HashPassword(oldPass)
+	_ = repo.CreateUser(ctx, &auth.User{
+		ID:           "uuid-bob",
+		Username:     "bob",
+		FullName:     "Bob Operator",
+		Email:        "bob@example.com",
+		PasswordHash: hash,
+		Role:         auth.RoleOperator,
+		IsActive:     true,
+	})
+
+	adminToken, _ := svc.JWTService().GenerateToken(&auth.User{
+		ID:       "uuid-admin",
+		Username: "admin_user",
+		Role:     auth.RoleAdmin,
+		IsActive: true,
+	}, time.Hour)
+
+	bobToken, _ := svc.JWTService().GenerateToken(&auth.User{
+		ID:       "uuid-bob",
+		Username: "bob",
+		Role:     auth.RoleOperator,
+		IsActive: true,
+	}, time.Hour)
+
+	charlieToken, _ := svc.JWTService().GenerateToken(&auth.User{
+		ID:       "uuid-charlie",
+		Username: "charlie",
+		Role:     auth.RoleOperator,
+		IsActive: true,
+	}, time.Hour)
+
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// 1. Bob resets his own password
+	newBobPass := "$NewBobSecret456"
+	selfReq := httptest.NewRequest(http.MethodPut, "/api/v1/users/bob/password", bytes.NewBufferString(`{"password":"`+newBobPass+`"}`))
+	selfReq.Header.Set("Authorization", "Bearer "+bobToken)
+	selfReq.Header.Set("Content-Type", "application/json")
+	selfRec := httptest.NewRecorder()
+	mux.ServeHTTP(selfRec, selfReq)
+
+	if selfRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for self password reset, got %d: %s", selfRec.Code, selfRec.Body.String())
+	}
+
+	// Bob logs in with new password
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"bob","password":"`+newBobPass+`"}`))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+	mux.ServeHTTP(loginRec, loginReq)
+
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for login with new password, got %d: %s", loginRec.Code, loginRec.Body.String())
+	}
+
+	// 2. Admin resets Bob's password
+	adminResetPass := "$AdminResetSecret789"
+	adminReq := httptest.NewRequest(http.MethodPut, "/api/v1/users/uuid-bob/password", bytes.NewBufferString(`{"password":"`+adminResetPass+`"}`))
+	adminReq.Header.Set("Authorization", "Bearer "+adminToken)
+	adminReq.Header.Set("Content-Type", "application/json")
+	adminRec := httptest.NewRecorder()
+	mux.ServeHTTP(adminRec, adminReq)
+
+	if adminRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for admin password reset, got %d: %s", adminRec.Code, adminRec.Body.String())
+	}
+
+	// 3. Charlie (operator) tries to reset Bob's password -> 403 Forbidden
+	charlieReq := httptest.NewRequest(http.MethodPut, "/api/v1/users/bob/password", bytes.NewBufferString(`{"password":"$HackedPassword123"}`))
+	charlieReq.Header.Set("Authorization", "Bearer "+charlieToken)
+	charlieReq.Header.Set("Content-Type", "application/json")
+	charlieRec := httptest.NewRecorder()
+	mux.ServeHTTP(charlieRec, charlieReq)
+
+	if charlieRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 when non-admin resets another user's password, got %d", charlieRec.Code)
+	}
+
+	// 4. Password too short (<8 chars) -> 400 Bad Request
+	shortReq := httptest.NewRequest(http.MethodPut, "/api/v1/users/bob/password", bytes.NewBufferString(`{"password":"short"}`))
+	shortReq.Header.Set("Authorization", "Bearer "+adminToken)
+	shortReq.Header.Set("Content-Type", "application/json")
+	shortRec := httptest.NewRecorder()
+	mux.ServeHTTP(shortRec, shortReq)
+
+	if shortRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for short password, got %d", shortRec.Code)
+	}
+}

@@ -54,7 +54,7 @@ func (s *Service) Login(ctx context.Context, req LoginRequestDTO) (*TokenRespons
 	if !user.IsActive {
 		// Run dummy comparison to equalize execution time
 		CheckPassword(req.Password, dummyBcryptHash)
-		return nil, fmt.Errorf("%w: account is inactive", ErrInvalidCredentials)
+		return nil, ErrUserInactive
 	}
 
 	if !CheckPassword(req.Password, user.PasswordHash) {
@@ -174,6 +174,60 @@ func (s *Service) GetUser(ctx context.Context, idOrUsername string) (*User, erro
 	}
 
 	return nil, ErrUserNotFound
+}
+
+// UpdateUser updates user profile fields (full name, email, role, is_active).
+func (s *Service) UpdateUser(ctx context.Context, idOrUsername string, req UpdateUserRequestDTO) (*User, error) {
+	idOrUsername = strings.TrimSpace(idOrUsername)
+	if idOrUsername == "" {
+		return nil, ErrUserNotFound
+	}
+
+	user, err := s.GetUser(ctx, idOrUsername)
+	if err != nil {
+		return nil, err
+	}
+
+	if req.Role != nil {
+		if !IsValidRole(*req.Role) {
+			return nil, fmt.Errorf("%w: invalid role %s", ErrInsufficientRole, *req.Role)
+		}
+	}
+
+	if req.FullName != nil {
+		trimmed := strings.TrimSpace(*req.FullName)
+		req.FullName = &trimmed
+	}
+	if req.Email != nil {
+		trimmed := strings.TrimSpace(*req.Email)
+		req.Email = &trimmed
+	}
+
+	return s.repo.UpdateUser(ctx, user.ID, req)
+}
+
+// UpdatePassword hashes and updates the password for a user.
+func (s *Service) UpdatePassword(ctx context.Context, idOrUsername string, newPassword string) error {
+	idOrUsername = strings.TrimSpace(idOrUsername)
+	if idOrUsername == "" {
+		return ErrUserNotFound
+	}
+
+	user, err := s.GetUser(ctx, idOrUsername)
+	if err != nil {
+		return err
+	}
+
+	if len(newPassword) < 8 || len(newPassword) > 128 {
+		return fmt.Errorf("%w: password must be between 8 and 128 characters", ErrInvalidCredentials)
+	}
+
+	hashedPassword, err := HashPassword(newPassword)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	return s.repo.UpdatePassword(ctx, user.ID, hashedPassword)
 }
 
 // JWTService returns the underlying JWTService.
