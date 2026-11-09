@@ -14,7 +14,8 @@
 #include "sdkconfig.h"
 #include "airtime_policy.h"
 #include "gateway_tdma_master.h"
-#include "gateway_crypto.h"
+#include "lora_mac_crypto.h"
+
 
 static const char *TAG = "gateway_master";
 static char s_gateway_id[32] = "gw-a";
@@ -481,12 +482,12 @@ static esp_err_t process_join_packet(const uint8_t *payload, size_t length, int1
                 (void)lora_mac_v2_build_nonce(nonce_prefix, LORA_MAC_V2_DIR_UPLINK, hdr.frame_counter, nonce);
 
                 uint8_t pt[11];
-                esp_err_t dec_err = gateway_crypto_decrypt_up_event(k_session_up,
-                                                                    nonce,
-                                                                    payload, 7U,
-                                                                    &payload[7], 11U,
-                                                                    &payload[18],
-                                                                    pt);
+                esp_err_t dec_err = lora_mac_crypto_decrypt_up_event(k_session_up,
+                                                                      nonce,
+                                                                      payload, 7U,
+                                                                      &payload[7], 11U,
+                                                                      &payload[18],
+                                                                      pt);
                 if (dec_err != ESP_OK) {
                     ESP_LOGW(TAG, "[EVENT RX] Decryption/MIC verification failed for Node #%u", hdr.node_id);
                     return dec_err;
@@ -558,12 +559,12 @@ static esp_err_t process_join_packet(const uint8_t *payload, size_t length, int1
                 uint8_t dl_nonce[13];
                 (void)lora_mac_v2_build_nonce(nonce_prefix, LORA_MAC_V2_DIR_DOWNLINK, ack_hdr.frame_counter, dl_nonce);
 
-                esp_err_t enc_err = gateway_crypto_encrypt_down_ack(k_session_dl,
-                                                                    dl_nonce,
-                                                                    ack_packet, 7U,
-                                                                    ack_pt, 4U,
-                                                                    &ack_packet[7],
-                                                                    &ack_packet[11]);
+                esp_err_t enc_err = lora_mac_crypto_encrypt_down_ack(k_session_dl,
+                                                                      dl_nonce,
+                                                                      ack_packet, 7U,
+                                                                      ack_pt, 4U,
+                                                                      &ack_packet[7],
+                                                                      &ack_packet[11]);
                 if (enc_err == ESP_OK) {
                     ESP_LOGI(TAG, "[EVENT ACK TX] Sending DOWN_EVENT_ACK (19B) for Ref=%" PRIu32 " to Node #%u...",
                              up_ev.event_ref, hdr.node_id);
