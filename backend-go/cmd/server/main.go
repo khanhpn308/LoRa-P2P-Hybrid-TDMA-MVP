@@ -22,17 +22,8 @@ import (
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/mqtt"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/presence"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/realtime"
-	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/scheduler"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/storage"
 )
-
-// NoopMQTTPublisher provides an in-memory/stub MQTT publisher when a broker is not connected.
-type NoopMQTTPublisher struct{}
-
-func (p *NoopMQTTPublisher) Publish(ctx context.Context, topic string, qos byte, retain bool, expiryInterval uint32, payload []byte) error {
-	log.Printf("[MQTT NOOP] Publish to %s (qos=%d, retain=%v, expiry=%ds, len=%dB)", topic, qos, retain, expiryInterval, len(payload))
-	return nil
-}
 
 // corsMiddleware provides CORS headers and preflight handling for web client integration.
 func corsMiddleware(next http.Handler) http.Handler {
@@ -48,11 +39,10 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// BuildServeMux wires REST endpoints for health checks, operational monitoring, TDMA schedules, device provisioning, and realtime WSS.
+// BuildServeMux wires REST endpoints for health checks, operational monitoring, device provisioning, and realtime WSS.
 func BuildServeMux(
 	statusStore storage.StatusStorage,
 	offlineThreshold time.Duration,
-	schedHandler *api.ScheduleHandler,
 	wsHandler *api.WebSocketHandler,
 	authHandler *auth.Handler,
 	channelHandler *api.ChannelHandler,
@@ -69,11 +59,6 @@ func BuildServeMux(
 	if statusStore != nil {
 		monitoringHandler := api.NewMonitoringHandler(statusStore, offlineThreshold, presenceTracker)
 		monitoringHandler.RegisterRoutes(mux)
-	}
-
-	if schedHandler != nil {
-		schedHandler.RegisterRoutes(mux)
-		log.Println("Schedule lifecycle REST API registered.")
 	}
 
 	if wsHandler != nil {
@@ -119,7 +104,6 @@ func main() {
 
 	dbURL := os.Getenv("DATABASE_URL")
 	var statusStore storage.StatusStorage
-	var scheduleRepo scheduler.ScheduleRepository
 	var channelRepo storage.ChannelRepository
 	var userRepo auth.UserRepository
 	var provisionRepo storage.ProvisionRepository
@@ -136,7 +120,6 @@ func main() {
 		defer db.Close()
 
 		statusStore = storage.NewPostgresStatusStorage(db)
-		scheduleRepo = storage.NewPostgresScheduleStorage(db)
 		channelRepo = storage.NewPostgresChannelRepository(db)
 		userRepo = auth.NewPostgresUserRepository(db)
 		eventStorage = storage.NewPostgresEventStorage(db)
@@ -147,7 +130,6 @@ func main() {
 		log.Println("PostgreSQL persistent storage initialized.")
 	} else {
 		log.Println("DATABASE_URL not set; initializing thread-safe in-memory storage.")
-		scheduleRepo = scheduler.NewMemoryScheduleRepository()
 		userRepo = auth.NewInMemoryUserRepository()
 		provisionRepo = storage.NewMemoryProvisionStorage()
 	}
@@ -157,22 +139,6 @@ func main() {
 		log.Printf("Warning: failed to seed default users: %v", err)
 	} else {
 		log.Println("Default user accounts verified/seeded (admin, operator01, viewer01).")
-	}
-
-	// Initialize TDMA planner
-	validator := scheduler.NewFeasibilityValidator(nil)
-	planner := scheduler.NewPlanner(validator)
-
-	// Initialize MQTT Dispatcher
-	mqttPub := &NoopMQTTPublisher{}
-	dispatcher, err := mqtt.NewScheduleDispatcher(mqttPub)
-	if err != nil {
-		log.Fatalf("Failed to initialize schedule dispatcher: %v", err)
-	}
-
-	var schedHandler *api.ScheduleHandler
-	if channelRepo != nil {
-		schedHandler = api.NewScheduleHandlerWithDeps(scheduleRepo, channelRepo, planner, dispatcher, nil)
 	}
 
 	// Initialize Realtime Hub & WebSocket Handler (Issue #251)
@@ -256,7 +222,7 @@ func main() {
 		provisionHandler = api.NewProvisionHandler(provisionRepo, keyWrapper, jwtAuth)
 	}
 
-	mux := BuildServeMux(statusStore, 5*time.Minute, schedHandler, wsHandler, authHandler, channelHandler, alertHandler, provisionHandler, joinReqHandler, presenceTracker)
+	mux := BuildServeMux(statusStore, 5*time.Minute, wsHandler, authHandler, channelHandler, alertHandler, provisionHandler, joinReqHandler, presenceTracker)
 
 	srv := &http.Server{
 		Addr:         ":" + port,
