@@ -11,11 +11,13 @@ import (
 
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/domain"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/jsonboundary"
-	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/scheduler"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/storage"
 )
 
 const maxPayloadBytes = 4096
+
+// ErrActiveScheduleOnChannel is returned when a channel change or release is rejected because an active schedule exists.
+var ErrActiveScheduleOnChannel = errors.New("cannot change or release channel while gateway holds an active schedule")
 
 // ScheduleGuard defines the interface for checking active schedule constraints before channel operations.
 type ScheduleGuard interface {
@@ -162,7 +164,7 @@ func (h *ChannelHandler) handleRequestChannel(w http.ResponseWriter, r *http.Req
 
 	if h.guard != nil {
 		if err := h.guard.CanChangeGatewayChannel(r.Context(), gwID); err != nil {
-			if errors.Is(err, scheduler.ErrActiveScheduleOnChannel) {
+			if errors.Is(err, ErrActiveScheduleOnChannel) {
 				writeError(w, http.StatusConflict, "ERR_ACTIVE_SCHEDULE_ON_CHANNEL", "cannot change channel while gateway holds an active schedule")
 				return
 			}
@@ -270,7 +272,7 @@ func (h *ChannelHandler) handleReleaseChannel(w http.ResponseWriter, r *http.Req
 
 	if h.guard != nil {
 		if err := h.guard.CanChangeGatewayChannel(r.Context(), gwID); err != nil {
-			if errors.Is(err, scheduler.ErrActiveScheduleOnChannel) {
+			if errors.Is(err, ErrActiveScheduleOnChannel) {
 				writeError(w, http.StatusConflict, "ERR_ACTIVE_SCHEDULE_ON_CHANNEL", "cannot release channel while gateway holds an active schedule")
 				return
 			}
