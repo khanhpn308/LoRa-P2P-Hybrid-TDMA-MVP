@@ -283,4 +283,10 @@ TEST_CASE("lora_mac crypto zeroize and negative bounds checks", "[lora_mac][cryp
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, lora_mac_crypto_decrypt_up_event(dummy, NULL, dummy, 7, dummy, 11, tag, dummy));
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, lora_mac_crypto_compute_beacon_hmac(NULL, dummy, 16, dummy));
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, lora_mac_crypto_verify_beacon_hmac(dummy, dummy, 0, tag));
+
+    /* Bounds checking: oversized payloads and AADs */
+    uint8_t oversized_buf[64] = {0};
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, lora_mac_crypto_ccm_encrypt(dummy, dummy, dummy, 7, oversized_buf, 49, dummy, tag));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, lora_mac_crypto_ccm_decrypt(dummy, dummy, dummy, 7, oversized_buf, 49, tag, dummy));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, lora_mac_crypto_ccm_encrypt(dummy, dummy, oversized_buf, 49, dummy, 4, dummy, tag));
 }

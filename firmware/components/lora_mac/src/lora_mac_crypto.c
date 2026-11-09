@@ -130,6 +130,9 @@ static esp_err_t psa_ccm_encrypt(const uint8_t *key_bytes,
         out_tag == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
+    if (pt_len > LORA_MAC_CRYPTO_MAX_PAYLOAD_LEN || aad_len > LORA_MAC_CRYPTO_MAX_AAD_LEN) {
+        return ESP_ERR_INVALID_ARG;
+    }
     esp_err_t init_err = lora_mac_crypto_init();
     if (init_err != ESP_OK) {
         return init_err;
@@ -186,6 +189,9 @@ static esp_err_t psa_ccm_decrypt(const uint8_t *key_bytes,
         (ct_len > 0U && out_plaintext == NULL) ||
         (aad_len > 0U && aad == NULL) ||
         tag == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (ct_len > LORA_MAC_CRYPTO_MAX_PAYLOAD_LEN || aad_len > LORA_MAC_CRYPTO_MAX_AAD_LEN) {
         return ESP_ERR_INVALID_ARG;
     }
     esp_err_t init_err = lora_mac_crypto_init();
@@ -526,6 +532,9 @@ static esp_err_t sw_aes128_ccm_encrypt(const uint8_t key[16],
         out_tag == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
+    if (pt_len > 16U || aad_len > LORA_MAC_CRYPTO_MAX_AAD_LEN) {
+        return ESP_ERR_INVALID_ARG;
+    }
     uint8_t rkeys[176];
     aes128_key_expansion(key, rkeys);
 
@@ -605,6 +614,9 @@ static esp_err_t sw_aes128_ccm_decrypt(const uint8_t key[16],
         (ct_len > 0U && out_pt == NULL) ||
         (aad_len > 0U && aad == NULL) ||
         tag == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (ct_len > 16U || aad_len > LORA_MAC_CRYPTO_MAX_AAD_LEN) {
         return ESP_ERR_INVALID_ARG;
     }
     uint8_t rkeys[176];

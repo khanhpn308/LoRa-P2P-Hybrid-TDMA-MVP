@@ -29,6 +29,8 @@ extern "C" {
 #define LORA_MAC_CRYPTO_HMAC_TAG_LEN   (16U)
 #define LORA_MAC_CRYPTO_KEY_LEN        (16U)
 #define LORA_MAC_CRYPTO_BEACON_KEY_LEN (32U)
+#define LORA_MAC_CRYPTO_MAX_PAYLOAD_LEN (48U)
+#define LORA_MAC_CRYPTO_MAX_AAD_LEN     (48U)
 
 /* Backwards-compatibility aliases for legacy node_crypto callers */
 #define NODE_CRYPTO_CCM_TAG_LEN        LORA_MAC_CRYPTO_CCM_TAG_LEN
