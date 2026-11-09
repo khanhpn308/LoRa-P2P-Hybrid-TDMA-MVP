@@ -29,7 +29,7 @@ func TestBuildServeMux_RouteRegistration(t *testing.T) {
 	keyWrapper := api.NewAESGCMKeyWrapper(masterKey)
 	provisionHandler := api.NewProvisionHandler(provisionRepo, keyWrapper, jwtAuth)
 
-	mux := BuildServeMux(nil, 5*time.Minute, nil, nil, authHandler, nil, nil, provisionHandler, nil, nil)
+	mux := BuildServeMux(nil, 5*time.Minute, nil, authHandler, nil, nil, provisionHandler, nil, nil)
 
 	// Health check
 	reqHealth := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -37,6 +37,14 @@ func TestBuildServeMux_RouteRegistration(t *testing.T) {
 	mux.ServeHTTP(recHealth, reqHealth)
 	if recHealth.Code != http.StatusOK {
 		t.Errorf("expected 200 for /healthz, got %d", recHealth.Code)
+	}
+
+	// Schedule endpoints must no longer be registered (return 404)
+	reqSched := httptest.NewRequest(http.MethodGet, "/api/v1/gateways/gw01/schedules/1", nil)
+	recSched := httptest.NewRecorder()
+	mux.ServeHTTP(recSched, reqSched)
+	if recSched.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for removed schedule endpoint, got %d", recSched.Code)
 	}
 
 	// Provision endpoint reachable (returns 401 when missing auth, NOT 404)

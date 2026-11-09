@@ -24,8 +24,6 @@ tags:
   -
     name: "alerts"
   -
-    name: "schedules"
-  -
     name: "audit"
   -
     name: "provisioning"
@@ -231,73 +229,6 @@ paths:
           "$ref": "#/components/responses/Conflict"
         "422":
           "$ref": "#/components/responses/Unprocessable"
-  "/api/v1/gateways/{gw_id}/schedules/generate":
-    post:
-      operationId: "schedules_generate"
-      description: "PROPOSED candidate profile; creation is not active. Clients must not infer schedule activation from HTTP 202."
-      summary: "Generate/propose versioned TDMA schedule; NOT instantly ACTIVE"
-      tags:
-        - "schedules"
-      x-roles:
-        - "ADMIN"
-      parameters:
-        -
-          "$ref": "#/components/parameters/GatewayId"
-      responses:
-        "202":
-          description: "Successful operation"
-          content:
-            "application/json":
-              schema:
-                "$ref": "#/components/schemas/ScheduleSummary"
-        "401":
-          "$ref": "#/components/responses/Unauthorized"
-        "403":
-          "$ref": "#/components/responses/Forbidden"
-        "404":
-          "$ref": "#/components/responses/NotFound"
-        "409":
-          "$ref": "#/components/responses/Conflict"
-        "422":
-          "$ref": "#/components/responses/Unprocessable"
-        "503":
-          "$ref": "#/components/responses/Unavailable"
-      requestBody:
-        required: true
-        content:
-          "application/json":
-            schema:
-              "$ref": "#/components/schemas/GenerateScheduleRequest"
-  "/api/v1/gateways/{gw_id}/schedules/{schedule_id}":
-    get:
-      operationId: "schedules_get"
-      summary: "Read schedule lifecycle state; ACTIVE requires Gateway ACTIVE_REPORT"
-      tags:
-        - "schedules"
-      x-roles:
-        - "ADMIN"
-        - "OPERATOR"
-        - "VIEWER"
-      parameters:
-        -
-          "$ref": "#/components/parameters/GatewayId"
-        -
-          "$ref": "#/components/parameters/ScheduleId"
-      responses:
-        "200":
-          description: "Successful operation"
-          content:
-            "application/json":
-              schema:
-                "$ref": "#/components/schemas/ScheduleSummary"
-        "401":
-          "$ref": "#/components/responses/Unauthorized"
-        "403":
-          "$ref": "#/components/responses/Forbidden"
-        "404":
-          "$ref": "#/components/responses/NotFound"
-        "422":
-          "$ref": "#/components/responses/Unprocessable"
   "/api/v1/nodes/{node_id}/commands":
     post:
       operationId: "nodes_command"
@@ -335,66 +266,6 @@ paths:
           "application/json":
             schema:
               "$ref": "#/components/schemas/CommandRequest"
-  "/api/v1/gateways/{gw_id}/schedules/{schedule_id}/review":
-    post:
-      operationId: "schedules_review"
-      summary: "PROPOSED: human review for planned schedule; Gateway is not activated"
-      description: "ADMIN reviews the proposed plan. APPROVE retains state PROPOSED with review_state APPROVED; REJECT sets REJECTED. This is not an RF activation and never sets ACTIVE."
-      tags:
-        - "schedules"
-      x-roles: ["ADMIN"]
-      parameters:
-        - $ref: "#/components/parameters/GatewayId"
-        - $ref: "#/components/parameters/ScheduleId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ScheduleReviewRequest"
-      responses:
-        "200":
-          description: "Updated review decision; schedule not activated"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ScheduleSummary"
-        "401": { $ref: "#/components/responses/Unauthorized" }
-        "403": { $ref: "#/components/responses/Forbidden" }
-        "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/Conflict" }
-        "422": { $ref: "#/components/responses/Unprocessable" }
-  "/api/v1/gateways/{gw_id}/schedules/{schedule_id}/activation-requests":
-    post:
-      operationId: "schedules_request_activation"
-      summary: "PROPOSED: queue an approved schedule for Gateway staging"
-      description: "202 only means Backend accepted/persisted intent. Gateway may STAGE_ACK and later ACTIVE_REPORT; only correlated ACTIVE_REPORT yields ACTIVE. Repeated X-Idempotency-Key plus identical request returns same accepted operation; conflicting payload is 409."
-      tags:
-        - "schedules"
-      x-roles: ["ADMIN"]
-      parameters:
-        - $ref: "#/components/parameters/GatewayId"
-        - $ref: "#/components/parameters/ScheduleId"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ScheduleActivationRequest"
-      responses:
-        "202":
-          description: "Activation REQUEST accepted for asynchronous dispatch; NOT ACTIVE"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ScheduleSummary"
-        "401": { $ref: "#/components/responses/Unauthorized" }
-        "403": { $ref: "#/components/responses/Forbidden" }
-        "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/Conflict" }
-        "422": { $ref: "#/components/responses/Unprocessable" }
-        "503": { $ref: "#/components/responses/Unavailable" }
   "/api/v1/nodes/{node_id}/commands/{command_id}":
     get:
       operationId: "nodes_command_get"
