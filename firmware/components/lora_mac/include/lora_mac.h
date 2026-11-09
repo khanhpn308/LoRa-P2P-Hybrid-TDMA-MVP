@@ -49,6 +49,8 @@ typedef enum {
     LORA_MAC_V2_TYPE_DOWN_SCHED_PREP   = 0x4B,  /**< GW -> Bcast: Schedule prepare (80B, Backend Ed25519) */
     LORA_MAC_V2_TYPE_UP_SCHED_READY    = 0x4C,  /**< Node -> GW: Migration ready per node (41B total) */
     LORA_MAC_V2_TYPE_DOWN_SCHED_DEC    = 0x4D,  /**< GW -> Bcast: Schedule decision commit/abort (80B) */
+    LORA_MAC_V2_TYPE_DOWN_HEARTBEAT_PROBE = 0x4E, /**< GW -> Bcast: Periodic node health probe (7B total) */
+    LORA_MAC_V2_TYPE_UP_HEARTBEAT_ACK    = 0x4F, /**< Node -> GW: Slotted liveness ACK (8B total) */
 } lora_mac_v2_msg_type_t;
 
 /**

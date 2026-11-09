@@ -29,7 +29,7 @@ func TestBuildServeMux_RouteRegistration(t *testing.T) {
 	keyWrapper := api.NewAESGCMKeyWrapper(masterKey)
 	provisionHandler := api.NewProvisionHandler(provisionRepo, keyWrapper, jwtAuth)
 
-	mux := BuildServeMux(nil, 5*time.Minute, nil, nil, authHandler, nil, nil, provisionHandler)
+	mux := BuildServeMux(nil, 5*time.Minute, nil, nil, authHandler, nil, nil, provisionHandler, nil, nil)
 
 	// Health check
 	reqHealth := httptest.NewRequest(http.MethodGet, "/healthz", nil)

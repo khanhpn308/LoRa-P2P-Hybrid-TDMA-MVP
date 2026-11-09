@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"time"
 
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/domain"
 )
@@ -50,9 +49,9 @@ func (s *PostgresStatusStorage) UpsertGatewayStatus(ctx context.Context, status 
 			gateway_id, gateway_epoch, mode, active_schedule_version,
 			channel_id, rf_duty_permille, node_count, free_heap_bytes,
 			offline_queue_count, pending_event_count, dropped_event_count,
-			last_seen_at, updated_at
+			updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CURRENT_TIMESTAMP
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP
 		)
 		ON CONFLICT (gateway_id) DO UPDATE SET
 			gateway_epoch = EXCLUDED.gateway_epoch,
@@ -65,14 +64,8 @@ func (s *PostgresStatusStorage) UpsertGatewayStatus(ctx context.Context, status 
 			offline_queue_count = EXCLUDED.offline_queue_count,
 			pending_event_count = EXCLUDED.pending_event_count,
 			dropped_event_count = EXCLUDED.dropped_event_count,
-			last_seen_at = EXCLUDED.last_seen_at,
 			updated_at = CURRENT_TIMESTAMP;
 	`
-
-	lastSeen := status.LastSeenAt
-	if lastSeen.IsZero() {
-		lastSeen = time.Now().UTC()
-	}
 
 	_, err := s.db.ExecContext(ctx, query,
 		status.GatewayID,
@@ -86,7 +79,6 @@ func (s *PostgresStatusStorage) UpsertGatewayStatus(ctx context.Context, status 
 		int64(status.OfflineQueueCount),
 		int(status.PendingEventCount),
 		status.DroppedEventCount,
-		lastSeen,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert gateway status: %w", err)
@@ -105,7 +97,7 @@ func (s *PostgresStatusStorage) GetGatewayStatus(ctx context.Context, gatewayID 
 			gateway_id, gateway_epoch, mode, active_schedule_version,
 			channel_id, rf_duty_permille, node_count, free_heap_bytes,
 			offline_queue_count, pending_event_count, dropped_event_count,
-			last_seen_at, updated_at
+			updated_at
 		FROM gateway_status
 		WHERE gateway_id = $1;
 	`
@@ -128,7 +120,6 @@ func (s *PostgresStatusStorage) GetGatewayStatus(ctx context.Context, gatewayID 
 		&offQueue,
 		&pending,
 		&droppedStr,
-		&rec.LastSeenAt,
 		&rec.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -170,8 +161,7 @@ func (s *PostgresStatusStorage) ListGateways(ctx context.Context) ([]*domain.Gat
 			COALESCE(s.channel_id, a.channel_id, 'CH00') AS ch_id,
 			COALESCE(c.center_frequency_hz, 920250000) AS freq_hz,
 			COALESCE(s.rf_duty_permille, 0) AS duty,
-			COALESCE(s.node_count, 0) AS nodes,
-			s.last_seen_at
+			COALESCE(s.node_count, 0) AS nodes
 		FROM all_gw_ids id
 		LEFT JOIN gateways g ON g.gateway_id = id.gateway_id
 		LEFT JOIN gateway_status s ON s.gateway_id = id.gateway_id
@@ -189,7 +179,6 @@ func (s *PostgresStatusStorage) ListGateways(ctx context.Context) ([]*domain.Gat
 	var items []*domain.GatewayItem
 	for rows.Next() {
 		var item domain.GatewayItem
-		var lastSeen sql.NullTime
 		var schedVer int64
 		var freqHz int64
 
@@ -204,17 +193,13 @@ func (s *PostgresStatusStorage) ListGateways(ctx context.Context) ([]*domain.Gat
 			&freqHz,
 			&item.RFDutyPermille,
 			&item.NodeCount,
-			&lastSeen,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan gateway item: %w", err)
 		}
 
 		item.ActiveScheduleVersion = uint32(schedVer)
 		item.FrequencyHz = uint64(freqHz)
-		if lastSeen.Valid {
-			formatted := lastSeen.Time.UTC().Format(time.RFC3339)
-			item.LastSeenAt = &formatted
-		}
+		item.LastSeenAt = nil
 
 		items = append(items, &item)
 	}
@@ -282,8 +267,7 @@ func (s *PostgresStatusStorage) ListNodes(ctx context.Context, filter domain.Nod
 		SELECT
 			nh.node_id,
 			nh.gateway_id,
-			nh.health_status,
-			nh.last_seen_at
+			nh.health_status
 		FROM node_health nh
 		WHERE ($1 = '' OR nh.gateway_id = $1)
 		  AND ($2 = '' OR nh.health_status = $2)
@@ -302,19 +286,17 @@ func (s *PostgresStatusStorage) ListNodes(ctx context.Context, filter domain.Nod
 	for rows.Next() {
 		var nID int
 		var gwID, status string
-		var lastSeen time.Time
 
-		if err := rows.Scan(&nID, &gwID, &status, &lastSeen); err != nil {
+		if err := rows.Scan(&nID, &gwID, &status); err != nil {
 			return nil, fmt.Errorf("failed to scan node row: %w", err)
 		}
 
 		slotID := nID
-		lastSeenStr := lastSeen.UTC().Format(time.RFC3339)
 		items = append(items, domain.NodeSummary{
 			NodeID:         nID,
 			GatewayID:      gwID,
 			AssignedSlotID: &slotID,
-			LastSeenAt:     &lastSeenStr,
+			LastSeenAt:     nil,
 			Status:         status,
 		})
 	}

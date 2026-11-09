@@ -7,3 +7,6 @@ CONFIG_OLED_SSD1306_I2C_ADDRESS=0x3C
 # SX1276 Host RX buffer size (128 bytes to accommodate DOWN_JOIN_GRANT 66B)
 CONFIG_SX1276_HOST_RX_BUFFER_SIZE=128
 
+# Periodic Node Liveness Heartbeat timer (300s = 5 minutes)
+CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC=300
+

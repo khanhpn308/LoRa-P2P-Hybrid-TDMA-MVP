@@ -225,6 +225,7 @@ export type RealtimeEventType =
   | "SCHEDULE_STATE_CHANGED"
   | "GATEWAY_STATUS_CHANGED"
   | "TELEMETRY_UPDATE"
+  | "NODE_JOIN_REQUEST"
   | "COMMAND_STATE_CHANGED";
 
 export type WsConnectionState =

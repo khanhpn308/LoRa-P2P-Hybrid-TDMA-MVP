@@ -340,10 +340,10 @@ func (s *mockStmt) Query(args []driver.Value) (driver.Rows, error) {
 		return &mockRows{
 			columns: []string{
 				"gateway_id", "node_id", "session_sel", "frame_counter", "maint_seq", "status_flags",
-				"pending_event_count", "health_status", "last_seen_at", "updated_at",
+				"pending_event_count", "health_status", "updated_at",
 			},
 			rows: [][]driver.Value{
-				{"gw01", 1, 1, int64(100), int64(10), 0, 0, "ONLINE", now, now},
+				{"gw01", 1, 1, int64(100), int64(10), 0, 0, "ONLINE", now},
 			},
 		}, nil
 	}
@@ -415,11 +415,11 @@ func (s *mockStmt) Query(args []driver.Value) (driver.Rows, error) {
 		return &mockRows{
 			columns: []string{
 				"gateway_id", "node_id", "session_sel", "frame_counter", "maint_seq", "status_flags",
-				"pending_event_count", "health_status", "last_seen_at", "updated_at",
+				"pending_event_count", "health_status", "updated_at",
 			},
 			rows: [][]driver.Value{
-				{"gw01", 1, 1, int64(100), int64(10), 0, 0, "ONLINE", now, now},
-				{"gw01", 2, 1, int64(95), int64(10), 0, 0, "ONLINE", now, now},
+				{"gw01", 1, 1, int64(100), int64(10), 0, 0, "ONLINE", now},
+				{"gw01", 2, 1, int64(95), int64(10), 0, 0, "ONLINE", now},
 			},
 		}, nil
 	}

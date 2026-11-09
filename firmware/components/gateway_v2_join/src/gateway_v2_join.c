@@ -89,15 +89,16 @@ esp_err_t gateway_v2_join_build_relay_json(gateway_v2_join_engine_t *engine,
     return ESP_OK;
 }
 
-esp_err_t gateway_v2_join_handle_hello(gateway_v2_join_engine_t *engine,
-                                       const uint8_t *hello_raw,
-                                       size_t hello_len,
-                                       int16_t rssi,
-                                       float snr,
-                                       uint64_t rx_mono_us,
-                                       const uint8_t backend_grant_proof[16],
-                                       uint8_t out_grant[LORA_MAC_V2_LEN_DOWN_JOIN_GRANT],
-                                       size_t *out_grant_len)
+esp_err_t gateway_v2_join_handle_hello_with_id(gateway_v2_join_engine_t *engine,
+                                               const uint8_t *hello_raw,
+                                               size_t hello_len,
+                                               int16_t rssi,
+                                               float snr,
+                                               uint64_t rx_mono_us,
+                                               const uint8_t backend_grant_proof[16],
+                                               uint8_t override_node_id,
+                                               uint8_t out_grant[LORA_MAC_V2_LEN_DOWN_JOIN_GRANT],
+                                               size_t *out_grant_len)
 {
     if (engine == NULL || hello_raw == NULL || out_grant == NULL || out_grant_len == NULL) {
         return ESP_ERR_INVALID_ARG;
@@ -119,9 +120,9 @@ esp_err_t gateway_v2_join_handle_hello(gateway_v2_join_engine_t *engine,
         return ESP_ERR_INVALID_ARG;
     }
 
-    /* Assign a deterministic node slot based on MAC (1..15) */
-    uint8_t assigned_node_id = (uint8_t)((hello.device_mac[5] % 15) + 1);
-    size_t slot_idx = (size_t)(assigned_node_id - 1);
+    /* Assign node ID: use approved override if provided, else fallback to deterministic MAC % 15 */
+    uint8_t assigned_node_id = override_node_id > 0 ? override_node_id : (uint8_t)((hello.device_mac[5] % 15) + 1);
+    size_t slot_idx = (size_t)((assigned_node_id - 1) % GATEWAY_V2_JOIN_MAX_PENDING_SESSIONS);
 
     /* Generate Gateway ephemeral X25519 keypair */
     uint8_t priv_gw[32];
@@ -234,6 +235,22 @@ esp_err_t gateway_v2_join_handle_hello(gateway_v2_join_engine_t *engine,
     ESP_LOGI(TAG, "UP_JOIN_HELLO processed successfully. Generated DOWN_JOIN_GRANT (66B) for Node #%u (Counter: %u)",
              assigned_node_id, (unsigned int)hello.join_counter);
     return ESP_OK;
+}
+
+esp_err_t gateway_v2_join_handle_hello(gateway_v2_join_engine_t *engine,
+                                       const uint8_t *hello_raw,
+                                       size_t hello_len,
+                                       int16_t rssi,
+                                       float snr,
+                                       uint64_t rx_mono_us,
+                                       const uint8_t backend_grant_proof[16],
+                                       uint8_t out_grant[LORA_MAC_V2_LEN_DOWN_JOIN_GRANT],
+                                       size_t *out_grant_len)
+{
+    return gateway_v2_join_handle_hello_with_id(engine, hello_raw, hello_len,
+                                                rssi, snr, rx_mono_us,
+                                                backend_grant_proof, 0,
+                                                out_grant, out_grant_len);
 }
 
 esp_err_t gateway_v2_join_handle_confirm(gateway_v2_join_engine_t *engine,

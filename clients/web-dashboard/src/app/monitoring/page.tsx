@@ -20,6 +20,7 @@ import { getAlerts, acknowledgeAlert as apiAcknowledgeAlert } from "@/lib/api/al
 import { useAuth } from "@/lib/auth/AuthContext";
 import { useRealtime } from "@/lib/realtime/RealtimeContext";
 import { ApiClientError } from "@/lib/api/client";
+import { TimeSeriesChart, TimeSeriesPoint } from "@/components/charts/TimeSeriesChart";
 
 export interface FaultEvent {
   id: string; // alert_id
@@ -228,6 +229,19 @@ function MonitoringContent() {
     router.push(`/nodes/${encodeURIComponent(event.node)}`);
   };
 
+  const monitoringChartData: TimeSeriesPoint[] = useMemo(() => {
+    return filteredEvents.map((ev) => {
+      const num = parseFloat(ev.thresholdValue.replace(/[^0-9.]/g, "")) || 0;
+      return {
+        id: ev.id,
+        timestamp: ev.rawTimestamp * 1000,
+        value: num,
+        name: `${ev.node} (${ev.faultType})`,
+        severity: ev.severity,
+      };
+    });
+  }, [filteredEvents]);
+
   return (
     <AppShell activeRoute={activeRoute} onRouteChange={handleRouteChange}>
       <div className="space-y-4">
@@ -368,6 +382,13 @@ function MonitoringContent() {
             </div>
           </div>
         </section>
+
+        {/* Real-time TimeSeries Chart */}
+        <TimeSeriesChart
+          title="Biểu đồ biến thiên chuỗi sự kiện cảnh báo hệ thống"
+          description="Phân bố và giá trị các sự kiện đo thu nhận qua LoRa P2P từ các nút cảm biến hiện trường"
+          data={monitoringChartData}
+        />
 
         {/* Main Data Table Container (DESIGN.md §7: Required columns in order) */}
         <section

@@ -151,7 +151,7 @@ func TestMonitoringHandler_GetGatewayStatus_Table(t *testing.T) {
 			}
 			store.gwErr = tc.storageErr
 
-			handler := api.NewMonitoringHandler(store, tc.offlineThreshold)
+			handler := api.NewMonitoringHandler(store, tc.offlineThreshold, nil)
 			mux := http.NewServeMux()
 			handler.RegisterRoutes(mux)
 
@@ -278,7 +278,7 @@ func TestMonitoringHandler_ListNodes_Table(t *testing.T) {
 			store.nodes = mockNodes
 			store.nodeErr = tc.storageErr
 
-			handler := api.NewMonitoringHandler(store, 5*time.Minute)
+			handler := api.NewMonitoringHandler(store, 5*time.Minute, nil)
 			mux := http.NewServeMux()
 			handler.RegisterRoutes(mux)
 

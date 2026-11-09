@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/domain"
+	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/presence"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/storage"
 )
 
@@ -18,17 +19,19 @@ import (
 type MonitoringHandler struct {
 	store            storage.StatusStorage
 	offlineThreshold time.Duration
+	presenceTracker  *presence.Tracker
 }
 
 // NewMonitoringHandler constructs a new MonitoringHandler.
 // If offlineThreshold <= 0, a default of 5 minutes is applied.
-func NewMonitoringHandler(store storage.StatusStorage, offlineThreshold time.Duration) *MonitoringHandler {
+func NewMonitoringHandler(store storage.StatusStorage, offlineThreshold time.Duration, presenceTracker *presence.Tracker) *MonitoringHandler {
 	if offlineThreshold <= 0 {
 		offlineThreshold = 5 * time.Minute
 	}
 	return &MonitoringHandler{
 		store:            store,
 		offlineThreshold: offlineThreshold,
+		presenceTracker:  presenceTracker,
 	}
 }
 
@@ -51,7 +54,14 @@ func (h *MonitoringHandler) handleListGateways(w http.ResponseWriter, r *http.Re
 
 	now := time.Now().UTC()
 	for _, gw := range gateways {
-		if gw.LastSeenAt != nil && h.offlineThreshold > 0 {
+		gw.LastSeenAt = nil
+		if h.presenceTracker != nil {
+			if h.presenceTracker.IsGatewayOnline(gw.GatewayID) {
+				gw.Mode = "ACTIVE"
+			} else {
+				gw.Mode = "OFFLINE"
+			}
+		} else if gw.LastSeenAt != nil && h.offlineThreshold > 0 {
 			t, parseErr := time.Parse(time.RFC3339, *gw.LastSeenAt)
 			if parseErr == nil && now.Sub(t) > h.offlineThreshold {
 				gw.Mode = "OFFLINE"
@@ -102,7 +112,7 @@ func (h *MonitoringHandler) handleCreateGateway(w http.ResponseWriter, r *http.R
 }
 
 // handleGetGatewayStatus returns the last-known operational state of a Gateway.
-// If last_seen_at exceeds offlineThreshold, mode is marked as OFFLINE.
+// If in-memory presence tracker is available, it determines ACTIVE vs OFFLINE without disk writes.
 // Returns HTTP 404 if the gateway has never reported status.
 // Authority: openapi.yaml, contract-semantics.md.
 func (h *MonitoringHandler) handleGetGatewayStatus(w http.ResponseWriter, r *http.Request) {
@@ -123,16 +133,27 @@ func (h *MonitoringHandler) handleGetGatewayStatus(w http.ResponseWriter, r *htt
 	}
 
 	mode := string(rec.Mode)
-	if h.offlineThreshold > 0 && time.Since(rec.LastSeenAt) > h.offlineThreshold {
+	if h.presenceTracker != nil {
+		if h.presenceTracker.IsGatewayOnline(gwID) {
+			mode = string(domain.GatewayModeActive)
+		} else {
+			mode = string(domain.GatewayModeOffline)
+		}
+	} else if h.offlineThreshold > 0 && time.Since(rec.LastSeenAt) > h.offlineThreshold {
 		mode = string(domain.GatewayModeOffline)
 	}
 
-	lastSeenStr := rec.LastSeenAt.UTC().Format(time.RFC3339)
+	var lastSeenStr *string
+	if h.presenceTracker == nil && !rec.LastSeenAt.IsZero() {
+		formatted := rec.LastSeenAt.UTC().Format(time.RFC3339)
+		lastSeenStr = &formatted
+	}
+
 	dto := domain.GatewayStatusView{
 		GatewayID:             rec.GatewayID,
 		Mode:                  mode,
 		ActiveScheduleVersion: rec.ActiveScheduleVersion,
-		LastSeenAt:            &lastSeenStr,
+		LastSeenAt:            lastSeenStr,
 		RFDutyPermille:        rec.RFDutyPermille,
 		NodeCount:             rec.NodeCount,
 	}
@@ -141,6 +162,7 @@ func (h *MonitoringHandler) handleGetGatewayStatus(w http.ResponseWriter, r *htt
 }
 
 // handleListNodes returns a cursor-paginated list of nodes matching query filters.
+// Ephemeral online status is overlaid from in-memory presence tracker without disk queries.
 // Authority: openapi.yaml, contract-semantics.md.
 func (h *MonitoringHandler) handleListNodes(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
@@ -186,6 +208,9 @@ func (h *MonitoringHandler) handleListNodes(w http.ResponseWriter, r *http.Reque
 		Cursor:    cursor,
 		Limit:     limit,
 	}
+	if h.presenceTracker != nil {
+		filter.Status = "" // Overlay in-memory presence
+	}
 
 	page, err := h.store.ListNodes(r.Context(), filter)
 	if err != nil {
@@ -195,6 +220,23 @@ func (h *MonitoringHandler) handleListNodes(w http.ResponseWriter, r *http.Reque
 
 	if page.Items == nil {
 		page.Items = make([]domain.NodeSummary, 0)
+	}
+
+	if h.presenceTracker != nil {
+		var filtered []domain.NodeSummary
+		for i := range page.Items {
+			page.Items[i].LastSeenAt = nil
+			if h.presenceTracker.IsNodeOnline(page.Items[i].NodeID) {
+				page.Items[i].Status = "ONLINE"
+			} else {
+				page.Items[i].Status = "OFFLINE"
+			}
+
+			if statusFilter == "" || page.Items[i].Status == statusFilter {
+				filtered = append(filtered, page.Items[i])
+			}
+		}
+		page.Items = filtered
 	}
 
 	writeJSON(w, http.StatusOK, page)

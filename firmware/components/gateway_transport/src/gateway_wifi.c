@@ -287,3 +287,14 @@ uint32_t gateway_wifi_get_reconnect_attempts(void)
 {
     return s_reconnect_attempts;
 }
+
+int8_t gateway_wifi_get_rssi(void)
+{
+#ifdef ESP_PLATFORM
+    wifi_ap_record_t ap_info;
+    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+        return ap_info.rssi;
+    }
+#endif
+    return -60;
+}

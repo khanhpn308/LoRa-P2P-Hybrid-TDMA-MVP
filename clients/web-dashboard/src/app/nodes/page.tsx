@@ -4,9 +4,10 @@ import React, { useState, useMemo, useEffect, useCallback, Suspense } from "reac
 import { useSearchParams, useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { NavItemKey } from "@/components/layout/Sidebar";
-import { getNodes } from "@/lib/api/nodes";
+import { getNodes, getDeviceJoinRequests, approveDeviceJoinRequest, rejectDeviceJoinRequest } from "@/lib/api/nodes";
 import { provisionDevice } from "@/lib/api/provisioning";
 import { useAuth } from "@/lib/auth/AuthContext";
+import { useRealtime } from "@/lib/realtime/RealtimeContext";
 import { ApiClientError } from "@/lib/api/client";
 import {
   Search,
@@ -39,6 +40,7 @@ export interface ConnectedNodeItem {
 
 export interface NewNodeRequest {
   id: string;
+  rawId: number;
   device_mac: string;
   gateway: string;
   area: string;
@@ -53,6 +55,7 @@ function NodesContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { role } = useAuth();
+  const { subscribe } = useRealtime();
 
   // URL query params initialization (e.g. from Overview Node card click)
   const initialConn = searchParams.get("conn") || "all";
@@ -102,10 +105,10 @@ function NodesContent() {
           gateway: n.gateway_id,
           area: "Khu vực cảm biến",
           connected: n.status === "ONLINE",
-          operating: n.status === "ONLINE" && n.assigned_slot_id !== null,
-          state: n.status === "ONLINE" ? (n.assigned_slot_id !== null ? "NORMAL" : "MAINTENANCE") : "OFFLINE",
+          operating: n.status === "ONLINE",
+          state: n.status === "ONLINE" ? "NORMAL" : "OFFLINE",
           battery_mv: 3300,
-          last_event_type: n.status === "ONLINE" ? "UP_HEALTH_REPLY (0x44)" : "Mất liên lạc TDMA",
+          last_event_type: n.status === "ONLINE" ? "P2P CSMA/CAD (Sẵn sàng)" : "Ngoại tuyến",
           assigned_slot_id: n.assigned_slot_id,
         }));
         setConnectedNodes(mapped);
@@ -115,11 +118,47 @@ function NodesContent() {
     } catch {
       setConnectedNodes([]);
     }
+
+    try {
+      const reqs = await getDeviceJoinRequests();
+      if (reqs) {
+        const mappedReqs: NewNodeRequest[] = reqs
+          .filter((r) => r.status === "PENDING")
+          .map((r) => ({
+            id: `REQ-${r.id}`,
+            rawId: r.id,
+            device_mac: r.device_mac,
+            gateway: r.gateway_id,
+            area: "Khu vực cảm biến",
+            rssi: `${r.rssi} dBm`,
+            signalQuality: r.rssi > -80 ? "Tốt" : r.rssi > -100 ? "Khá" : "Yếu",
+            snr: `${r.snr.toFixed(1)} dB`,
+            time: new Date(r.created_at).toLocaleTimeString("vi-VN"),
+            relativeTime: new Date(r.created_at).toLocaleString("vi-VN"),
+          }));
+        setNewNodes(mappedReqs);
+      }
+    } catch {
+      // Graceful fallback
+    }
   }, []);
 
   useEffect(() => {
     loadNodes();
-  }, [loadNodes]);
+
+    const unsubscribe = subscribe((envelope) => {
+      if (envelope.type === "NODE_JOIN_REQUEST") {
+        loadNodes();
+        showToast("[Realtime] Có thiết bị mới gửi yêu cầu gia nhập mạng!");
+      } else if (envelope.type === "ALERT_TRIGGERED") {
+        loadNodes();
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [loadNodes, subscribe]);
 
   const handleRouteChange = (route: NavItemKey) => {
     setActiveRoute(route);
@@ -204,58 +243,17 @@ function NodesContent() {
     }
 
     try {
-      const cleanMac = approvingNode.device_mac.replace(/[^0-9a-fA-F]/g, "").toLowerCase().slice(0, 12);
-      const kJoin = "0102030405060708090a0b0c0d0e0f10";
-
-      await provisionDevice({
-        network_id: 1,
-        device_mac: cleanMac,
-        k_join: kJoin,
-        generation: 1,
-      });
-
-      const newNodeId = `N-${Math.floor(100 + Math.random() * 900)}`;
-      const newConnectedItem: ConnectedNodeItem = {
-        id: newNodeId,
-        node_id: parseInt(newNodeId.replace(/\D/g, "") || "100", 10),
-        gateway: approvingNode.gateway.split(" ")[0] || "GW-01",
-        area: approveFormArea,
-        connected: true,
-        operating: true,
-        state: "NORMAL",
-        battery_mv: 3300,
-        last_event_type: "UP_EVENT: Gia nhập mạng thành công",
-        assigned_slot_id: 1,
-      };
-
-      setConnectedNodes((prev) => [newConnectedItem, ...prev]);
-      setNewNodes((prev) => prev.filter((n) => n.id !== approvingNode.id));
+      const res = await approveDeviceJoinRequest(approvingNode.rawId);
       setApprovingNode(null);
       showToast(
-        `Đã cấp phát thành công thiết bị [${cleanMac}] qua POST /api/v1/devices/provision!`
+        `Đã phê duyệt Node [${approvingNode.device_mac}] thành công! Cấp Node ID #${res.assigned_node_id}.`
       );
+      await loadNodes();
     } catch (err) {
       if (err instanceof ApiClientError && err.status === 403) {
         showToast("Lỗi 403: Bạn không có quyền ADMIN để cấp phát thiết bị.");
       } else {
-        // Fallback for UI presentation
-        const newNodeId = `N-${Math.floor(100 + Math.random() * 900)}`;
-        const newConnectedItem: ConnectedNodeItem = {
-          id: newNodeId,
-          node_id: parseInt(newNodeId.replace(/\D/g, "") || "100", 10),
-          gateway: approvingNode.gateway.split(" ")[0] || "GW-01",
-          area: approveFormArea,
-          connected: true,
-          operating: true,
-          state: "NORMAL",
-          battery_mv: 3300,
-          last_event_type: "UP_EVENT: Gia nhập mạng thành công",
-          assigned_slot_id: 1,
-        };
-        setConnectedNodes((prev) => [newConnectedItem, ...prev]);
-        setNewNodes((prev) => prev.filter((n) => n.id !== approvingNode.id));
-        setApprovingNode(null);
-        showToast(`Đã chấp thuận Node [${approvingNode.id}]! Cấp mã định danh mới: [${newNodeId}].`);
+        showToast(`Lỗi khi phê duyệt thiết bị: ${(err as Error).message}`);
       }
     }
   };
@@ -268,31 +266,31 @@ function NodesContent() {
     setRejectingNode(node);
   };
 
-  const handleConfirmRejection = () => {
+  const handleConfirmRejection = async () => {
     if (!rejectingNode) return;
-    setNewNodes((prev) => prev.filter((n) => n.id !== rejectingNode.id));
-    setRejectingNode(null);
-    showToast(`Đã từ chối yêu cầu gia nhập của Node [${rejectingNode.id}].`);
+    try {
+      await rejectDeviceJoinRequest(rejectingNode.rawId);
+      setRejectingNode(null);
+      showToast(`Đã từ chối yêu cầu gia nhập của Node [${rejectingNode.device_mac}].`);
+      await loadNodes();
+    } catch (err) {
+      showToast(`Lỗi khi từ chối thiết bị: ${(err as Error).message}`);
+    }
   };
 
-  const handleApproveAll = () => {
+  const handleApproveAll = async () => {
     if (newNodes.length === 0) return;
-    const addedItems: ConnectedNodeItem[] = newNodes.map((n, idx) => ({
-      id: `N-${150 + idx}`,
-      node_id: 150 + idx,
-      gateway: n.gateway.split(" ")[0] || "GW-01",
-      area: n.area,
-      connected: true,
-      operating: true,
-      state: "NORMAL",
-      battery_mv: 3300,
-      last_event_type: "UP_EVENT: Gia nhập mạng thành công",
-      assigned_slot_id: (idx % 15) + 1,
-    }));
-
-    setConnectedNodes((prev) => [...addedItems, ...prev]);
-    setNewNodes([]);
-    showToast(`Đã chấp thuận toàn bộ ${addedItems.length} Node mới vào mạng TDMA!`);
+    let count = 0;
+    for (const n of newNodes) {
+      try {
+        await approveDeviceJoinRequest(n.rawId);
+        count++;
+      } catch {
+        // Continue with others
+      }
+    }
+    showToast(`Đã phê duyệt thành công ${count}/${newNodes.length} Node mới vào mạng!`);
+    await loadNodes();
   };
 
   return (
@@ -308,7 +306,7 @@ function NodesContent() {
               Node
             </h1>
             <p className="text-xs text-text-secondary">
-              Danh sách thiết bị cảm biến đầu cuối LoRa TDMA toàn hệ thống
+              Danh sách thiết bị cảm biến đầu cuối LoRa P2P toàn hệ thống
             </p>
           </div>
 
@@ -345,7 +343,7 @@ function NodesContent() {
                   : "bg-canvas text-text-secondary border border-border"
               }`}
             >
-              180
+              {connectedNodes.length}
             </span>
           </button>
 
@@ -615,7 +613,7 @@ function NodesContent() {
                   <span className="font-mono text-xs text-text-secondary tabular-nums">
                     {totalConnected === 0
                       ? "0 / 0 Node"
-                      : `${startIndex + 1}–${Math.min(startIndex + rowsPerPage, totalConnected)} / 180 Node`}
+                      : `${startIndex + 1}–${Math.min(startIndex + rowsPerPage, totalConnected)} / ${totalConnected} Node`}
                   </span>
 
                   <div className="flex items-center gap-1">
@@ -872,7 +870,7 @@ function NodesContent() {
                       Xác nhận chấp thuận Node
                     </h3>
                     <p className="text-xs text-text-secondary">
-                      Cấp quyền gia nhập mạng TDMA cho thiết bị cảm biến
+                      Cấp quyền gia nhập mạng LoRa P2P cho thiết bị cảm biến
                     </p>
                   </div>
                 </div>
@@ -1000,7 +998,7 @@ function NodesContent() {
                       Từ chối yêu cầu gia nhập
                     </h3>
                     <p className="text-xs text-text-secondary">
-                      Hủy bỏ yêu cầu tham gia mạng TDMA của thiết bị cảm biến
+                      Hủy bỏ yêu cầu tham gia mạng LoRa P2P của thiết bị cảm biến
                     </p>
                   </div>
                 </div>

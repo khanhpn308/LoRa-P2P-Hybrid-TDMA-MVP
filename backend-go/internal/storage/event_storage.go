@@ -349,8 +349,8 @@ func (s *PostgresEventStorage) RecordHealthUpdate(ctx context.Context, h *domain
 	const query = `
 		INSERT INTO node_health (
 			gateway_id, node_id, session_sel, frame_counter, maint_seq, status_flags,
-			pending_event_count, health_status, last_seen_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+			pending_event_count, health_status, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP)
 		ON CONFLICT (gateway_id, node_id) DO UPDATE SET
 			session_sel = EXCLUDED.session_sel,
 			frame_counter = EXCLUDED.frame_counter,
@@ -358,7 +358,6 @@ func (s *PostgresEventStorage) RecordHealthUpdate(ctx context.Context, h *domain
 			status_flags = EXCLUDED.status_flags,
 			pending_event_count = EXCLUDED.pending_event_count,
 			health_status = EXCLUDED.health_status,
-			last_seen_at = CURRENT_TIMESTAMP,
 			updated_at = CURRENT_TIMESTAMP;
 	`
 
@@ -385,7 +384,7 @@ func (s *PostgresEventStorage) GetNodeHealth(ctx context.Context, gatewayID stri
 	const query = `
 		SELECT
 			gateway_id, node_id, session_sel, frame_counter, maint_seq, status_flags,
-			pending_event_count, health_status, last_seen_at, updated_at
+			pending_event_count, health_status, updated_at
 		FROM node_health
 		WHERE gateway_id = $1 AND node_id = $2;
 	`
@@ -404,7 +403,6 @@ func (s *PostgresEventStorage) GetNodeHealth(ctx context.Context, gatewayID stri
 		&flags,
 		&pending,
 		&status,
-		&h.LastSeenAt,
 		&h.UpdatedAt,
 	)
 
@@ -955,7 +953,7 @@ func (s *PostgresEventStorage) ListNodeHealth(ctx context.Context, gatewayID str
 		query = `
 			SELECT
 				gateway_id, node_id, session_sel, frame_counter, maint_seq, status_flags,
-				pending_event_count, health_status, last_seen_at, updated_at
+				pending_event_count, health_status, updated_at
 			FROM node_health
 			WHERE gateway_id = $1
 			ORDER BY node_id ASC
@@ -966,7 +964,7 @@ func (s *PostgresEventStorage) ListNodeHealth(ctx context.Context, gatewayID str
 		query = `
 			SELECT
 				gateway_id, node_id, session_sel, frame_counter, maint_seq, status_flags,
-				pending_event_count, health_status, last_seen_at, updated_at
+				pending_event_count, health_status, updated_at
 			FROM node_health
 			ORDER BY node_id ASC
 			LIMIT $1;
@@ -996,7 +994,6 @@ func (s *PostgresEventStorage) ListNodeHealth(ctx context.Context, gatewayID str
 			&flags,
 			&pending,
 			&status,
-			&h.LastSeenAt,
 			&h.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan node health row: %w", err)

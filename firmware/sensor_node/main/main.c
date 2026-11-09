@@ -247,6 +247,56 @@ static esp_err_t node_cad_event_tx_and_ack(const node_tdma_client_config_t *cfg,
     }
 }
 
+static esp_err_t node_send_heartbeat_ack(uint8_t node_id, uint16_t seq)
+{
+    uint8_t ack_pkt[8];
+    ack_pkt[0] = LORA_MAC_V2_TYPE_UP_HEARTBEAT_ACK;
+    ack_pkt[1] = node_id;
+    ack_pkt[2] = (uint8_t)(seq & 0xFF);
+    ack_pkt[3] = (uint8_t)((seq >> 8) & 0xFF);
+    /* 4-byte response auth token matching Gateway probe expectations */
+    ack_pkt[4] = 0x55;
+    ack_pkt[5] = 0xAA;
+    ack_pkt[6] = (uint8_t)(seq & 0xFF);
+    ack_pkt[7] = (uint8_t)((seq >> 8) & 0xFF);
+
+    ESP_LOGI(TAG, "==================================================");
+    ESP_LOGI(TAG, ">>> LORA UP_HEARTBEAT_ACK TRANSMISSION <<<");
+    ESP_LOGI(TAG, "Node ID: #%u | Seq: %u | Length: 8 Bytes | Freq: 920.250 MHz", node_id, seq);
+    ESP_LOGI(TAG, "==================================================");
+
+    return sx1276_tx(ack_pkt, sizeof(ack_pkt), pdMS_TO_TICKS(100));
+}
+
+static esp_err_t node_listen_and_respond_probe(const node_tdma_client_config_t *cfg, uint32_t wait_ms)
+{
+    if (cfg == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    (void)prod_radio_rx_single(wait_ms);
+    uint8_t rx_buf[64];
+    size_t rx_len = 0U;
+    esp_err_t err = prod_radio_read_frame(rx_buf, &rx_len, wait_ms);
+    (void)sx1276_standby();
+
+    if (err == ESP_OK && rx_len >= 7 && rx_buf[0] == LORA_MAC_V2_TYPE_DOWN_HEARTBEAT_PROBE) {
+        uint16_t probe_seq = (uint16_t)rx_buf[1] | ((uint16_t)rx_buf[2] << 8);
+        ESP_LOGI(TAG, "==================================================");
+        ESP_LOGI(TAG, ">>> DOWN_HEARTBEAT_PROBE RECEIVED! <<< (Seq: %u)", probe_seq);
+        ESP_LOGI(TAG, "==================================================");
+
+        /* Slotted delay to prevent channel collision: Node_ID * 40ms */
+        uint32_t slot_delay_ms = (uint32_t)cfg->node_id * 40U;
+        ESP_LOGI(TAG, "[HEARTBEAT] Applying slotted backoff: %" PRIu32 " ms before ACK...", slot_delay_ms);
+        if (slot_delay_ms > 0) {
+            vTaskDelay(pdMS_TO_TICKS(slot_delay_ms));
+        }
+
+        return node_send_heartbeat_ack(cfg->node_id, probe_seq);
+    }
+    return err;
+}
+
 void app_main(void)
 {
     s_boot_count++;
@@ -423,7 +473,23 @@ void app_main(void)
             break;
         }
         case BUTTON_CAUSE_TIMER:
-            ESP_LOGI(TAG, "[WAKE CAUSE] Periodic Timer Wakeup (Maintenance/Sync Check)");
+            ESP_LOGI(TAG, "[WAKE CAUSE] Periodic Timer Wakeup (5-10 min Node Liveness Heartbeat)");
+            if (!radio_initialized) {
+                esp_err_t sx_err = sx1276_init(NULL, NULL);
+                if (sx_err == ESP_OK) {
+                    radio_initialized = true;
+                } else {
+                    ESP_LOGW(TAG, "SX1276 init for timer wakeup failed: %s", esp_err_to_name(sx_err));
+                }
+            }
+            if (radio_initialized && s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
+                uint32_t slot_delay_ms = (uint32_t)tdma_cfg.node_id * 40U;
+                if (slot_delay_ms > 0) {
+                    vTaskDelay(pdMS_TO_TICKS(slot_delay_ms));
+                }
+                uint16_t hb_seq = (uint16_t)(esp_timer_get_time() / 1000000ULL);
+                (void)node_send_heartbeat_ack(tdma_cfg.node_id, hb_seq);
+            }
             break;
         default:
             ESP_LOGI(TAG, "[WAKE CAUSE] Power-On Reset or Software Restart");
@@ -534,6 +600,11 @@ void app_main(void)
     } else if (s_join_ctx.state != NODE_V2_JOIN_STATE_INSTALLED_INACTIVE && pending_events > 0U) {
         ESP_LOGW(TAG, "Node is not yet joined (State: %s). TDMA event transmission deferred until joined.",
                  node_v2_join_state_to_str(s_join_ctx.state));
+    }
+
+    /* 9b. If joined and idle, briefly listen for Gateway DOWN_HEARTBEAT_PROBE (150ms window) */
+    if (radio_initialized && s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE && pending_events == 0U) {
+        (void)node_listen_and_respond_probe(&tdma_cfg, 150);
     }
 
     /* 10. Ensure radio is sleeping before entering Deep-Sleep */

@@ -106,6 +106,20 @@ esp_err_t gateway_v2_join_handle_hello(gateway_v2_join_engine_t *engine,
                                        size_t *out_grant_len);
 
 /**
+ * @brief Process incoming UP_JOIN_HELLO with an explicitly assigned node_id approved by Backend/User.
+ */
+esp_err_t gateway_v2_join_handle_hello_with_id(gateway_v2_join_engine_t *engine,
+                                               const uint8_t *hello_raw,
+                                               size_t hello_len,
+                                               int16_t rssi,
+                                               float snr,
+                                               uint64_t rx_mono_us,
+                                               const uint8_t backend_grant_proof[16],
+                                               uint8_t override_node_id,
+                                               uint8_t out_grant[LORA_MAC_V2_LEN_DOWN_JOIN_GRANT],
+                                               size_t *out_grant_len);
+
+/**
  * @brief Process incoming UP_JOIN_KEY_CONFIRM (0x47, 31B) from LoRa RF.
  *
  * Verifies GW_KC_TAG8 under K_KC_UP, generates DOWN_JOIN_FINISH (0x48, 31B) with GW_FINISH_TAG8.
