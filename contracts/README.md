@@ -6,8 +6,8 @@ Các tệp trong thư mục này định nghĩa giao diện để Firmware Node,
 
 | Ranh giới/đầu mối | Nguồn chuẩn đề xuất | Chủ trì → Cùng duyệt | Issue |
 |---|---|---|---|
-| Node ↔ Gateway RF Custom MAC | [radio-mac/specification.md](radio-mac/specification.md) | Embedded Node + Gateway → RF/Security, Backend | [#12](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/12), [#127](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/127) |
-| Backend Planner → Gateway Executor → Node | [radio-mac/tdma-schedule.md](radio-mac/tdma-schedule.md) | Backend + Gateway → Node/RF | #12, #14, #128 |
+| Node ↔ Gateway RF Custom MAC | [radio-mac/specification.md](radio-mac/specification.md) | Embedded Node + Gateway → RF/Security, Backend | [#12](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/12), [#127](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/127), [#273](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/273) |
+| Backend Planner → Gateway Executor → Node | [radio-mac/tdma-schedule.md](radio-mac/tdma-schedule.md) | **SUPERSEDED / DEPRECATED (DEC-273-01 / ADR-0004)** | #12, #14, #128, #273 |
 | Gateway ↔ Mosquitto ↔ Backend Go | [mqtt/topics.md](mqtt/topics.md), [mqtt/schemas/](mqtt/schemas/) | Gateway + Backend/Infra → Security | [#14](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/14), [#128](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/128), [#221](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/221) |
 | Backend REST → Next.js/Kotlin Android | [api/openapi.yaml](api/openapi.yaml) | Backend → Web/Mobile | [#15](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/15), [#128](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/128), [#154](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/154) |
 | Backend WSS → Next.js/Kotlin Android | [api/websocket.md](api/websocket.md), [api/schemas/](api/schemas/) | Backend → Web/Mobile | #15, #128 |
@@ -17,8 +17,8 @@ Các tệp trong thư mục này định nghĩa giao diện để Firmware Node,
 1. **Thẩm quyền hợp đồng:** Hợp đồng chỉ có hiệu lực khi chủ sở hữu phía gửi **và** phía nhận duyệt qua PR/ADR. Không suy diễn việc xuất hiện trong Git là đã được phê duyệt, đạt an toàn RF hay hoàn thành HIL (#169).
 2. **Event-Only Architecture & Zero Periodic Telemetry:** Bãi bỏ hoàn toàn chế độ truyền định kỳ DATA_TELEMETRY (0x03/0x23) và topic uplink/telemetry theo Quyết định Owner #125 / PR #133. Chuyển dịch sang mô hình:
    - **Physical Button Trigger & Event-Only (Refs #230):** Bãi bỏ cơ cấu cảnh báo tại chỗ (còi buzzer, đèn LED báo động, relay) và cảm biến phức tạp theo Quyết định Owner #230; Node dùng nút nhấn vật lý (button press qua GPIO/EXT0) làm nguồn sinh sự kiện duy nhất cho MVP.
-   - **Event-Only Remote Logging:** Node chỉ truyền UP_EVENT (0x41, 26B) trong khe tĩnh (Static DATA Slot) độc quyền của mình.
-   - **Same-Slot ACK:** Gateway ghi bền vững (WAL/SQLite) trước khi phát DOWN_EVENT_ACK (0x42, 19B) ngay trong cùng khe DATA của Node.
+   - **Pure CAD + Random Backoff (CSMA/CA) kết hợp Gateway Continuous RX 24/7 (DEC-273-01 / ADR-0004):** Bãi bỏ hoàn toàn mô hình Hybrid TDMA, khe thời gian tĩnh, superframe và Beacon đồng bộ. Node thực hiện kiểm tra hoạt động kênh (CAD) trước khi phát `UP_EVENT` (0x41, 26B); Gateway duy trì chế độ nhận liên tục Continuous RX 24/7 trên kênh tĩnh VN920.
+   - **Immediate RF ACK:** Gateway ghi bền vững (WAL/SQLite) trước khi phát DOWN_EVENT_ACK (0x42, 19B) ngay trong cửa sổ RX đơn của Node.
 3. **Phân định 4 tầng xác nhận độc lập:**
    - **RF ACK** (DOWN_EVENT_ACK 0x42 19B): Gateway phản hồi Node sau khi commit WAL; Node xóa hoặc đánh dấu sự kiện trong hàng đợi NVS.
    - **MQTT Transport PUBACK**: Broker Mosquitto xác nhận đã nhận gói tin qua QoS 1; không chứng minh Backend đã ghi nhận CSDL.
@@ -33,11 +33,12 @@ Các tệp trong thư mục này định nghĩa giao diện để Firmware Node,
    - Tuyệt đối không gộp chung hoặc đánh đồng PENDING_COUNT với DROPPED_EVENT_COUNT.
 6. **Kế hoạch chuyển đổi và hủy bỏ (Deprecation Policy):**
    - Topic uplink/telemetry, endpoint REST /api/v1/nodes/{id}/telemetry, sự kiện WSS TELEMETRY_UPDATE, và lệnh SET_PERIODIC_MODE được đánh dấu DEPRECATED_HISTORICAL.
+   - **Hạ tầng lập lịch TDMA:** Topic `downlink/schedule`, `uplink/schedule-ack`, cùng schemas `schedule.schema.json` và `schedule-ack.schema.json` được đánh dấu `SUPERSEDED / DEPRECATED` theo DEC-273-01 / ADR-0004.
    - Giữ nguyên cấu trúc dữ liệu của các schema 1.0-draft để các hệ thống giải mã log lịch sử không bị gián đoạn.
    - Cấm mọi firmware và producer V2 xuất bản dữ liệu đo kiểm định kỳ lên uplink/telemetry hoặc gửi lệnh SET_PERIODIC_MODE.
 
 ## Trạng thái
 
-- **Radio MAC V2 (0.3.0-draft):** Đã căn chỉnh baseline MVP (PR #205, PR #206); Join CAD bất đồng bộ (tối đa 3 lần thử lại), khe DATA W500ms + G50ms (chu kỳ 600ms/Node, 15 slots 9000ms), khe READY R400ms + G50ms (chu kỳ 500ms/Node) trong Migration theo yêu cầu, Beacon 0x43 32B HMAC-SHA256-128 trong Maintenance (~300s). Bãi bỏ hoàn toàn countdown 3->2->1 theo DEC-MH-05, D05, #208. HIL #169 tiếp tục đo kiểm thực địa độc lập.
-- **MQTT / REST / WebSocket V2 (Issue #128, #221, #232):** Đồng bộ hóa schema sự kiện UP_EVENT 0x41 (`event_ref`, `event_code`, `event_value`), hủy bỏ telemetry định kỳ và countdown schedule, chuẩn hóa REST route cấp phát kênh VN920_V1 (`/api/v1/channels`, `/api/v1/gateways/{gw_id}/channel*`), bổ sung schema relay UP_JOIN_HELLO 0x45 68B, cập nhật validator kiểm tra hình học lịch V2 và bộ test tương thích.
+- **Radio MAC V2 (0.4.0-draft):** Chuyển đổi toàn diện sang Pure CAD + Random Backoff (CSMA/CA) kết hợp Gateway Continuous RX 24/7 theo Quyết định Owner DEC-273-01 / ADR-0004 (Issue #273). Bãi bỏ hoàn toàn khe tĩnh Static DATA Slot, superframe, Beacon đồng bộ 0x43 và giao thức Schedule Migration (0x4B/0x4C/0x4D). Join CAD bất đồng bộ (tối đa 3 lần thử lại). HIL #169 tiếp tục đo kiểm thực địa độc lập.
+- **MQTT / REST / WebSocket V2 (Issue #128, #221, #232, #273):** Đồng bộ hóa schema sự kiện UP_EVENT 0x41 (`event_ref`, `event_code`, `event_value`), hủy bỏ telemetry định kỳ và hạ tầng lập lịch TDMA, chuẩn hóa REST route cấp phát kênh VN920_V1 (`/api/v1/channels`, `/api/v1/gateways/{gw_id}/channel*`), bổ sung schema relay UP_JOIN_HELLO 0x45 68B, cập nhật validator kiểm tra hợp đồng tự động.
 - Bất đồng và lộ trình kỹ thuật được cập nhật tại [OPEN_DECISIONS.md](OPEN_DECISIONS.md).

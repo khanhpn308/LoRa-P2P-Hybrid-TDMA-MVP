@@ -1,6 +1,12 @@
-# TDMA Schedule Interface — Đặc tả Vận hành Lịch và Đồng bộ Thời gian
+# [SUPERSEDED / DEPRECATED] TDMA Schedule Interface — Đặc tả Vận hành Lịch và Đồng bộ Thời gian
 
-**Revision 0.3.0-draft · Hybrid TDMA & Maintenance Superframe · Issue #127 / Umbrella #125 · Gate G2: NOT_VERIFIED.**
+> [!WARNING]
+> **SUPERSEDED / DEPRECATED — Owner Decision DEC-273-01 / ADR-0004 (Issue #273, 2026-11-09)**
+> Toàn bộ mô hình phân chia khe thời gian TDMA (Static DATA Slot, Maintenance Superframe), Beacon đồng bộ thời gian (`DOWN_SYNC_BEACON` 0x43), và giao thức di trú lịch Schedule Migration (`DOWN_SCHED_PREPARE` 0x4B, `UP_SCHED_READY` 0x4C, `DOWN_SCHED_DECISION` 0x4D) chính thức **BÃI BỎ HOÀN TOÀN**.
+> Hệ thống chuyển đổi toàn diện sang mô hình **Event-driven CAD + Exponential Random Backoff (CSMA/CA)** cho Sensor Node kết hợp **Gateway Continuous RX 24/7** theo [ADR-0004](../../docs/adr/0004-pure-cad-csma-ca-mac.md).
+> Toàn bộ nội dung tài liệu dưới đây chỉ được lưu giữ phục vụ mục đích truy xuất nguồn gốc lịch sử (historical provenance).
+
+**Revision 0.3.0-draft (SUPERSEDED) · Hybrid TDMA & Maintenance Superframe · Issue #127 / Umbrella #125 / Bãi bỏ theo Issue #273.**
 
 ---
 

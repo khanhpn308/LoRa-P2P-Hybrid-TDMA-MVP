@@ -33,9 +33,13 @@
 - `uplink/status` Retain=true is **last-known snapshot**, not online proof. LWT, heartbeat, broker session state and Backend ingress-time freshness require a separate verified presence policy. MQTT Will Delay can be truncated by session termination (`Session Expiry=0`). No unsupported claim of prompt/discrete disconnect detection.
 - MQTT `PUBACK` confirms a single transport hop; Backend persistence and Node command execution require separate evidence. Use durable commit-before-ACK/error quarantine and bounded retry as proposed implementation for #18; none is verified by this document.
 
-## 4. TDMA schedule state machine
+## 4. TDMA schedule state machine — SUPERSEDED / DEPRECATED (DEC-273-01 / ADR-0004)
 
-**Backend durable states:** `PROPOSED`, `SENT`, `STAGED`, `ACTIVE`, `REJECTED`, `EXPIRED`.
+> [!WARNING]
+> **SUPERSEDED / DEPRECATED (Owner Decision DEC-273-01 / ADR-0004, Issue #273, 2026-11-09)**
+> Toàn bộ cơ chế lập lịch khe TDMA, superframe, và máy trạng thái phân phối lịch TDMA (PROPOSED -> SENT -> STAGED -> ACTIVE) bị bãi bỏ hoàn toàn. Hệ thống chuyển đổi sang Pure CAD + Random Backoff (CSMA/CA) kết hợp Gateway Continuous RX 24/7. Các topic `downlink/schedule` và `uplink/schedule-ack` không còn được sử dụng ở V2 runtime. Nội dung mục này được lưu giữ phục vụ đối chiếu lịch sử.
+
+**Backend durable states (Lịch sử):** `PROPOSED`, `SENT`, `STAGED`, `ACTIVE`, `REJECTED`, `EXPIRED`.
 
 | From | Event / validation | To | Critical rule |
 |---|---|---|---|

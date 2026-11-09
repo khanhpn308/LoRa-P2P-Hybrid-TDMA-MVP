@@ -28,7 +28,8 @@
 | **DEC-127-02** | Cryptography | Chốt độ dài thẻ xác thực AES-128-CCM cho dữ liệu ứng dụng là **8 byte ($M=8$)** nhằm tối ưu hóa thời gian chiếm dụng sóng RF airtime. | `OWNER_APPROVED_DESIGN` · Owner Phê duyệt (2026-11-06) |
 | **DEC-127-03** | RF PHY | MVP hỗ trợ SF7/SF8; ví dụ 400ms lịch sử là NON_NORMATIVE. Baseline DATA V2 Owner chốt 2026-11-07: `W_MS=500ms` hữu dụng + `G_MS=50ms` mỗi bên; chu kỳ Node 600ms. | `OWNER_APPROVED_MVP_CONFIG / NOT_HIL_VERIFIED` · #208 |
 | **DEC-127-04** | Node Policy | Khi hàng đợi sự kiện NVS FIFO của Node đầy tải do mất kết nối kéo dài, áp dụng chính sách **`RING_BUFFER_DROP_OLDEST`** (ghi đè sự kiện cũ nhất để ưu tiên cảnh báo mới nhất). Bắt buộc lưu bền vững `DROPPED_EVENT_COUNT` trong NVS. | `OWNER_APPROVED_DESIGN` · Owner Phê duyệt (2026-11-06) |
-| **DEC-MH-01** | Beacon | **SUPERSEDED:** Beacon V2 `0x43` **32B**: header16 + HMAC-SHA256-128 tag16, `KEY_ID` byte12, khóa nhóm 256-bit per-Gateway qua trusted out-of-band provisioning; Ed25519-80B cũ không còn là định dạng đích. Beacon không được ký lệnh đổi lịch. | `OWNER_APPROVED_MVP_DESIGN / NOT_IMPLEMENTED` · #209/#208 |
+| **DEC-273-01** | Radio MAC & Scheduling | **BÃI BỎ HOÀN TOÀN HYBRID TDMA (DEC-0001 / ADR-0001).** Chuyển đổi toàn diện sang mô hình **Event-driven CAD + Exponential Random Backoff (CSMA/CA)** cho Sensor Node kết hợp **Gateway Continuous RX 24/7**. Bãi bỏ khe tĩnh Static DATA Slot, superframe, Beacon đồng bộ (`DOWN_SYNC_BEACON` 0x43) và giao thức di trú lịch (`0x4B`/`0x4C`/`0x4D`). Backend Go không lập lịch khe RF. Các topic và schema MQTT `downlink/schedule` và `uplink/schedule-ack` được đánh dấu `SUPERSEDED / DEPRECATED`. | `OWNER_APPROVED_DESIGN` · Quyết định Owner [Issue #273](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/273) (2026-11-09) · [ADR-0004](../docs/adr/0004-pure-cad-csma-ca-mac.md) |
+| **DEC-MH-01** | Beacon | **SUPERSEDED (bởi DEC-273-01):** Beacon V2 `0x43` **32B** phục vụ đồng bộ TDMA đã bị bãi bỏ cùng toàn bộ mô hình khe thời gian TDMA theo ADR-0004. Lưu giữ phục vụ đối chiếu lịch sử. | `SUPERSEDED` · #209/#208, DEC-273-01 |
 | **DEC-MH-02** | Wire Codepoint | Phê duyệt chính thức mã bản tin sức khỏe định kỳ `UP_HEALTH_REPLY` (`0x44`, 21B, AES-128-CCM) theo thiết kế PR #190. *Bổ chính #201:* Khẳng định ngân sách 21B không có trường cho `DROPPED_EVENT_COUNT`; kênh truyền tải số liệu mất gói theo dõi dưới `DEC-MH-08`. | `OWNER_APPROVED_DESIGN` · Owner Phê duyệt (2026-11-06) |
 
 ---
@@ -37,30 +38,30 @@
 
 | ID / Nguồn | Vấn đề | Đề xuất giải quyết / Quy tắc candidate | Trạng thái & Cơ quan phụ trách |
 |---|---|---|---|
-| **DEC-MH-03** | Maintenance cadence | Danh định ~300s giữa các Maintenance Superframe; Maintenance bao gồm Beacon, Health theo Node và Shared Control theo nhu cầu. Join dùng CAD bất đồng bộ **mọi lúc**, không bắt buộc trong Maintenance. Thời lượng Maintenance và RF overhead là timing profile riêng. | `OWNER_APPROVED_MVP_DIRECTION / TIMING_TO_IMPLEMENT` · #208 |
-| **DEC-MH-04** | Beacon miss/holdover | Sau **hơn 3 Beacon liên tiếp** không nhận được, Node ghi nhận trạng thái mất kết nối (`N_MISSED > 3`). Đây là ngưỡng báo trạng thái; DATA TX phải tạm khóa sớm hơn nếu bound sai số clock vượt Guard/thiếu đồng bộ đáng tin cậy, lịch không tự hết hạn. | `OWNER_APPROVED_MVP_MONITORING_RULE / CLOCK_BOUND_NOT_HIL_VERIFIED` · #208 |
-| **DEC-MH-05** | Schedule migration | **Bãi bỏ countdown 3→2→1** và Schedule Lease. Một Maintenance on-demand dùng Backend-signed `DOWN_SCHED_PREPARE` **80B** → per-Node `UP_SCHED_READY 0x4C` **41B** (R=400ms hữu dụng, G_R=50ms mỗi bên) → Backend-signed `DOWN_SCHED_DECISION` **80B** COMMIT/ABORT. Chỉ COMMIT sau khi Backend xác minh **100% READY của mọi Node bị ảnh hưởng**, kể cả offline; kích hoạt ở K_TARGET, mất quyết định thì fail-closed. | `OWNER_APPROVED_MVP_DESIGN / CODEPOINT_0x4B_0x4D_CANDIDATE / NOT_IMPLEMENTED` · #208 |
-| **DEC-MH-06** | Rào chắn bán song công SX1276 | Thiết lập khoảng bảo vệ tối thiểu giữa RX và TX turnaround để tránh xung đột phần cứng khi radio đang nhận packet. | `CANDIDATE` (Chờ đo đạc #169) · Embedded / RF |
+| **DEC-MH-03** | Maintenance cadence | **SUPERSEDED (DEC-273-01 / ADR-0004):** Bãi bỏ Maintenance Superframe và Beacon định kỳ. Node vận hành bất đồng bộ theo sự kiện. | `SUPERSEDED` · DEC-273-01 |
+| **DEC-MH-04** | Beacon miss/holdover | **SUPERSEDED (DEC-273-01 / ADR-0004):** Bãi bỏ theo dõi Beacon miss/holdover do không còn sử dụng Beacon đồng bộ TDMA. | `SUPERSEDED` · DEC-273-01 |
+| **DEC-MH-05** | Schedule migration | **SUPERSEDED (DEC-273-01 / ADR-0004):** Bãi bỏ hoàn toàn quy trình Schedule Migration (PREPARE 80B, READY 41B, DECISION 80B) do hệ thống không còn dùng khe TDMA. | `SUPERSEDED` · DEC-273-01 |
+| **DEC-MH-06** | Rào chắn bán song công SX1276 | Thiết lập khoảng bảo vệ tối thiểu giữa RX và TX turnaround để tránh xung đột phần cứng khi radio chuyển đổi từ Continuous RX sang TX (gửi ACK) và ngược lại. | `CANDIDATE` (Chờ đo đạc #169) · Embedded / RF |
 | **DEC-127-05** | SLA ghi bền vững WAL tại Gateway | Xác định giới hạn mili-giây cho thao tác ghi SQLite/WAL tại Gateway trước khi phát `DOWN_EVENT_ACK` trên RF để cam kết 0% mất dữ liệu. | `OPEN_DECISION` · Gateway Engine / SQLite |
-| **DEC-127-06** | DATA slot timing SF7/SF8 | Baseline triển khai: `NODE_ID == SLOT_INDEX` 1..15, `W_MS=500ms` hữu dụng bao gồm UP_EVENT→GW durable WAL→immediate DOWN_EVENT_ACK cùng Slot; `G_MS=50ms` mỗi bên; full Slot 600ms, 15 Slot = 9000ms chưa tính superframe overhead. Thay W live phải qua signed migration + 100% READY. Guard và timing có thể điều chỉnh bằng versioned profile, không mặc định timing/HIL PASS. | `OWNER_APPROVED_MVP_NUMERIC_CONFIG / HIL_NOT_VERIFIED` · #208 |
-| **DEC-MH-07** | Beacon Window | `DOWN_SYNC_BEACON 0x43` **32B HMAC** thay thế mục tiêu 80B Ed25519. Cửa sổ Beacon phải chứa PHY ToA SF7/SF8 + turnaround/guard; không mặc định 250ms hay 400ms là đã được đo. Beacon trong Maintenance (~300s recurrence), không có Beacon ở DATA Slot0. | `OWNER_APPROVED_MVP_BEACON / HIL_NOT_VERIFIED` · #209/#208 |
-| **DEC-MH-08** | Diagnostic packet | `UP_DIAG_METRICS 0x4A` **23B** được Owner phê duyệt: V2 header7 (AAD), encrypted `DROPPED_EVENT_COUNT:u32BE + DIAG_SEQ:u32BE` 8B, CCM-8 tag8. Health 0x44/21B giữ nguyên; Diagnostics chỉ TX trong Normal Maintenance Management cơ hội đã cấp, hoãn khi Schedule Migration. | `OWNER_APPROVED_MVP_WIRE_DESIGN / IMPLEMENTATION_NOT_VERIFIED` · #204/#205 |
+| **DEC-127-06** | DATA slot timing SF7/SF8 | **SUPERSEDED (DEC-273-01 / ADR-0004):** Bãi bỏ khe thời gian tĩnh DATA slot (W500/G50). Chuyển sang mô hình Pure CAD + Exponential Random Backoff (CSMA/CA). | `SUPERSEDED` · DEC-273-01 |
+| **DEC-MH-07** | Beacon Window | **SUPERSEDED (DEC-273-01 / ADR-0004):** Bãi bỏ cửa sổ Beacon do không còn sử dụng Beacon đồng bộ TDMA. | `SUPERSEDED` · DEC-273-01 |
+| **DEC-MH-08** | Diagnostic packet | `UP_DIAG_METRICS 0x4A` **23B** được Owner phê duyệt: V2 header7 (AAD), encrypted `DROPPED_EVENT_COUNT:u32BE + DIAG_SEQ:u32BE` 8B, CCM-8 tag8. Báo cáo chẩn đoán sự kiện tràn hàng đợi. | `OWNER_APPROVED_MVP_WIRE_DESIGN / IMPLEMENTATION_NOT_VERIFIED` · #204/#205 |
 
 ---
 
-## 2A. Baseline bổ sung ngày 2026-11-07 — chuẩn bị triển khai V2
+## 2A. Baseline bổ sung ngày 2026-11-07 & 2026-11-09 — chuẩn bị triển khai V2
 
 **Quyết định mới nhất của Owner ưu tiên hơn mô tả lịch sử và draft chưa đồng bộ.**
 
 | Scope | Baseline triển khai | Trạng thái |
 | --- | --- | --- |
-| Join CAD | Node Join bất kỳ lúc nào, CAD/backoff, tối đa 3 retry sau lần đầu; Gateway đáp Join ngay khi Backend chấp thuận và radio có thể TX, chấp nhận collision Event/ACK; Event retry ở lượt Slot Node tiếp theo | OWNER_APPROVED_MVP_DESIGN #208 |
-| Reboot Node | DATA_TX_DISABLED, RX_ONLY, cần Backend kích hoạt lại và xác minh session/sync/schedule; không tự TX chỉ vì có NVS schedule | OWNER_APPROVED_MVP_DESIGN #208 |
-| Diagnostic | 0x4A 23B; giữ Health 21B; REPORT chỉ trong Normal Maintenance Management khi được cấp | OWNER_APPROVED_MVP_WIRE_DESIGN #204 |
-| Beacon key | 256-bit random per-Gateway K_BEACON, trusted local OOB provisioning cho Gateway/Node; byte12 KEY_ID; HMAC-SHA256-128; key compromise có thể spoof Beacon, không authorize schedule | OWNER_APPROVED_MVP_SECURITY_DESIGN #209 |
-| Schedule wire | Backend Ed25519 PREPARE 80B, SCHED_READY 0x4C 41B, DECISION Ed25519 80B; candidate 0x4B/0x4D cần wire registry agreement | OWNER_APPROVED_MVP_DESIGN #208 |
-| No Schedule Lease | Lịch đã COMMIT tiếp tục có hiệu lực tới khi đổi lịch với 100% READY và COMMIT ký, không tự hết hạn theo thời gian | OWNER_APPROVED_MVP_DESIGN #208 |
-| **DEC-EVENT-01** (Bãi bỏ Local Alarm) | Bãi bỏ hoàn toàn các yêu cầu, đặc tả và cơ cấu chấp hành cảnh báo tại chỗ (còi buzzer, đèn LED báo động, siren, relay vật lý). Hệ thống chuyển dịch triệt để sang mô hình thuần túy **Event-Only Remote Logging** qua khe tĩnh Static DATA TDMA; không phát sóng định kỳ (loại bỏ hoàn toàn telemetry định kỳ). | `OWNER_APPROVED_MVP_DESIGN` · Issue #230 (2026-11-07) |
+| Join CAD | Node Join bất kỳ lúc nào qua CAD/backoff (tối đa 3 retry sau lần đầu); Gateway đáp Join; sau Join Node sẵn sàng gửi UP_EVENT qua CAD/CSMA-CA mà không cần chờ lịch TDMA | OWNER_APPROVED_MVP_DESIGN #208, DEC-273-01 |
+| Reboot Node | Khởi động lại ở chế độ an toàn, xác minh khóa phiên/NVS, cho phép phát UP_EVENT qua CAD/CSMA-CA khi có ngắt nút nhấn | OWNER_APPROVED_MVP_DESIGN #208, DEC-273-01 |
+| Diagnostic | 0x4A 23B; giữ Health 21B; báo cáo chẩn đoán sự kiện tràn hàng đợi | OWNER_APPROVED_MVP_WIRE_DESIGN #204 |
+| Beacon key | **SUPERSEDED (DEC-273-01):** Bãi bỏ cùng Beacon TDMA | SUPERSEDED · DEC-273-01 |
+| Schedule wire | **SUPERSEDED (DEC-273-01):** Bãi bỏ PREPARE/READY/DECISION cùng TDMA | SUPERSEDED · DEC-273-01 |
+| No Schedule Lease | **SUPERSEDED (DEC-273-01):** Bãi bỏ cùng TDMA | SUPERSEDED · DEC-273-01 |
+| **DEC-EVENT-01** (Bãi bỏ Local Alarm) | Bãi bỏ hoàn toàn các yêu cầu, đặc tả và cơ cấu chấp hành cảnh báo tại chỗ (còi buzzer, đèn LED báo động, siren, relay vật lý). Hệ thống chuyển dịch triệt để sang mô hình thuần túy **Event-Only Remote Logging** qua cơ chế Event-driven CAD + Exponential Random Backoff (CSMA/CA) kết hợp Gateway Continuous RX 24/7 (DEC-273-01 / ADR-0004); không phát sóng định kỳ (loại bỏ hoàn toàn telemetry định kỳ). | `OWNER_APPROVED_MVP_DESIGN` · Issue #230 (2026-11-07), DEC-273-01 (2026-11-09) |
 | **DEC-NODE-01** (Nút nhấn làm nguồn sự kiện) | Bãi bỏ hoàn toàn các đặc tả/kế hoạch về lấy mẫu cảm biến công nghiệp phức tạp (ADC, I2C, SPI nhiệt độ/rung lắc) cho giai đoạn MVP. Nguồn sinh sự kiện duy nhất được sử dụng để kiểm thử và vận hành Node MVP là **Nút nhấn vật lý (Button press qua GPIO/EXT0 wakeup)** đã hoàn thiện ở Issue #149. Nút nhấn kích hoạt ngắt thức dậy chip, lọc dội phím (debounce), sinh bản tin `UP_EVENT` (0x41, 26B, `EVENT_CODE=0x01`, `EVENT_VALUE=1`) đẩy vào `node_event_fifo`. | `OWNER_APPROVED_MVP_DESIGN` · Issue #230 (2026-11-07) |
 
 **Verification:** Bắt đầu code/test không phụ thuộc HIL toàn diện, nhưng không đánh dấu timing/legal/security/HIL PASS khi chưa có bằng chứng. Review trước RF deploy.
@@ -70,16 +71,16 @@
 | ID Lịch sử | Vấn đề gốc | Trạng thái hiện tại trong Kiến trúc V2 | Phân loại & Tham chiếu |
 |---|---|---|---|
 | **D01 §6.1** | Header 8B + CRC16 thiếu xác thực | Đã thay thế hoàn toàn bằng Header Unicast V2 7B + AES-128-CCM-8. Bản tin 0x45..0x49 và 0x41..0x44 đã được phê duyệt thiết kế. | `OWNER_APPROVED_DESIGN` · Xem `specification.md` |
-| **D02 §5.1** | Profile Superframe P-10S-15 | Đã bãi bỏ khe tranh chấp PCSS. Thay thế bằng mô hình Static DATA Superframe + Maintenance Superframe (~300s). | `OWNER_APPROVED_DESIGN` · Xem `tdma-schedule.md` |
+| **D02 §5.1** | Profile Superframe P-10S-15 | Đã bãi bỏ khe tranh chấp PCSS. Toàn bộ mô hình Superframe và khe TDMA tĩnh tiếp tục bị **BÃI BỎ HOÀN TOÀN** theo DEC-273-01 / ADR-0004, thay bằng Pure CAD + Random Backoff CSMA/CA. | `SUPERSEDED` · DEC-273-01 / ADR-0004 |
 | **D03 §1** | Pháp lý tần số 921.4 MHz và airtime | Tuân thủ băng tần VN920 (920.250–922.750 MHz); hạn ngạch Node $\le 1.0\%$, GW $\le 10\%$. Công suất phát $\le +14\text{ dBm}$. | `CONFIRMED` / Chờ HIL #169 |
 | **D04 §5.2** | Giả định jitter DIO0 < 50µs | Bắt buộc đo kiểm thực tế trên bench hardware. | `BLOCKED` trên Issue #169 |
-| **D05 §5.3** | Chuyển lịch/Countdown lịch sử | Countdown 3→2→1 **SUPERSEDED** bởi signed PREPARE→100% distinct Schedule READY→signed COMMIT/ABORT tại K_TARGET, tất cả trong một Maintenance nếu đủ thời gian. Quyền DATA của Node mới sau Join vẫn phải chờ Backend-authorized activation riêng. | `OWNER_APPROVED_MVP_DESIGN` · #208 |
+| **D05 §5.3** | Chuyển lịch/Countdown lịch sử | Countdown 3→2→1 và giao thức Schedule Migration bị **BÃI BỎ HOÀN TOÀN** theo DEC-273-01 / ADR-0004. | `SUPERSEDED` · DEC-273-01 |
 | **D06 §6.3** | Namespace MQTT topics | Sử dụng định dạng chuẩn `iot/v1/gw/{gateway_id}/...`. | `CONFIRMED` · ADR-0002 |
-| **D07 §6.3** | Cờ retain trên topic schedule | Cấm retain=true cho downlink schedule để tránh kích hoạt lịch cũ sau khởi động lại. | `CONFIRMED` |
+| **D07 §6.3** | Cờ retain trên topic schedule | Topic `downlink/schedule` bị **BÃI BỎ HOÀN TOÀN** theo DEC-273-01 / ADR-0004 (SUPERSEDED / DEPRECATED). | `SUPERSEDED` · DEC-273-01 |
 | **D08 §6.3** | Phiên bản giao thức MQTT | Bắt buộc MQTT 5.0 (Mosquitto 2.0) với QoS1 và User Properties. | `OWNER_ACCEPTED` (PR #26 MERGED) |
 | **D09 §6.2** | Định dạng giá trị cảm biến thô | `UP_EVENT` truyền `raw integer` (`EVENT_VALUE: i16`); Backend chịu trách nhiệm quy đổi theo cấu hình loại cảm biến. | `OWNER_APPROVED_DESIGN` |
 | **D10 §6.2** | Thiếu mã kích hoạt cảnh báo | `UP_EVENT` bổ sung trường `EVENT_CODE (1B)` xác thực rõ ràng loại cảnh báo. | `OWNER_APPROVED_DESIGN` |
-| **D11 §5.3** | `SCHED_VER` 8-bit wrap-around | Không dùng modulo-256; phiên bản lịch được gắn chặt với Epoch và thế hệ phiên bảo mật (`SESSION_SEL`). | `OWNER_APPROVED_DESIGN` |
+| **D11 §5.3** | `SCHED_VER` 8-bit wrap-around | Lập lịch TDMA bị **BÃI BỎ HOÀN TOÀN** theo DEC-273-01 / ADR-0004. Quản lý phiên dựa trên `SESSION_SEL` và `FRAME_COUNTER` 32-bit. | `SUPERSEDED` · DEC-273-01 |
 | **D12 §6.3** | Tràn bộ đệm sự kiện tại Gateway | Bắt buộc Gateway có giới hạn buffer, bộ đếm tràn và ghi WAL trước khi xác nhận. | `CONFIRMED` |
 | **D13 §9.3** | Xác thực JWT / RBAC tại Backend | Enforce RBAC tại Backend; OpenAPI mang tính chất provisional cho đến khi có ADR xác thực người dùng. | `CONFIRMED` |
 

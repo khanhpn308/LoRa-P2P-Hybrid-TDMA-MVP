@@ -1,30 +1,30 @@
 # Custom LoRa P2P Radio MAC — Giao diện Node ↔ Gateway
 
-**Revision 0.3.0-draft · Owner MVP V2 packet/timing alignment · Issue #127 / Umbrella #125 · Gate G2: NOT_VERIFIED.**
+**Revision 0.4.0-draft · Pure CAD + Random Backoff (CSMA/CA) MAC & Gateway Continuous RX 24/7 · Issue #273 / DEC-273-01 / ADR-0004 · Gate G2: NOT_VERIFIED.**
 
 ---
 
 ## 1. Phạm vi và trách nhiệm hệ thống
 
-Hệ thống hoạt động theo mô hình **Event-Only Remote Logging + Static DATA TDMA + Maintenance Superframe** (Quyết định Owner #230 bãi bỏ hoàn toàn cơ cấu cảnh báo phần cứng tại chỗ và cảm biến phức tạp):
+Hệ thống hoạt động theo mô hình **Event-Only Remote Logging + Pure Event-Driven CAD + Exponential Random Backoff (CSMA/CA) kết hợp Gateway Continuous RX 24/7** (Quyết định Owner DEC-273-01 / [ADR-0004](../../docs/adr/0004-pure-cad-csma-ca-mac.md) tại Issue #273 bãi bỏ hoàn toàn mô hình Hybrid TDMA, khe thời gian tĩnh, superframe, Beacon đồng bộ và Schedule Migration; Quyết định Owner #230 bãi bỏ hoàn toàn cơ cấu cảnh báo phần cứng tại chỗ và cảm biến phức tạp):
 
 - **Sensor Node (ESP32-WROOM-32E + SX1276)**:
   - Nguồn kích hoạt sự kiện duy nhất cho kiểm thử MVP là **Nút nhấn vật lý** (Button press qua GPIO/ngắt EXT0, `button_driver.c`). Cơ cấu cảnh báo tại chỗ (còi buzzer, đèn LED báo động, relay) và lấy mẫu cảm biến công nghiệp phức tạp (ADC, I2C, SPI) bị bãi bỏ hoàn toàn theo Quyết định Owner #230.
   - Khi nút bấm được kích hoạt và lọc dội phím thành công, Node ghi nhận sự kiện (`UP_EVENT`, 0x41, `EVENT_CODE=0x01`, `EVENT_VALUE=1`) vào hàng đợi bền vững `node_event_fifo` trong RTC RAM/NVS flash.
   - Giao diện RF chỉ truyền dữ liệu ứng dụng khi có sự kiện từ nút bấm (`UP_EVENT`, 0x41); chế độ truyền định kỳ liên tục (`DATA_TELEMETRY`) bị bãi bỏ hoàn toàn.
-  - Node chỉ được phép truyền dữ liệu sự kiện trong khe tĩnh (`Static DATA Slot`) độc quyền của mình; không dùng contention/PCSS cho UP_EVENT; **Join (0x45..0x49) được khởi tạo bất đồng bộ bằng CAD/backoff bất kỳ thời điểm nào**.
+  - **Truy cập vô tuyến CAD + CSMA/CA (DEC-273-01 / ADR-0004):** Bãi bỏ khe tĩnh Static DATA Slot. Node thực hiện kiểm tra hoạt động kênh (CAD) trên SX1276. Nếu kênh bận, thực hiện Exponential Random Backoff ($CW \in [16\text{ ms}, 256\text{ ms}]$, tối đa 5 lần thử). Nếu kênh rỗi, phát sóng `UP_EVENT` (0x41) ngay lập tức, mở cửa sổ chờ ACK đơn ngắn ($T_{rx\_ack} \approx 200\text{ ms}$) để nhận `DOWN_EVENT_ACK` (0x42), nhận và xác thực ACK thành công rồi lập tức quay về ngủ sâu (Deep Sleep).
   - Duy trì hàng đợi sự kiện bền vững trong bộ nhớ NVS với mã tham chiếu cục bộ `EVENT_REF` (4 byte tăng đơn điệu) để theo dõi xác nhận và phát lại; không tự ý gán nhãn `event_id` toàn cục.
   - Tuân thủ nghiêm ngặt 8 tầng bảo vệ an toàn (`8-Fold Fail-Closed Guards`) trước khi bật bộ phát radio TX.
 - **Gateway (ESP32-WROOM-32E / Linux Gateway Engine + SX1276)**:
-  - Là nguồn cung cấp nhịp đồng hồ danh định và superframe cục bộ; vận hành bộ thu/phát bán song công trên một chip SX1276 duy nhất.
+  - **Vận hành Continuous RX 24/7 (DEC-273-01 / ADR-0004):** Duy trì chip SX1276 ở chế độ nhận liên tục (`MODE_RXCONTINUOUS`) trên kênh tĩnh VN920 được cấp phát độc quyền (CH00–CH10). Bãi bỏ hoàn toàn việc duy trì nhịp đồng hồ danh định TDMA, superframe và Beacon đồng bộ định kỳ.
   - Là thẩm quyền duy nhất sinh ra và quản lý mã định danh sự kiện toàn cục (`event_id`) để xuất bản lên Backend MQTT.
-  - Bắt buộc phải ghi nhận sự kiện vào bộ nhớ bền vững (WAL / SQLite) trước khi phát gói tin xác nhận `DOWN_EVENT_ACK` (0x42) ngay trong khe thời gian.
-  - Phát `DOWN_SYNC_BEACON` (0x43, 32B, per-Gateway HMAC-SHA256-128) chỉ trong Maintenance danh định ~300s; thực thi lịch TDMA tích cực và lưu trữ lịch dự phòng (shadow schedule).
+  - Bắt buộc phải ghi nhận sự kiện vào bộ nhớ bền vững (WAL / SQLite) trước khi chuyển radio sang TX để phát gói tin xác nhận `DOWN_EVENT_ACK` (0x42) ngay lập tức, sau đó quay lại Continuous RX 24/7.
   - Bắt tay thỏa thuận khóa phiên cục bộ với Node thông qua X25519 ECDH; quản lý ranh giới kích hoạt khóa phiên (`INSTALLED_INACTIVE` $\to$ `ACTIVE`).
 - **Backend Go Modular Monolith**:
-  - Lập kế hoạch phân bổ lịch TDMA ở tầng vĩ mô và đẩy xuống Gateway qua MQTT 5.0 / TLS; tuyệt đối **không** tạo lệnh điều khiển TX/RX theo từng slot thời gian RF.
+  - Không lập kế hoạch phân bổ lịch TDMA, không gửi cấu hình schedule qua MQTT; bãi bỏ hoàn toàn trách nhiệm phân bổ slot RF theo DEC-273-01 / ADR-0004.
+  - Quản lý định danh Gateway, Node và cấp phát kênh VN920 tĩnh độc quyền qua REST API.
   - Tuân thủ nguyên tắc **Zero-Knowledge**: Backend **không sở hữu** bí mật dùng chung $Z$ và các khóa phiên dữ liệu unicast $K_{\text{SESSION\_UP}}$, $K_{\text{SESSION\_DOWN}}$ (`DEC-SEC-01`).
-  - Xác thực bằng chứng nhận Finish từ Node (`BACKEND_READY_PROOF`) thông qua gói `UP_JOIN_READY` (0x49) trước khi đưa Node vào danh sách lập lịch hoạt động chính thức.
+  - Xác thực bằng chứng nhận Finish từ Node (`BACKEND_READY_PROOF`) thông qua gói `UP_JOIN_READY` (0x49) trước khi đưa Node vào danh sách hoạt động chính thức.
 - **PHY Layer**: SX1276 LoRa P2P, không phải LoRaWAN. Băng tần quy hoạch VN920 (920.250–922.750 MHz), công suất phát $\le +14\text{ dBm}$, tuân thủ hạn ngạch airtime pháp lý (Node $\le 1.0\%$, Gateway $\le 10\%$).
 
 ---
@@ -121,9 +121,13 @@ Mọi gói tin V2 Unicast sử dụng **Header chuẩn 7 byte** không mã hóa 
 - **Thẻ xác thực:** `CCM-8 Tag` (8B).
 - **Ràng buộc:** Gateway chỉ được phát gói tin này sau khi sự kiện đã được lưu bền vững vào WAL / SQLite.
 
-#### 3. `DOWN_SYNC_BEACON` (0x43, **32 octets**)
+#### 3. `DOWN_SYNC_BEACON` (0x43, **32 octets**) — SUPERSEDED / DEPRECATED (DEC-273-01 / ADR-0004)
 
-**Owner-approved MVP wire target:** 16B header and a 16B truncated HMAC-SHA256 authentication tag. Beacon is *time synchronization only* and cannot authorize schedule COMMIT, rejoin or activation.
+> [!WARNING]
+> **SUPERSEDED / DEPRECATED (Owner Decision DEC-273-01 / ADR-0004, Issue #273, 2026-11-09)**
+> Bản tin Beacon đồng bộ 0x43 bị bãi bỏ hoàn toàn do hệ thống không còn sử dụng khe thời gian và superframe TDMA. Sensor Node hoạt động bất đồng bộ theo sự kiện kết hợp kiểm tra CAD; Gateway vận hành Continuous RX 24/7. Nội dung dưới đây được lưu giữ phục vụ đối chiếu lịch sử.
+
+**Owner-approved MVP wire target (Lịch sử):** 16B header and a 16B truncated HMAC-SHA256 authentication tag. Beacon is *time synchronization only* and cannot authorize schedule COMMIT, rejoin or activation.
 
 | Offset | Field | Size |
 | --- | --- | ---: |
@@ -163,7 +167,11 @@ Mọi gói tin V2 Unicast sử dụng **Header chuẩn 7 byte** không mã hóa 
 
 Bytes 0..6: `0x4A | NODE_ID | SESSION_SEL | FRAME_COUNTER:u32BE` (AAD). Bytes 7..14: AES-128-CCM ciphertext of `DROPPED_EVENT_COUNT:u32BE | DIAG_SEQ:u32BE`. Bytes 15..22: CCM-8 authentication tag. Use `K_SESSION_UP` and V2 nonce `SESSION_NONCE_PREFIX8 || 0x01 || FRAME_COUNTER4`, **shared UP counter namespace** with 0x41/0x44 to avoid `(key,nonce)` reuse. Duplicate reports must not double count. Health 0x44 stays 21B. DIAG can only TX in explicitly authorized NORMAL Maintenance management opportunity; defer during Schedule Migration.
 
-#### 7. Schedule Migration V2 — signed Broadcast, READY TDMA
+#### 7. Schedule Migration V2 — SUPERSEDED / DEPRECATED (DEC-273-01 / ADR-0004)
+
+> [!WARNING]
+> **SUPERSEDED / DEPRECATED (Owner Decision DEC-273-01 / ADR-0004, Issue #273, 2026-11-09)**
+> Toàn bộ quy trình Schedule Migration (DOWN_SCHED_PREPARE 0x4B, UP_SCHED_READY 0x4C, DOWN_SCHED_DECISION 0x4D) bị bãi bỏ hoàn toàn theo DEC-273-01 / ADR-0004. Hệ thống chuyển đổi toàn diện sang Pure CAD + Random Backoff (CSMA/CA) kết hợp Gateway Continuous RX 24/7. Nội dung dưới đây được lưu giữ phục vụ đối chiếu lịch sử.
 
 - `DOWN_SCHED_PREPARE`: **80B**, 16B canonical common header + **64B Backend Ed25519 signature**, broadcast by Gateway. Candidate type `0x4B` is reserved for wire compatibility review; backend-only private signing key, Node verifies pinned Backend public key; fields bind GW/NETWORK/PROFILE/SCHED_GENERATION/K_TARGET/W_MS/KEY_ID.
 - `UP_SCHED_READY`: **41B**, **approved type 0x4C**, V2 unicast AAD 7B + encrypted 26B `[SCHED_GENERATION:u32, K_TARGET:u32, STATUS:u8, REASON:u8, BACKEND_READY_PROOF:16B]` + CCM8. A distinct Node↔Backend proof derived from `K_JOIN` must bind exact signed PREPARE, checked independently by Backend; Gateway verifies CCM.
@@ -224,27 +232,30 @@ Tuân thủ nghiêm ngặt các quyết định `DEC-SEC-01` .. `DEC-SEC-07` đ�
 
 ---
 
-## 6. Ràng buộc Tần số, CAD Join và DATA/READY Timing — OWNER MVP BASELINE
+## 6. Ràng buộc Tần số, CAD + CSMA/CA và Thời gian Phản hồi — OWNER MVP BASELINE (DEC-273-01 / ADR-0004)
 
-- DATA: `W_MS=500ms` **usable**; `G_MS=50ms` each side. Full period per implicit Node ID index = **600ms**, 15 reserved positions occupy **9000ms** plus any separately modelled DATA SF overhead. Each usable W includes Event uplink, Gateway authentication + durable acceptance WAL, RX/TX turnaround and **immediate ACK downlink in same Node Slot**. If no valid ACK, Node keeps same logical Event and retries in its next own DATA slot with dedup; missing ACK does not establish Gateway failed to store Event.
-- Slot i boundaries from authorized common DATA origin: `start(i)=(i-1)*500+(2*i-1)*50` ms; `end(i)=start(i)+500`. Empty/offline indices remain reserved; no compaction.
-- READY migration: `R_MS=400ms` usable, `G_R_MS=50ms` each side, full READY period **500ms**; 15 READY opportunities occupy **7500ms** only in on-demand Maintenance Schedule Control. Shared authenticated Maintenance origin, not PREPARE receive time, determines READY slot.
-- Maintenance Beacon + Health nominal recurrence **~300 seconds** between Maintenance; do not conflate with Maintenance frame duration. Beacon 32B HMAC in Maintenance only, no DATA Beacon Slot0.
-- Join: asynchronous any time by SX1276 CAD + randomized bounded backoff, **3 retries** after initial attempt. Gateway downlink as soon as Backend accepts and radio can TX; such downlink may collide with incoming Event and cause no ACK, handled by next-own-slot Event retry; one SX1276 cannot RX and TX simultaneously. No protected Maintenance-only Join Window.
-- Reboot: Node **RX_ONLY / DATA_TX_DISABLED**, await authenticated Backend-authorized reactivation; no data TX from persisted schedule alone. Reconciliation of session/time/generation and pending cutover fail-closed state required. Reboot activation packet type/flow remains separate implementation dependency.
-- Beacon loss: **more than 3 consecutive missed** => report disconnected. This is a status threshold, NOT a license to TX with invalid clock confidence. If guard cannot contain uncertainty, inhibit TX earlier; active schedule does not expire automatically.
-- SF7/SF8 are intended PHY choices; validate ToA, SPI/ISR jitter, actual WAL latency, RX/TX turnaround, half-duplex, RF legality and clock error before real RF operation. **Owner approved MVP numeric values, not measured performance; HIL_NOT_VERIFIED.**
+- **Bãi bỏ TDMA DATA Slots & Schedule Superframe (DEC-273-01 / ADR-0004):** Bãi bỏ hoàn toàn các thông số khe tĩnh `W_MS=500ms`, `G_MS=50ms`, chu kỳ 600ms/Node, 15 slots 9000ms, và khung READY 400ms/50ms.
+- **Cơ chế truy cập vô tuyến CAD + Exponential Random Backoff (CSMA/CA):**
+  - **Kiểm tra kênh (CAD):** Thời gian CAD trên SX1276 tương ứng $\sim 1.5 - 2$ ký hiệu LoRa ($\approx 1.5\text{ ms}$ tại SF7/BW 125kHz).
+  - **Lùi ngẫu nhiên khi kênh bận:** Cửa sổ tranh chấp $CW_{\text{min}} = 16\text{ ms}$, $CW_{\text{max}} = 256\text{ ms}$. Lùi ngẫu nhiên theo hàm mũ tại lần thử $k$ ($CW_k = \min(CW_{\text{max}}, CW_{\text{min}} \cdot 2^{k-1})$), tối đa $\text{MAX\_CAD\_RETRIES} = 5$ lần thử.
+  - **Phát sóng và Cửa sổ nhận ACK (Single RX Window):** Sau khi kênh rỗi, Node phát `UP_EVENT` (26 octets, ToA $\approx 50\text{ ms}$ tại SF7) và lập tức mở một cửa sổ RX đơn lẻ với thời gian chờ $T_{rx\_ack} \approx 200\text{ ms}$ để nhận `DOWN_EVENT_ACK` (0x42, 19 octets).
+  - **Xử lý mất ACK (Event Retry):** Nếu hết thời gian chờ $T_{rx\_ack}$ mà không nhận được ACK hợp lệ, Node áp dụng thời gian lùi ngẫu nhiên ($1.000\text{ ms} - 3.000\text{ ms}$) và thử phát lại tối đa $\text{MAX\_EVENT\_RETRIES} = 3$ lần. Nếu vẫn không thành công, sự kiện được lưu giữ bền vững trong NVS FIFO theo chính sách `RING_BUFFER_DROP_OLDEST` (`DEC-127-04`).
+- **Gateway Continuous RX 24/7:**
+  - Gateway duy trì chip SX1276 ở chế độ nhận liên tục (`MODE_RXCONTINUOUS`) trên kênh tần số VN920 tĩnh đã được Backend cấp phát (CH00–CH10).
+  - Khi nhận `UP_EVENT` hợp lệ: Gateway commit sự kiện vào bộ nhớ bền vững (WAL / SQLite), chuyển sang TX phát `DOWN_EVENT_ACK` (19 octets, ToA $\approx 36\text{ ms}$ tại SF7), sau đó lập tức hoàn trả radio về chế độ Continuous RX 24/7.
+- **Join bất đồng bộ:** Asynchronous bất kỳ lúc nào qua SX1276 CAD + randomized bounded backoff, tối đa 3 lần thử lại. Sau khi hoàn tất Join V2 và kích hoạt phiên, Node sẵn sàng gửi sự kiện nút bấm qua CAD ngay lập tức mà không cần chờ lịch TDMA.
+- **PHY SF7/SF8:** Công suất phát $\le +14\text{ dBm}$, tuân thủ hạn ngạch airtime pháp lý VN920 (Node $\le 1.0\%$, Gateway $\le 10\%$).
 
 ---
 
-
 ## 7. Tiêu chí Đóng băng Hợp đồng (Gate G2 Status)
 
-- [x] Phê duyệt kiến trúc Event-Only, bãi bỏ PCSS và Local Alarm Autonomy vật lý (Quyết định Owner #230); CAD dành riêng cho Join; nút bấm là nguồn sự kiện MVP.
+- [x] Phê duyệt kiến trúc Event-Only, bãi bỏ PCSS và Local Alarm Autonomy vật lý (Quyết định Owner #230); nút bấm là nguồn sự kiện MVP.
+- [x] **Phê duyệt chuyển đổi toàn diện từ Hybrid TDMA sang Pure CAD + Exponential Random Backoff (CSMA/CA) kết hợp Gateway Continuous RX 24/7 (Quyết định Owner DEC-273-01 / ADR-0004, Issue #273).**
 - [x] Phê duyệt mã bản tin và bố cục gói tin Join V2 (0x45..0x48) và Post-Join (0x49).
 - [x] Phê duyệt bộ quyết định an ninh mật mã `DEC-SEC-01` .. `DEC-SEC-07`.
-- [x] Phê duyệt mã bản tin `UP_EVENT` (0x41), `DOWN_EVENT_ACK` (0x42), `DOWN_SYNC_BEACON` (0x43), `UP_HEALTH_REPLY` (0x44).
-- [x] Phê duyệt baseline DATA W500/G50, READY R400/G_R50, SF7/SF8 (Owner #208; HIL chưa chạy) và chính sách hàng đợi `RING_BUFFER_DROP_OLDEST` (`DEC-127-04`).
+- [x] Phê duyệt mã bản tin `UP_EVENT` (0x41) 26B, `DOWN_EVENT_ACK` (0x42) 19B, `UP_DIAG_METRICS` (0x4A) 23B; bãi bỏ `DOWN_SYNC_BEACON` (0x43) và Schedule Migration (`0x4B`/`0x4C`/`0x4D`).
+- [x] Phê duyệt chính sách hàng đợi `RING_BUFFER_DROP_OLDEST` (`DEC-127-04`).
 - [ ] Hoàn thành kiểm tra chéo Golden Vectors Go $\leftrightarrow$ ESP-IDF mbedTLS (Issue #173) $\to$ **NOT_VERIFIED**.
 - [ ] Hoàn thành kiểm tra phân quyền ACL broker Mosquitto mTLS (Issue #174) $\to$ **NOT_VERIFIED**.
 - [ ] Hoàn thành kiểm thử xung đột nguồn Gateway NVS HIL (Issue #175) $\to$ **NOT_VERIFIED**.
