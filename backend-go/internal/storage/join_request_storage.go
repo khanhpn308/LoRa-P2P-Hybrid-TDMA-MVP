@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	ErrRequestNotFound = errors.New("join request not found")
+	ErrRequestNotFound   = errors.New("join request not found")
 	ErrNoAvailableNodeID = errors.New("no available node ID in range 1-254")
 )
 
