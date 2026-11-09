@@ -176,13 +176,19 @@ func TestListChannelsEndpoint(t *testing.T) {
 
 func TestAllocateChannelEndpoint(t *testing.T) {
 	repo := newMockRepo()
-	handler := api.NewChannelHandler(repo)
+	auth := api.NewStaticAuthenticator(map[string]api.Role{
+		"operator-tok": api.RoleOperator,
+		"admin-tok":    api.RoleAdmin,
+		"viewer-tok":   api.RoleViewer,
+	})
+	handler := api.NewChannelHandler(repo, auth)
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
 	t.Run("successful allocation", func(t *testing.T) {
 		body := `{"channel_id":"CH00"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/gateways/gw01/channels/request", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer operator-tok")
 		req.Header.Set("X-Idempotency-Key", "req-1")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
@@ -206,6 +212,7 @@ func TestAllocateChannelEndpoint(t *testing.T) {
 	t.Run("missing idempotency key", func(t *testing.T) {
 		body := `{"channel_id":"CH01"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/gateways/gw02/channels/request", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer operator-tok")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -217,6 +224,7 @@ func TestAllocateChannelEndpoint(t *testing.T) {
 	t.Run("idempotent replay", func(t *testing.T) {
 		body := `{"channel_id":"CH00"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/gateways/gw01/channels/request", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer operator-tok")
 		req.Header.Set("X-Idempotency-Key", "req-1")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
@@ -229,6 +237,7 @@ func TestAllocateChannelEndpoint(t *testing.T) {
 	t.Run("gateway already holds a channel", func(t *testing.T) {
 		body := `{"channel_id":"CH01"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/gateways/gw01/channels/request", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer operator-tok")
 		req.Header.Set("X-Idempotency-Key", "req-2")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
@@ -244,6 +253,7 @@ func TestAllocateChannelEndpoint(t *testing.T) {
 	t.Run("channel already in use by another gateway", func(t *testing.T) {
 		body := `{"channel_id":"CH00"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/gateways/gw02/channels/request", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer operator-tok")
 		req.Header.Set("X-Idempotency-Key", "req-3")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
@@ -259,6 +269,7 @@ func TestAllocateChannelEndpoint(t *testing.T) {
 	t.Run("invalid channel", func(t *testing.T) {
 		body := `{"channel_id":"CH99"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/gateways/gw02/channels/request", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer operator-tok")
 		req.Header.Set("X-Idempotency-Key", "req-4")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
@@ -271,6 +282,7 @@ func TestAllocateChannelEndpoint(t *testing.T) {
 	t.Run("rejects unknown json fields (SE-004)", func(t *testing.T) {
 		body := `{"channel_id":"CH01","injected":"evil"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/gateways/gw02/channels/request", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer operator-tok")
 		req.Header.Set("X-Idempotency-Key", "req-5")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
@@ -283,6 +295,7 @@ func TestAllocateChannelEndpoint(t *testing.T) {
 	t.Run("rejects payload exceeding size limit", func(t *testing.T) {
 		oversized := `{"channel_id":"CH01","filler":"` + strings.Repeat("x", 5000) + `"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/gateways/gw02/channels/request", strings.NewReader(oversized))
+		req.Header.Set("Authorization", "Bearer operator-tok")
 		req.Header.Set("X-Idempotency-Key", "req-6")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
@@ -342,7 +355,12 @@ func TestGetChannelEndpoint(t *testing.T) {
 
 func TestReleaseChannelEndpoint(t *testing.T) {
 	repo := newMockRepo()
-	handler := api.NewChannelHandler(repo)
+	auth := api.NewStaticAuthenticator(map[string]api.Role{
+		"operator-tok": api.RoleOperator,
+		"admin-tok":    api.RoleAdmin,
+		"viewer-tok":   api.RoleViewer,
+	})
+	handler := api.NewChannelHandler(repo, auth)
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
@@ -360,6 +378,7 @@ func TestReleaseChannelEndpoint(t *testing.T) {
 
 	t.Run("successful release", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/gateways/gw01/channel", nil)
+		req.Header.Set("Authorization", "Bearer admin-tok")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -378,6 +397,7 @@ func TestReleaseChannelEndpoint(t *testing.T) {
 
 	t.Run("release non-allocated channel", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/gateways/gw01/channel", nil)
+		req.Header.Set("Authorization", "Bearer admin-tok")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -388,7 +408,7 @@ func TestReleaseChannelEndpoint(t *testing.T) {
 
 	t.Run("release blocked by active schedule", func(t *testing.T) {
 		guard := &mockScheduleGuard{blockedGateway: "gw02"}
-		hWithGuard := api.NewChannelHandler(repo, guard)
+		hWithGuard := api.NewChannelHandler(repo, guard, auth)
 		mWithGuard := http.NewServeMux()
 		hWithGuard.RegisterRoutes(mWithGuard)
 
@@ -405,6 +425,7 @@ func TestReleaseChannelEndpoint(t *testing.T) {
 		}
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/gateways/gw02/channel", nil)
+		req.Header.Set("Authorization", "Bearer admin-tok")
 		rec := httptest.NewRecorder()
 		mWithGuard.ServeHTTP(rec, req)
 
@@ -413,6 +434,179 @@ func TestReleaseChannelEndpoint(t *testing.T) {
 		}
 		if !strings.Contains(rec.Body.String(), "ERR_ACTIVE_SCHEDULE_ON_CHANNEL") {
 			t.Errorf("expected ERR_ACTIVE_SCHEDULE_ON_CHANNEL in body: %s", rec.Body.String())
+		}
+	})
+}
+
+func TestChannelHandler_RBAC_Table(t *testing.T) {
+	repo := newMockRepo()
+	auth := api.NewStaticAuthenticator(map[string]api.Role{
+		"viewer-tok":   api.RoleViewer,
+		"operator-tok": api.RoleOperator,
+		"admin-tok":    api.RoleAdmin,
+	})
+	handler := api.NewChannelHandler(repo, auth)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// Pre-seed an allocation for gw03
+	_, _ = repo.AllocateChannel(context.Background(), domain.AllocateRequest{
+		GatewayID:          "gw03",
+		ChannelID:          "CH03",
+		ChannelPlanVersion: domain.ChannelPlanVN920V1,
+		RequestID:          "seed-alloc-3",
+		GrantedBy:          "test",
+	})
+
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		body       string
+		idempKey   string
+		authHeader string
+		wantCode   int
+	}{
+		// POST /gateways/{gw_id}/channels/request
+		{
+			name:       "POST request channel missing token -> 401",
+			method:     http.MethodPost,
+			path:       "/api/v1/gateways/gw05/channels/request",
+			body:       `{"channel_id":"CH05"}`,
+			idempKey:   "req-auth-1",
+			authHeader: "",
+			wantCode:   http.StatusUnauthorized,
+		},
+		{
+			name:       "POST request channel empty token -> 401",
+			method:     http.MethodPost,
+			path:       "/api/v1/gateways/gw05/channels/request",
+			body:       `{"channel_id":"CH05"}`,
+			idempKey:   "req-auth-2",
+			authHeader: "Bearer ",
+			wantCode:   http.StatusUnauthorized,
+		},
+		{
+			name:       "POST request channel invalid token -> 401",
+			method:     http.MethodPost,
+			path:       "/api/v1/gateways/gw05/channels/request",
+			body:       `{"channel_id":"CH05"}`,
+			idempKey:   "req-auth-3",
+			authHeader: "Bearer invalid-token",
+			wantCode:   http.StatusUnauthorized,
+		},
+		{
+			name:       "POST request channel VIEWER token -> 403 Forbidden",
+			method:     http.MethodPost,
+			path:       "/api/v1/gateways/gw05/channels/request",
+			body:       `{"channel_id":"CH05"}`,
+			idempKey:   "req-auth-4",
+			authHeader: "Bearer viewer-tok",
+			wantCode:   http.StatusForbidden,
+		},
+		{
+			name:       "POST request channel OPERATOR token -> 201 Created",
+			method:     http.MethodPost,
+			path:       "/api/v1/gateways/gw05/channels/request",
+			body:       `{"channel_id":"CH05"}`,
+			idempKey:   "req-auth-5",
+			authHeader: "Bearer operator-tok",
+			wantCode:   http.StatusCreated,
+		},
+		{
+			name:       "POST request channel ADMIN token -> 201 Created",
+			method:     http.MethodPost,
+			path:       "/api/v1/gateways/gw06/channels/request",
+			body:       `{"channel_id":"CH06"}`,
+			idempKey:   "req-auth-6",
+			authHeader: "Bearer admin-tok",
+			wantCode:   http.StatusCreated,
+		},
+		// DELETE /gateways/{gw_id}/channel
+		{
+			name:       "DELETE channel missing token -> 401",
+			method:     http.MethodDelete,
+			path:       "/api/v1/gateways/gw03/channel",
+			authHeader: "",
+			wantCode:   http.StatusUnauthorized,
+		},
+		{
+			name:       "DELETE channel empty token -> 401",
+			method:     http.MethodDelete,
+			path:       "/api/v1/gateways/gw03/channel",
+			authHeader: "Bearer ",
+			wantCode:   http.StatusUnauthorized,
+		},
+		{
+			name:       "DELETE channel invalid token -> 401",
+			method:     http.MethodDelete,
+			path:       "/api/v1/gateways/gw03/channel",
+			authHeader: "Bearer invalid-token",
+			wantCode:   http.StatusUnauthorized,
+		},
+		{
+			name:       "DELETE channel VIEWER token -> 403 Forbidden",
+			method:     http.MethodDelete,
+			path:       "/api/v1/gateways/gw03/channel",
+			authHeader: "Bearer viewer-tok",
+			wantCode:   http.StatusForbidden,
+		},
+		{
+			name:       "DELETE channel OPERATOR token -> 403 Forbidden",
+			method:     http.MethodDelete,
+			path:       "/api/v1/gateways/gw03/channel",
+			authHeader: "Bearer operator-tok",
+			wantCode:   http.StatusForbidden,
+		},
+		{
+			name:       "DELETE channel ADMIN token -> 200 OK",
+			method:     http.MethodDelete,
+			path:       "/api/v1/gateways/gw03/channel",
+			authHeader: "Bearer admin-tok",
+			wantCode:   http.StatusOK,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var bodyReader = strings.NewReader(tc.body)
+			req := httptest.NewRequest(tc.method, tc.path, bodyReader)
+			if tc.authHeader != "" {
+				req.Header.Set("Authorization", tc.authHeader)
+			}
+			if tc.idempKey != "" {
+				req.Header.Set("X-Idempotency-Key", tc.idempKey)
+			}
+			if tc.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != tc.wantCode {
+				t.Fatalf("expected status %d, got %d (body: %s)", tc.wantCode, rec.Code, rec.Body.String())
+			}
+		})
+	}
+
+	t.Run("unconfigured authenticator returns 500 INTERNAL_ERROR", func(t *testing.T) {
+		unconfiguredHandler := api.NewChannelHandler(repo)
+		unconfiguredMux := http.NewServeMux()
+		unconfiguredHandler.RegisterRoutes(unconfiguredMux)
+
+		reqPost := httptest.NewRequest(http.MethodPost, "/api/v1/gateways/gw10/channels/request", strings.NewReader(`{"channel_id":"CH08"}`))
+		reqPost.Header.Set("X-Idempotency-Key", "req-unconf-1")
+		recPost := httptest.NewRecorder()
+		unconfiguredMux.ServeHTTP(recPost, reqPost)
+		if recPost.Code != http.StatusInternalServerError {
+			t.Errorf("expected 500 for unconfigured handler on POST request, got %d", recPost.Code)
+		}
+
+		reqDel := httptest.NewRequest(http.MethodDelete, "/api/v1/gateways/gw10/channel", nil)
+		recDel := httptest.NewRecorder()
+		unconfiguredMux.ServeHTTP(recDel, reqDel)
+		if recDel.Code != http.StatusInternalServerError {
+			t.Errorf("expected 500 for unconfigured handler on DELETE release, got %d", recDel.Code)
 		}
 	})
 }

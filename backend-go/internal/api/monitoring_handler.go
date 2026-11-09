@@ -98,6 +98,11 @@ type CreateGatewayDTO struct {
 
 // handleCreateGateway registers or updates a gateway metadata entry.
 func (h *MonitoringHandler) handleCreateGateway(w http.ResponseWriter, r *http.Request) {
+	if status, code, msg := h.checkAdminRBAC(r); status != http.StatusOK {
+		writeError(w, status, code, msg)
+		return
+	}
+
 	var dto CreateGatewayDTO
 	if err := json.NewDecoder(r.Body).Decode(&dto); err != nil {
 		writeError(w, http.StatusBadRequest, "MALFORMED_JSON", "invalid JSON payload")

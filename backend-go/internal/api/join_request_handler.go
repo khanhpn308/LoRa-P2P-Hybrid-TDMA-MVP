@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/storage"
 )
@@ -18,16 +19,21 @@ type DownlinkPublisher interface {
 
 // JoinRequestHandler provides endpoints for inspecting and approving/rejecting node join requests.
 type JoinRequestHandler struct {
-	store     storage.JoinRequestStorage
-	publisher DownlinkPublisher
+	store         storage.JoinRequestStorage
+	publisher     DownlinkPublisher
+	authenticator Authenticator
 }
 
-// NewJoinRequestHandler constructs a new JoinRequestHandler.
-func NewJoinRequestHandler(store storage.JoinRequestStorage, publisher DownlinkPublisher) *JoinRequestHandler {
-	return &JoinRequestHandler{
+// NewJoinRequestHandler constructs a new JoinRequestHandler with optional Authenticator.
+func NewJoinRequestHandler(store storage.JoinRequestStorage, publisher DownlinkPublisher, auth ...Authenticator) *JoinRequestHandler {
+	h := &JoinRequestHandler{
 		store:     store,
 		publisher: publisher,
 	}
+	if len(auth) > 0 {
+		h.authenticator = auth[0]
+	}
+	return h
 }
 
 // RegisterRoutes registers the join request routes on a ServeMux.
@@ -37,7 +43,44 @@ func (h *JoinRequestHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/devices/requests/{id}/reject", h.handleReject)
 }
 
+func (h *JoinRequestHandler) checkRBAC(r *http.Request, allowedRoles ...Role) (string, int, error) {
+	if h.authenticator == nil {
+		return "", http.StatusInternalServerError, errors.New("authenticator unconfigured")
+	}
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+		return "", http.StatusUnauthorized, errors.New("bearer token required")
+	}
+	token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+	if token == "" {
+		return "", http.StatusUnauthorized, errors.New("bearer token empty")
+	}
+	role, err := h.authenticator.Authenticate(token)
+	if err != nil {
+		return "", http.StatusUnauthorized, errors.New("invalid or expired bearer token")
+	}
+	for _, allowed := range allowedRoles {
+		if role == allowed {
+			return string(role), http.StatusOK, nil
+		}
+	}
+	return "", http.StatusForbidden, errors.New("insufficient permissions")
+}
+
 func (h *JoinRequestHandler) handleListRequests(w http.ResponseWriter, r *http.Request) {
+	// RBAC check: VIEWER, OPERATOR, ADMIN allowed to inspect join requests
+	_, status, err := h.checkRBAC(r, RoleViewer, RoleOperator, RoleAdmin)
+	if err != nil {
+		if status == http.StatusForbidden {
+			writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+		} else if status == http.StatusInternalServerError {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		} else {
+			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", err.Error())
+		}
+		return
+	}
+
 	list, err := h.store.ListPendingRequests(r.Context())
 	if err != nil {
 		log.Printf("[JoinRequestHandler] ListPendingRequests error: %v", err)
@@ -55,6 +98,19 @@ type ApproveRequestDTO struct {
 }
 
 func (h *JoinRequestHandler) handleApprove(w http.ResponseWriter, r *http.Request) {
+	// RBAC check: OPERATOR or ADMIN required (VIEWER forbidden)
+	_, status, err := h.checkRBAC(r, RoleOperator, RoleAdmin)
+	if err != nil {
+		if status == http.StatusForbidden {
+			writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+		} else if status == http.StatusInternalServerError {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		} else {
+			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", err.Error())
+		}
+		return
+	}
+
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil || id <= 0 {
@@ -97,6 +153,19 @@ func (h *JoinRequestHandler) handleApprove(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *JoinRequestHandler) handleReject(w http.ResponseWriter, r *http.Request) {
+	// RBAC check: OPERATOR or ADMIN required (VIEWER forbidden)
+	_, status, err := h.checkRBAC(r, RoleOperator, RoleAdmin)
+	if err != nil {
+		if status == http.StatusForbidden {
+			writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+		} else if status == http.StatusInternalServerError {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		} else {
+			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", err.Error())
+		}
+		return
+	}
+
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil || id <= 0 {

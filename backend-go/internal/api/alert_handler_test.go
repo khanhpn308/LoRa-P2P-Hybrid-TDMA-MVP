@@ -103,7 +103,15 @@ func (m *mockAlertRepo) AcknowledgeAlert(ctx context.Context, alertID int64, ack
 }
 
 func setupAlertRouter(repo api.AlertRepository, auth ...api.Authenticator) http.Handler {
-	handler := api.NewAlertHandler(repo, auth...)
+	var a api.Authenticator
+	if len(auth) > 0 {
+		a = auth[0]
+	} else {
+		a = api.NewStaticAuthenticator(map[string]api.Role{
+			"test-tok": api.RoleOperator,
+		})
+	}
+	handler := api.NewAlertHandler(repo, a)
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 	return mux
@@ -229,6 +237,7 @@ func TestAlertHandler_ListAlerts_Table(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest("GET", "/api/v1/alerts"+tc.query, nil)
+			req.Header.Set("Authorization", "Bearer test-tok")
 			rec := httptest.NewRecorder()
 
 			router.ServeHTTP(rec, req)
@@ -313,6 +322,7 @@ func TestAlertHandler_AcknowledgeAlert_Table(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var bodyReader = strings.NewReader(tc.body)
 			req := httptest.NewRequest("POST", "/api/v1/alerts/"+tc.alertID+"/acknowledge", bodyReader)
+			req.Header.Set("Authorization", "Bearer test-tok")
 			if tc.body != "" {
 				req.Header.Set("Content-Type", "application/json")
 			}
@@ -426,6 +436,20 @@ func TestAlertHandler_RBAC_Table(t *testing.T) {
 			authHeader: "Bearer admin-tok",
 			wantCode:   http.StatusOK,
 		},
+		{
+			name:       "GET /alerts empty bearer token -> 401",
+			method:     "GET",
+			path:       "/api/v1/alerts",
+			authHeader: "Bearer ",
+			wantCode:   http.StatusUnauthorized,
+		},
+		{
+			name:       "POST /alerts/{id}/ack empty bearer token -> 401",
+			method:     "POST",
+			path:       "/api/v1/alerts/101/acknowledge",
+			authHeader: "Bearer ",
+			wantCode:   http.StatusUnauthorized,
+		},
 	}
 
 	for _, tc := range tests {
@@ -443,4 +467,24 @@ func TestAlertHandler_RBAC_Table(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("unconfigured authenticator returns 500 INTERNAL_ERROR", func(t *testing.T) {
+		unconfiguredHandler := api.NewAlertHandler(repo)
+		unconfiguredMux := http.NewServeMux()
+		unconfiguredHandler.RegisterRoutes(unconfiguredMux)
+
+		reqGet := httptest.NewRequest("GET", "/api/v1/alerts", nil)
+		recGet := httptest.NewRecorder()
+		unconfiguredMux.ServeHTTP(recGet, reqGet)
+		if recGet.Code != http.StatusInternalServerError {
+			t.Errorf("expected 500 for unconfigured handler on GET, got %d", recGet.Code)
+		}
+
+		reqAck := httptest.NewRequest("POST", "/api/v1/alerts/101/acknowledge", nil)
+		recAck := httptest.NewRecorder()
+		unconfiguredMux.ServeHTTP(recAck, reqAck)
+		if recAck.Code != http.StatusInternalServerError {
+			t.Errorf("expected 500 for unconfigured handler on POST ack, got %d", recAck.Code)
+		}
+	})
 }

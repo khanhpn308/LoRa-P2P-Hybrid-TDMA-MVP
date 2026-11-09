@@ -54,7 +54,7 @@ func (h *AlertHandler) RegisterRoutes(mux *http.ServeMux) {
 
 func (h *AlertHandler) checkRBAC(r *http.Request, allowedRoles ...Role) (string, int, error) {
 	if h.authenticator == nil {
-		return "operator", http.StatusOK, nil
+		return "", http.StatusInternalServerError, errors.New("authenticator unconfigured")
 	}
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
@@ -82,6 +82,8 @@ func (h *AlertHandler) handleListAlerts(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		if status == http.StatusForbidden {
 			writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+		} else if status == http.StatusInternalServerError {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		} else {
 			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", err.Error())
 		}
@@ -176,6 +178,8 @@ func (h *AlertHandler) handleAcknowledgeAlert(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		if status == http.StatusForbidden {
 			writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+		} else if status == http.StatusInternalServerError {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		} else {
 			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", err.Error())
 		}
