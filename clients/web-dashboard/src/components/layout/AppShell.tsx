@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { Header } from "./Header";
 import { Sidebar, NavItemKey } from "./Sidebar";
+import { useTheme } from "@/components/providers/ThemeProvider";
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -15,70 +16,14 @@ export const AppShell: React.FC<AppShellProps> = ({
   activeRoute = "overview",
   onRouteChange,
 }) => {
-  const [darkMode, setDarkMode] = useState(false);
+  const { darkMode, toggleDarkMode } = useTheme();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-  // Sync theme with localStorage and system preference
-  useEffect(() => {
-    const applyTheme = () => {
-      const savedTheme = localStorage.getItem("theme") || "system";
-      let isDark: boolean;
-      if (savedTheme === "dark") {
-        isDark = true;
-      } else if (savedTheme === "light") {
-        isDark = false;
-      } else {
-        // system preference
-        isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-      }
-
-      setDarkMode(isDark);
-      if (isDark) {
-        document.documentElement.classList.add("dark");
-      } else {
-        document.documentElement.classList.remove("dark");
-      }
-    };
-
-    applyTheme();
-
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    const handleSystemChange = () => {
-      if (localStorage.getItem("theme") === "system" || !localStorage.getItem("theme")) {
-        applyTheme();
-      }
-    };
-
-    const handleCustomChange = () => {
-      applyTheme();
-    };
-
-    window.addEventListener("theme-change", handleCustomChange);
-    window.addEventListener("storage", handleCustomChange);
-    mediaQuery.addEventListener("change", handleSystemChange);
-
-    return () => {
-      window.removeEventListener("theme-change", handleCustomChange);
-      window.removeEventListener("storage", handleCustomChange);
-      mediaQuery.removeEventListener("change", handleSystemChange);
-    };
-  }, []);
-
-  const toggleDarkMode = () => {
-    const nextDark = !darkMode;
-    setDarkMode(nextDark);
-    const mode = nextDark ? "dark" : "light";
-    localStorage.setItem("theme", mode);
-    if (nextDark) {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
-    window.dispatchEvent(new Event("theme-change"));
-  };
-
   return (
-    <div className={`min-h-screen flex flex-col ${darkMode ? "dark" : ""}`}>
+    <div
+      className={`min-h-screen flex flex-col ${darkMode ? "dark" : ""}`}
+      suppressHydrationWarning
+    >
       {/* 56px Header across full width */}
       <Header
         darkMode={darkMode}
