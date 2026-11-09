@@ -5,7 +5,8 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { NavItemKey } from "@/components/layout/Sidebar";
 import { getNodes, getDeviceJoinRequests, approveDeviceJoinRequest, rejectDeviceJoinRequest, deleteNode } from "@/lib/api/nodes";
-import { provisionDevice } from "@/lib/api/provisioning";
+import { ProvisionDeviceModal } from "@/components/nodes/ProvisionDeviceModal";
+import type { DeviceProvisionResponse } from "@/types/api";
 import { useAuth } from "@/lib/auth/AuthContext";
 import { useRealtime } from "@/lib/realtime/RealtimeContext";
 import { ApiClientError } from "@/lib/api/client";
@@ -86,6 +87,7 @@ function NodesContent() {
   const [approveFormArea, setApproveFormArea] = useState<string>("Khu A - Phân xưởng Ép");
   const [deletingNode, setDeletingNode] = useState<ConnectedNodeItem | null>(null);
   const [isDeletingNode, setIsDeletingNode] = useState<boolean>(false);
+  const [isProvisionModalOpen, setIsProvisionModalOpen] = useState<boolean>(false);
 
   // Toast feedback state
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -95,6 +97,11 @@ function NodesContent() {
     setTimeout(() => {
       setToastMessage(null);
     }, 3500);
+  };
+
+  const handleProvisionSuccess = (resp: DeviceProvisionResponse) => {
+    showToast(`Cấp phát thành công thiết bị [${resp.device_mac}] cho Network ${resp.network_id}!`);
+    loadNodes();
   };
 
   const handleConfirmDeleteNode = async () => {
@@ -326,11 +333,21 @@ function NodesContent() {
             </p>
           </div>
 
-          <div className="flex items-center shrink-0">
+          <div className="flex items-center gap-3 shrink-0">
+            {role === "ADMIN" && (
+              <button
+                type="button"
+                onClick={() => setIsProvisionModalOpen(true)}
+                className="h-10 px-4 bg-interactive hover:bg-interactive-hover active:bg-blue-700 text-white font-medium text-sm rounded-lg inline-flex items-center gap-2 transition-colors shadow-none focus:outline-none focus:ring-2 focus:ring-interactive focus:ring-offset-2 focus:ring-offset-canvas cursor-pointer"
+              >
+                <ShieldCheck className="w-4 h-4 shrink-0" />
+                <span>Cấp phát thiết bị</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setActiveTab("new")}
-              className="h-10 px-4 bg-interactive hover:bg-interactive-hover active:bg-blue-700 text-white font-medium text-sm rounded-lg inline-flex items-center gap-2 transition-colors shadow-none focus:outline-none focus:ring-2 focus:ring-interactive focus:ring-offset-2 focus:ring-offset-canvas cursor-pointer"
+              className="h-10 px-4 bg-canvas hover:bg-surface border border-border text-text-primary font-medium text-sm rounded-lg inline-flex items-center gap-2 transition-colors shadow-none focus:outline-none focus:ring-2 focus:ring-interactive focus:ring-offset-2 focus:ring-offset-canvas cursor-pointer"
             >
               <Plus className="w-4 h-4 shrink-0" />
               <span>Thêm Node</span>
@@ -713,6 +730,16 @@ function NodesContent() {
               </div>
 
               <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                {role === "ADMIN" && (
+                  <button
+                    type="button"
+                    onClick={() => setIsProvisionModalOpen(true)}
+                    className="h-10 px-3 bg-surface hover:bg-canvas border border-border text-text-primary rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <ShieldCheck className="w-3.5 h-3.5 text-interactive" />
+                    <span>Cấp phát thiết bị</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => {
@@ -1159,6 +1186,13 @@ function NodesContent() {
             </div>
           </div>
         )}
+
+        {/* Provision Device Modal (Issue #305) */}
+        <ProvisionDeviceModal
+          isOpen={isProvisionModalOpen}
+          onClose={() => setIsProvisionModalOpen(false)}
+          onSuccess={handleProvisionSuccess}
+        />
 
         {/* Floating Context-Aware Feedback Toast */}
         {toastMessage && (

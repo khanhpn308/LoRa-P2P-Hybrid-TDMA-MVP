@@ -21,8 +21,8 @@ function LoginContent() {
   const router = useRouter();
   const { login } = useAuth();
 
-  const [username, setUsername] = useState("admin01");
-  const [password, setPassword] = useState("password123");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -234,7 +234,7 @@ function LoginContent() {
             {/* Demo Hint */}
             <div className="text-[11px] text-text-secondary bg-canvas p-2.5 rounded-lg border border-border flex items-center justify-between">
               <span>{lang === "vi" ? "Mẫu tài khoản mặc định:" : "Default demo account:"}</span>
-              <span className="font-mono font-semibold text-text-primary">admin01</span>
+              <span className="font-mono font-semibold text-text-primary">admin / admin</span>
             </div>
 
             {/* Submit Button */}
