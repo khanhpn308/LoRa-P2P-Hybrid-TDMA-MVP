@@ -1,5 +1,6 @@
 #include <inttypes.h>
 #include <string.h>
+#include <stdlib.h>
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "nvs_flash.h"
@@ -7,14 +8,14 @@
 #include "freertos/task.h"
 
 #include "lora_mac.h"
+#include "lora_mac_crypto.h"
 #include "sx1276_driver.h"
 #include "session_key_store.h"
 #include "gateway_transport.h"
 #include "gateway_v2_join.h"
+#include "gateway_wal.h"
 #include "sdkconfig.h"
 #include "airtime_policy.h"
-#include "gateway_tdma_master.h"
-#include "gateway_crypto.h"
 
 static const char *TAG = "gateway_master";
 static char s_gateway_id[32] = "gw-a";
@@ -127,9 +128,9 @@ static void on_downlink_join_grant(const uint8_t *data, size_t len)
     }
 }
 
-static gateway_tdma_engine_t s_tdma_engine;
-static TaskHandle_t s_tdma_task_handle = NULL;
-static esp_timer_handle_t s_epoch_timer = NULL;
+static gateway_wal_t s_gateway_wal;
+static uint32_t s_downlink_frame_counter = 0;
+static TaskHandle_t s_gateway_rx_task_handle = NULL;
 static esp_timer_handle_t s_gw_heartbeat_timer = NULL;
 static esp_timer_handle_t s_nodes_liveness_timer = NULL;
 
@@ -141,69 +142,6 @@ static uint32_t s_rx_events_total = 0;
 #define GATEWAY_TASK_STACK_SIZE_BYTES (16384U)
 static StackType_t s_gateway_task_stack[GATEWAY_TASK_STACK_SIZE_BYTES];
 static StaticTask_t s_gateway_task_tcb;
-
-/* Hardware and Radio HAL Callbacks */
-
-static esp_err_t hal_radio_tx(const uint8_t *payload, uint8_t length, uint32_t timeout_ms)
-{
-    TickType_t ticks = pdMS_TO_TICKS(timeout_ms);
-    return sx1276_tx(payload, length, ticks);
-}
-
-static esp_err_t hal_radio_rx_start(void)
-{
-    return sx1276_start_rx_continuous();
-}
-
-static esp_err_t hal_radio_rx_stop(void)
-{
-    return sx1276_stop_rx();
-}
-
-static esp_err_t hal_radio_read_frame(uint8_t *out_buf, size_t *out_len, int16_t *out_rssi, int8_t *out_snr, uint32_t timeout_ms)
-{
-    sx1276_rx_frame_t frame;
-    TickType_t ticks = pdMS_TO_TICKS(timeout_ms);
-    esp_err_t err = sx1276_read_frame(&frame, ticks);
-    if (err == ESP_OK) {
-        if (out_buf != NULL && frame.length <= 128U) {
-            (void)memcpy(out_buf, frame.payload, frame.length);
-        }
-        if (out_len != NULL) {
-            *out_len = frame.length;
-        }
-        if (out_rssi != NULL) {
-            *out_rssi = frame.rssi_dbm;
-        }
-        if (out_snr != NULL) {
-            *out_snr = frame.snr_db_quarter;
-        }
-        return ESP_OK;
-    }
-    return err;
-}
-
-static esp_err_t hal_radio_standby(void)
-{
-    return sx1276_standby();
-}
-
-static esp_err_t hal_radio_sleep(void)
-{
-    return sx1276_sleep();
-}
-
-static uint32_t hal_get_time_ms(void)
-{
-    return (uint32_t)(esp_timer_get_time() / 1000ULL);
-}
-
-static void hal_delay_ms(uint32_t ms)
-{
-    if (ms > 0U) {
-        vTaskDelay(pdMS_TO_TICKS(ms));
-    }
-}
 
 static esp_err_t hal_session_key_lookup(uint8_t node_id,
                                         uint8_t *out_session_sel,
@@ -237,15 +175,6 @@ static esp_err_t hal_session_key_lookup(uint8_t node_id,
         }
     }
     return ESP_OK;
-}
-
-static void gateway_epoch_timer_cb(void *arg)
-{
-    (void)arg;
-    if (s_tdma_task_handle != NULL) {
-        /* Non-blocking notification to worker task per RTOS-001 / RTOS-005 */
-        vTaskNotifyGiveFromISR(s_tdma_task_handle, NULL);
-    }
 }
 
 static void gateway_heartbeat_timer_cb(void *arg)
@@ -481,12 +410,12 @@ static esp_err_t process_join_packet(const uint8_t *payload, size_t length, int1
                 (void)lora_mac_v2_build_nonce(nonce_prefix, LORA_MAC_V2_DIR_UPLINK, hdr.frame_counter, nonce);
 
                 uint8_t pt[11];
-                esp_err_t dec_err = gateway_crypto_decrypt_up_event(k_session_up,
-                                                                    nonce,
-                                                                    payload, 7U,
-                                                                    &payload[7], 11U,
-                                                                    &payload[18],
-                                                                    pt);
+                esp_err_t dec_err = lora_mac_crypto_decrypt_up_event(k_session_up,
+                                                                     nonce,
+                                                                     payload, 7U,
+                                                                     &payload[7], 11U,
+                                                                     &payload[18],
+                                                                     pt);
                 if (dec_err != ESP_OK) {
                     ESP_LOGW(TAG, "[EVENT RX] Decryption/MIC verification failed for Node #%u", hdr.node_id);
                     return dec_err;
@@ -495,7 +424,7 @@ static esp_err_t process_join_packet(const uint8_t *payload, size_t length, int1
                 lora_mac_v2_up_event_t up_ev;
                 (void)lora_mac_v2_up_event_deserialize(pt, 11U, &up_ev);
                 ESP_LOGI(TAG, "==================================================");
-                ESP_LOGI(TAG, ">>> VALID UP_EVENT RECEIVED! <<< Node #%u: Ref=%" PRIu32 ", Code=%u, Val=%u | RSSI=%d dBm, SNR=%.1f dB",
+                ESP_LOGI(TAG, ">>> VALID UP_EVENT RECEIVED! <<< Node #%u: Ref=%" PRIu32 ", Code=%u, Val=%d | RSSI=%d dBm, SNR=%.1f dB",
                          hdr.node_id, up_ev.event_ref, up_ev.event_code, up_ev.event_value, rssi, (double)snr_f);
                 ESP_LOGI(TAG, "==================================================");
 
@@ -519,7 +448,7 @@ static esp_err_t process_join_packet(const uint8_t *payload, size_t length, int1
                     .rssi_dbm = rssi,
                     .snr_db_quarter = snr,
                 };
-                (void)gateway_wal_push(&s_tdma_engine.wal, &wal_ev);
+                (void)gateway_wal_push(&s_gateway_wal, &wal_ev);
 
                 /* Publish Event to Backend over MQTT for UI Charts */
                 char alert_payload[384];
@@ -543,7 +472,7 @@ static esp_err_t process_join_packet(const uint8_t *payload, size_t length, int1
                     .ver_type = LORA_MAC_V2_TYPE_DOWN_EVENT_ACK,
                     .node_id = hdr.node_id,
                     .session_sel = hdr.session_sel,
-                    .frame_counter = ++s_tdma_engine.downlink_frame_counter,
+                    .frame_counter = ++s_downlink_frame_counter,
                 };
                 size_t ack_hdr_written = 0;
                 (void)lora_mac_v2_header_encode(&ack_hdr, ack_packet, 19U, &ack_hdr_written);
@@ -558,12 +487,12 @@ static esp_err_t process_join_packet(const uint8_t *payload, size_t length, int1
                 uint8_t dl_nonce[13];
                 (void)lora_mac_v2_build_nonce(nonce_prefix, LORA_MAC_V2_DIR_DOWNLINK, ack_hdr.frame_counter, dl_nonce);
 
-                esp_err_t enc_err = gateway_crypto_encrypt_down_ack(k_session_dl,
-                                                                    dl_nonce,
-                                                                    ack_packet, 7U,
-                                                                    ack_pt, 4U,
-                                                                    &ack_packet[7],
-                                                                    &ack_packet[11]);
+                esp_err_t enc_err = lora_mac_crypto_encrypt_down_ack(k_session_dl,
+                                                                     dl_nonce,
+                                                                     ack_packet, 7U,
+                                                                     ack_pt, 4U,
+                                                                     &ack_packet[7],
+                                                                     &ack_packet[11]);
                 if (enc_err == ESP_OK) {
                     ESP_LOGI(TAG, "[EVENT ACK TX] Sending DOWN_EVENT_ACK (19B) for Ref=%" PRIu32 " to Node #%u...",
                              up_ev.event_ref, hdr.node_id);
@@ -599,38 +528,20 @@ static esp_err_t process_join_packet(const uint8_t *payload, size_t length, int1
     return ESP_OK;
 }
 
-static void gateway_tdma_master_task(void *pvParameters)
+static void gateway_radio_rx_task(void *pvParameters)
 {
     (void)pvParameters;
-    ESP_LOGI(TAG, "Gateway TDMA Master Task running (Continuous RX active on 920.250 MHz CH0)");
+    ESP_LOGI(TAG, "Gateway Continuous RX Task running (24/7 active on 920.250 MHz CH0)");
 
-    /* Start in continuous RX to listen for OTA join handshakes */
+    /* Start in continuous RX to listen for OTA join handshakes and event uplinks */
     (void)sx1276_start_rx_continuous();
 
     while (1) {
-        /* Check if epoch timer triggered a superframe */
-        uint32_t notified = ulTaskNotifyTake(pdTRUE, 0);
-        if (notified > 0) {
-            /* Superframe epoch reached: Stop continuous RX and run TDMA superframe */
-            (void)sx1276_stop_rx();
-
-            ESP_LOGI(TAG, "Starting Superframe sequence #%" PRIu32 " (Broadcasting DOWN_SYNC_BEACON on 920.250 MHz CH0)",
-                     s_tdma_engine.superframe_seq);
-            esp_err_t err = gateway_tdma_run_superframe(&s_tdma_engine);
-            if (err != ESP_OK) {
-                ESP_LOGW(TAG, "Superframe cycle returned warning: %s", esp_err_to_name(err));
-            }
-
-            /* Superframe completed: return to continuous RX for OTA Join */
-            (void)sx1276_start_rx_continuous();
-            continue;
-        }
-
         /* Check for incoming LoRa packet with 20ms wait */
         sx1276_rx_frame_t rx_frame;
         esp_err_t rx_err = sx1276_read_frame(&rx_frame, pdMS_TO_TICKS(20));
         if (rx_err == ESP_OK && rx_frame.length > 0) {
-            ESP_LOGI(TAG, "[RF RX IDLE] Frame received: len=%u B, Type=0x%02X, RSSI=%d dBm, SNR=%.1f dB | Freq=920.250 MHz (CH0)",
+            ESP_LOGI(TAG, "[RF RX] Frame received: len=%u B, Type=0x%02X, RSSI=%d dBm, SNR=%.1f dB | Freq=920.250 MHz (CH0)",
                      rx_frame.length, rx_frame.payload[0], rx_frame.rssi_dbm, (float)rx_frame.snr_db_quarter / 4.0f);
             (void)process_join_packet(rx_frame.payload, rx_frame.length, rx_frame.rssi_dbm, rx_frame.snr_db_quarter);
             (void)sx1276_start_rx_continuous();
@@ -640,7 +551,7 @@ static void gateway_tdma_master_task(void *pvParameters)
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "Starting Gateway Master (ESP-IDF v6.1 / SX1276 MVP)");
+    ESP_LOGI(TAG, "Starting Gateway Master (ESP-IDF v6.1 / SX1276 MVP Continuous RX)");
 
     // Initialize NVS flash for durable session key storage
     esp_err_t ret = nvs_flash_init();
@@ -656,6 +567,22 @@ void app_main(void)
         ESP_LOGE(TAG, "Failed to initialize session key store: %s", esp_err_to_name(ret));
     } else {
         ESP_LOGI(TAG, "Session key store initialized successfully");
+    }
+
+    // Initialize Gateway WAL
+    ret = gateway_wal_init(&s_gateway_wal);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize gateway WAL: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "Gateway WAL initialized successfully");
+    }
+
+    // Initialize Crypto Subsystem
+    ret = lora_mac_crypto_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize lora_mac crypto: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "LoRa MAC crypto initialized successfully");
     }
 
     // Initialize Gateway Transport (WiFi Station & MQTT 5.0 mTLS)
@@ -726,53 +653,18 @@ void app_main(void)
         ESP_LOGI(TAG, "SX1276 radio initialized in STANDBY mode");
     }
 
-    // Configure Gateway TDMA Master Engine
-    gateway_tdma_config_t cfg;
-    ESP_ERROR_CHECK(gateway_tdma_get_default_config(&cfg));
-#ifdef CONFIG_GATEWAY_TARGET_GW_ID
-    cfg.gw_id = (uint8_t)CONFIG_GATEWAY_TARGET_GW_ID;
-#endif
-    cfg.key_lookup_fn = hal_session_key_lookup;
-    cfg.join_frame_fn = process_join_packet;
-
-    gateway_tdma_radio_hal_t hal = {
-        .radio_tx = hal_radio_tx,
-        .radio_rx_start = hal_radio_rx_start,
-        .radio_rx_stop = hal_radio_rx_stop,
-        .radio_read_frame = hal_radio_read_frame,
-        .radio_standby = hal_radio_standby,
-        .radio_sleep = hal_radio_sleep,
-        .get_time_ms = hal_get_time_ms,
-        .delay_ms = hal_delay_ms,
-    };
-
-    ESP_ERROR_CHECK(gateway_tdma_init(&s_tdma_engine, &cfg, &hal));
-    ESP_LOGI(TAG, "Gateway TDMA Master Engine initialized");
-
-    // Create static FreeRTOS task per RTOS-005
-    s_tdma_task_handle = xTaskCreateStatic(
-        gateway_tdma_master_task,
-        "gw_tdma_master",
+    // Create static FreeRTOS task for 24/7 Continuous RX per RTOS-005
+    s_gateway_rx_task_handle = xTaskCreateStatic(
+        gateway_radio_rx_task,
+        "gw_rx_task",
         GATEWAY_TASK_STACK_SIZE_BYTES,
         NULL,
         5, /* Priority */
         s_gateway_task_stack,
         &s_gateway_task_tcb
     );
-
-    // Initialize high-resolution hardware periodic timer (esp_timer) for 10-second epoch loop
-    const esp_timer_create_args_t timer_args = {
-        .callback = &gateway_epoch_timer_cb,
-        .arg = NULL,
-        .name = "tdma_epoch_timer"
-    };
-    ret = esp_timer_create(&timer_args, &s_epoch_timer);
-    if (ret == ESP_OK) {
-        /* In CAD + Random Backoff mode, disable periodic 10s superframe timer so Gateway stays in Continuous RX 24/7 */
-        /* ESP_ERROR_CHECK(esp_timer_start_periodic(s_epoch_timer, 10000000ULL)); */
-        ESP_LOGI(TAG, "Gateway operational in 24/7 Continuous RX mode (CAD + Random Backoff Event MAC)");
-    } else {
-        ESP_LOGE(TAG, "Failed to create esp_timer: %s", esp_err_to_name(ret));
+    if (s_gateway_rx_task_handle == NULL) {
+        ESP_LOGE(TAG, "Failed to create gateway radio RX task");
     }
 
     // 1. Gateway Binary Heartbeat: periodic 30-second cadence
@@ -797,5 +689,5 @@ void app_main(void)
         ESP_LOGI(TAG, "Node liveness probe and bitmap timer started (5m cadence)");
     }
 
-    ESP_LOGI(TAG, "Gateway Master active and operational with V2 Join relay initialized");
+    ESP_LOGI(TAG, "Gateway Master active and operational in 24/7 Continuous RX mode");
 }

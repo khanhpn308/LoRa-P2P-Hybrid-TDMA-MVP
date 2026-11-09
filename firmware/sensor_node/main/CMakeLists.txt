@@ -3,12 +3,10 @@ idf_component_register(
     INCLUDE_DIRS "."
     REQUIRES
         oled_ssd1306
-        node_tdma_client
         node_v2_join
         sx1276_driver
         lora_mac
         button_driver
-        tdma_common
         airtime_policy
         nvs_flash
         mbedtls
