@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Radio, Moon, Sun, Bell, LogOut, User as UserIcon } from "lucide-react";
 import { useRealtime } from "@/lib/realtime/RealtimeContext";
 import { useAuth } from "@/lib/auth/AuthContext";
+import { useTheme } from "@/components/providers/ThemeProvider";
 
 interface HeaderProps {
   darkMode?: boolean;
@@ -13,12 +14,16 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({
-  darkMode = false,
-  onToggleDarkMode,
+  darkMode: propDarkMode,
+  onToggleDarkMode: propOnToggleDarkMode,
 }) => {
   const router = useRouter();
   const { connectionState, reconnectCount } = useRealtime();
   const { user, role, logout, isAuthenticated } = useAuth();
+  const { darkMode: contextDarkMode, toggleDarkMode } = useTheme();
+
+  const darkMode = propDarkMode !== undefined ? propDarkMode : contextDarkMode;
+  const handleToggleTheme = propOnToggleDarkMode || toggleDarkMode;
 
   const handleLogout = () => {
     logout();
@@ -103,10 +108,11 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Theme Toggle */}
         <button
           type="button"
-          onClick={onToggleDarkMode}
+          onClick={handleToggleTheme}
           className="w-9 h-9 rounded-lg flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-canvas transition-colors border border-transparent hover:border-border"
           title="Chuyển đổi giao diện Sáng / Tối"
           aria-label="Toggle theme"
+          suppressHydrationWarning
         >
           {darkMode ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4" />}
         </button>
