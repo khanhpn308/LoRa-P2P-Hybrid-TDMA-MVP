@@ -50,6 +50,7 @@ func BuildServeMux(
 	provisionHandler *api.ProvisionHandler,
 	joinReqHandler *api.JoinRequestHandler,
 	presenceTracker *presence.Tracker,
+	auth ...api.Authenticator,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
 
@@ -57,7 +58,7 @@ func BuildServeMux(
 	healthHandler.RegisterRoutes(mux)
 
 	if statusStore != nil {
-		monitoringHandler := api.NewMonitoringHandler(statusStore, offlineThreshold, presenceTracker)
+		monitoringHandler := api.NewMonitoringHandler(statusStore, offlineThreshold, presenceTracker, auth...)
 		monitoringHandler.RegisterRoutes(mux)
 	}
 
@@ -124,8 +125,6 @@ func main() {
 		userRepo = auth.NewPostgresUserRepository(db)
 		eventStorage = storage.NewPostgresEventStorage(db)
 		joinReqStore = storage.NewPostgresJoinRequestStorage(db)
-		channelHandler = api.NewChannelHandler(channelRepo)
-		alertHandler = api.NewAlertHandler(eventStorage)
 		provisionRepo = storage.NewPostgresProvisionStorage(db)
 		log.Println("PostgreSQL persistent storage initialized.")
 	} else {
@@ -179,9 +178,6 @@ func main() {
 	}
 
 	var joinReqHandler *api.JoinRequestHandler
-	if joinReqStore != nil {
-		joinReqHandler = api.NewJoinRequestHandler(joinReqStore, statusSub)
-	}
 
 	jwtSecret := os.Getenv("JWT_SECRET_KEY")
 	if len(jwtSecret) < 32 {
@@ -201,6 +197,16 @@ func main() {
 	wsHandler := api.NewWebSocketHandler(realtimeHandler)
 
 	jwtAuth := api.NewJWTAuthenticator(jwtService)
+
+	if channelRepo != nil {
+		channelHandler = api.NewChannelHandler(channelRepo, jwtAuth)
+	}
+	if eventStorage != nil {
+		alertHandler = api.NewAlertHandler(eventStorage, jwtAuth)
+	}
+	if joinReqStore != nil {
+		joinReqHandler = api.NewJoinRequestHandler(joinReqStore, statusSub, jwtAuth)
+	}
 
 	var provisionHandler *api.ProvisionHandler
 	if provisionRepo != nil {
@@ -222,7 +228,7 @@ func main() {
 		provisionHandler = api.NewProvisionHandler(provisionRepo, keyWrapper, jwtAuth)
 	}
 
-	mux := BuildServeMux(statusStore, 5*time.Minute, wsHandler, authHandler, channelHandler, alertHandler, provisionHandler, joinReqHandler, presenceTracker)
+	mux := BuildServeMux(statusStore, 5*time.Minute, wsHandler, authHandler, channelHandler, alertHandler, provisionHandler, joinReqHandler, presenceTracker, jwtAuth)
 
 	srv := &http.Server{
 		Addr:         ":" + port,

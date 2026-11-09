@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -516,6 +517,107 @@ func TestMonitoringHandler_DeleteNode_Table(t *testing.T) {
 					t.Fatalf("failed to decode response: %v", err)
 				}
 				if resp["status"] != "DELETED" || resp["node_id"] != tc.nodeID {
+					t.Fatalf("unexpected response body: %v", resp)
+				}
+			}
+		})
+	}
+}
+
+func TestMonitoringHandler_CreateGateway_Table(t *testing.T) {
+	authMap := map[string]api.Role{
+		"token-admin":    api.RoleAdmin,
+		"token-operator": api.RoleOperator,
+		"token-viewer":   api.RoleViewer,
+	}
+	staticAuth := api.NewStaticAuthenticator(authMap)
+
+	tests := []struct {
+		name           string
+		body           string
+		token          string
+		expectedStatus int
+	}{
+		{
+			name:           "missing bearer token returns 401",
+			body:           `{"gateway_id":"gw01","name":"Gateway 1"}`,
+			token:          "",
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name:           "empty bearer token returns 401",
+			body:           `{"gateway_id":"gw01","name":"Gateway 1"}`,
+			token:          " ",
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name:           "invalid bearer token returns 401",
+			body:           `{"gateway_id":"gw01","name":"Gateway 1"}`,
+			token:          "invalid-token",
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name:           "role VIEWER returns 403 Forbidden",
+			body:           `{"gateway_id":"gw01","name":"Gateway 1"}`,
+			token:          "token-viewer",
+			expectedStatus: http.StatusForbidden,
+		},
+		{
+			name:           "role OPERATOR returns 403 Forbidden",
+			body:           `{"gateway_id":"gw01","name":"Gateway 1"}`,
+			token:          "token-operator",
+			expectedStatus: http.StatusForbidden,
+		},
+		{
+			name:           "role ADMIN returns 201 Created",
+			body:           `{"gateway_id":"gw01","name":"Gateway 1","location":"Building A","ip_address":"192.168.1.10"}`,
+			token:          "token-admin",
+			expectedStatus: http.StatusCreated,
+		},
+		{
+			name:           "malformed JSON returns 400 Bad Request",
+			body:           `{"gateway_id": invalid_json}`,
+			token:          "token-admin",
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "invalid gateway ID format returns 422",
+			body:           `{"gateway_id":"invalid!gw!","name":"Bad Gateway"}`,
+			token:          "token-admin",
+			expectedStatus: http.StatusUnprocessableEntity,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newMockMonitoringStorage()
+			handler := api.NewMonitoringHandler(store, 5*time.Minute, nil, staticAuth)
+			mux := http.NewServeMux()
+			handler.RegisterRoutes(mux)
+
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/gateways", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			if tc.token != "" {
+				if tc.token == " " {
+					req.Header.Set("Authorization", "Bearer ")
+				} else {
+					req.Header.Set("Authorization", "Bearer "+tc.token)
+				}
+			}
+			rec := httptest.NewRecorder()
+
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != tc.expectedStatus {
+				t.Fatalf("expected status %d, got %d: %s", tc.expectedStatus, rec.Code, rec.Body.String())
+			}
+
+			if tc.expectedStatus == http.StatusCreated {
+				var resp map[string]interface{}
+				if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+					t.Fatalf("failed to decode response: %v", err)
+				}
+				if resp["status"] != "CREATED" || resp["gateway_id"] != "gw01" {
 					t.Fatalf("unexpected response body: %v", resp)
 				}
 			}

@@ -26,15 +26,21 @@ type ScheduleGuard interface {
 
 // ChannelHandler provides HTTP REST endpoints for RF channel catalogue and Gateway allocations.
 type ChannelHandler struct {
-	repo  storage.ChannelRepository
-	guard ScheduleGuard
+	repo          storage.ChannelRepository
+	guard         ScheduleGuard
+	authenticator Authenticator
 }
 
-// NewChannelHandler creates a new ChannelHandler, optionally accepting a ScheduleGuard.
-func NewChannelHandler(repo storage.ChannelRepository, guard ...ScheduleGuard) *ChannelHandler {
+// NewChannelHandler creates a new ChannelHandler, optionally accepting ScheduleGuard and/or Authenticator.
+func NewChannelHandler(repo storage.ChannelRepository, args ...any) *ChannelHandler {
 	h := &ChannelHandler{repo: repo}
-	if len(guard) > 0 {
-		h.guard = guard[0]
+	for _, arg := range args {
+		switch v := arg.(type) {
+		case Authenticator:
+			h.authenticator = v
+		case ScheduleGuard:
+			h.guard = v
+		}
 	}
 	return h
 }
@@ -42,6 +48,35 @@ func NewChannelHandler(repo storage.ChannelRepository, guard ...ScheduleGuard) *
 // SetScheduleGuard sets the schedule guard for channel operations.
 func (h *ChannelHandler) SetScheduleGuard(guard ScheduleGuard) {
 	h.guard = guard
+}
+
+// SetAuthenticator sets the authenticator for channel operations.
+func (h *ChannelHandler) SetAuthenticator(auth Authenticator) {
+	h.authenticator = auth
+}
+
+func (h *ChannelHandler) checkRBAC(r *http.Request, allowedRoles ...Role) (string, int, error) {
+	if h.authenticator == nil {
+		return "", http.StatusInternalServerError, errors.New("authenticator unconfigured")
+	}
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+		return "", http.StatusUnauthorized, errors.New("bearer token required")
+	}
+	token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+	if token == "" {
+		return "", http.StatusUnauthorized, errors.New("bearer token empty")
+	}
+	role, err := h.authenticator.Authenticate(token)
+	if err != nil {
+		return "", http.StatusUnauthorized, errors.New("invalid or expired bearer token")
+	}
+	for _, allowed := range allowedRoles {
+		if role == allowed {
+			return string(role), http.StatusOK, nil
+		}
+	}
+	return "", http.StatusForbidden, errors.New("insufficient permissions")
 }
 
 // RegisterRoutes registers the channel registry API endpoints on a ServeMux according to OpenAPI 3.0.3 spec.
@@ -156,6 +191,19 @@ func (h *ChannelHandler) handleListChannels(w http.ResponseWriter, r *http.Reque
 
 // handleRequestChannel allocates an exclusive channel matching OpenAPI POST /api/v1/gateways/{gw_id}/channels/request.
 func (h *ChannelHandler) handleRequestChannel(w http.ResponseWriter, r *http.Request) {
+	// RBAC check: ADMIN and OPERATOR allowed; VIEWER forbidden
+	_, status, err := h.checkRBAC(r, RoleOperator, RoleAdmin)
+	if err != nil {
+		if status == http.StatusForbidden {
+			writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+		} else if status == http.StatusInternalServerError {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		} else {
+			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", err.Error())
+		}
+		return
+	}
+
 	gwID := strings.TrimSpace(r.PathValue("gw_id"))
 	if err := domain.ValidateGatewayID(gwID); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_GATEWAY_ID", "invalid gateway identifier")
@@ -264,6 +312,19 @@ func (h *ChannelHandler) handleGetChannel(w http.ResponseWriter, r *http.Request
 
 // handleReleaseChannel explicitly releases an active allocation matching OpenAPI DELETE /api/v1/gateways/{gw_id}/channel.
 func (h *ChannelHandler) handleReleaseChannel(w http.ResponseWriter, r *http.Request) {
+	// RBAC check: ADMIN only; OPERATOR and VIEWER forbidden
+	_, status, err := h.checkRBAC(r, RoleAdmin)
+	if err != nil {
+		if status == http.StatusForbidden {
+			writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+		} else if status == http.StatusInternalServerError {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		} else {
+			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", err.Error())
+		}
+		return
+	}
+
 	gwID := strings.TrimSpace(r.PathValue("gw_id"))
 	if err := domain.ValidateGatewayID(gwID); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_GATEWAY_ID", "invalid gateway identifier")
