@@ -37,7 +37,7 @@ for target in ("gateway_master", "sensor_node"):
     elif full.is_file():
         print(f"OK {path} registers ../components")
 
-for name in ("sx1276_driver", "lora_mac", "tdma_common", "airtime_policy"):
+for name in ("sx1276_driver", "lora_mac", "airtime_policy"):
     full = root / "firmware/components" / name
     if not full.is_dir():
         failures.append(f"missing component directory: {name}")

@@ -15,7 +15,7 @@ menu "Gateway Master Configuration"
             default 1
             range 0 254
             help
-                Numeric gateway network ID matching DOWN_SYNC_BEACON origin and unicast filtering.
+                Numeric gateway network ID matching gateway origin and unicast filtering.
     endmenu
 
     menu "WiFi Station Configuration"
@@ -65,7 +65,7 @@ menu "Gateway Master Configuration"
             default 16
             range 4 128
             help
-                Bounded FreeRTOS queue depth for decoupling TDMA radio loop from network.
+                Bounded FreeRTOS queue depth for decoupling radio loop from network.
 
         config GATEWAY_TRANSPORT_TASK_STACK_SIZE
             int "Transport Task Stack Size (bytes)"

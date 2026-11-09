@@ -3,19 +3,19 @@
 menu "Sensor Node Configuration"
 
     menu "Node Identity & Target Gateway"
-        config NODE_TDMA_NODE_ID
-            int "Node Network ID & Assigned Static TDMA Slot (1..15)"
-            default 1
-            range 1 15
-            help
-                Assigned static DATA slot index in the TDMA superframe (Slot #1 to #15).
-
-        config NODE_TDMA_GATEWAY_ID
-            int "Expected Gateway Network ID"
+        config NODE_DEFAULT_NODE_ID
+            int "Node Default Network ID (1..254)"
             default 1
             range 1 254
             help
-                Network Gateway ID emitting DOWN_SYNC_BEACON (0x43).
+                Default network ID before over-the-air assignment.
+
+        config NODE_TARGET_GATEWAY_ID
+            int "Target Gateway Network ID"
+            default 1
+            range 1 254
+            help
+                Network Gateway ID to target for uplinks and OTA Join.
     endmenu
 
     menu "Button Wakeup & Deep-Sleep Power"
@@ -69,22 +69,8 @@ menu "Sensor Node Configuration"
                 Default 300 (5 minutes) matches the node liveness heartbeat reporting cycle.
     endmenu
 
-    menu "TDMA Slot Client Timing & Airtime"
-        config NODE_TDMA_BEACON_TIMEOUT_MS
-            int "Beacon Reception Window Timeout (ms)"
-            default 500
-            range 100 5000
-            help
-                Duration the node listens for Gateway DOWN_SYNC_BEACON before marking as missed.
-
-        config NODE_TDMA_CLOCK_DRIFT_PPM
-            int "Local Crystal Oscillator Drift in PPM"
-            default 20
-            range 1 100
-            help
-                Assumed crystal drift in parts-per-million used to compute holdover guard.
-
-        config NODE_TDMA_AIRTIME_PERMILLE
+    menu "CAD / CSMA Timing & Airtime"
+        config NODE_AIRTIME_PERMILLE
             int "Regulatory Duty Cycle Permille Limit (10 = 1.0%)"
             default 10
             range 1 100

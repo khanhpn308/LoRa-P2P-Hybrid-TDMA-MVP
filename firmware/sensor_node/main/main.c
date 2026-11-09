@@ -10,27 +10,39 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "sx1276_driver.h"
+#include "lora_mac.h"
+#include "lora_mac_crypto.h"
 #include "node_event_fifo.h"
 #include "button_driver.h"
 #include "airtime_policy.h"
-#include "tdma_common.h"
-#include "node_crypto.h"
-#include "node_tdma_client.h"
 #include "node_v2_join.h"
 #include "oled_ssd1306.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "sensor_node";
 
+static const uint8_t DEFAULT_NONCE_PREFIX[8] = {
+    0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57
+};
+
 /* Persistent RTC memory variables preserved across Deep-Sleep */
 RTC_DATA_ATTR static node_event_fifo_t s_event_fifo;
-RTC_DATA_ATTR static node_tdma_client_state_t s_tdma_state;
+RTC_DATA_ATTR static uint32_t s_uplink_frame_counter = 0;
 RTC_DATA_ATTR static node_v2_join_context_t s_join_ctx;
 RTC_DATA_ATTR static uint32_t s_boot_count = 0;
 RTC_DATA_ATTR static uint32_t s_button_events = 0;
 RTC_DATA_ATTR static bool s_fifo_initialized = false;
-RTC_DATA_ATTR static bool s_tdma_initialized = false;
 RTC_DATA_ATTR static bool s_join_initialized = false;
+
+/* Node MAC Configuration structure for Pure CAD CSMA/CA */
+typedef struct {
+    uint8_t node_id;
+    uint8_t gw_id;
+    uint8_t session_sel;
+    uint8_t session_nonce_prefix[8];
+    uint8_t k_session_up[16];
+    uint8_t k_session_down[16];
+} node_mac_config_t;
 
 /* Production SX1276 & FreeRTOS Radio HAL Callbacks */
 static esp_err_t prod_radio_cad(bool *out_activity_detected)
@@ -90,7 +102,7 @@ static void prod_delay_ms(uint32_t ms)
     }
 }
 
-static esp_err_t node_cad_event_tx_and_ack(const node_tdma_client_config_t *cfg,
+static esp_err_t node_cad_event_tx_and_ack(const node_mac_config_t *cfg,
                                            node_event_fifo_t *fifo)
 {
     if (cfg == NULL || fifo == NULL) {
@@ -133,7 +145,7 @@ static esp_err_t node_cad_event_tx_and_ack(const node_tdma_client_config_t *cfg,
     }
 
     /* 2. Assemble and encrypt UP_EVENT (26 bytes) */
-    uint32_t uplink_counter = ++s_tdma_state.uplink_frame_counter;
+    uint32_t uplink_counter = ++s_uplink_frame_counter;
     lora_mac_v2_header_t hdr = {
         .ver_type = LORA_MAC_V2_TYPE_UP_EVENT,
         .node_id = cfg->node_id,
@@ -151,7 +163,7 @@ static esp_err_t node_cad_event_tx_and_ack(const node_tdma_client_config_t *cfg,
         .event_ref = event_item.event_ref,
         .event_time = event_item.event_time,
         .event_code = event_item.event_code,
-        .event_value = event_item.event_value,
+        .event_value = (int16_t)event_item.event_value,
     };
     uint8_t pt[11];
     size_t pt_written = 0U;
@@ -159,12 +171,12 @@ static esp_err_t node_cad_event_tx_and_ack(const node_tdma_client_config_t *cfg,
 
     uint8_t ct[11];
     uint8_t ccm_tag[8];
-    esp_err_t enc_err = node_crypto_encrypt_up_event(cfg->k_session_up,
-                                                     nonce,
-                                                     raw_hdr, sizeof(raw_hdr),
-                                                     pt, sizeof(pt),
-                                                     ct, ccm_tag);
-    node_crypto_zeroize(pt, sizeof(pt));
+    esp_err_t enc_err = lora_mac_crypto_encrypt_up_event(cfg->k_session_up,
+                                                         nonce,
+                                                         raw_hdr, sizeof(raw_hdr),
+                                                         pt, sizeof(pt),
+                                                         ct, ccm_tag);
+    lora_mac_crypto_zeroize(pt, sizeof(pt));
     if (enc_err != ESP_OK) {
         ESP_LOGE(TAG, "UP_EVENT encryption failed: %s", esp_err_to_name(enc_err));
         return enc_err;
@@ -206,12 +218,12 @@ static esp_err_t node_cad_event_tx_and_ack(const node_tdma_client_config_t *cfg,
                                           dl_nonce);
 
             uint8_t dl_pt[4];
-            if (node_crypto_decrypt_down_ack(cfg->k_session_down,
-                                             dl_nonce,
-                                             ack_buf, 7U,
-                                             &ack_buf[7], 4U,
-                                             &ack_buf[11],
-                                             dl_pt) == ESP_OK) {
+            if (lora_mac_crypto_decrypt_down_ack(cfg->k_session_down,
+                                                 dl_nonce,
+                                                 ack_buf, 7U,
+                                                 &ack_buf[7], 4U,
+                                                 &ack_buf[11],
+                                                 dl_pt) == ESP_OK) {
                 lora_mac_v2_down_event_ack_t ack_payload;
                 if (lora_mac_v2_down_event_ack_deserialize(dl_pt, 4U, &ack_payload) == ESP_OK &&
                     ack_payload.event_ref == event_item.event_ref) {
@@ -224,7 +236,7 @@ static esp_err_t node_cad_event_tx_and_ack(const node_tdma_client_config_t *cfg,
                     ESP_LOGW(TAG, "ACK event_ref mismatch (received %" PRIu32 ", expected %" PRIu32 ")",
                              ack_payload.event_ref, event_item.event_ref);
                 }
-                node_crypto_zeroize(dl_pt, sizeof(dl_pt));
+                lora_mac_crypto_zeroize(dl_pt, sizeof(dl_pt));
             } else {
                 ESP_LOGW(TAG, "DOWN_EVENT_ACK decryption/MIC check failed");
             }
@@ -268,7 +280,7 @@ static esp_err_t node_send_heartbeat_ack(uint8_t node_id, uint16_t seq)
     return sx1276_tx(ack_pkt, sizeof(ack_pkt), pdMS_TO_TICKS(100));
 }
 
-static esp_err_t node_listen_and_respond_probe(const node_tdma_client_config_t *cfg, uint32_t wait_ms)
+static esp_err_t node_listen_and_respond_probe(const node_mac_config_t *cfg, uint32_t wait_ms)
 {
     if (cfg == NULL) {
         return ESP_ERR_INVALID_ARG;
@@ -301,7 +313,7 @@ void app_main(void)
 {
     s_boot_count++;
     ESP_LOGI(TAG, "==================================================");
-    ESP_LOGI(TAG, "Starting Sensor Node Boot #%" PRIu32 " (ESP-IDF v6.1 / HW-001)", s_boot_count);
+    ESP_LOGI(TAG, "Starting Sensor Node Boot #%" PRIu32 " (ESP-IDF v6.1 / HW-001 Pure CAD CSMA)", s_boot_count);
 
     bool radio_initialized = false;
 
@@ -326,21 +338,20 @@ void app_main(void)
         }
     }
 
-    /* 3. Configure TDMA Client parameters from Kconfig / defaults */
-    node_tdma_client_config_t tdma_cfg;
-    (void)node_tdma_client_get_default_config(&tdma_cfg);
-#ifdef CONFIG_NODE_TDMA_NODE_ID
-    tdma_cfg.node_id = (uint8_t)CONFIG_NODE_TDMA_NODE_ID;
+    /* 3. Configure Node MAC parameters from Kconfig / defaults */
+    node_mac_config_t mac_cfg;
+    (void)memset(&mac_cfg, 0, sizeof(mac_cfg));
+#ifdef CONFIG_NODE_DEFAULT_NODE_ID
+    mac_cfg.node_id = (uint8_t)CONFIG_NODE_DEFAULT_NODE_ID;
+#else
+    mac_cfg.node_id = 1;
 #endif
-#ifdef CONFIG_NODE_TDMA_GATEWAY_ID
-    tdma_cfg.gw_id = (uint8_t)CONFIG_NODE_TDMA_GATEWAY_ID;
+#ifdef CONFIG_NODE_TARGET_GATEWAY_ID
+    mac_cfg.gw_id = (uint8_t)CONFIG_NODE_TARGET_GATEWAY_ID;
+#else
+    mac_cfg.gw_id = 1;
 #endif
-#ifdef CONFIG_NODE_TDMA_BEACON_TIMEOUT_MS
-    tdma_cfg.beacon_window_ms = (uint32_t)CONFIG_NODE_TDMA_BEACON_TIMEOUT_MS;
-#endif
-#ifdef CONFIG_NODE_TDMA_CLOCK_DRIFT_PPM
-    tdma_cfg.clock_drift_ppm = (uint32_t)CONFIG_NODE_TDMA_CLOCK_DRIFT_PPM;
-#endif
+    (void)memcpy(mac_cfg.session_nonce_prefix, DEFAULT_NONCE_PREFIX, 8);
 
     /* 4. Configure Node V2 Join subsystem */
     if (!s_join_initialized) {
@@ -371,10 +382,6 @@ void app_main(void)
         if (nvs_get_blob(sec_handle, "k_join", join_cfg.k_join, &k_len) == ESP_OK) {
             ESP_LOGI(TAG, "Loaded provisioned K_JOIN from nvs_sec");
         }
-        size_t kb_len = sizeof(tdma_cfg.k_beacon);
-        if (nvs_get_blob(sec_handle, "k_beacon", tdma_cfg.k_beacon, &kb_len) == ESP_OK) {
-            ESP_LOGI(TAG, "Loaded provisioned K_BEACON from nvs_sec");
-        }
         uint32_t net_id = 0;
         if (nvs_get_u32(sec_handle, "network_id", &net_id) == ESP_OK) {
             join_cfg.network_id = net_id;
@@ -389,9 +396,9 @@ void app_main(void)
 
     /* Bind established session keys if already joined */
     if (s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
-        tdma_cfg.node_id = s_join_ctx.assigned_node_id;
-        (void)memcpy(tdma_cfg.k_session_up, s_join_ctx.session_keys.k_session_up, 16);
-        (void)memcpy(tdma_cfg.k_session_down, s_join_ctx.session_keys.k_session_dl, 16);
+        mac_cfg.node_id = s_join_ctx.assigned_node_id;
+        (void)memcpy(mac_cfg.k_session_up, s_join_ctx.session_keys.k_session_up, 16);
+        (void)memcpy(mac_cfg.k_session_down, s_join_ctx.session_keys.k_session_dl, 16);
     }
 
     node_v2_join_radio_hal_t join_hal = {
@@ -406,12 +413,12 @@ void app_main(void)
     };
 
     /* 5. Initialize Airtime Policy & Crypto subsystem */
-#ifdef CONFIG_NODE_TDMA_AIRTIME_PERMILLE
-    (void)airtime_policy_init((uint16_t)CONFIG_NODE_TDMA_AIRTIME_PERMILLE);
+#ifdef CONFIG_NODE_AIRTIME_PERMILLE
+    (void)airtime_policy_init((uint16_t)CONFIG_NODE_AIRTIME_PERMILLE);
 #else
     (void)airtime_policy_init(10U); /* 1.0% regulatory duty cycle */
 #endif
-    (void)node_crypto_init();
+    (void)lora_mac_crypto_init();
 
     /* 6. Initialize button driver from Kconfig settings */
     button_driver_t btn_driver;
@@ -450,7 +457,7 @@ void app_main(void)
                              esp_err_to_name(push_err), node_event_fifo_get_dropped_count(&s_event_fifo));
                 }
 
-                /* Local OLED display update for confirmed button event (Issue #271) */
+                /* Local OLED display update for confirmed button event */
 #if CONFIG_OLED_SSD1306_ENABLE
                 oled_ssd1306_dev_t oled_dev;
                 oled_ssd1306_config_t oled_cfg;
@@ -483,12 +490,12 @@ void app_main(void)
                 }
             }
             if (radio_initialized && s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
-                uint32_t slot_delay_ms = (uint32_t)tdma_cfg.node_id * 40U;
+                uint32_t slot_delay_ms = (uint32_t)mac_cfg.node_id * 40U;
                 if (slot_delay_ms > 0) {
                     vTaskDelay(pdMS_TO_TICKS(slot_delay_ms));
                 }
                 uint16_t hb_seq = (uint16_t)(esp_timer_get_time() / 1000000ULL);
-                (void)node_send_heartbeat_ack(tdma_cfg.node_id, hb_seq);
+                (void)node_send_heartbeat_ack(mac_cfg.node_id, hb_seq);
             }
             break;
         default:
@@ -543,9 +550,9 @@ void app_main(void)
                     ESP_LOGI(TAG, "Assigned Node ID: #%u | State: %s",
                              s_join_ctx.assigned_node_id, node_v2_join_state_to_str(s_join_ctx.state));
                     ESP_LOGI(TAG, "==================================================");
-                    tdma_cfg.node_id = s_join_ctx.assigned_node_id;
-                    (void)memcpy(tdma_cfg.k_session_up, s_join_ctx.session_keys.k_session_up, 16);
-                    (void)memcpy(tdma_cfg.k_session_down, s_join_ctx.session_keys.k_session_dl, 16);
+                    mac_cfg.node_id = s_join_ctx.assigned_node_id;
+                    (void)memcpy(mac_cfg.k_session_up, s_join_ctx.session_keys.k_session_up, 16);
+                    (void)memcpy(mac_cfg.k_session_down, s_join_ctx.session_keys.k_session_dl, 16);
                     break;
                 }
 
@@ -560,18 +567,6 @@ void app_main(void)
                 ESP_LOGI(TAG, "[STANDBY] Radio standing by on 920.250 MHz. Retrying Join in %" PRIu32 " ms...", backoff_ms);
                 vTaskDelay(pdMS_TO_TICKS(backoff_ms));
             }
-        }
-    }
-
-    /* Initialize TDMA Client state once node ID is assigned */
-    if (!s_tdma_initialized && s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
-        esp_err_t tdma_init_err = node_tdma_client_init(&tdma_cfg, &s_tdma_state);
-        if (tdma_init_err == ESP_OK) {
-            s_tdma_initialized = true;
-            ESP_LOGI(TAG, "Node TDMA Client initialized for Node ID #%u (Slot #%u)",
-                     tdma_cfg.node_id, tdma_cfg.node_id);
-        } else {
-            ESP_LOGE(TAG, "Failed to initialize TDMA Client state: %s", esp_err_to_name(tdma_init_err));
         }
     }
 
@@ -592,19 +587,19 @@ void app_main(void)
         }
 
         if (radio_initialized) {
-            esp_err_t cycle_err = node_cad_event_tx_and_ack(&tdma_cfg, &s_event_fifo);
+            esp_err_t cycle_err = node_cad_event_tx_and_ack(&mac_cfg, &s_event_fifo);
             ESP_LOGI(TAG, "CAD Event cycle finished (status: %s, remaining pending: %zu)",
                      esp_err_to_name(cycle_err),
                      node_event_fifo_get_pending_count(&s_event_fifo));
         }
     } else if (s_join_ctx.state != NODE_V2_JOIN_STATE_INSTALLED_INACTIVE && pending_events > 0U) {
-        ESP_LOGW(TAG, "Node is not yet joined (State: %s). TDMA event transmission deferred until joined.",
+        ESP_LOGW(TAG, "Node is not yet joined (State: %s). Event transmission deferred until joined.",
                  node_v2_join_state_to_str(s_join_ctx.state));
     }
 
     /* 9b. If joined and idle, briefly listen for Gateway DOWN_HEARTBEAT_PROBE (150ms window) */
     if (radio_initialized && s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE && pending_events == 0U) {
-        (void)node_listen_and_respond_probe(&tdma_cfg, 150);
+        (void)node_listen_and_respond_probe(&mac_cfg, 150);
     }
 
     /* 10. Ensure radio is sleeping before entering Deep-Sleep */
