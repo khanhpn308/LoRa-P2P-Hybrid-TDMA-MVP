@@ -15,7 +15,6 @@ import {
   Cpu,
   Radio,
   Battery,
-  Clock,
   AlertTriangle,
   CheckCircle2,
   Bell,
@@ -176,6 +175,7 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
   };
 
   const handleConfirmDelete = async () => {
+    if (role !== "ADMIN") return;
     try {
       setIsDeleting(true);
       await deleteNode(node.node_id);
@@ -432,7 +432,7 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
       </section>
 
       {/* Confirmation Modal for Safe Node Deletion (Issue #293) */}
-      {showDeleteModal && (
+      {showDeleteModal && role === "ADMIN" && (
         <div
           role="dialog"
           aria-modal="true"

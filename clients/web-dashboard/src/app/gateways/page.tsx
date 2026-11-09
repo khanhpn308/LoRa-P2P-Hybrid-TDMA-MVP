@@ -179,6 +179,7 @@ function GatewaysContent() {
   };
 
   const handleOpenAddModal = () => {
+    if (role !== "ADMIN") return;
     setShowAddGatewayModal(true);
   };
 
@@ -199,16 +200,18 @@ function GatewaysContent() {
             </p>
           </div>
 
-          <div className="flex items-center shrink-0">
-            <button
-              type="button"
-              onClick={handleOpenAddModal}
-              className="h-10 px-4 bg-interactive hover:bg-interactive-hover active:bg-blue-700 text-white font-medium text-sm rounded-lg inline-flex items-center gap-2 transition-colors shadow-none focus:outline-none focus:ring-2 focus:ring-interactive focus:ring-offset-2 focus:ring-offset-canvas"
-            >
-              <Plus className="w-4 h-4 shrink-0" />
-              <span>Thêm Gateway</span>
-            </button>
-          </div>
+          {role === "ADMIN" && (
+            <div className="flex items-center shrink-0">
+              <button
+                type="button"
+                onClick={handleOpenAddModal}
+                className="h-10 px-4 bg-interactive hover:bg-interactive-hover active:bg-blue-700 text-white font-medium text-sm rounded-lg inline-flex items-center gap-2 transition-colors shadow-none focus:outline-none focus:ring-2 focus:ring-interactive focus:ring-offset-2 focus:ring-offset-canvas"
+              >
+                <Plus className="w-4 h-4 shrink-0" />
+                <span>Thêm Gateway</span>
+              </button>
+            </div>
+          )}
         </section>
 
         {/* FILTER TOOLBAR: Exactly 3 controls (Search + 2 Independent Status Filters) */}
@@ -498,7 +501,7 @@ function GatewaysContent() {
         </section>
 
         {/* Add Gateway Modal - Minimalist Action Form */}
-        {showAddGatewayModal && (
+        {showAddGatewayModal && role === "ADMIN" && (
           <div
             role="dialog"
             aria-modal="true"
