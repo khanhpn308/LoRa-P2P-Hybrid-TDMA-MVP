@@ -1,8 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:loratdma:mqtt:schedule-ack:v1-draft",
-  "title": "LoRa TDMA schedule-ack (active V2 contract)",
-  "description": "Active V2 schedule acknowledgment contract. STAGE_ACK confirms durable staging; ACTIVE_REPORT confirms 100% affected nodes confirmed READY in Migration and local superframe switch executed; VERIFY_NACK reports rejection with reason_code.",
+  "title": "LoRa TDMA schedule-ack (SUPERSEDED / DEPRECATED - DEC-273-01)",
+  "description": "SUPERSEDED / DEPRECATED by ADR-0004 (Issue #273). TDMA schedule acknowledgment is deprecated in favor of pure CAD CSMA/CA MAC with Gateway continuous RX 24/7. Preserved for historical log compatibility. (Previously: Active V2 schedule acknowledgment contract. STAGE_ACK confirms durable staging; ACTIVE_REPORT confirms 100% affected nodes confirmed READY in Migration and local superframe switch executed; VERIFY_NACK reports rejection with reason_code).",
+  "deprecated": true,
   "type": "object",
   "additionalProperties": false,
   "properties": {

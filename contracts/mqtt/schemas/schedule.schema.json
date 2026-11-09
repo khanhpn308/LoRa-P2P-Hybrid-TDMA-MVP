@@ -1,7 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:loratdma:mqtt:schedule:v1-draft",
-  "title": "LoRa TDMA schedule (proposed contract)",
+  "title": "LoRa TDMA schedule (SUPERSEDED / DEPRECATED - DEC-273-01)",
+  "description": "SUPERSEDED / DEPRECATED by ADR-0004 (Issue #273). TDMA schedule distribution over MQTT is deprecated in favor of pure CAD CSMA/CA MAC with Gateway continuous RX 24/7. Preserved for historical log compatibility.",
+  "deprecated": true,
   "type": "object",
   "additionalProperties": false,
   "properties": {

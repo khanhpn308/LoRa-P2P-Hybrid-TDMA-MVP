@@ -10,11 +10,11 @@ Root `iot/v1/gw/{gateway_id}`. **MQTT 5.0 bắt buộc** cho Gateway và Backend
 | `uplink/telemetry` | Gateway → Backend | 1 | false | [telemetry](schemas/telemetry.schema.json) | **DEPRECATED_LEGACY** (Cấm phát sinh mới ở V2; chỉ đọc log lịch sử) |
 | `uplink/alert` | Gateway → Backend | 1 | false | [alert](schemas/alert.schema.json) (V2 `UP_EVENT` 0x41, 26B) | **ACTIVE_V2_EVENT_PLANE** (Sự kiện vượt ngưỡng cảm biến) |
 | `uplink/status` | Gateway → Backend | 1 | true | [status](schemas/status.schema.json) (V2 Health 0x44 & Diag 0x4A, VN920) | **ACTIVE** (Snapshot vận hành, kênh VN920, hàng đợi/mất gói) |
-| `uplink/schedule-ack` | Gateway → Backend | 1 | false | [schedule-ack](schemas/schedule-ack.schema.json) | **ACTIVE** (Xác nhận STAGE_ACK / VERIFY_NACK / ACTIVE_REPORT) |
+| `uplink/schedule-ack` | Gateway → Backend | 1 | false | [schedule-ack](schemas/schedule-ack.schema.json) | **SUPERSEDED_DEPRECATED** (Bãi bỏ theo DEC-273-01 / ADR-0004) |
 | `uplink/command-ack` (bổ sung đề xuất) | Gateway → Backend | 1 | false | [command-ack](schemas/command-ack.schema.json) | **ACTIVE** (Kết quả thi hành lệnh Node, phân biệt NODE_ACKED) |
 | `uplink/join-hello` (NEW · V2) | Gateway → Backend | 1 | **false** | [join-hello](schemas/join-hello.schema.json) (V2 `UP_JOIN_HELLO` 0x45, 68B) | **ACTIVE_V2_JOIN_PLANE** (Relay bản tin Hello gia nhập mạng V2) |
 | `uplink/session-key-ack` (NEW · DRAFT) | Gateway → Backend | 1 | **false** | [session-key-ack](schemas/session-key-ack.schema.json) | **DRAFT** (Xác nhận cài đặt khóa phiên bền vững vào NVS) |
-| `downlink/schedule` | Backend → Gateway | 1 | **false** | [schedule](schemas/schedule.schema.json) | **ACTIVE_V2** (Lịch TDMA tĩnh V2: W500/G50, 15 khe 9000ms) |
+| `downlink/schedule` | Backend → Gateway | 1 | **false** | [schedule](schemas/schedule.schema.json) | **SUPERSEDED_DEPRECATED** (Bãi bỏ theo DEC-273-01 / ADR-0004) |
 | `downlink/command` | Backend → Gateway | 1 | false | [command](schemas/command.schema.json) | **ACTIVE** (Lệnh điều khiển Node; cấm SET_PERIODIC_MODE) |
 | `downlink/session-key-install` (NEW · DRAFT) | Backend → Gateway | 1 | **false** | [session-key-install](schemas/session-key-install.schema.json) | **DRAFT** (Cài đặt cặp khóa phiên được bọc AES-256-GCM) |
 
