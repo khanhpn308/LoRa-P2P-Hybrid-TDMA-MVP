@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -77,6 +78,28 @@ func (m *mockMonitoringStorage) ListGateways(ctx context.Context) ([]*domain.Gat
 }
 
 func (m *mockMonitoringStorage) CreateGateway(ctx context.Context, gatewayID, name, location, ipAddress string) error {
+	return nil
+}
+
+func (m *mockMonitoringStorage) DeleteGateway(ctx context.Context, gatewayID string) error {
+	if m.gwErr != nil {
+		return m.gwErr
+	}
+	delete(m.gateways, gatewayID)
+	return nil
+}
+
+func (m *mockMonitoringStorage) DeleteNode(ctx context.Context, nodeID string) error {
+	if m.nodeErr != nil {
+		return m.nodeErr
+	}
+	var remaining []domain.NodeSummary
+	for _, n := range m.nodes {
+		if fmt.Sprintf("%d", n.NodeID) != nodeID && fmt.Sprintf("N-%03d", n.NodeID) != nodeID {
+			remaining = append(remaining, n)
+		}
+	}
+	m.nodes = remaining
 	return nil
 }
 
@@ -298,6 +321,202 @@ func TestMonitoringHandler_ListNodes_Table(t *testing.T) {
 				}
 				if len(page.Items) != tc.expectedCount {
 					t.Fatalf("expected %d items, got %d", tc.expectedCount, len(page.Items))
+				}
+			}
+		})
+	}
+}
+
+func TestMonitoringHandler_DeleteGateway_Table(t *testing.T) {
+	authMap := map[string]api.Role{
+		"token-admin":    api.RoleAdmin,
+		"token-operator": api.RoleOperator,
+		"token-viewer":   api.RoleViewer,
+	}
+	staticAuth := api.NewStaticAuthenticator(authMap)
+
+	tests := []struct {
+		name           string
+		gatewayID      string
+		token          string
+		storageErr     error
+		expectedStatus int
+	}{
+		{
+			name:           "missing bearer token returns 401",
+			gatewayID:      "gw01",
+			token:          "",
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name:           "invalid bearer token returns 401",
+			gatewayID:      "gw01",
+			token:          "invalid-token",
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name:           "role VIEWER returns 403 Forbidden",
+			gatewayID:      "gw01",
+			token:          "token-viewer",
+			expectedStatus: http.StatusForbidden,
+		},
+		{
+			name:           "role OPERATOR returns 403 Forbidden",
+			gatewayID:      "gw01",
+			token:          "token-operator",
+			expectedStatus: http.StatusForbidden,
+		},
+		{
+			name:           "invalid gateway ID format returns 422",
+			gatewayID:      "invalid!gw!",
+			token:          "token-admin",
+			expectedStatus: http.StatusUnprocessableEntity,
+		},
+		{
+			name:           "storage failure returns 500",
+			gatewayID:      "gw01",
+			token:          "token-admin",
+			storageErr:     errors.New("db error"),
+			expectedStatus: http.StatusInternalServerError,
+		},
+		{
+			name:           "role ADMIN deletes gateway successfully returns 200",
+			gatewayID:      "gw01",
+			token:          "token-admin",
+			expectedStatus: http.StatusOK,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newMockMonitoringStorage()
+			store.gwErr = tc.storageErr
+			store.gateways["gw01"] = &domain.GatewayStatusRecord{GatewayID: "gw01"}
+
+			handler := api.NewMonitoringHandler(store, 5*time.Minute, nil, staticAuth)
+			mux := http.NewServeMux()
+			handler.RegisterRoutes(mux)
+
+			req := httptest.NewRequest(http.MethodDelete, "/api/v1/gateways/"+tc.gatewayID, nil)
+			if tc.token != "" {
+				req.Header.Set("Authorization", "Bearer "+tc.token)
+			}
+			rec := httptest.NewRecorder()
+
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != tc.expectedStatus {
+				t.Fatalf("expected status %d, got %d: %s", tc.expectedStatus, rec.Code, rec.Body.String())
+			}
+
+			if tc.expectedStatus == http.StatusOK {
+				var resp map[string]interface{}
+				if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+					t.Fatalf("failed to decode response: %v", err)
+				}
+				if resp["status"] != "DELETED" || resp["gateway_id"] != tc.gatewayID {
+					t.Fatalf("unexpected response body: %v", resp)
+				}
+				if _, exists := store.gateways[tc.gatewayID]; exists {
+					t.Fatalf("expected gateway to be deleted from store")
+				}
+			}
+		})
+	}
+}
+
+func TestMonitoringHandler_DeleteNode_Table(t *testing.T) {
+	authMap := map[string]api.Role{
+		"token-admin":    api.RoleAdmin,
+		"token-operator": api.RoleOperator,
+		"token-viewer":   api.RoleViewer,
+	}
+	staticAuth := api.NewStaticAuthenticator(authMap)
+
+	tests := []struct {
+		name           string
+		nodeID         string
+		token          string
+		storageErr     error
+		expectedStatus int
+	}{
+		{
+			name:           "missing bearer token returns 401",
+			nodeID:         "12",
+			token:          "",
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name:           "invalid bearer token returns 401",
+			nodeID:         "12",
+			token:          "bad-token",
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name:           "role VIEWER returns 403 Forbidden",
+			nodeID:         "12",
+			token:          "token-viewer",
+			expectedStatus: http.StatusForbidden,
+		},
+		{
+			name:           "role OPERATOR returns 403 Forbidden",
+			nodeID:         "12",
+			token:          "token-operator",
+			expectedStatus: http.StatusForbidden,
+		},
+		{
+			name:           "storage error returns 500",
+			nodeID:         "12",
+			token:          "token-admin",
+			storageErr:     errors.New("db error"),
+			expectedStatus: http.StatusInternalServerError,
+		},
+		{
+			name:           "role ADMIN deletes numeric node returns 200",
+			nodeID:         "1",
+			token:          "token-admin",
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "role ADMIN deletes node by MAC returns 200",
+			nodeID:         "aabbccddeeff",
+			token:          "token-admin",
+			expectedStatus: http.StatusOK,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newMockMonitoringStorage()
+			store.nodeErr = tc.storageErr
+			store.nodes = []domain.NodeSummary{
+				{NodeID: 1, GatewayID: "gw01", Status: "ONLINE"},
+				{NodeID: 2, GatewayID: "gw01", Status: "OFFLINE"},
+			}
+
+			handler := api.NewMonitoringHandler(store, 5*time.Minute, nil, staticAuth)
+			mux := http.NewServeMux()
+			handler.RegisterRoutes(mux)
+
+			req := httptest.NewRequest(http.MethodDelete, "/api/v1/nodes/"+tc.nodeID, nil)
+			if tc.token != "" {
+				req.Header.Set("Authorization", "Bearer "+tc.token)
+			}
+			rec := httptest.NewRecorder()
+
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != tc.expectedStatus {
+				t.Fatalf("expected status %d, got %d: %s", tc.expectedStatus, rec.Code, rec.Body.String())
+			}
+
+			if tc.expectedStatus == http.StatusOK {
+				var resp map[string]interface{}
+				if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+					t.Fatalf("failed to decode response: %v", err)
+				}
+				if resp["status"] != "DELETED" || resp["node_id"] != tc.nodeID {
+					t.Fatalf("unexpected response body: %v", resp)
 				}
 			}
 		})

@@ -5,7 +5,8 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { NavItemKey } from "@/components/layout/Sidebar";
 import { GatewayMode, GatewayStatusChangedPayload } from "@/types/api";
-import { getGateways, createGateway } from "@/lib/api/gateways";
+import { getGateways, createGateway, deleteGateway } from "@/lib/api/gateways";
+import { useAuth } from "@/lib/auth/AuthContext";
 import { useRealtime } from "@/lib/realtime/RealtimeContext";
 import {
   Search,
@@ -16,6 +17,8 @@ import {
   Router,
   CheckCircle2,
   X,
+  Trash2,
+  AlertTriangle,
 } from "lucide-react";
 
 export interface GatewayItem {
@@ -37,6 +40,7 @@ export interface GatewayItem {
 function GatewaysContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { role } = useAuth();
   const { subscribe } = useRealtime();
 
   // URL query params initialization (e.g. from Overview Gateway card click)
@@ -58,6 +62,8 @@ function GatewaysContent() {
   const [newGwLocation, setNewGwLocation] = useState<string>("");
   const [newGwIp, setNewGwIp] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [deletingGateway, setDeletingGateway] = useState<GatewayItem | null>(null);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
   const loadGateways = useCallback(async () => {
     try {
@@ -82,6 +88,21 @@ function GatewaysContent() {
       setGateways([]);
     }
   }, []);
+
+  const handleConfirmDelete = async () => {
+    if (!deletingGateway) return;
+    try {
+      setIsDeleting(true);
+      await deleteGateway(deletingGateway.id);
+      setToastMessage(`Đã xóa thành công trạm Gateway [${deletingGateway.id}].`);
+      setDeletingGateway(null);
+      await loadGateways();
+    } catch (err) {
+      setToastMessage(`Lỗi khi xóa Gateway: ${err instanceof Error ? err.message : "Thất bại"}`);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   useEffect(() => {
     loadGateways();
@@ -298,10 +319,17 @@ function GatewaysContent() {
                     Hoạt động
                   </th>
 
-                  {/* Column 5: Khu vực (20%) */}
-                  <th scope="col" className="py-2.5 pr-6 px-4 font-semibold" style={{ width: "20%" }}>
+                  {/* Column 5: Khu vực */}
+                  <th scope="col" className="py-2.5 px-4 font-semibold" style={{ width: role === "ADMIN" ? "18%" : "20%" }}>
                     Khu vực
                   </th>
+
+                  {/* Column 6: Thao tác (Chỉ ADMIN) */}
+                  {role === "ADMIN" && (
+                    <th scope="col" className="py-2.5 pr-6 pl-2 font-semibold text-right" style={{ width: "12%" }}>
+                      Thao tác
+                    </th>
+                  )}
                 </tr>
               </thead>
 
@@ -309,7 +337,7 @@ function GatewaysContent() {
               <tbody className="divide-y divide-border text-sm">
                 {paginatedGateways.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="h-32 text-center text-text-secondary text-sm">
+                    <td colSpan={role === "ADMIN" ? 6 : 5} className="h-32 text-center text-text-secondary text-sm">
                       Không tìm thấy Gateway nào phù hợp với bộ lọc.
                     </td>
                   </tr>
@@ -371,8 +399,8 @@ function GatewaysContent() {
                         )}
                       </td>
 
-                      {/* 5. Khu vực (Tên khu vực thực tế + Badge + Chevron) */}
-                      <td className="py-3 pr-6 px-4">
+                      {/* 5. Khu vực (Tên khu vực thực tế + Badge) */}
+                      <td className="py-3 px-4">
                         <div className="flex items-center justify-between gap-2">
                           <span
                             className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-canvas border border-border text-text-primary truncate max-w-[180px]"
@@ -380,9 +408,30 @@ function GatewaysContent() {
                           >
                             {gw.primaryArea}
                           </span>
-                          <ChevronRight className="w-4 h-4 text-text-secondary group-hover:text-interactive group-hover:translate-x-0.5 transition-all shrink-0" />
+                          {role !== "ADMIN" && (
+                            <ChevronRight className="w-4 h-4 text-text-secondary group-hover:text-interactive group-hover:translate-x-0.5 transition-all shrink-0" />
+                          )}
                         </div>
                       </td>
+
+                      {/* 6. Thao tác xóa an toàn (Chỉ ADMIN) */}
+                      {role === "ADMIN" && (
+                        <td className="py-3 pr-6 pl-2 text-right" onClick={(e) => e.stopPropagation()}>
+                          <div className="inline-flex items-center justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setDeletingGateway(gw)}
+                              title={`Xóa Gateway ${gw.id}`}
+                              aria-label={`Xóa Gateway ${gw.id}`}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-state-critical bg-state-critical/10 hover:bg-state-critical hover:text-white rounded border border-state-critical/20 transition-colors cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Xóa</span>
+                            </button>
+                            <ChevronRight className="w-4 h-4 text-text-secondary group-hover:text-interactive group-hover:translate-x-0.5 transition-all shrink-0" />
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   ))
                 )}
@@ -564,6 +613,63 @@ function GatewaysContent() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* Confirmation Modal for Safe Gateway Deletion (Issue #293) */}
+        {deletingGateway && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-gateway-modal-title"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          >
+            <div className="bg-surface border border-border rounded-xl shadow-none max-w-md w-full p-6 space-y-4">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-full bg-state-critical/10 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5 text-state-critical" />
+                </div>
+                <div className="space-y-1">
+                  <h3 id="delete-gateway-modal-title" className="text-base font-semibold text-text-primary">
+                    Xác nhận xóa Gateway
+                  </h3>
+                  <p className="text-sm text-text-secondary">
+                    Bạn có chắc chắn muốn gỡ bỏ Gateway{" "}
+                    <span className="font-semibold text-text-primary">{deletingGateway.name}</span> (
+                    <span className="font-mono text-interactive font-semibold">{deletingGateway.id}</span>)?
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3 bg-state-critical/5 border border-state-critical/20 rounded-lg text-xs text-state-critical space-y-1">
+                <div className="font-semibold flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5" /> Cảnh báo rủi ro hệ thống:
+                </div>
+                <div>
+                  Hành động này sẽ ngắt kết nối và gỡ toàn bộ cấu hình trạm Gateway khỏi hệ thống,
+                  đồng thời giải phóng kênh RF ({deletingGateway.frequency}) đang gán để dùng cho trạm khác.
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+                <button
+                  type="button"
+                  onClick={() => setDeletingGateway(null)}
+                  disabled={isDeleting}
+                  className="h-9 px-4 rounded-lg border border-border bg-canvas hover:bg-canvas/80 text-text-secondary text-xs font-medium transition-colors cursor-pointer"
+                >
+                  Hủy bỏ
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDelete}
+                  disabled={isDeleting}
+                  className="h-9 px-4 rounded-lg bg-state-critical hover:bg-state-critical/90 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer flex items-center gap-2 disabled:opacity-50"
+                >
+                  {isDeleting ? "Đang xóa..." : "Xác nhận xóa"}
+                </button>
+              </div>
             </div>
           </div>
         )}

@@ -4,8 +4,9 @@ import React, { useState, useEffect, use, useMemo, Suspense } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
-import { getNode } from "@/lib/api/nodes";
+import { getNode, deleteNode } from "@/lib/api/nodes";
 import { getAlerts } from "@/lib/api/alerts";
+import { useAuth } from "@/lib/auth/AuthContext";
 import { useRealtime } from "@/lib/realtime/RealtimeContext";
 import { TimeSeriesChart, TimeSeriesPoint } from "@/components/charts/TimeSeriesChart";
 import {
@@ -18,6 +19,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Bell,
+  Trash2,
 } from "lucide-react";
 import { NodeSummary, Alert, AlertSeverity, AlertAckStatus, AlertTriggeredPayload } from "@/types/api";
 
@@ -38,7 +40,12 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
   const unwrappedParams = use(params);
   const rawId = decodeURIComponent(unwrappedParams.id || "N-012");
   const router = useRouter();
+  const { role } = useAuth();
   const { subscribe } = useRealtime();
+
+  const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const initialNode: NodeDetailView = {
     node_id: parseInt(rawId.replace(/\D/g, "") || "1", 10),
@@ -168,6 +175,22 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
     );
   };
 
+  const handleConfirmDelete = async () => {
+    try {
+      setIsDeleting(true);
+      await deleteNode(node.node_id);
+      setToastMessage(`Đã xóa thành công Node [${rawId}]. Đang chuyển hướng...`);
+      setShowDeleteModal(false);
+      setTimeout(() => {
+        router.push("/nodes");
+      }, 1000);
+    } catch (err) {
+      setToastMessage(`Lỗi khi xóa Node: ${err instanceof Error ? err.message : "Thất bại"}`);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
     <AppShell activeRoute="nodes">
       {/* Breadcrumb Navigation */}
@@ -233,6 +256,19 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
               )}
             </div>
           </div>
+
+          {/* Action button for ADMIN (Issue #293) */}
+          {role === "ADMIN" && (
+            <button
+              type="button"
+              onClick={() => setShowDeleteModal(true)}
+              title={`Xóa Node ${rawId}`}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold text-state-critical bg-state-critical/10 hover:bg-state-critical hover:text-white border border-state-critical/20 transition-colors cursor-pointer"
+            >
+              <Trash2 className="w-4 h-4" />
+              <span>Xóa Node</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -394,6 +430,74 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
           </table>
         </div>
       </section>
+
+      {/* Confirmation Modal for Safe Node Deletion (Issue #293) */}
+      {showDeleteModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-node-detail-modal-title"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+        >
+          <div className="bg-surface border border-border rounded-xl shadow-none max-w-md w-full p-6 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-state-critical/10 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-state-critical" />
+              </div>
+              <div className="space-y-1">
+                <h3 id="delete-node-detail-modal-title" className="text-base font-semibold text-text-primary">
+                  Xác nhận xóa Node
+                </h3>
+                <p className="text-sm text-text-secondary">
+                  Bạn có chắc chắn muốn xóa và gỡ bỏ node{" "}
+                  <span className="font-mono text-interactive font-semibold">{rawId}</span> (Trạm{" "}
+                  <span className="font-semibold text-text-primary">{node.gateway_id}</span>)?
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-state-critical/5 border border-state-critical/20 rounded-lg text-xs text-state-critical space-y-1">
+              <div className="font-semibold flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5" /> Cảnh báo rủi ro thiết bị:
+              </div>
+              <div>
+                Hành động này sẽ ngắt kết nối, gỡ toàn bộ cấu hình node và thu hồi slot TDMA khỏi hệ thống.
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(false)}
+                disabled={isDeleting}
+                className="h-9 px-4 rounded-lg border border-border bg-canvas hover:bg-canvas/80 text-text-secondary text-xs font-medium transition-colors cursor-pointer"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                disabled={isDeleting}
+                className="h-9 px-4 rounded-lg bg-state-critical hover:bg-state-critical/90 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer flex items-center gap-2 disabled:opacity-50"
+              >
+                {isDeleting ? "Đang xóa..." : "Xác nhận xóa"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Context-Aware Feedback Toast */}
+      {toastMessage && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-3 bg-surface border border-interactive text-text-primary text-xs font-medium rounded-lg shadow-lg"
+        >
+          <CheckCircle2 className="w-4 h-4 text-interactive shrink-0" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
     </AppShell>
   );
 }

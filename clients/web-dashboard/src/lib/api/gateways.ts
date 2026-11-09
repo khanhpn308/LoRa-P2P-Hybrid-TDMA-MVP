@@ -106,3 +106,13 @@ export async function createGateway(input: CreateGatewayInput): Promise<void> {
     body: JSON.stringify(input),
   });
 }
+
+/**
+ * Deletes a registered gateway and releases its RF channel allocation via DELETE /api/v1/gateways/{gw_id}.
+ */
+export async function deleteGateway(gwId: string): Promise<void> {
+  await apiFetch<{ status: string; gateway_id: string }>(`/api/v1/gateways/${gwId}`, {
+    method: "DELETE",
+  });
+}
+

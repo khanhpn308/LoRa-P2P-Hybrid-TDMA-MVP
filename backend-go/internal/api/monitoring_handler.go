@@ -1,14 +1,19 @@
 package api
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/auth"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/domain"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/presence"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/storage"
@@ -20,19 +25,24 @@ type MonitoringHandler struct {
 	store            storage.StatusStorage
 	offlineThreshold time.Duration
 	presenceTracker  *presence.Tracker
+	authenticator    Authenticator
 }
 
 // NewMonitoringHandler constructs a new MonitoringHandler.
 // If offlineThreshold <= 0, a default of 5 minutes is applied.
-func NewMonitoringHandler(store storage.StatusStorage, offlineThreshold time.Duration, presenceTracker *presence.Tracker) *MonitoringHandler {
+func NewMonitoringHandler(store storage.StatusStorage, offlineThreshold time.Duration, presenceTracker *presence.Tracker, auth ...Authenticator) *MonitoringHandler {
 	if offlineThreshold <= 0 {
 		offlineThreshold = 5 * time.Minute
 	}
-	return &MonitoringHandler{
+	h := &MonitoringHandler{
 		store:            store,
 		offlineThreshold: offlineThreshold,
 		presenceTracker:  presenceTracker,
 	}
+	if len(auth) > 0 {
+		h.authenticator = auth[0]
+	}
+	return h
 }
 
 // RegisterRoutes registers the monitoring endpoints on the provided ServeMux.
@@ -40,7 +50,9 @@ func (h *MonitoringHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/gateways", h.handleListGateways)
 	mux.HandleFunc("POST /api/v1/gateways", h.handleCreateGateway)
 	mux.HandleFunc("GET /api/v1/gateways/{gw_id}/status", h.handleGetGatewayStatus)
+	mux.HandleFunc("DELETE /api/v1/gateways/{gw_id}", h.handleDeleteGateway)
 	mux.HandleFunc("GET /api/v1/nodes", h.handleListNodes)
+	mux.HandleFunc("DELETE /api/v1/nodes/{node_id}", h.handleDeleteNode)
 }
 
 // handleListGateways returns all known gateways with live telemetry and registry metadata.
@@ -240,4 +252,199 @@ func (h *MonitoringHandler) handleListNodes(w http.ResponseWriter, r *http.Reque
 	}
 
 	writeJSON(w, http.StatusOK, page)
+}
+
+func (h *MonitoringHandler) checkAdminRBAC(r *http.Request) (int, string, string) {
+	authenticator := h.authenticator
+	if authenticator == nil {
+		secret := os.Getenv("JWT_SECRET_KEY")
+		if len(secret) < 32 {
+			secret = "default-mvp-jwt-secret-key-minimum-32-bytes!!"
+		}
+		if svc, err := auth.NewJWTService([]byte(secret)); err == nil {
+			authenticator = NewJWTAuthenticator(svc)
+		}
+	}
+
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+		return http.StatusUnauthorized, "UNAUTHORIZED", "bearer token required"
+	}
+	token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+	if token == "" {
+		return http.StatusUnauthorized, "UNAUTHORIZED", "bearer token empty"
+	}
+
+	if authenticator == nil {
+		return http.StatusInternalServerError, "INTERNAL_ERROR", "authenticator unconfigured"
+	}
+
+	role, err := authenticator.Authenticate(token)
+	if err != nil {
+		return http.StatusUnauthorized, "UNAUTHORIZED", "invalid or expired bearer token"
+	}
+
+	if role != RoleAdmin {
+		return http.StatusForbidden, "FORBIDDEN", "role ADMIN required for this operation"
+	}
+
+	return http.StatusOK, "", ""
+}
+
+// GatewayLifecycleStorage is an optional interface implemented by storage backends that support lifecycle deletion.
+type GatewayLifecycleStorage interface {
+	DeleteGateway(ctx context.Context, gatewayID string) error
+	DeleteNode(ctx context.Context, nodeID string) error
+}
+
+func (h *MonitoringHandler) deleteGateway(ctx context.Context, gwID string) error {
+	if lifecycle, ok := h.store.(GatewayLifecycleStorage); ok {
+		return lifecycle.DeleteGateway(ctx, gwID)
+	}
+
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		return errors.New("storage does not support lifecycle operations and DATABASE_URL is not set")
+	}
+
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		return fmt.Errorf("failed to open database connection: %w", err)
+	}
+	defer db.Close()
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// 1. Release active RF channel allocation
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE gateway_channel_allocations
+		SET status = 'RELEASED',
+		    released_by = 'ADMIN',
+		    release_reason = 'Gateway deleted from system registry',
+		    released_at = CURRENT_TIMESTAMP,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE gateway_id = $1 AND status = 'ALLOCATED'`, gwID); err != nil {
+		return fmt.Errorf("failed to release gateway channel allocations: %w", err)
+	}
+
+	// 2. Remove from gateway_status
+	if _, err := tx.ExecContext(ctx, `DELETE FROM gateway_status WHERE gateway_id = $1`, gwID); err != nil {
+		return fmt.Errorf("failed to delete gateway_status: %w", err)
+	}
+
+	// 3. Remove from gateways registry
+	if _, err := tx.ExecContext(ctx, `DELETE FROM gateways WHERE gateway_id = $1`, gwID); err != nil {
+		return fmt.Errorf("failed to delete gateways: %w", err)
+	}
+
+	// 4. Remove associated node health entries
+	if _, err := tx.ExecContext(ctx, `DELETE FROM node_health WHERE gateway_id = $1`, gwID); err != nil {
+		return fmt.Errorf("failed to delete node_health for gateway: %w", err)
+	}
+
+	// 5. Remove associated device join requests
+	if _, err := tx.ExecContext(ctx, `DELETE FROM device_join_requests WHERE gateway_id = $1`, gwID); err != nil {
+		return fmt.Errorf("failed to delete device_join_requests for gateway: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+func (h *MonitoringHandler) deleteNode(ctx context.Context, nodeID string) error {
+	if lifecycle, ok := h.store.(GatewayLifecycleStorage); ok {
+		return lifecycle.DeleteNode(ctx, nodeID)
+	}
+
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		return errors.New("storage does not support lifecycle operations and DATABASE_URL is not set")
+	}
+
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		return fmt.Errorf("failed to open database connection: %w", err)
+	}
+	defer db.Close()
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	cleanedID := strings.TrimPrefix(strings.TrimSpace(nodeID), "N-")
+	if numericID, err := strconv.Atoi(cleanedID); err == nil && numericID >= 1 && numericID <= 254 {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM node_health WHERE node_id = $1`, numericID); err != nil {
+			return fmt.Errorf("failed to delete node_health by node_id: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM device_join_requests WHERE assigned_node_id = $1`, numericID); err != nil {
+			return fmt.Errorf("failed to delete device_join_requests by assigned_node_id: %w", err)
+		}
+	}
+
+	hexMAC := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(nodeID), ":", ""))
+	if len(hexMAC) == 12 {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM device_join_requests WHERE LOWER(device_mac) = $1`, hexMAC); err != nil {
+			return fmt.Errorf("failed to delete device_join_requests by mac: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM devices WHERE encode(device_mac, 'hex') = $1`, hexMAC); err != nil {
+			return fmt.Errorf("failed to delete devices by mac: %w", err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+// handleDeleteGateway handles DELETE /api/v1/gateways/{gw_id}.
+func (h *MonitoringHandler) handleDeleteGateway(w http.ResponseWriter, r *http.Request) {
+	if status, code, msg := h.checkAdminRBAC(r); status != http.StatusOK {
+		writeError(w, status, code, msg)
+		return
+	}
+
+	gwID := strings.TrimSpace(r.PathValue("gw_id"))
+	if !domain.GatewayIDPattern.MatchString(gwID) {
+		writeError(w, http.StatusUnprocessableEntity, "INVALID_GATEWAY_ID", "gateway_id must match ^[A-Za-z0-9_-]{1,32}$")
+		return
+	}
+
+	if err := h.deleteGateway(r.Context(), gwID); err != nil {
+		log.Printf("[MonitoringHandler] DeleteGateway %s error: %v", gwID, err)
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to delete gateway")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":     "DELETED",
+		"gateway_id": gwID,
+	})
+}
+
+// handleDeleteNode handles DELETE /api/v1/nodes/{node_id}.
+func (h *MonitoringHandler) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
+	if status, code, msg := h.checkAdminRBAC(r); status != http.StatusOK {
+		writeError(w, status, code, msg)
+		return
+	}
+
+	nodeID := strings.TrimSpace(r.PathValue("node_id"))
+	if nodeID == "" {
+		writeError(w, http.StatusUnprocessableEntity, "INVALID_NODE_ID", "node_id required")
+		return
+	}
+
+	if err := h.deleteNode(r.Context(), nodeID); err != nil {
+		log.Printf("[MonitoringHandler] DeleteNode %s error: %v", nodeID, err)
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to delete node")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":  "DELETED",
+		"node_id": nodeID,
+	})
 }

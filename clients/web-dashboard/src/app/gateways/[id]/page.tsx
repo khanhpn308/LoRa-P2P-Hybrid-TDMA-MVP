@@ -4,8 +4,9 @@ import React, { useState, useEffect, useMemo, use, Suspense } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
-import { getGatewayStatus, getGateways } from "@/lib/api/gateways";
+import { getGatewayStatus, getGateways, deleteGateway } from "@/lib/api/gateways";
 import { getAlerts } from "@/lib/api/alerts";
+import { useAuth } from "@/lib/auth/AuthContext";
 import { useRealtime } from "@/lib/realtime/RealtimeContext";
 import {
   Alert,
@@ -18,6 +19,8 @@ import {
   Radio,
   Layers,
   AlertTriangle,
+  Trash2,
+  CheckCircle2,
 } from "lucide-react";
 
 interface GatewayDetailProps {
@@ -59,10 +62,14 @@ function GatewayDetailContent({ params }: { params: Promise<{ id: string }> }) {
   const unwrappedParams = use(params);
   const rawId = decodeURIComponent(unwrappedParams.id || "GW-01");
   const router = useRouter();
+  const { role } = useAuth();
   const { subscribe } = useRealtime();
 
   const [timeRange, setTimeRange] = useState<"24h" | "7d" | "30d">("24h");
   const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const initialGw: GatewayInfo = {
     id: rawId,
@@ -223,6 +230,22 @@ function GatewayDetailContent({ params }: { params: Promise<{ id: string }> }) {
     router.push(`/monitoring?area=${encodeURIComponent(areaName)}`);
   };
 
+  const handleConfirmDelete = async () => {
+    try {
+      setIsDeleting(true);
+      await deleteGateway(rawId);
+      setToastMessage(`Đã xóa thành công Gateway [${rawId}]. Đang chuyển hướng...`);
+      setShowDeleteModal(false);
+      setTimeout(() => {
+        router.push("/gateways");
+      }, 1000);
+    } catch (err) {
+      setToastMessage(`Lỗi khi xóa Gateway: ${err instanceof Error ? err.message : "Thất bại"}`);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
     <AppShell activeRoute="gateways">
       {/* Breadcrumb Navigation */}
@@ -285,6 +308,19 @@ function GatewayDetailContent({ params }: { params: Promise<{ id: string }> }) {
               )}
             </div>
           </div>
+
+          {/* Action button for ADMIN (Issue #293) */}
+          {role === "ADMIN" && (
+            <button
+              type="button"
+              onClick={() => setShowDeleteModal(true)}
+              title={`Xóa Gateway ${gw.id}`}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold text-state-critical bg-state-critical/10 hover:bg-state-critical hover:text-white border border-state-critical/20 transition-colors cursor-pointer"
+            >
+              <Trash2 className="w-4 h-4" />
+              <span>Xóa Gateway</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -501,6 +537,75 @@ function GatewayDetailContent({ params }: { params: Promise<{ id: string }> }) {
           </div>
         </section>
       </div>
+
+      {/* Confirmation Modal for Safe Gateway Deletion (Issue #293) */}
+      {showDeleteModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-gateway-detail-modal-title"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+        >
+          <div className="bg-surface border border-border rounded-xl shadow-none max-w-md w-full p-6 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-state-critical/10 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-state-critical" />
+              </div>
+              <div className="space-y-1">
+                <h3 id="delete-gateway-detail-modal-title" className="text-base font-semibold text-text-primary">
+                  Xác nhận xóa Gateway
+                </h3>
+                <p className="text-sm text-text-secondary">
+                  Bạn có chắc chắn muốn gỡ bỏ Gateway{" "}
+                  <span className="font-semibold text-text-primary">{gw.name}</span> (
+                  <span className="font-mono text-interactive font-semibold">{gw.id}</span>)?
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-state-critical/5 border border-state-critical/20 rounded-lg text-xs text-state-critical space-y-1">
+              <div className="font-semibold flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5" /> Cảnh báo rủi ro hệ thống:
+              </div>
+              <div>
+                Hành động này sẽ ngắt kết nối và gỡ toàn bộ cấu hình trạm Gateway khỏi hệ thống,
+                đồng thời giải phóng kênh RF ({gw.frequency}) đang gán để dùng cho trạm khác.
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(false)}
+                disabled={isDeleting}
+                className="h-9 px-4 rounded-lg border border-border bg-canvas hover:bg-canvas/80 text-text-secondary text-xs font-medium transition-colors cursor-pointer"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                disabled={isDeleting}
+                className="h-9 px-4 rounded-lg bg-state-critical hover:bg-state-critical/90 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer flex items-center gap-2 disabled:opacity-50"
+              >
+                {isDeleting ? "Đang xóa..." : "Xác nhận xóa"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Context-Aware Feedback Toast */}
+      {toastMessage && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-3 bg-surface border border-interactive text-text-primary text-xs font-medium rounded-lg shadow-lg"
+        >
+          <CheckCircle2 className="w-4 h-4 text-interactive shrink-0" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
     </AppShell>
   );
 }
