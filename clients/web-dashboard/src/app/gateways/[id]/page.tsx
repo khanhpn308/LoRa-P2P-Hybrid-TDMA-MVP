@@ -1,10 +1,17 @@
 "use client";
 
-import React, { useState, useEffect, use, Suspense } from "react";
+import React, { useState, useEffect, useMemo, use, Suspense } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
-import { getGatewayStatus } from "@/lib/api/gateways";
+import { getGatewayStatus, getGateways } from "@/lib/api/gateways";
+import { getAlerts } from "@/lib/api/alerts";
+import { useRealtime } from "@/lib/realtime/RealtimeContext";
+import {
+  Alert,
+  AlertTriggeredPayload,
+  GatewayStatusChangedPayload,
+} from "@/types/api";
 import {
   ArrowLeft,
   ChevronRight,
@@ -52,8 +59,10 @@ function GatewayDetailContent({ params }: { params: Promise<{ id: string }> }) {
   const unwrappedParams = use(params);
   const rawId = decodeURIComponent(unwrappedParams.id || "GW-01");
   const router = useRouter();
+  const { subscribe } = useRealtime();
 
   const [timeRange, setTimeRange] = useState<"24h" | "7d" | "30d">("24h");
+  const [alerts, setAlerts] = useState<Alert[]>([]);
 
   const initialGw: GatewayInfo = {
     id: rawId,
@@ -82,8 +91,30 @@ function GatewayDetailContent({ params }: { params: Promise<{ id: string }> }) {
   useEffect(() => {
     async function loadRealGateway() {
       try {
-        const realStatus = await getGatewayStatus(rawId);
-        if (realStatus) {
+        const [realStatusResult, allGwsResult, alertsResult] = await Promise.allSettled([
+          getGatewayStatus(rawId),
+          getGateways(),
+          getAlerts({ gateway_id: rawId, limit: 100 }),
+        ]);
+
+        if (allGwsResult.status === "fulfilled" && Array.isArray(allGwsResult.value)) {
+          const matchedGw = allGwsResult.value.find((g) => g.gateway_id === rawId);
+          if (matchedGw) {
+            setGw((prev) => ({
+              ...prev,
+              name: matchedGw.name || prev.name,
+              primaryArea: matchedGw.location || prev.primaryArea,
+              ipAddress: matchedGw.ip_address || prev.ipAddress,
+              channel: matchedGw.channel_id || prev.channel,
+              frequency: matchedGw.frequency_hz
+                ? `${(matchedGw.frequency_hz / 1e6).toFixed(3)} MHz`
+                : prev.frequency,
+            }));
+          }
+        }
+
+        if (realStatusResult.status === "fulfilled" && realStatusResult.value) {
+          const realStatus = realStatusResult.value;
           setGw((prev) => ({
             ...prev,
             mode: realStatus.mode,
@@ -95,6 +126,14 @@ function GatewayDetailContent({ params }: { params: Promise<{ id: string }> }) {
             operating: realStatus.mode === "ACTIVE" || realStatus.mode === "AUTONOMOUS",
           }));
         }
+
+        if (
+          alertsResult.status === "fulfilled" &&
+          alertsResult.value &&
+          Array.isArray(alertsResult.value.items)
+        ) {
+          setAlerts(alertsResult.value.items);
+        }
       } catch {
         // preserve baseline
       }
@@ -102,33 +141,83 @@ function GatewayDetailContent({ params }: { params: Promise<{ id: string }> }) {
     loadRealGateway();
   }, [rawId]);
 
-  // Backend-provided covered areas with fault-event count (DESIGN.md §7)
-  const coveredAreas: CoveredAreaItem[] = [
-    {
-      id: "CA-1",
-      name: gw.primaryArea,
-      description: "Khu phân xưởng sản xuất chính & buồng máy nén",
-      nodeCount: 38,
-      faultEventCount: timeRange === "24h" ? 5 : timeRange === "7d" ? 18 : 42,
-      status: "warning",
-    },
-    {
-      id: "CA-2",
-      name: "Khu vực Phụ trợ",
-      description: "Hệ thống trạm bơm giải nhiệt và tháp trao đổi nhiệt",
-      nodeCount: 24,
-      faultEventCount: timeRange === "24h" ? 2 : timeRange === "7d" ? 7 : 15,
-      status: "normal",
-    },
-    {
-      id: "CA-3",
-      name: "Kho nguyên liệu",
-      description: "Kho lưu trữ vật tư và sàn bến bãi logistics",
-      nodeCount: 16,
-      faultEventCount: 0,
-      status: "optimal",
-    },
-  ];
+  useEffect(() => {
+    const unsubscribe = subscribe((envelope) => {
+      if (envelope.type === "ALERT_TRIGGERED") {
+        const payload = envelope.payload as AlertTriggeredPayload;
+        if (payload.gateway_id === rawId) {
+          const newAlert: Alert = {
+            alert_id: payload.alert_id,
+            node_id: payload.node_id,
+            gateway_id: payload.gateway_id,
+            event_ref: payload.event_ref,
+            event_code: payload.event_code,
+            event_value: payload.event_value,
+            severity: payload.severity,
+            triggered_at: payload.triggered_at,
+            received_at: new Date().toISOString(),
+            ack_status: "UNACKNOWLEDGED",
+            acked_at: null,
+          };
+          setAlerts((prev) => [newAlert, ...prev.filter((a) => a.alert_id !== newAlert.alert_id)]);
+        }
+      } else if (envelope.type === "GATEWAY_STATUS_CHANGED") {
+        const payload = envelope.payload as GatewayStatusChangedPayload;
+        if (payload.gateway_id === rawId) {
+          setGw((prev) => ({
+            ...prev,
+            mode: payload.mode,
+            connected: payload.mode !== "OFFLINE",
+            operating: payload.mode === "ACTIVE" || payload.mode === "AUTONOMOUS",
+            lastSeenAt: payload.last_seen_at,
+          }));
+        }
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [rawId, subscribe]);
+
+  // Compute alerts filtered by selected time range (24h / 7d / 30d)
+  const filteredAlerts = useMemo(() => {
+    const now = Date.now();
+    const windowMs =
+      timeRange === "24h"
+        ? 24 * 60 * 60 * 1000
+        : timeRange === "7d"
+        ? 7 * 24 * 60 * 60 * 1000
+        : 30 * 24 * 60 * 60 * 1000;
+
+    return alerts.filter((a) => {
+      const ts = a.triggered_at
+        ? new Date(a.triggered_at).getTime()
+        : new Date(a.received_at).getTime();
+      return !isNaN(ts) && now - ts <= windowMs;
+    });
+  }, [alerts, timeRange]);
+
+  // Real covered areas derived from gateway metadata and real alert counts
+  const coveredAreas: CoveredAreaItem[] = useMemo(() => {
+    const rawAreas = gw.primaryArea
+      .split(/[,;]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const areaNames = rawAreas.length > 0 ? rawAreas : [gw.primaryArea || "Khu vực chung"];
+
+    return areaNames.map((name, idx) => ({
+      id: `CA-${gw.id}-${idx + 1}`,
+      name,
+      description:
+        idx === 0
+          ? `Khu vực vận hành và vùng phủ sóng vô tuyến chính của Gateway ${gw.id}`
+          : `Phân khu trực thuộc tầm phủ sóng của Gateway ${gw.id}`,
+      nodeCount: idx === 0 ? gw.nodeCount : 0,
+      faultEventCount: filteredAlerts.length,
+      status: filteredAlerts.length > 0 ? ("warning" as const) : ("optimal" as const),
+    }));
+  }, [gw.id, gw.primaryArea, gw.nodeCount, filteredAlerts.length]);
 
   const handleNavigateToMonitoring = (areaName: string) => {
     router.push(`/monitoring?area=${encodeURIComponent(areaName)}`);
@@ -353,7 +442,7 @@ function GatewayDetailContent({ params }: { params: Promise<{ id: string }> }) {
               </thead>
 
               <tbody className="divide-y divide-border text-sm">
-                {coveredAreas.map((area) => (
+                {coveredAreas.map((area, index) => (
                   <tr
                     key={area.id}
                     onClick={() => handleNavigateToMonitoring(area.name)}
@@ -366,7 +455,7 @@ function GatewayDetailContent({ params }: { params: Promise<{ id: string }> }) {
                         <span className="font-semibold text-interactive text-sm group-hover:underline underline-offset-2">
                           {area.name}
                         </span>
-                        {area.id === "CA-1" && (
+                        {index === 0 && (
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 dark:bg-blue-950/60 text-interactive border border-blue-200 dark:border-blue-800">
                             Chính
                           </span>

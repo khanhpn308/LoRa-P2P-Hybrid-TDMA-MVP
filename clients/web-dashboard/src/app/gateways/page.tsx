@@ -124,12 +124,13 @@ function GatewaysContent() {
   // Filtered gateways based on the 3 independent controls
   const filteredGateways = useMemo(() => {
     return gateways.filter((gw) => {
-      // 1. Search Query filter (matches ID or Name)
+      // 1. Search Query filter (matches ID, Name, or Area)
       if (searchQuery.trim() !== "") {
         const q = searchQuery.toLowerCase().trim();
         const matchId = gw.id.toLowerCase().includes(q);
         const matchName = gw.name.toLowerCase().includes(q);
-        if (!matchId && !matchName) return false;
+        const matchArea = gw.primaryArea.toLowerCase().includes(q);
+        if (!matchId && !matchName && !matchArea) return false;
       }
 
       // 2. Connection Status filter (Đã kết nối / Mất kết nối)
@@ -277,18 +278,18 @@ function GatewaysContent() {
               {/* Table Header */}
               <thead>
                 <tr className="h-11 bg-canvas/60 border-b border-border text-[13px] font-medium text-text-secondary uppercase tracking-wider">
-                  {/* Column 1: Mã Gateway (18%) */}
-                  <th scope="col" className="py-2.5 pl-6 pr-4 font-semibold" style={{ width: "18%" }}>
+                  {/* Column 1: Mã Gateway (16%) */}
+                  <th scope="col" className="py-2.5 pl-6 pr-4 font-semibold" style={{ width: "16%" }}>
                     Mã Gateway
                   </th>
 
-                  {/* Column 2: Tên Gateway (32%) */}
-                  <th scope="col" className="py-2.5 px-4 font-semibold" style={{ width: "32%" }}>
+                  {/* Column 2: Tên Gateway (28%) */}
+                  <th scope="col" className="py-2.5 px-4 font-semibold" style={{ width: "28%" }}>
                     Tên Gateway
                   </th>
 
-                  {/* Column 3: Kết nối (20%) */}
-                  <th scope="col" className="py-2.5 px-4 font-semibold" style={{ width: "20%" }}>
+                  {/* Column 3: Kết nối (18%) */}
+                  <th scope="col" className="py-2.5 px-4 font-semibold" style={{ width: "18%" }}>
                     Kết nối
                   </th>
 
@@ -297,8 +298,8 @@ function GatewaysContent() {
                     Hoạt động
                   </th>
 
-                  {/* Column 5: Khu vực (12% - text-right) */}
-                  <th scope="col" className="py-2.5 pr-6 pl-4 font-semibold text-right" style={{ width: "12%" }}>
+                  {/* Column 5: Khu vực (20%) */}
+                  <th scope="col" className="py-2.5 pr-6 px-4 font-semibold" style={{ width: "20%" }}>
                     Khu vực
                   </th>
                 </tr>
@@ -370,11 +371,14 @@ function GatewaysContent() {
                         )}
                       </td>
 
-                      {/* 5. Khu vực (Number of covered areas right-aligned + chevron) */}
-                      <td className="py-3 pr-6 pl-4 text-right">
-                        <div className="inline-flex items-center justify-end gap-2 w-full">
-                          <span className="font-mono text-sm text-text-primary tabular-nums">
-                            {gw.areaCount}
+                      {/* 5. Khu vực (Tên khu vực thực tế + Badge + Chevron) */}
+                      <td className="py-3 pr-6 px-4">
+                        <div className="flex items-center justify-between gap-2">
+                          <span
+                            className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-canvas border border-border text-text-primary truncate max-w-[180px]"
+                            title={gw.primaryArea}
+                          >
+                            {gw.primaryArea}
                           </span>
                           <ChevronRight className="w-4 h-4 text-text-secondary group-hover:text-interactive group-hover:translate-x-0.5 transition-all shrink-0" />
                         </div>
