@@ -42,9 +42,16 @@ func NewNodeHandler(repo storage.EventQueryRepository) *NodeHandler {
 }
 
 // RegisterRoutes registers the node endpoints on a ServeMux according to openapi.yaml.
+// Note: GET /api/v1/nodes is registered by MonitoringHandler to provide full status,
+// presence tracking, and cursor pagination without route collision.
 func (h *NodeHandler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/v1/nodes", h.handleListNodes)
 	mux.HandleFunc("GET /api/v1/nodes/{node_id}/telemetry", h.handleGetNodeTelemetry)
+}
+
+// RegisterListNodesRoute registers the node listing route on a ServeMux.
+// In production BuildServeMux, GET /api/v1/nodes is registered by MonitoringHandler.
+func (h *NodeHandler) RegisterListNodesRoute(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/v1/nodes", h.handleListNodes)
 }
 
 // handleListNodes returns confirmed node health reports derived from UP_HEALTH_REPLY (0x44 21B).
@@ -91,7 +98,7 @@ func (h *NodeHandler) handleListNodes(w http.ResponseWriter, r *http.Request) {
 
 // handleGetNodeTelemetry returns HTTP 410 Gone.
 // Periodic application telemetry and SET_PERIODIC_MODE cease as current business flows.
-// Authority: Issue #125, Issue #128, openapi.yaml.
+// Authority: Issue #125, Issue #128, Issue #303, openapi.yaml.
 func (h *NodeHandler) handleGetNodeTelemetry(w http.ResponseWriter, r *http.Request) {
 	nodeIDStr := r.PathValue("node_id")
 	nodeID, err := strconv.Atoi(nodeIDStr)
@@ -103,7 +110,7 @@ func (h *NodeHandler) handleGetNodeTelemetry(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusGone)
 	_ = json.NewEncoder(w).Encode(DeprecatedTelemetryResponseDTO{
-		Code:    "DEPRECATED_HISTORICAL",
-		Message: "Historical periodic telemetry retrieval superseded by Event-Only architecture (UP_EVENT 0x41). V2 nodes emit discrete event logs under /api/v1/alerts.",
+		Code:    "TELEMETRY_PERIODIC_MODE_DEPRECATED",
+		Message: "Periodic application telemetry and SET_PERIODIC_MODE cease as current business flows. Event-Only V2 alerts arrive via ALERT_TRIGGERED.",
 	})
 }

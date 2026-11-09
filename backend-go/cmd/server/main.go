@@ -50,6 +50,7 @@ func BuildServeMux(
 	provisionHandler *api.ProvisionHandler,
 	joinReqHandler *api.JoinRequestHandler,
 	presenceTracker *presence.Tracker,
+	nodeHandler *api.NodeHandler,
 	auth ...api.Authenticator,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
@@ -60,6 +61,11 @@ func BuildServeMux(
 	if statusStore != nil {
 		monitoringHandler := api.NewMonitoringHandler(statusStore, offlineThreshold, presenceTracker, auth...)
 		monitoringHandler.RegisterRoutes(mux)
+	}
+
+	if nodeHandler != nil {
+		nodeHandler.RegisterRoutes(mux)
+		log.Println("Node REST API registered at GET /api/v1/nodes/{node_id}/telemetry.")
 	}
 
 	if wsHandler != nil {
@@ -112,6 +118,7 @@ func main() {
 	var joinReqStore storage.JoinRequestStorage
 	var channelHandler *api.ChannelHandler
 	var alertHandler *api.AlertHandler
+	var nodeHandler *api.NodeHandler
 
 	if dbURL != "" {
 		db, err := sql.Open("postgres", dbURL)
@@ -125,12 +132,14 @@ func main() {
 		userRepo = auth.NewPostgresUserRepository(db)
 		eventStorage = storage.NewPostgresEventStorage(db)
 		joinReqStore = storage.NewPostgresJoinRequestStorage(db)
+		nodeHandler = api.NewNodeHandler(eventStorage)
 		provisionRepo = storage.NewPostgresProvisionStorage(db)
 		log.Println("PostgreSQL persistent storage initialized.")
 	} else {
 		log.Println("DATABASE_URL not set; initializing thread-safe in-memory storage.")
 		userRepo = auth.NewInMemoryUserRepository()
 		provisionRepo = storage.NewMemoryProvisionStorage()
+		nodeHandler = api.NewNodeHandler(nil)
 	}
 
 	// Seed / verify default test accounts (admin, operator01, viewer01)
@@ -228,7 +237,7 @@ func main() {
 		provisionHandler = api.NewProvisionHandler(provisionRepo, keyWrapper, jwtAuth)
 	}
 
-	mux := BuildServeMux(statusStore, 5*time.Minute, wsHandler, authHandler, channelHandler, alertHandler, provisionHandler, joinReqHandler, presenceTracker, jwtAuth)
+	mux := BuildServeMux(statusStore, 5*time.Minute, wsHandler, authHandler, channelHandler, alertHandler, provisionHandler, joinReqHandler, presenceTracker, nodeHandler, jwtAuth)
 
 	srv := &http.Server{
 		Addr:         ":" + port,
