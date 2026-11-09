@@ -63,13 +63,14 @@ python3 tools/provisioning/provision_node.py \
 
 ---
 
-## Kịch Bản 2: Node Mới Join Mạng (Join Handshake & Kích Hoạt Phiên)
+## Kịch Bản 2: Node Mới Join Mạng & Duyệt Thiết Bị (Join Handshake & Web Dashboard Approval)
 
 ### 1. Trường hợp test
-Node chưa có khóa phiên phát tín hiệu Join Request (chứa Ephemeral Public Key X25519) qua sóng $\to$ Gateway tiếp nhận, chuyển tiếp lên Backend qua MQTT $\to$ Backend xác thực và phản hồi Join Accept $\to$ Gateway phát sóng Accept $\to$ Node xác lập khóa phiên `K_SESSION_UP` / `K_SESSION_DL`.
+Node chưa có khóa phiên phát tín hiệu Join Request (chứa Ephemeral Public Key X25519) qua sóng $\to$ Gateway tiếp nhận, chuyển tiếp lên Backend qua MQTT topic `iot/v1/gw/{gateway_id}/join/request` $\to$ Admin xem xét và phê duyệt trên Web Dashboard (tab "Node mới" tại `/nodes`) $\to$ Backend xác thực và phản hồi Join Accept qua MQTT $\to$ Gateway phát sóng `DOWN_JOIN_ACCEPT (0x46)` $\to$ Node xác lập khóa phiên `K_SESSION_UP` / `K_SESSION_DOWN`, chuyển trạng thái sang sẵn sàng hoạt động (Event-Driven Pure CAD CSMA/CA).
 
 ### 2. Thư mục chạy
 * Backend Go: `backend-go`
+* Web Dashboard: `clients/web-dashboard`
 * Gateway: `firmware/gateway_master`
 * Node: `firmware/sensor_node`
 
@@ -94,16 +95,21 @@ CONFIG_SX1276_RF_TX_ENABLE=y
 CONFIG_SX1276_PA_PATH_BOOST=y
 CONFIG_SX1276_TX_POWER_DBM=2
 CONFIG_SX1276_CHANNEL_CH00=y
-CONFIG_NODE_TDMA_NODE_ID=1
-CONFIG_NODE_TDMA_GATEWAY_ID=1
+CONFIG_NODE_DEVICE_ID=1
+CONFIG_NODE_GATEWAY_ID=1
 ```
 
 ### 4. Lệnh chạy
 
-#### Cửa sổ 1 - Khởi động Backend:
+#### Cửa sổ 1 - Khởi động Backend & Web Dashboard:
 ```bash
+# Khởi động Backend Go
 cd /home/khanh/projects/iot/LoRa-P2P-Hybrid-TDMA-MVP/backend-go
 go run cmd/server/main.go
+
+# Khởi động Web Dashboard
+cd /home/khanh/projects/iot/LoRa-P2P-Hybrid-TDMA-MVP/clients/web-dashboard
+npm run dev
 ```
 
 #### Cửa sổ 2 - Nạp & Bật Monitor Gateway:
@@ -121,16 +127,17 @@ idf.py -p /dev/ttyUSB1 flash monitor
 ### 5. Thông số cần thu thập
 * Node Serial: `JOIN_COUNTER` tăng 1 trong NVS flash, in mã `UP_JOIN_REQUEST (0x45)`.
 * Gateway Serial: Nhận `UP_JOIN_REQUEST`, đẩy MQTT topic `iot/v1/gw/gw-a/join/request`.
+* Web Dashboard: Xuất hiện thẻ Node mới tại mục `Node mới` (tab 2), hiển thị RSSI, SNR, Device MAC. Admin bấm "Phê duyệt thiết bị".
 * Backend Log: Xác minh HMAC thẻ Join, sinh bộ khóa phiên, publish `iot/v1/gw/gw-a/join/accept`.
 * Gateway Serial: Nhận MQTT, phát `DOWN_JOIN_ACCEPT (0x46)` trên RF.
-* Node Serial: Nhận `DOWN_JOIN_ACCEPT`, tính khóa chung ECDH X25519 thành công, chuyển trạng thái sang `INSTALLED_INACTIVE` $\to$ sẵn sàng nhận lịch.
+* Node Serial: Nhận `DOWN_JOIN_ACCEPT`, tính khóa chung ECDH X25519 thành công, chuyển trạng thái sang `ACTIVE` $\to$ sẵn sàng phát sự kiện qua CAD CSMA/CA.
 
 ---
 
-## Kịch Bản 3: Phân Lịch & Cập Nhật Lịch TDMA (Schedule Distribution)
+## Kịch Bản 3: Cấp Phát Kênh Tần Số VN920 Tĩnh (Static VN920 Channel Allocation & Commissioning)
 
 ### 1. Trường hợp test
-Backend lập lịch và phát hành bản lịch mới qua MQTT $\to$ Gateway tiếp nhận, lưu trữ và cập nhật vào chu kỳ phát sóng Superframe `DOWN_SYNC_BEACON` (Slot 0).
+Kiến trúc Pure CAD CSMA/CA (ADR-0004) bãi bỏ hoàn toàn subsystem lập lịch TDMA và endpoint `/api/v1/schedules`. Kênh tần số VN920 (CH00..CH10) được cấp phát tĩnh độc quyền cho từng Gateway thông qua REST API quản lý kênh, sau đó Gateway duy trì Continuous RX 24/7 trên kênh này.
 
 ### 2. Thư mục chạy
 ```bash
@@ -138,42 +145,33 @@ cd /home/khanh/projects/iot/LoRa-P2P-Hybrid-TDMA-MVP
 ```
 
 ### 3. Thông số cấu hình
-* Lập lịch 2 khe: Node 1 $\to$ Slot 1, Node 2 $\to$ Slot 2.
-* Chu kỳ Superframe: 10,000 ms.
-* Schedule Version: `2`.
+* Kênh yêu cầu: `CH00` (Tần số 920.250 MHz, BW 125 kHz).
+* Gateway ID: `gw-a`.
 
 ### 4. Lệnh chạy
 ```bash
-curl -X POST http://localhost:8080/api/v1/schedules \
+# Yêu cầu cấp phát kênh tĩnh VN920 cho Gateway gw-a
+curl -X POST http://localhost:8080/api/v1/channels/request \
   -H "Authorization: Bearer <ADMIN_JWT_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{
-    "network_id": 1,
-    "schedule_version": 2,
-    "superframe_duration_ms": 10000,
-    "beacon_window_ms": 500,
-    "slot_duration_ms": 600,
-    "slot_guard_ms": 50,
-    "slots": [
-      {"slot_index": 1, "node_id": 1},
-      {"slot_index": 2, "node_id": 2}
-    ]
+    "gateway_id": "gw-a",
+    "channel_id": "CH00"
   }'
 ```
 
 ### 5. Thông số cần thu thập
-* Backend: HTTP Response `200 OK` kèm `schedule_id`.
+* Backend: HTTP Response `200 OK` (hoặc `201 Created`) trả về `allocation_generation` và trạng thái `ALLOCATED`.
 * Gateway Monitor:
-  * Log MQTT: `Downlink schedule received (X bytes)` trên topic `iot/v1/gw/gw-a/control/schedule`.
-  * Log Master Engine: Cập nhật `sched_ver = 2`.
-  * Log Beacon: `DOWN_SYNC_BEACON` phát ở đầu chu kỳ mang byte `SCHED_VER = 0x02`.
+  * Trạng thái hoạt động: Gateway duy trì chế độ `MODE_RXCONTINUOUS` tại tần số 920.250 MHz.
+  * Không phát Beacon chu kỳ `DOWN_SYNC_BEACON`, không có các luồng di trú lịch TDMA.
 
 ---
 
-## Kịch Bản 4: Giao Tiếp Dữ Liệu Node $\leftrightarrow$ Gateway (`UP_EVENT` $\leftrightarrow$ `DOWN_EVENT_ACK`)
+## Kịch Bản 4: Giao Tiếp Dữ Liệu Node $\leftrightarrow$ Gateway qua Pure CAD + CSMA/CA (`UP_EVENT` $\leftrightarrow$ `DOWN_EVENT_ACK`)
 
 ### 1. Trường hợp test
-Node 1 đang ngủ Deep-Sleep $\to$ Nhấn nút vật lý $\to$ Wake up $\to$ Bắt Beacon $\to$ Chờ đúng Slot 1 $\to$ Bắn `UP_EVENT` (26B) $\to$ Gateway thu, kiểm tra chống phát lại, giải mã AES-CCM-8 $\to$ Phản hồi tức thì `DOWN_EVENT_ACK` (19B) $\to$ Node xóa hàng đợi và ngủ lại.
+Node 1 đang ngủ Deep-Sleep $\to$ Nhấn nút vật lý $\to$ Wake up $\to$ Lắng nghe kiểm tra kênh CAD SX1276 ($\sim 1.5 - 2$ ký hiệu LoRa) $\to$ Kênh rỗi $\to$ Phát tức thì `UP_EVENT` (26B, mã hóa AES-128-CCM-8) $\to$ Gateway Continuous RX 24/7 thu nhận, kiểm tra chống phát lại, ghi WAL/SQLite $\to$ Phản hồi tức thì `DOWN_EVENT_ACK` (19B) trong cửa sổ RX đơn của Node $\to$ Node xóa hàng đợi FIFO và trở về Deep Sleep $\to$ Gateway đẩy MQTT lên Backend $\to$ Web Dashboard cập nhật sự kiện Realtime qua WebSocket.
 
 ### 2. Thư mục chạy
 * Gateway: `firmware/gateway_master`
@@ -195,7 +193,7 @@ CONFIG_SX1276_RF_TX_ENABLE=y
 CONFIG_SX1276_PA_PATH_BOOST=y
 CONFIG_SX1276_TX_POWER_DBM=2
 CONFIG_SX1276_CHANNEL_CH00=y
-CONFIG_NODE_TDMA_NODE_ID=1
+CONFIG_NODE_DEVICE_ID=1
 CONFIG_NODE_BUTTON_GPIO=4
 CONFIG_NODE_BUTTON_ACTIVE_LEVEL=0
 CONFIG_NODE_BUTTON_DEBOUNCE_MS=50
@@ -224,14 +222,18 @@ Nhấn nút bấm vật lý (nối GPIO 4 xuống GND) trên Board Node 1.
 * **Node Monitor:**
   * `[WAKE CAUSE] EXT0 Button Wakeup detected on GPIO 4`
   * `>>> EVENT ENQUEUED <<< Ref: 1`
-  * `Beacon sync successful (SF_SEQ: X, Epoch: Y)`
-  * `Executing TDMA transmission cycle for 1 pending event(s)...`
-  * `TDMA cycle completed (status: ESP_OK, client state: REARM_SLEEP, remaining pending: 0)`
-  * `Entering Deep-Sleep mode.`
+  * `Executing CAD check on channel CH00... CAD Clear (Free)`
+  * `TX UP_EVENT (0x41) 26 bytes sent`
+  * `RX Single Window: DOWN_EVENT_ACK (0x42) received, CCM verified`
+  * `Event Ref 1 committed in NVS FIFO. Entering Deep-Sleep mode.`
 * **Gateway Monitor:**
-  * Slot 0: Phát `DOWN_SYNC_BEACON` (32 bytes).
-  * Slot 1: Nhận frame 26 bytes từ `Node ID = 1`, frame counter tăng hợp lệ, CCM tag khớp.
-  * Phát phản hồi `DOWN_EVENT_ACK` (19 bytes) trong cùng Slot 1.
+  * Continuous RX: Nhận frame 26 bytes từ `Node ID = 1`, `FRAME_COUNTER` hợp lệ, CCM tag khớp.
+  * Ghi WAL/SQLite hoàn tất.
+  * Phát phản hồi `DOWN_EVENT_ACK` (19 bytes) ngay lập tức.
+  * Publish MQTT topic `iot/v1/gw/gw-a/uplink/events`.
+* **Web Dashboard:**
+  * WebSocket nhận sự kiện `ALERT_TRIGGERED`.
+  * Chỉ số sự kiện trên Dashboard nhảy tăng lập tức mà không cần F5 tải lại trang.
 * **Logic Analyzer:**
   * Kẹp `DIO0` (GPIO26) của Node 1 và Gateway:
     * Đo ToA `UP_EVENT`: ~61.7 ms (SF7) hoặc ~113.2 ms (SF8).
@@ -240,10 +242,10 @@ Nhấn nút bấm vật lý (nối GPIO 4 xuống GND) trên Board Node 1.
 
 ---
 
-## Kịch Bản 5: Phân Khe Tĩnh TDMA (Multi-Node Slotted Verification: Node 1 & Node 2)
+## Kịch Bản 5: Kiểm Thử Tranh Chấp Sóng & Lùi Ngẫu Nhiên (Exponential Random Backoff Verification)
 
 ### 1. Trường hợp test
-Cấu hình 2 Node khác nhau: Node 1 gán Slot 1, Node 2 gán Slot 2. Kích hoạt cả hai phát dữ liệu. Xác minh mỗi Node phát đúng khe thời gian riêng biệt, không đè sóng nhau.
+Mô phỏng trường hợp kênh RF đang bận khi Node cần truyền sự kiện. Node thực hiện kiểm tra CAD, phát hiện năng lượng sóng (`CadDetected == 1`), áp dụng thuật toán Exponential Random Backoff ($CW_{\text{min}} = 16\text{ ms}$, $CW_{\text{max}} = 256\text{ ms}$) lùi thời gian ngẫu nhiên trước khi thử lại CAD, không phát đè sóng gây nghẽn mạng.
 
 ### 2. Thư mục chạy
 ```bash
@@ -252,88 +254,57 @@ cd /home/khanh/projects/iot/LoRa-P2P-Hybrid-TDMA-MVP/firmware/sensor_node
 
 ### 3. Thông số menuconfig
 
-#### Node 1:
+#### Node 1 & Node 2:
 ```text
-CONFIG_NODE_TDMA_NODE_ID=1
 CONFIG_NODE_BUTTON_GPIO=4
 CONFIG_SX1276_RF_TX_ENABLE=y
 CONFIG_SX1276_PA_PATH_BOOST=y
 CONFIG_SX1276_TX_POWER_DBM=2
+CONFIG_SX1276_CHANNEL_CH00=y
 ```
 
-#### Node 2:
-```text
-CONFIG_NODE_TDMA_NODE_ID=2
-CONFIG_NODE_BUTTON_GPIO=4
-CONFIG_SX1276_RF_TX_ENABLE=y
-CONFIG_SX1276_PA_PATH_BOOST=y
-CONFIG_SX1276_TX_POWER_DBM=2
-```
-
-### 4. Lệnh chạy
-
-#### Bước 5.1: Nạp Node 1 (`/dev/ttyUSB1`):
-```bash
-cd /home/khanh/projects/iot/LoRa-P2P-Hybrid-TDMA-MVP/firmware/sensor_node
-# Đảm bảo CONFIG_NODE_TDMA_NODE_ID=1 trong sdkconfig
-idf.py -p /dev/ttyUSB1 flash
-```
-
-#### Bước 5.2: Cấu hình và Nạp Node 2 (`/dev/ttyUSB2`):
-```bash
-cd /home/khanh/projects/iot/LoRa-P2P-Hybrid-TDMA-MVP/firmware/sensor_node
-# Đổi CONFIG_NODE_TDMA_NODE_ID=2
-idf.py menuconfig
-idf.py -p /dev/ttyUSB2 flash
-```
-
-#### Bước 5.3: Mở 3 cửa sổ Terminal giám sát:
-```bash
-# Terminal 1:
-idf.py -p /dev/ttyUSB0 monitor  # Gateway
-
-# Terminal 2:
-idf.py -p /dev/ttyUSB1 monitor  # Node 1
-
-# Terminal 3:
-idf.py -p /dev/ttyUSB2 monitor  # Node 2
-```
+### 4. Lệnh chạy & Thao tác
+1. Mở monitor trên cả Node 1, Node 2 và Gateway.
+2. Tạo lưu lượng RF giả lập hoặc kích hoạt Node 1 phát bản tin có ToA dài (SF8).
+3. Trong lúc Node 1 đang phát sóng, kích hoạt nút bấm trên Node 2.
 
 ### 5. Thông số cần thu thập
-* **Logic Analyzer (Ch 0: GW DIO0, Ch 1: Node 1 DIO0, Ch 2: Node 2 DIO0):**
-  * $t_0$: Xung Beacon của Gateway xuất hiện ở đầu chu kỳ.
-  * $t_1$: Xung TX `UP_EVENT` của Node 1 xuất hiện trong khoảng $[550\text{ ms}, 1150\text{ ms}]$.
-  * $t_2$: Xung TX `UP_EVENT` của Node 2 xuất hiện trong khoảng $[1150\text{ ms}, 1750\text{ ms}]$.
-  * **Tiêu chuẩn PASS:** Hai xung TX cách nhau chính xác 1 độ rộng Slot ($600\text{ ms}$), vùng bảo vệ (guard band $50\text{ ms}$) hoàn toàn yên lặng, không có hiện tượng truyền trùng lặp.
+* **Node 2 Monitor:**
+  * `Executing CAD check on channel CH00... CAD Busy (CadDetected=1)`
+  * `Backoff attempt 1/5: waiting X ms (CW=16ms)`
+  * `CAD Retry: CAD Clear (Free) -> TX UP_EVENT (0x41)`
+  * `RX Single Window: DOWN_EVENT_ACK (0x42) received`
+* **Tiêu chuẩn PASS:** Node 2 không phát đè lên sóng của Node 1, cả hai gói tin `UP_EVENT` đều được Gateway thu nhận và phản hồi ACK thành công mà không bị hỏng CRC.
 
 ---
 
-## Kịch Bản 6: Gửi Cùng Một Lúc (Simultaneous Button Alert Contention Test)
+## Kịch Bản 6: Bấm Nút Đồng Thời Trên Nhiều Node (Simultaneous Button Alert Contention Test qua Pure CAD + CSMA/CA)
 
 ### 1. Trường hợp test
-Nhấn nút vật lý đồng thời trên cả Node 1 và Node 2 trong cùng một chu kỳ Superframe 10 giây. Chứng minh cơ chế Hybrid TDMA loại bỏ hoàn toàn xung đột trên không (zero on-air packet collision), các Node tự động xếp hàng theo khe tĩnh của mình.
+Nhấn nút vật lý đồng thời trên cả Node 1 và Node 2. Chứng minh cơ chế Pure CAD kết hợp Exponential Random Backoff phân giải tranh chấp hoàn toàn bất đồng bộ, cả hai sự kiện đều được gửi đến Gateway và hiển thị trên Web Dashboard với tỉ lệ thành công 100%.
 
 ### 2. Thư mục chạy
 * Giữ nguyên cấu hình đã nạp ở **Kịch Bản 5**.
 
 ### 3. Thông số menuconfig
-* Node 1: `CONFIG_NODE_TDMA_NODE_ID=1`
-* Node 2: `CONFIG_NODE_TDMA_NODE_ID=2`
-* Gateway: Chế độ Static Superframe 15 slots.
+* Node 1: `CONFIG_NODE_DEVICE_ID=1`
+* Node 2: `CONFIG_NODE_DEVICE_ID=2`
+* Gateway: Chế độ Continuous RX 24/7 trên kênh CH00.
 
 ### 4. Lệnh chạy & Thao tác
 1. Chạy `monitor` trên cả 3 thiết bị (`/dev/ttyUSB0`, `/dev/ttyUSB1`, `/dev/ttyUSB2`).
-2. Quan sát thấy Gateway vừa phát một Beacon mới (bắt đầu chu kỳ 10s mới).
+2. Mở Web Dashboard trên trình duyệt tại trang `/monitoring` và `/`.
 3. **Thao tác vật lý:** Dùng 2 tay nhấn nút bấm trên cả Node 1 và Node 2 cùng một lúc.
 
 ### 5. Thông số cần thu thập
 * **Node 1 Serial:**
-  * Nhận Beacon $\to$ Tính mốc Slot 1 $\to$ Bắn `UP_EVENT` $\to$ Nhận `DOWN_EVENT_ACK` ngay $\to$ Đi ngủ.
+  * CAD Clear $\to$ Phát `UP_EVENT` ngay $\to$ Nhận `DOWN_EVENT_ACK` $\to$ Ngủ Deep-Sleep.
 * **Node 2 Serial:**
-  * Nhận cùng Beacon $\to$ Tính mốc Slot 2 $\to$ Đứng chờ qua Slot 1 $\to$ Đến đúng Slot 2 mới kích hoạt phát `UP_EVENT` $\to$ Nhận `DOWN_EVENT_ACK` $\to$ Đi ngủ.
+  * Phát hiện kênh bận $\to$ Lùi ngẫu nhiên $X$ ms $\to$ CAD Clear $\to$ Phát `UP_EVENT` $\to$ Nhận `DOWN_EVENT_ACK` $\to$ Ngủ Deep-Sleep.
 * **Gateway Serial:**
-  * Slot 1: Tiếp nhận và xử lý trọn vẹn `UP_EVENT` của Node 1, gửi ACK 1.
-  * Slot 2: Tiếp nhận và xử lý trọn vẹn `UP_EVENT` của Node 2, gửi ACK 2.
+  * Nhận sự kiện từ Node 1, gửi ACK 1, ghi WAL, publish MQTT `uplink/events`.
+  * Nhận sự kiện từ Node 2, gửi ACK 2, ghi WAL, publish MQTT `uplink/events`.
   * Bộ đếm lỗi: `corrupted_packet_count = 0`.
-  * Bộ đếm rớt gói: `overflow_dropped_count = 0`.
-* **Tiêu chuẩn PASS:** Tỉ lệ phân phát gói thành công **PDR = 100% (2/2)** mặc dù sự kiện kích hoạt hoàn toàn đồng thời. Khẳng định tính đúng đắn của giao thức TDMA so với ALOHA/CSMA.
+* **Web Dashboard:**
+  * Cả hai sự kiện từ Node 1 và Node 2 hiển thị đồng thời trên bảng sự kiện thời gian thực.
+* **Tiêu chuẩn PASS:** Tỉ lệ phân phát gói thành công **PDR = 100% (2/2)** mặc dù sự kiện kích hoạt hoàn toàn đồng thời. Khẳng định hiệu năng của cơ chế Pure CAD + Exponential Random Backoff (CSMA/CA).

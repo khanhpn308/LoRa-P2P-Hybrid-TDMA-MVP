@@ -70,9 +70,7 @@ export default function OverviewPage() {
         items.forEach((n) => {
           if (n.status === "ONLINE") {
             nodeConnected += 1;
-            if (n.assigned_slot_id !== null) {
-              nodeOperating += 1;
-            }
+            nodeOperating += 1;
           }
         });
       }

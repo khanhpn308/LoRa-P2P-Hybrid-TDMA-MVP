@@ -353,7 +353,7 @@ function GatewayDetailContent({ params }: { params: Promise<{ id: string }> }) {
               <span className="text-lg font-mono font-semibold text-text-primary mt-1">
                 {gw.sf}
               </span>
-              <span className="text-[10px] text-text-secondary mt-0.5">Slot thời gian ngắn</span>
+              <span className="text-[10px] text-text-secondary mt-0.5">Airtime tối ưu</span>
             </div>
 
             {/* Field 6: Coding Rate */}

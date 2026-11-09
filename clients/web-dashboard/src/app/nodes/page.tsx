@@ -35,7 +35,6 @@ export interface ConnectedNodeItem {
   state: "NORMAL" | "FAULT" | "MAINTENANCE" | "OFFLINE";
   battery_mv: number;
   last_event_type: string;
-  assigned_slot_id: number | null;
 }
 
 export interface NewNodeRequest {
@@ -109,7 +108,6 @@ function NodesContent() {
           state: n.status === "ONLINE" ? "NORMAL" : "OFFLINE",
           battery_mv: 3300,
           last_event_type: n.status === "ONLINE" ? "P2P CSMA/CAD (Sẵn sàng)" : "Ngoại tuyến",
-          assigned_slot_id: n.assigned_slot_id,
         }));
         setConnectedNodes(mapped);
       } else {
@@ -643,7 +641,7 @@ function NodesContent() {
         )}
 
         {/* ======================================================== */}
-        {/* VIEW 2: NODE MỚI (YÊU CẦU GIA NHẬP MẠNG TDMA)             */}
+        {/* VIEW 2: NODE MỚI (YÊU CẦU GIA NHẬP MẠNG)                  */}
         {/* ======================================================== */}
         {activeTab === "new" && (
           <div className="space-y-4">
