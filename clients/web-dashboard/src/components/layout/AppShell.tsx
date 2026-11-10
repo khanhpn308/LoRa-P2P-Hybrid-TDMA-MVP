@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { Header } from "./Header";
 import { Sidebar, NavItemKey } from "./Sidebar";
 import { useTheme } from "@/components/providers/ThemeProvider";
+import { useAuth } from "@/lib/auth/AuthContext";
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -17,7 +18,13 @@ export const AppShell: React.FC<AppShellProps> = ({
   onRouteChange,
 }) => {
   const { darkMode, toggleDarkMode } = useTheme();
+  const { isAuthenticated, isLoading } = useAuth();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  // Defense-in-depth: Prevent rendering AppShell, Sidebar, Header, or children if not authenticated
+  if (isLoading || !isAuthenticated) {
+    return null;
+  }
 
   return (
     <div

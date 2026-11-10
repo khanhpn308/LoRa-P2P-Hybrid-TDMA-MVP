@@ -3,7 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Radio, Moon, Sun, Bell, LogOut, User as UserIcon } from "lucide-react";
+import { Radio, Moon, Sun, Bell, LogOut } from "lucide-react";
 import { useRealtime } from "@/lib/realtime/RealtimeContext";
 import { useAuth } from "@/lib/auth/AuthContext";
 import { useTheme } from "@/components/providers/ThemeProvider";
@@ -19,7 +19,7 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const router = useRouter();
   const { connectionState, reconnectCount } = useRealtime();
-  const { user, role, logout, isAuthenticated } = useAuth();
+  const { user, role, logout } = useAuth();
   const { darkMode: contextDarkMode, toggleDarkMode } = useTheme();
 
   const darkMode = propDarkMode !== undefined ? propDarkMode : contextDarkMode;
@@ -27,7 +27,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   const handleLogout = () => {
     logout();
-    router.push("/login");
+    router.replace("/login");
   };
 
   const renderWsBadge = () => {
@@ -130,47 +130,37 @@ export const Header: React.FC<HeaderProps> = ({
 
         <div className="h-5 w-[1px] bg-border" />
 
-        {/* User Profile & Role */}
-        {isAuthenticated ? (
-          <div className="flex items-center gap-2">
-            <Link
-              href="/users"
-              className="flex items-center gap-2 pl-1 cursor-pointer hover:opacity-85 transition-opacity"
-              title={`Tài khoản: ${user?.username || "admin"} (${displayRole})`}
-            >
-              <div className="w-7 h-7 rounded-full bg-border text-text-secondary flex items-center justify-center text-xs font-semibold">
-                {initials}
-              </div>
-              <div className="hidden md:flex flex-col text-left">
-                <span className="text-xs font-medium text-text-primary leading-tight">
-                  {user?.username || "Quản trị viên"}
-                </span>
-                <span className="text-[10px] text-text-secondary tracking-tight">
-                  {displayRole}
-                </span>
-              </div>
-            </Link>
-
-            {/* Logout button */}
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-text-secondary hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors border border-transparent hover:border-rose-200 dark:hover:border-rose-900"
-              title="Đăng xuất khỏi hệ thống"
-              aria-label="Logout"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        ) : (
+        {/* User Profile & Role (Always visible, Guest state removed) */}
+        <div className="flex items-center gap-2">
           <Link
-            href="/login"
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-interactive text-white rounded hover:bg-interactive-hover transition-colors"
+            href="/users"
+            className="flex items-center gap-2 pl-1 cursor-pointer hover:opacity-85 transition-opacity"
+            title={`Tài khoản: ${user?.username || "admin"} (${displayRole})`}
           >
-            <UserIcon className="w-3.5 h-3.5" />
-            <span>Đăng nhập</span>
+            <div className="w-7 h-7 rounded-full bg-border text-text-secondary flex items-center justify-center text-xs font-semibold">
+              {initials}
+            </div>
+            <div className="hidden md:flex flex-col text-left">
+              <span className="text-xs font-medium text-text-primary leading-tight">
+                {user?.username || "Quản trị viên"}
+              </span>
+              <span className="text-[10px] text-text-secondary tracking-tight">
+                {displayRole}
+              </span>
+            </div>
           </Link>
-        )}
+
+          {/* Logout button */}
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-text-secondary hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors border border-transparent hover:border-rose-200 dark:hover:border-rose-900"
+            title="Đăng xuất khỏi hệ thống"
+            aria-label="Logout"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
     </header>
   );
