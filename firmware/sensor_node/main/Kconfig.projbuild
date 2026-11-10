@@ -99,4 +99,28 @@ menu "Sensor Node Configuration"
                 Maximum channel activity detection retries before backing off and deferring transmission (ADR-0004 default: 5).
     endmenu
 
+    menu "Stop-and-Wait ARQ & Retransmission"
+        config NODE_ARQ_MAX_RETRIES
+            int "Stop-and-Wait ARQ Maximum Retries (tx_max)"
+            default 3
+            range 1 10
+            help
+                Maximum immediate retransmission attempts (tx_max) per event session
+                when ACK is lost or invalid before sleeping (default: 3).
+
+        config NODE_ARQ_BACKOFF_MIN_MS
+            int "ARQ Minimum Random Backoff in ms"
+            default 50
+            range 10 1000
+            help
+                Minimum random backoff time in milliseconds before retransmission attempt.
+
+        config NODE_ARQ_BACKOFF_MAX_MS
+            int "ARQ Maximum Random Backoff in ms"
+            default 200
+            range 10 5000
+            help
+                Maximum random backoff time in milliseconds before retransmission attempt.
+    endmenu
+
 endmenu
