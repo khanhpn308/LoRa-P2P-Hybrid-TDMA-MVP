@@ -76,6 +76,27 @@ menu "Sensor Node Configuration"
             range 1 100
             help
                 Pre-transmit duty cycle enforcement limit (1.0% = 10 permille).
+
+        config NODE_CAD_CW_MIN_MS
+            int "CAD Minimum Contention Window in ms (CW_min)"
+            default 16
+            range 1 1000
+            help
+                Minimum contention window size for CAD exponential backoff in milliseconds (ADR-0004 default: 16).
+
+        config NODE_CAD_CW_MAX_MS
+            int "CAD Maximum Contention Window in ms (CW_max)"
+            default 256
+            range 1 5000
+            help
+                Maximum contention window size for CAD exponential backoff in milliseconds (ADR-0004 default: 256).
+
+        config NODE_CAD_MAX_RETRIES
+            int "CAD Maximum Retries (MAX_CAD_RETRIES)"
+            default 5
+            range 1 20
+            help
+                Maximum channel activity detection retries before backing off and deferring transmission (ADR-0004 default: 5).
     endmenu
 
 endmenu

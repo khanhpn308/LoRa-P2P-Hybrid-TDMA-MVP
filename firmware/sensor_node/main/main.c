@@ -18,6 +18,7 @@
 #include "node_v2_join.h"
 #include "oled_ssd1306.h"
 #include "node_smart_backoff.h"
+#include "node_cad_backoff.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "sensor_node";
@@ -121,25 +122,31 @@ static esp_err_t node_cad_event_tx_and_ack(const node_mac_config_t *cfg,
              event_item.event_ref, event_item.event_code, event_item.event_value);
     ESP_LOGI(TAG, "==================================================");
 
-    /* 1. CAD with exponential random backoff (up to 3 retries) */
+    /* 1. CAD with exponential random backoff (ADR-0004 Section 2.2, Item 3: up to MAX_CAD_RETRIES=5) */
     bool channel_clear = false;
-    uint32_t backoff_base_ms = 20U;
-    for (uint8_t attempt = 1; attempt <= 3; attempt++) {
+    for (uint8_t attempt = 1; attempt <= NODE_CAD_MAX_RETRIES; attempt++) {
         bool activity = false;
         esp_err_t cad_err = sx1276_cad(&activity, pdMS_TO_TICKS(50));
         if (cad_err == ESP_OK && !activity) {
             channel_clear = true;
-            ESP_LOGI(TAG, "[CAD] Channel CLEAR on attempt #%u (Freq=920.250 MHz CH0)", attempt);
+            ESP_LOGI(TAG, "[CAD] Channel CLEAR on attempt #%u/%u (Freq=920.250 MHz CH0)",
+                     attempt, NODE_CAD_MAX_RETRIES);
             break;
         }
-        uint32_t backoff_ms = backoff_base_ms + (esp_random() % (backoff_base_ms * 2U));
-        ESP_LOGW(TAG, "[CAD] Channel BUSY on attempt #%u, backing off %" PRIu32 " ms...", attempt, backoff_ms);
+
+        uint32_t cw_k = node_get_cad_contention_window_ms(attempt);
+        uint32_t backoff_ms = node_calculate_cad_backoff_ms(attempt);
+        ESP_LOGW(TAG, "[CAD] Channel BUSY on attempt #%u/%u (CW_k=%" PRIu32 " ms), backing off %" PRIu32 " ms...",
+                 attempt, NODE_CAD_MAX_RETRIES, cw_k, backoff_ms);
         (void)node_smart_backoff(backoff_ms);
-        backoff_base_ms *= 2U;
     }
 
     if (!channel_clear) {
-        ESP_LOGE(TAG, "[CAD] Channel persistently busy after 3 retries; deferring event transmission");
+        ESP_LOGE(TAG, "[CAD] Channel persistently busy after %u retries (activity detected); aborting TX",
+                 NODE_CAD_MAX_RETRIES);
+        (void)node_event_fifo_record_retry(fifo, event_item.event_ref);
+        ESP_LOGW(TAG, "Event Ref #%" PRIu32 " preserved in FIFO for retry", event_item.event_ref);
+        (void)sx1276_sleep();
         return ESP_ERR_TIMEOUT;
     }
 
