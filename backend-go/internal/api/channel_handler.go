@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/auth"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/domain"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/jsonboundary"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/storage"
@@ -56,6 +57,15 @@ func (h *ChannelHandler) SetAuthenticator(auth Authenticator) {
 }
 
 func (h *ChannelHandler) checkRBAC(r *http.Request, allowedRoles ...Role) (string, int, error) {
+	if claims, ok := auth.ClaimsFromContext(r.Context()); ok && claims != nil {
+		for _, allowed := range allowedRoles {
+			if Role(claims.Role) == allowed {
+				return string(claims.Role), http.StatusOK, nil
+			}
+		}
+		return "", http.StatusForbidden, errors.New("insufficient permissions")
+	}
+
 	if h.authenticator == nil {
 		return "", http.StatusInternalServerError, errors.New("authenticator unconfigured")
 	}

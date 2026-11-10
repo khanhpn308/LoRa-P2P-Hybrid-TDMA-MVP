@@ -260,6 +260,13 @@ func (h *MonitoringHandler) handleListNodes(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *MonitoringHandler) checkAdminRBAC(r *http.Request) (int, string, string) {
+	if claims, ok := auth.ClaimsFromContext(r.Context()); ok && claims != nil {
+		if claims.Role != auth.RoleAdmin {
+			return http.StatusForbidden, "FORBIDDEN", "role ADMIN required for this operation"
+		}
+		return http.StatusOK, "", ""
+	}
+
 	authenticator := h.authenticator
 	if authenticator == nil {
 		secret := os.Getenv("JWT_SECRET_KEY")

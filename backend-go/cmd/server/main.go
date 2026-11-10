@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -51,54 +52,90 @@ func BuildServeMux(
 	joinReqHandler *api.JoinRequestHandler,
 	presenceTracker *presence.Tracker,
 	nodeHandler *api.NodeHandler,
-	auth ...api.Authenticator,
+	jwtService *auth.JWTService,
+	authenticators ...api.Authenticator,
 ) *http.ServeMux {
-	mux := http.NewServeMux()
+	rootMux := http.NewServeMux()
+	apiMux := http.NewServeMux()
 
 	healthHandler := api.NewHealthHandler()
-	healthHandler.RegisterRoutes(mux)
-
-	if statusStore != nil {
-		monitoringHandler := api.NewMonitoringHandler(statusStore, offlineThreshold, presenceTracker, auth...)
-		monitoringHandler.RegisterRoutes(mux)
-	}
-
-	if nodeHandler != nil {
-		nodeHandler.RegisterRoutes(mux)
-		log.Println("Node REST API registered at GET /api/v1/nodes/{node_id}/telemetry.")
-	}
+	healthHandler.RegisterRoutes(rootMux)
 
 	if wsHandler != nil {
-		wsHandler.RegisterRoutes(mux)
+		wsHandler.RegisterRoutes(rootMux)
 		log.Println("Realtime WebSocket hub endpoint registered at GET /api/v1/ws/realtime.")
 	}
 
 	if authHandler != nil {
-		authHandler.RegisterRoutes(mux)
+		authHandler.RegisterRoutes(rootMux)
 		log.Println("Auth REST API registered.")
 	}
 
+	if statusStore != nil {
+		monitoringHandler := api.NewMonitoringHandler(statusStore, offlineThreshold, presenceTracker, authenticators...)
+		monitoringHandler.RegisterRoutes(apiMux)
+	}
+
+	if nodeHandler != nil {
+		nodeHandler.RegisterRoutes(apiMux)
+		log.Println("Node REST API registered at GET /api/v1/nodes/{node_id}/telemetry.")
+	}
+
 	if channelHandler != nil {
-		channelHandler.RegisterRoutes(mux)
+		channelHandler.RegisterRoutes(apiMux)
 		log.Println("Channel registry REST API registered.")
 	}
 
 	if alertHandler != nil {
-		alertHandler.RegisterRoutes(mux)
+		alertHandler.RegisterRoutes(apiMux)
 		log.Println("Alerts REST API registered.")
 	}
 
 	if provisionHandler != nil {
-		provisionHandler.RegisterRoutes(mux)
+		provisionHandler.RegisterRoutes(apiMux)
 		log.Println("Device provisioning REST API registered at POST /api/v1/devices/provision.")
 	}
 
 	if joinReqHandler != nil {
-		joinReqHandler.RegisterRoutes(mux)
+		joinReqHandler.RegisterRoutes(apiMux)
 		log.Println("Device join request approval REST API registered at /api/v1/devices/requests.")
 	}
 
-	return mux
+	if jwtService == nil && len(authenticators) > 0 {
+		if ja, ok := authenticators[0].(*api.JWTAuthenticator); ok && ja != nil {
+			jwtService = ja.JWTService()
+		}
+	}
+
+	var authMw func(http.Handler) http.Handler
+	if jwtService != nil {
+		authMw = auth.AuthMiddleware(jwtService)
+	} else {
+		authMw = func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_ = json.NewEncoder(w).Encode(map[string]string{
+					"error":   "UNAUTHORIZED",
+					"message": "missing or malformed bearer token",
+				})
+			})
+		}
+	}
+
+	wrappedAuthMw := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			authMw(next).ServeHTTP(w, r)
+		})
+	}
+	rootMux.Handle("/api/v1/", wrappedAuthMw(apiMux))
+
+	return rootMux
 }
 
 func main() {
@@ -237,7 +274,7 @@ func main() {
 		provisionHandler = api.NewProvisionHandler(provisionRepo, keyWrapper, jwtAuth)
 	}
 
-	mux := BuildServeMux(statusStore, 5*time.Minute, wsHandler, authHandler, channelHandler, alertHandler, provisionHandler, joinReqHandler, presenceTracker, nodeHandler, jwtAuth)
+	mux := BuildServeMux(statusStore, 5*time.Minute, wsHandler, authHandler, channelHandler, alertHandler, provisionHandler, joinReqHandler, presenceTracker, nodeHandler, jwtService, jwtAuth)
 
 	srv := &http.Server{
 		Addr:         ":" + port,
