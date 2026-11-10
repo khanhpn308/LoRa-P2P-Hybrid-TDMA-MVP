@@ -19,6 +19,7 @@
 #include "oled_ssd1306.h"
 #include "node_smart_backoff.h"
 #include "node_cad_backoff.h"
+#include "node_arq.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "sensor_node";
@@ -117,40 +118,12 @@ static esp_err_t node_cad_event_tx_and_ack(const node_mac_config_t *cfg,
     }
 
     ESP_LOGI(TAG, "==================================================");
-    ESP_LOGI(TAG, ">>> CAD + RANDOM BACKOFF EVENT TRANSMISSION <<<");
+    ESP_LOGI(TAG, ">>> CAD + ARQ EVENT TRANSMISSION SESSION <<<");
     ESP_LOGI(TAG, "Pending Event: Ref=%" PRIu32 ", Code=%u, Value=%" PRIu32,
              event_item.event_ref, event_item.event_code, event_item.event_value);
     ESP_LOGI(TAG, "==================================================");
 
-    /* 1. CAD with exponential random backoff (ADR-0004 Section 2.2, Item 3: up to MAX_CAD_RETRIES=5) */
-    bool channel_clear = false;
-    for (uint8_t attempt = 1; attempt <= NODE_CAD_MAX_RETRIES; attempt++) {
-        bool activity = false;
-        esp_err_t cad_err = sx1276_cad(&activity, pdMS_TO_TICKS(50));
-        if (cad_err == ESP_OK && !activity) {
-            channel_clear = true;
-            ESP_LOGI(TAG, "[CAD] Channel CLEAR on attempt #%u/%u (Freq=920.250 MHz CH0)",
-                     attempt, NODE_CAD_MAX_RETRIES);
-            break;
-        }
-
-        uint32_t cw_k = node_get_cad_contention_window_ms(attempt);
-        uint32_t backoff_ms = node_calculate_cad_backoff_ms(attempt);
-        ESP_LOGW(TAG, "[CAD] Channel BUSY on attempt #%u/%u (CW_k=%" PRIu32 " ms), backing off %" PRIu32 " ms...",
-                 attempt, NODE_CAD_MAX_RETRIES, cw_k, backoff_ms);
-        (void)node_smart_backoff(backoff_ms);
-    }
-
-    if (!channel_clear) {
-        ESP_LOGE(TAG, "[CAD] Channel persistently busy after %u retries (activity detected); aborting TX",
-                 NODE_CAD_MAX_RETRIES);
-        (void)node_event_fifo_record_retry(fifo, event_item.event_ref);
-        ESP_LOGW(TAG, "Event Ref #%" PRIu32 " preserved in FIFO for retry", event_item.event_ref);
-        (void)sx1276_sleep();
-        return ESP_ERR_TIMEOUT;
-    }
-
-    /* 2. Assemble and encrypt UP_EVENT (26 bytes) */
+    /* 1. Assemble and encrypt UP_EVENT (26 bytes) once for this session */
     uint32_t uplink_counter = ++s_uplink_frame_counter;
     lora_mac_v2_header_t hdr = {
         .ver_type = LORA_MAC_V2_TYPE_UP_EVENT,
@@ -193,76 +166,138 @@ static esp_err_t node_cad_event_tx_and_ack(const node_mac_config_t *cfg,
     (void)memcpy(&wire_tx[7], ct, 11);
     (void)memcpy(&wire_tx[18], ccm_tag, 8);
 
-    /* 3. Transmit UP_EVENT immediately */
-    ESP_LOGI(TAG, "[EVENT TX] Transmitting UP_EVENT (26B, Node #%u, Ctr=%" PRIu32 ") on 920.250 MHz...",
-             hdr.node_id, uplink_counter);
-    esp_err_t tx_err = sx1276_tx(wire_tx, sizeof(wire_tx), pdMS_TO_TICKS(150));
-    if (tx_err != ESP_OK) {
-        ESP_LOGE(TAG, "[EVENT TX] Transmission failed: %s", esp_err_to_name(tx_err));
-        return tx_err;
-    }
-    ESP_LOGI(TAG, "[EVENT TX] Transmitted UP_EVENT successfully. Listening for DOWN_EVENT_ACK...");
+    /* 2. Intra-session Stop-and-Wait ARQ loop */
+    uint8_t tx_retries = 0U;
+    const uint8_t tx_max = NODE_ARQ_MAX_RETRIES;
 
-    /* 4. Open RX window to wait for DOWN_EVENT_ACK (timeout: 400 ms) */
-    (void)prod_radio_rx_single(400);
-    uint8_t ack_buf[64];
-    size_t ack_len = 0U;
-    esp_err_t ack_rx_err = prod_radio_read_frame(ack_buf, &ack_len, 400);
-    (void)sx1276_standby();
+    while (node_arq_should_retry(tx_retries, tx_max)) {
+        ESP_LOGI(TAG, "--- ARQ Transmission Attempt #%u/%u (Event Ref=%" PRIu32 ") ---",
+                 (unsigned int)(tx_retries + 1U), (unsigned int)tx_max, event_item.event_ref);
 
-    bool ack_valid = false;
-    if (ack_rx_err == ESP_OK && ack_len >= LORA_MAC_V2_LEN_DOWN_EVENT_ACK) {
-        lora_mac_v2_header_t ack_hdr;
-        if (lora_mac_v2_header_parse(ack_buf, ack_len, &ack_hdr) == ESP_OK &&
-            ack_hdr.ver_type == LORA_MAC_V2_TYPE_DOWN_EVENT_ACK &&
-            ack_hdr.node_id == cfg->node_id) {
+        /* 2a. CAD with exponential random backoff (ADR-0004: up to MAX_CAD_RETRIES=5) */
+        bool channel_clear = false;
+        for (uint8_t attempt = 1; attempt <= NODE_CAD_MAX_RETRIES; attempt++) {
+            bool activity = false;
+            esp_err_t cad_err = sx1276_cad(&activity, pdMS_TO_TICKS(50));
+            if (cad_err == ESP_OK && !activity) {
+                channel_clear = true;
+                ESP_LOGI(TAG, "[CAD] Channel CLEAR on attempt #%u/%u (Freq=920.250 MHz CH0)",
+                         attempt, NODE_CAD_MAX_RETRIES);
+                break;
+            }
 
-            uint8_t dl_nonce[13];
-            (void)lora_mac_v2_build_nonce(cfg->session_nonce_prefix,
-                                          LORA_MAC_V2_DIR_DOWNLINK,
-                                          ack_hdr.frame_counter,
-                                          dl_nonce);
+            uint32_t cw_k = node_get_cad_contention_window_ms(attempt);
+            uint32_t backoff_ms = node_calculate_cad_backoff_ms(attempt);
+            ESP_LOGW(TAG, "[CAD] Channel BUSY on attempt #%u/%u (CW_k=%" PRIu32 " ms), backing off %" PRIu32 " ms...",
+                     attempt, NODE_CAD_MAX_RETRIES, cw_k, backoff_ms);
+            (void)node_smart_backoff(backoff_ms);
+        }
 
-            uint8_t dl_pt[4];
-            if (lora_mac_crypto_decrypt_down_ack(cfg->k_session_down,
-                                                 dl_nonce,
-                                                 ack_buf, 7U,
-                                                 &ack_buf[7], 4U,
-                                                 &ack_buf[11],
-                                                 dl_pt) == ESP_OK) {
-                lora_mac_v2_down_event_ack_t ack_payload;
-                if (lora_mac_v2_down_event_ack_deserialize(dl_pt, 4U, &ack_payload) == ESP_OK &&
-                    ack_payload.event_ref == event_item.event_ref) {
-                    ack_valid = true;
-                    ESP_LOGI(TAG, "==================================================");
-                    ESP_LOGI(TAG, ">>> DOWN_EVENT_ACK RECEIVED & VERIFIED! <<< (Ref: %" PRIu32 ")",
-                             ack_payload.event_ref);
-                    ESP_LOGI(TAG, "==================================================");
-                } else {
-                    ESP_LOGW(TAG, "ACK event_ref mismatch (received %" PRIu32 ", expected %" PRIu32 ")",
-                             ack_payload.event_ref, event_item.event_ref);
-                }
-                lora_mac_crypto_zeroize(dl_pt, sizeof(dl_pt));
+        if (!channel_clear) {
+            ESP_LOGE(TAG, "[CAD] Channel persistently busy after %u retries (activity detected); aborting TX session",
+                     NODE_CAD_MAX_RETRIES);
+            (void)node_event_fifo_record_retry(fifo, event_item.event_ref);
+            ESP_LOGW(TAG, "Event Ref #%" PRIu32 " preserved in FIFO for retry", event_item.event_ref);
+            (void)sx1276_sleep();
+            return ESP_ERR_TIMEOUT;
+        }
+
+        /* 2b. Transmit UP_EVENT */
+        ESP_LOGI(TAG, "[EVENT TX] Transmitting UP_EVENT (26B, Node #%u, Ctr=%" PRIu32 ", Attempt #%u/%u) on 920.250 MHz...",
+                 hdr.node_id, uplink_counter, (unsigned int)(tx_retries + 1U), (unsigned int)tx_max);
+        esp_err_t tx_err = sx1276_tx(wire_tx, sizeof(wire_tx), pdMS_TO_TICKS(150));
+        if (tx_err != ESP_OK) {
+            ESP_LOGE(TAG, "[EVENT TX] Transmission failed: %s", esp_err_to_name(tx_err));
+            tx_retries++;
+            if (node_arq_should_retry(tx_retries, tx_max)) {
+                (void)node_reset_sx1276_fifo_tx_ptr();
+                uint32_t retry_backoff = node_calculate_arq_backoff_ms();
+                (void)node_smart_backoff(retry_backoff);
+                continue;
             } else {
-                ESP_LOGW(TAG, "DOWN_EVENT_ACK decryption/MIC check failed");
+                break;
+            }
+        }
+        ESP_LOGI(TAG, "[EVENT TX] Transmitted UP_EVENT successfully. Listening for DOWN_EVENT_ACK...");
+
+        /* 2c. Open RX window to wait for DOWN_EVENT_ACK (timeout: 400 ms) */
+        (void)prod_radio_rx_single(400);
+        uint8_t ack_buf[64];
+        size_t ack_len = 0U;
+        esp_err_t ack_rx_err = prod_radio_read_frame(ack_buf, &ack_len, 400);
+        (void)sx1276_standby();
+
+        bool ack_valid = false;
+        if (ack_rx_err == ESP_OK && ack_len >= LORA_MAC_V2_LEN_DOWN_EVENT_ACK) {
+            lora_mac_v2_header_t ack_hdr;
+            if (lora_mac_v2_header_parse(ack_buf, ack_len, &ack_hdr) == ESP_OK &&
+                ack_hdr.ver_type == LORA_MAC_V2_TYPE_DOWN_EVENT_ACK &&
+                ack_hdr.node_id == cfg->node_id) {
+
+                uint8_t dl_nonce[13];
+                (void)lora_mac_v2_build_nonce(cfg->session_nonce_prefix,
+                                              LORA_MAC_V2_DIR_DOWNLINK,
+                                              ack_hdr.frame_counter,
+                                              dl_nonce);
+
+                uint8_t dl_pt[4];
+                if (lora_mac_crypto_decrypt_down_ack(cfg->k_session_down,
+                                                     dl_nonce,
+                                                     ack_buf, 7U,
+                                                     &ack_buf[7], 4U,
+                                                     &ack_buf[11],
+                                                     dl_pt) == ESP_OK) {
+                    lora_mac_v2_down_event_ack_t ack_payload;
+                    if (lora_mac_v2_down_event_ack_deserialize(dl_pt, 4U, &ack_payload) == ESP_OK &&
+                        ack_payload.event_ref == event_item.event_ref) {
+                        ack_valid = true;
+                        ESP_LOGI(TAG, "==================================================");
+                        ESP_LOGI(TAG, ">>> DOWN_EVENT_ACK RECEIVED & VERIFIED! <<< (Ref: %" PRIu32 ")",
+                                 ack_payload.event_ref);
+                        ESP_LOGI(TAG, "==================================================");
+                    } else {
+                        ESP_LOGW(TAG, "ACK event_ref mismatch (received %" PRIu32 ", expected %" PRIu32 ")",
+                                 ack_payload.event_ref, event_item.event_ref);
+                    }
+                    lora_mac_crypto_zeroize(dl_pt, sizeof(dl_pt));
+                } else {
+                    ESP_LOGW(TAG, "DOWN_EVENT_ACK decryption/MIC check failed");
+                }
+            } else {
+                ESP_LOGW(TAG, "Corrupted ACK header received");
             }
         } else {
-            ESP_LOGW(TAG, "Corrupted ACK header received");
+            ESP_LOGW(TAG, "ACK timeout or missing (err: %s, len: %zu)", esp_err_to_name(ack_rx_err), ack_len);
         }
-    } else {
-        ESP_LOGW(TAG, "ACK timeout or missing (err: %s, len: %zu)", esp_err_to_name(ack_rx_err), ack_len);
+
+        /* 2d. Evaluate ACK */
+        if (ack_valid) {
+            (void)node_event_fifo_ack(fifo, event_item.event_ref);
+            tx_retries = 0U;
+            ESP_LOGI(TAG, "Event Ref #%" PRIu32 " ACKed and removed from FIFO. Remaining pending: %zu",
+                     event_item.event_ref, node_event_fifo_get_pending_count(fifo));
+            return ESP_OK;
+        }
+
+        /* 2e. Prepare for ARQ retransmission */
+        tx_retries++;
+        if (node_arq_should_retry(tx_retries, tx_max)) {
+            ESP_LOGW(TAG, "[ARQ] Retrying transmission: tx_retries=%u < tx_max=%u. Resetting FIFO pointer & backing off...",
+                     (unsigned int)tx_retries, (unsigned int)tx_max);
+            (void)node_reset_sx1276_fifo_tx_ptr();
+            uint32_t arq_backoff_ms = node_calculate_arq_backoff_ms();
+            ESP_LOGI(TAG, "[ARQ] Smart backoff %" PRIu32 " ms before next CAD & TX attempt", arq_backoff_ms);
+            (void)node_smart_backoff(arq_backoff_ms);
+        } else {
+            ESP_LOGE(TAG, "[ARQ] Reached tx_max (%u attempts) without receiving valid ACK", (unsigned int)tx_max);
+            break;
+        }
     }
 
-    if (ack_valid) {
-        (void)node_event_fifo_ack(fifo, event_item.event_ref);
-        ESP_LOGI(TAG, "Event Ref #%" PRIu32 " ACKed and removed from FIFO. Remaining pending: %zu",
-                 event_item.event_ref, node_event_fifo_get_pending_count(fifo));
-        return ESP_OK;
-    } else {
-        (void)node_event_fifo_record_retry(fifo, event_item.event_ref);
-        ESP_LOGW(TAG, "Event Ref #%" PRIu32 " preserved in FIFO for retry", event_item.event_ref);
-        return ESP_ERR_TIMEOUT;
-    }
+    /* 3. Retries exhausted without valid ACK: record retry in FIFO and end session */
+    (void)node_event_fifo_record_retry(fifo, event_item.event_ref);
+    ESP_LOGW(TAG, "Event Ref #%" PRIu32 " preserved in FIFO for retry in next wake cycle", event_item.event_ref);
+    return ESP_ERR_TIMEOUT;
 }
 
 static esp_err_t node_send_heartbeat_ack(uint8_t node_id, uint16_t seq)

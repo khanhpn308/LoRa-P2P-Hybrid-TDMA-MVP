@@ -7,6 +7,7 @@ idf_component_register(
         oled_ssd1306
         node_v2_join
         node_smart_backoff
+        node_arq
         sx1276_driver
         lora_mac
         button_driver

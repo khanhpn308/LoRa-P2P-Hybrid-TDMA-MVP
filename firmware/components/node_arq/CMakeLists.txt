@@ -1,0 +1,10 @@
+idf_component_register(
+    SRCS
+        "src/node_arq.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        esp_hw_support
+        log
+        sx1276_driver
+)
