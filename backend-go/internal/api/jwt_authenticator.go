@@ -27,3 +27,11 @@ func (a *JWTAuthenticator) Authenticate(token string) (Role, error) {
 	}
 	return Role(claims.Role), nil
 }
+
+// JWTService returns the underlying auth.JWTService.
+func (a *JWTAuthenticator) JWTService() *auth.JWTService {
+	if a == nil {
+		return nil
+	}
+	return a.jwtService
+}
