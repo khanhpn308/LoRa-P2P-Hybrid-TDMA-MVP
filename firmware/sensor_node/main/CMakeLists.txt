@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS
         "main.c"
+        "node_cad_backoff.c"
     INCLUDE_DIRS "."
     REQUIRES
         oled_ssd1306
