@@ -17,6 +17,7 @@
 #include "airtime_policy.h"
 #include "node_v2_join.h"
 #include "oled_ssd1306.h"
+#include "node_smart_backoff.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "sensor_node";
@@ -97,9 +98,7 @@ static uint32_t prod_get_time_ms(void)
 
 static void prod_delay_ms(uint32_t ms)
 {
-    if (ms > 0) {
-        vTaskDelay(pdMS_TO_TICKS(ms));
-    }
+    (void)node_smart_backoff(ms);
 }
 
 static esp_err_t node_cad_event_tx_and_ack(const node_mac_config_t *cfg,
@@ -135,7 +134,7 @@ static esp_err_t node_cad_event_tx_and_ack(const node_mac_config_t *cfg,
         }
         uint32_t backoff_ms = backoff_base_ms + (esp_random() % (backoff_base_ms * 2U));
         ESP_LOGW(TAG, "[CAD] Channel BUSY on attempt #%u, backing off %" PRIu32 " ms...", attempt, backoff_ms);
-        vTaskDelay(pdMS_TO_TICKS(backoff_ms));
+        (void)node_smart_backoff(backoff_ms);
         backoff_base_ms *= 2U;
     }
 
@@ -301,7 +300,7 @@ static esp_err_t node_listen_and_respond_probe(const node_mac_config_t *cfg, uin
         uint32_t slot_delay_ms = (uint32_t)cfg->node_id * 40U;
         ESP_LOGI(TAG, "[HEARTBEAT] Applying slotted backoff: %" PRIu32 " ms before ACK...", slot_delay_ms);
         if (slot_delay_ms > 0) {
-            vTaskDelay(pdMS_TO_TICKS(slot_delay_ms));
+            (void)node_smart_backoff(slot_delay_ms);
         }
 
         return node_send_heartbeat_ack(cfg->node_id, probe_seq);
@@ -492,7 +491,7 @@ void app_main(void)
             if (radio_initialized && s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
                 uint32_t slot_delay_ms = (uint32_t)mac_cfg.node_id * 40U;
                 if (slot_delay_ms > 0) {
-                    vTaskDelay(pdMS_TO_TICKS(slot_delay_ms));
+                    (void)node_smart_backoff(slot_delay_ms);
                 }
                 uint16_t hb_seq = (uint16_t)(esp_timer_get_time() / 1000000ULL);
                 (void)node_send_heartbeat_ack(mac_cfg.node_id, hb_seq);
@@ -565,7 +564,7 @@ void app_main(void)
 
                 uint32_t backoff_ms = 2000U + (esp_random() % 1000U);
                 ESP_LOGI(TAG, "[STANDBY] Radio standing by on 920.250 MHz. Retrying Join in %" PRIu32 " ms...", backoff_ms);
-                vTaskDelay(pdMS_TO_TICKS(backoff_ms));
+                (void)node_smart_backoff(backoff_ms);
             }
         }
     }
