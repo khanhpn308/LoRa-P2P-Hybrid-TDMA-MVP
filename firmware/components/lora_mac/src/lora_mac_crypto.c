@@ -792,3 +792,41 @@ esp_err_t lora_mac_crypto_decrypt_down_ack(const uint8_t *k_session_dl,
     }
     return lora_mac_crypto_ccm_decrypt(k_session_dl, nonce, aad, aad_len, ciphertext, ct_len, tag, out_plaintext);
 }
+
+esp_err_t lora_mac_crypto_encrypt_down_revoke(const uint8_t *k_session_dl,
+                                              const uint8_t *nonce,
+                                              const uint8_t *aad,
+                                              size_t aad_len,
+                                              const uint8_t *plaintext,
+                                              size_t pt_len,
+                                              uint8_t *out_ciphertext,
+                                              uint8_t *out_tag)
+{
+    if (k_session_dl == NULL || nonce == NULL || aad == NULL ||
+        plaintext == NULL || out_ciphertext == NULL || out_tag == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (pt_len > 48U || aad_len > 48U) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return lora_mac_crypto_ccm_encrypt(k_session_dl, nonce, aad, aad_len, plaintext, pt_len, out_ciphertext, out_tag);
+}
+
+esp_err_t lora_mac_crypto_decrypt_down_revoke(const uint8_t *k_session_dl,
+                                              const uint8_t *nonce,
+                                              const uint8_t *aad,
+                                              size_t aad_len,
+                                              const uint8_t *ciphertext,
+                                              size_t ct_len,
+                                              const uint8_t *tag,
+                                              uint8_t *out_plaintext)
+{
+    if (k_session_dl == NULL || nonce == NULL || aad == NULL ||
+        ciphertext == NULL || tag == NULL || out_plaintext == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (ct_len > 48U || aad_len > 48U) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return lora_mac_crypto_ccm_decrypt(k_session_dl, nonce, aad, aad_len, ciphertext, ct_len, tag, out_plaintext);
+}
