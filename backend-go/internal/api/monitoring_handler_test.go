@@ -624,3 +624,100 @@ func TestMonitoringHandler_CreateGateway_Table(t *testing.T) {
 		})
 	}
 }
+
+type mockRevocationPublisher struct {
+	calls []struct {
+		gatewayID string
+		nodeID    int
+	}
+	err error
+}
+
+func (m *mockRevocationPublisher) PublishNodeRevoke(ctx context.Context, gatewayID string, nodeID int) error {
+	if m.err != nil {
+		return m.err
+	}
+	m.calls = append(m.calls, struct {
+		gatewayID string
+		nodeID    int
+	}{gatewayID: gatewayID, nodeID: nodeID})
+	return nil
+}
+
+func TestMonitoringHandler_DeleteNode_PublishesDownlinkRevoke(t *testing.T) {
+	authMap := map[string]api.Role{
+		"token-admin": api.RoleAdmin,
+	}
+	staticAuth := api.NewStaticAuthenticator(authMap)
+
+	store := newMockMonitoringStorage()
+	store.nodes = []domain.NodeSummary{
+		{NodeID: 42, GatewayID: "gw-test-01", Status: "ONLINE"},
+	}
+
+	handler := api.NewMonitoringHandler(store, 5*time.Minute, nil, staticAuth)
+	pub := &mockRevocationPublisher{}
+	handler.SetRevocationPublisher(pub)
+
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/nodes/42", nil)
+	req.Header.Set("Authorization", "Bearer token-admin")
+	rec := httptest.NewRecorder()
+
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if len(pub.calls) != 1 {
+		t.Fatalf("expected 1 call to PublishNodeRevoke, got %d", len(pub.calls))
+	}
+
+	if pub.calls[0].gatewayID != "gw-test-01" {
+		t.Fatalf("expected gatewayID gw-test-01, got %s", pub.calls[0].gatewayID)
+	}
+
+	if pub.calls[0].nodeID != 42 {
+		t.Fatalf("expected nodeID 42, got %d", pub.calls[0].nodeID)
+	}
+}
+
+func TestMonitoringHandler_DeleteNode_WithGatewayQueryHint(t *testing.T) {
+	authMap := map[string]api.Role{
+		"token-admin": api.RoleAdmin,
+	}
+	staticAuth := api.NewStaticAuthenticator(authMap)
+
+	store := newMockMonitoringStorage()
+	handler := api.NewMonitoringHandler(store, 5*time.Minute, nil, staticAuth)
+	pub := &mockRevocationPublisher{}
+	handler.SetRevocationPublisher(pub)
+
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/nodes/N-15?gateway_id=gw-custom", nil)
+	req.Header.Set("Authorization", "Bearer token-admin")
+	rec := httptest.NewRecorder()
+
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if len(pub.calls) != 1 {
+		t.Fatalf("expected 1 call to PublishNodeRevoke, got %d", len(pub.calls))
+	}
+
+	if pub.calls[0].gatewayID != "gw-custom" {
+		t.Fatalf("expected gatewayID gw-custom, got %s", pub.calls[0].gatewayID)
+	}
+
+	if pub.calls[0].nodeID != 15 {
+		t.Fatalf("expected nodeID 15, got %d", pub.calls[0].nodeID)
+	}
+}

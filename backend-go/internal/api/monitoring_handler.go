@@ -19,13 +19,19 @@ import (
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/storage"
 )
 
+// NodeRevocationPublisher publishes node revocation downlink messages to Gateways.
+type NodeRevocationPublisher interface {
+	PublishNodeRevoke(ctx context.Context, gatewayID string, nodeID int) error
+}
+
 // MonitoringHandler provides HTTP REST endpoints for gateway status monitoring and paginated node listings.
 // Authority: contracts/api/openapi.yaml, contracts/api/contract-semantics.md §1.1.
 type MonitoringHandler struct {
-	store            storage.StatusStorage
-	offlineThreshold time.Duration
-	presenceTracker  *presence.Tracker
-	authenticator    Authenticator
+	store               storage.StatusStorage
+	offlineThreshold    time.Duration
+	presenceTracker     *presence.Tracker
+	authenticator       Authenticator
+	revocationPublisher NodeRevocationPublisher
 }
 
 // NewMonitoringHandler constructs a new MonitoringHandler.
@@ -43,6 +49,11 @@ func NewMonitoringHandler(store storage.StatusStorage, offlineThreshold time.Dur
 		h.authenticator = auth[0]
 	}
 	return h
+}
+
+// SetRevocationPublisher sets the publisher for downlink node revocation commands.
+func (h *MonitoringHandler) SetRevocationPublisher(pub NodeRevocationPublisher) {
+	h.revocationPublisher = pub
 }
 
 // RegisterRoutes registers the monitoring endpoints on the provided ServeMux.
@@ -367,48 +378,137 @@ func (h *MonitoringHandler) deleteGateway(ctx context.Context, gwID string) erro
 }
 
 func (h *MonitoringHandler) deleteNode(ctx context.Context, nodeID string) error {
-	if lifecycle, ok := h.store.(GatewayLifecycleStorage); ok {
-		return lifecycle.DeleteNode(ctx, nodeID)
-	}
+	return h.deleteNodeWithGateway(ctx, nodeID, "")
+}
 
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		return errors.New("storage does not support lifecycle operations and DATABASE_URL is not set")
-	}
-
-	db, err := sql.Open("postgres", dbURL)
-	if err != nil {
-		return fmt.Errorf("failed to open database connection: %w", err)
-	}
-	defer db.Close()
-
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
+func (h *MonitoringHandler) deleteNodeWithGateway(ctx context.Context, nodeID string, gwIDHint string) error {
 	cleanedID := strings.TrimPrefix(strings.TrimSpace(nodeID), "N-")
-	if numericID, err := strconv.Atoi(cleanedID); err == nil && numericID >= 1 && numericID <= 254 {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM node_health WHERE node_id = $1`, numericID); err != nil {
-			return fmt.Errorf("failed to delete node_health by node_id: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM device_join_requests WHERE assigned_node_id = $1`, numericID); err != nil {
-			return fmt.Errorf("failed to delete device_join_requests by assigned_node_id: %w", err)
-		}
+	numericID, errNum := strconv.Atoi(cleanedID)
+	var targetNodeID int
+	if errNum == nil && numericID >= 1 && numericID <= 254 {
+		targetNodeID = numericID
 	}
 
 	hexMAC := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(nodeID), ":", ""))
-	if len(hexMAC) == 12 {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM device_join_requests WHERE LOWER(device_mac) = $1`, hexMAC); err != nil {
-			return fmt.Errorf("failed to delete device_join_requests by mac: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM devices WHERE encode(device_mac, 'hex') = $1`, hexMAC); err != nil {
-			return fmt.Errorf("failed to delete devices by mac: %w", err)
+
+	gwMap := make(map[string]bool)
+	if gwIDHint != "" {
+		gwMap[gwIDHint] = true
+	}
+
+	if h.store != nil {
+		if page, err := h.store.ListNodes(ctx, domain.NodeFilter{Limit: 250}); err == nil {
+			for _, n := range page.Items {
+				if (targetNodeID > 0 && n.NodeID == targetNodeID) ||
+					(nodeID != "" && (fmt.Sprintf("%d", n.NodeID) == nodeID || fmt.Sprintf("N-%03d", n.NodeID) == nodeID)) {
+					if n.GatewayID != "" {
+						gwMap[n.GatewayID] = true
+					}
+				}
+			}
 		}
 	}
 
-	return tx.Commit()
+	if lifecycle, ok := h.store.(GatewayLifecycleStorage); ok {
+		if err := lifecycle.DeleteNode(ctx, nodeID); err != nil {
+			return err
+		}
+	} else {
+		dbURL := os.Getenv("DATABASE_URL")
+		if dbURL == "" {
+			return errors.New("storage does not support lifecycle operations and DATABASE_URL is not set")
+		}
+
+		db, err := sql.Open("postgres", dbURL)
+		if err != nil {
+			return fmt.Errorf("failed to open database connection: %w", err)
+		}
+		defer db.Close()
+
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("failed to begin transaction: %w", err)
+		}
+		defer tx.Rollback()
+
+		if targetNodeID > 0 {
+			rows, err := tx.QueryContext(ctx, `SELECT gateway_id FROM node_health WHERE node_id = $1`, targetNodeID)
+			if err == nil {
+				for rows.Next() {
+					var gid string
+					if err := rows.Scan(&gid); err == nil && gid != "" {
+						gwMap[gid] = true
+					}
+				}
+				rows.Close()
+			}
+			rowsReq, err := tx.QueryContext(ctx, `SELECT gateway_id FROM device_join_requests WHERE assigned_node_id = $1`, targetNodeID)
+			if err == nil {
+				for rowsReq.Next() {
+					var gid string
+					if err := rowsReq.Scan(&gid); err == nil && gid != "" {
+						gwMap[gid] = true
+					}
+				}
+				rowsReq.Close()
+			}
+
+			if _, err := tx.ExecContext(ctx, `DELETE FROM node_health WHERE node_id = $1`, targetNodeID); err != nil {
+				return fmt.Errorf("failed to delete node_health by node_id: %w", err)
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM device_join_requests WHERE assigned_node_id = $1`, targetNodeID); err != nil {
+				return fmt.Errorf("failed to delete device_join_requests by assigned_node_id: %w", err)
+			}
+		}
+
+		if len(hexMAC) == 12 {
+			rowsReq, err := tx.QueryContext(ctx, `SELECT gateway_id, assigned_node_id FROM device_join_requests WHERE LOWER(device_mac) = $1`, hexMAC)
+			if err == nil {
+				for rowsReq.Next() {
+					var gid string
+					var nid sql.NullInt64
+					if err := rowsReq.Scan(&gid, &nid); err == nil {
+						if gid != "" {
+							gwMap[gid] = true
+						}
+						if nid.Valid && targetNodeID == 0 {
+							targetNodeID = int(nid.Int64)
+						}
+					}
+				}
+				rowsReq.Close()
+			}
+
+			if _, err := tx.ExecContext(ctx, `DELETE FROM device_join_requests WHERE LOWER(device_mac) = $1`, hexMAC); err != nil {
+				return fmt.Errorf("failed to delete device_join_requests by mac: %w", err)
+			}
+			// NOTE: Preserving devices and device_generations tables to keep K_join intact (AC-1/AC-5).
+		}
+
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+
+	if len(gwMap) == 0 && h.store != nil {
+		if gws, err := h.store.ListGateways(ctx); err == nil {
+			for _, gw := range gws {
+				if gw != nil && gw.GatewayID != "" {
+					gwMap[gw.GatewayID] = true
+				}
+			}
+		}
+	}
+
+	if h.revocationPublisher != nil && targetNodeID > 0 {
+		for gid := range gwMap {
+			if err := h.revocationPublisher.PublishNodeRevoke(ctx, gid, targetNodeID); err != nil {
+				log.Printf("[MonitoringHandler] Warning: failed to publish node revoke to gateway %s: %v", gid, err)
+			}
+		}
+	}
+
+	return nil
 }
 
 // handleDeleteGateway handles DELETE /api/v1/gateways/{gw_id}.
@@ -449,7 +549,8 @@ func (h *MonitoringHandler) handleDeleteNode(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if err := h.deleteNode(r.Context(), nodeID); err != nil {
+	gwIDHint := strings.TrimSpace(r.URL.Query().Get("gateway_id"))
+	if err := h.deleteNodeWithGateway(r.Context(), nodeID, gwIDHint); err != nil {
 		log.Printf("[MonitoringHandler] DeleteNode %s error: %v", nodeID, err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to delete node")
 		return
