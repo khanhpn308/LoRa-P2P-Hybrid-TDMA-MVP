@@ -17,6 +17,11 @@ extern "C" {
 #define NODE_V2_JOIN_FINISH_TIMEOUT_MS     (2000U)
 #define NODE_V2_JOIN_NVS_NAMESPACE         "node_join"
 #define NODE_V2_JOIN_NVS_KEY_COUNTER       "join_ctr"
+#define NODE_V2_JOIN_NVS_KEY_JOINED        "joined"
+#define NODE_V2_JOIN_NVS_KEY_NODE_ID       "node_id"
+#define NODE_V2_JOIN_NVS_KEY_K_UP          "k_up"
+#define NODE_V2_JOIN_NVS_KEY_K_DL          "k_dl"
+#define NODE_V2_JOIN_SESSION_KEY_LEN       (16U)
 
 typedef enum {
     NODE_V2_JOIN_STATE_UNJOINED = 0,
@@ -114,6 +119,54 @@ esp_err_t node_v2_join_run(const node_v2_join_config_t *cfg,
  * @brief Convert node join state to string for logging and verification.
  */
 const char *node_v2_join_state_to_str(node_v2_join_state_t state);
+
+/**
+ * @brief Save established session keys, assigned Node ID, and joined status to NVS flash.
+ *
+ * Saves k_session_up (16B), k_session_dl (16B), node_id (u8), and joined=1 (u8)
+ * under NODE_V2_JOIN_NVS_NAMESPACE (Issue #322).
+ *
+ * @param[in] ctx Join context containing session keys and assigned node ID.
+ * @return ESP_OK on success, ESP_ERR_INVALID_ARG if ctx is NULL or keys are all zeros,
+ *         ESP_ERR_INVALID_STATE if not in INSTALLED_INACTIVE or node_id is 0,
+ *         or underlying NVS error.
+ */
+esp_err_t node_v2_join_save_session(const node_v2_join_context_t *ctx);
+
+/**
+ * @brief Load and verify established session keys, assigned Node ID, and joined status from NVS flash.
+ *
+ * Reads joined flag, node_id, and session keys (k_up, k_dl) from NVS.
+ * Verifies data integrity (non-zero keys, valid node ID, joined == 1).
+ * If valid, populates ctx and transitions state to NODE_V2_JOIN_STATE_INSTALLED_INACTIVE.
+ *
+ * @param[in,out] ctx Join context to populate with recovered session keys and node ID.
+ * @return ESP_OK on valid active session recovered,
+ *         ESP_ERR_NOT_FOUND if no session is stored or joined == 0,
+ *         ESP_ERR_INVALID_STATE if corrupted or all-zeros keys or invalid node ID,
+ *         or other NVS error.
+ */
+esp_err_t node_v2_join_load_session(node_v2_join_context_t *ctx);
+
+/**
+ * @brief Invalidate / revoke stored session from NVS flash.
+ *
+ * Erases joined, node_id, k_up, and k_dl keys from NVS while preserving
+ * monotonic join_ctr to protect against replay and rollback (DEC-SEC-06).
+ * Zeroizes session keys in ctx (if provided) and resets state to NODE_V2_JOIN_STATE_UNJOINED.
+ *
+ * @param[in,out] ctx Join context to zeroize/reset, or NULL if only clearing NVS.
+ * @return ESP_OK on success, or NVS error.
+ */
+esp_err_t node_v2_join_erase_session(node_v2_join_context_t *ctx);
+
+/**
+ * @brief Check if join context has an active installed session.
+ *
+ * @param[in] ctx Join context.
+ * @return true if state is NODE_V2_JOIN_STATE_INSTALLED_INACTIVE and assigned_node_id != 0.
+ */
+bool node_v2_join_is_joined(const node_v2_join_context_t *ctx);
 
 #ifdef __cplusplus
 }

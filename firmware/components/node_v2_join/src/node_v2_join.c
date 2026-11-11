@@ -5,7 +5,43 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 
+#if !defined(ESP_PLATFORM)
+esp_err_t nvs_set_u8(nvs_handle_t handle, const char *key, uint8_t value);
+esp_err_t nvs_get_u8(nvs_handle_t handle, const char *key, uint8_t *out_value);
+
+esp_err_t nvs_set_u8(nvs_handle_t handle, const char *key, uint8_t value)
+{
+    return nvs_set_u32(handle, key, (uint32_t)value);
+}
+
+esp_err_t nvs_get_u8(nvs_handle_t handle, const char *key, uint8_t *out_value)
+{
+    if (out_value == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    uint32_t val32 = 0;
+    esp_err_t err = nvs_get_u32(handle, key, &val32);
+    if (err == ESP_OK) {
+        *out_value = (uint8_t)val32;
+    }
+    return err;
+}
+#endif
+
 static const char *TAG = "node_v2_join";
+
+static bool s_is_all_zeros(const uint8_t *buf, size_t len)
+{
+    if (buf == NULL || len == 0U) {
+        return true;
+    }
+    for (size_t i = 0; i < len; i++) {
+        if (buf[i] != 0U) {
+            return false;
+        }
+    }
+    return true;
+}
 
 const char *node_v2_join_state_to_str(node_v2_join_state_t state)
 {
@@ -133,6 +169,192 @@ esp_err_t node_v2_join_commit_counter(node_v2_join_context_t *ctx, uint32_t *out
     *out_counter = next_ctr;
     ESP_LOGI(TAG, "Monotonic JOIN_COUNTER committed successfully to NVS: %u", (unsigned int)next_ctr);
     return ESP_OK;
+}
+
+esp_err_t node_v2_join_save_session(const node_v2_join_context_t *ctx)
+{
+    if (ctx == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (ctx->state != NODE_V2_JOIN_STATE_INSTALLED_INACTIVE || ctx->assigned_node_id == 0U) {
+        ESP_LOGE(TAG, "Cannot save session: invalid state (%s) or unassigned node ID (%u)",
+                 node_v2_join_state_to_str(ctx->state), ctx->assigned_node_id);
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (s_is_all_zeros(ctx->session_keys.k_session_up, NODE_V2_JOIN_SESSION_KEY_LEN) ||
+        s_is_all_zeros(ctx->session_keys.k_session_dl, NODE_V2_JOIN_SESSION_KEY_LEN)) {
+        ESP_LOGE(TAG, "Cannot save session: session keys are all zeros (fail-closed)");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t handle = 0;
+    esp_err_t err = nvs_open(NODE_V2_JOIN_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS namespace %s: %s", NODE_V2_JOIN_NVS_NAMESPACE, esp_err_to_name(err));
+        return err;
+    }
+
+    /* 1. Write k_up blob (16 bytes) */
+    err = nvs_set_blob(handle, NODE_V2_JOIN_NVS_KEY_K_UP, ctx->session_keys.k_session_up, NODE_V2_JOIN_SESSION_KEY_LEN);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to write %s to NVS: %s", NODE_V2_JOIN_NVS_KEY_K_UP, esp_err_to_name(err));
+        nvs_close(handle);
+        return err;
+    }
+
+    /* 2. Write k_dl blob (16 bytes) */
+    err = nvs_set_blob(handle, NODE_V2_JOIN_NVS_KEY_K_DL, ctx->session_keys.k_session_dl, NODE_V2_JOIN_SESSION_KEY_LEN);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to write %s to NVS: %s", NODE_V2_JOIN_NVS_KEY_K_DL, esp_err_to_name(err));
+        nvs_close(handle);
+        return err;
+    }
+
+    /* 3. Write assigned_node_id (u8) */
+    err = nvs_set_u8(handle, NODE_V2_JOIN_NVS_KEY_NODE_ID, ctx->assigned_node_id);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to write %s to NVS: %s", NODE_V2_JOIN_NVS_KEY_NODE_ID, esp_err_to_name(err));
+        nvs_close(handle);
+        return err;
+    }
+
+    /* 4. Write joined flag (u8 = 1) */
+    err = nvs_set_u8(handle, NODE_V2_JOIN_NVS_KEY_JOINED, 1U);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to write %s to NVS: %s", NODE_V2_JOIN_NVS_KEY_JOINED, esp_err_to_name(err));
+        nvs_close(handle);
+        return err;
+    }
+
+    /* 5. Commit changes to flash */
+    err = nvs_commit(handle);
+    nvs_close(handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to commit session to NVS flash: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    ESP_LOGI(TAG, "Session keys, Node ID (#%u) and join status committed successfully to NVS flash",
+             ctx->assigned_node_id);
+    return ESP_OK;
+}
+
+esp_err_t node_v2_join_load_session(node_v2_join_context_t *ctx)
+{
+    if (ctx == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t handle = 0;
+    esp_err_t err = nvs_open(NODE_V2_JOIN_NVS_NAMESPACE, NVS_READONLY, &handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    /* 1. Read joined flag */
+    uint8_t joined = 0U;
+    err = nvs_get_u8(handle, NODE_V2_JOIN_NVS_KEY_JOINED, &joined);
+    if (err == ESP_ERR_NVS_NOT_FOUND || (err == ESP_OK && joined != 1U)) {
+        nvs_close(handle);
+        return ESP_ERR_NOT_FOUND;
+    } else if (err != ESP_OK) {
+        nvs_close(handle);
+        return err;
+    }
+
+    /* 2. Read assigned node ID */
+    uint8_t node_id = 0U;
+    err = nvs_get_u8(handle, NODE_V2_JOIN_NVS_KEY_NODE_ID, &node_id);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        nvs_close(handle);
+        return ESP_ERR_NOT_FOUND;
+    } else if (err != ESP_OK || node_id == 0U) {
+        nvs_close(handle);
+        return (err == ESP_OK) ? ESP_ERR_INVALID_STATE : err;
+    }
+
+    /* 3. Read k_up blob (16 bytes) */
+    uint8_t k_up[NODE_V2_JOIN_SESSION_KEY_LEN];
+    size_t k_up_len = sizeof(k_up);
+    err = nvs_get_blob(handle, NODE_V2_JOIN_NVS_KEY_K_UP, k_up, &k_up_len);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        nvs_close(handle);
+        return ESP_ERR_NOT_FOUND;
+    } else if (err != ESP_OK || k_up_len != NODE_V2_JOIN_SESSION_KEY_LEN) {
+        nvs_close(handle);
+        return (err == ESP_OK) ? ESP_ERR_INVALID_SIZE : err;
+    }
+
+    /* 4. Read k_dl blob (16 bytes) */
+    uint8_t k_dl[NODE_V2_JOIN_SESSION_KEY_LEN];
+    size_t k_dl_len = sizeof(k_dl);
+    err = nvs_get_blob(handle, NODE_V2_JOIN_NVS_KEY_K_DL, k_dl, &k_dl_len);
+    nvs_close(handle);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        lora_mac_crypto_zeroize(k_up, sizeof(k_up));
+        return ESP_ERR_NOT_FOUND;
+    } else if (err != ESP_OK || k_dl_len != NODE_V2_JOIN_SESSION_KEY_LEN) {
+        lora_mac_crypto_zeroize(k_up, sizeof(k_up));
+        return (err == ESP_OK) ? ESP_ERR_INVALID_SIZE : err;
+    }
+
+    /* 5. Check integrity: non-zero keys */
+    if (s_is_all_zeros(k_up, sizeof(k_up)) || s_is_all_zeros(k_dl, sizeof(k_dl))) {
+        lora_mac_crypto_zeroize(k_up, sizeof(k_up));
+        lora_mac_crypto_zeroize(k_dl, sizeof(k_dl));
+        ESP_LOGE(TAG, "Corrupted session keys in NVS flash (all zeros)");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    /* Populate context safely */
+    ctx->assigned_node_id = node_id;
+    (void)memcpy(ctx->session_keys.k_session_up, k_up, sizeof(k_up));
+    (void)memcpy(ctx->session_keys.k_session_dl, k_dl, sizeof(k_dl));
+    lora_mac_crypto_zeroize(k_up, sizeof(k_up));
+    lora_mac_crypto_zeroize(k_dl, sizeof(k_dl));
+    ctx->state = NODE_V2_JOIN_STATE_INSTALLED_INACTIVE;
+
+    ESP_LOGI(TAG, "Loaded and verified persistent V2 Join session from NVS (Node ID: #%u, joined=1)",
+             ctx->assigned_node_id);
+    return ESP_OK;
+}
+
+esp_err_t node_v2_join_erase_session(node_v2_join_context_t *ctx)
+{
+    nvs_handle_t handle = 0;
+    esp_err_t err = nvs_open(NODE_V2_JOIN_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS namespace %s: %s", NODE_V2_JOIN_NVS_NAMESPACE, esp_err_to_name(err));
+        return err;
+    }
+
+    (void)nvs_erase_key(handle, NODE_V2_JOIN_NVS_KEY_JOINED);
+    (void)nvs_erase_key(handle, NODE_V2_JOIN_NVS_KEY_NODE_ID);
+    (void)nvs_erase_key(handle, NODE_V2_JOIN_NVS_KEY_K_UP);
+    (void)nvs_erase_key(handle, NODE_V2_JOIN_NVS_KEY_K_DL);
+    /* Notice: NODE_V2_JOIN_NVS_KEY_COUNTER is preserved (DEC-SEC-06) */
+
+    err = nvs_commit(handle);
+    nvs_close(handle);
+
+    if (ctx != NULL) {
+        lora_mac_crypto_zeroize(&ctx->session_keys, sizeof(ctx->session_keys));
+        ctx->assigned_node_id = 0U;
+        ctx->state = NODE_V2_JOIN_STATE_UNJOINED;
+    }
+
+    ESP_LOGI(TAG, "Revoked and erased session state from NVS flash (monotonic counter preserved)");
+    return err;
+}
+
+bool node_v2_join_is_joined(const node_v2_join_context_t *ctx)
+{
+    if (ctx == NULL) {
+        return false;
+    }
+    return (ctx->state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE && ctx->assigned_node_id != 0U);
 }
 
 esp_err_t node_v2_join_run(const node_v2_join_config_t *cfg,
@@ -569,6 +791,13 @@ esp_err_t node_v2_join_run(const node_v2_join_config_t *cfg,
     ctx->state = NODE_V2_JOIN_STATE_INSTALLED_INACTIVE;
     ESP_LOGI(TAG, "V2 Join Handshake complete! Session established in INSTALLED_INACTIVE state. Node ID: #%u",
              ctx->assigned_node_id);
+
+    /* Commit session keys, assigned node_id, and joined flag to NVS Flash (Issue #322) */
+    err = node_v2_join_save_session(ctx);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to commit session state to NVS Flash: %s", esp_err_to_name(err));
+        return err;
+    }
 
     return ESP_OK;
 }
