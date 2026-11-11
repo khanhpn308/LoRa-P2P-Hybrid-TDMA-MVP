@@ -69,7 +69,9 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
   useEffect(() => {
     async function loadRealNode() {
       const realNode = await getNode(rawId);
+      let gwId = "";
       if (realNode) {
+        gwId = realNode.gateway_id;
         setNode((prev) => ({
           ...prev,
           node_id: realNode.node_id,
@@ -84,7 +86,11 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
       }
       try {
         const numId = parseInt(rawId.replace(/\D/g, "") || "1", 10);
-        const alertsResp = await getAlerts({ node_id: numId });
+        const alertsParams: { node_id: number; gateway_id?: string } = { node_id: numId };
+        if (gwId && gwId !== "--" && gwId.trim() !== "") {
+          alertsParams.gateway_id = gwId.trim();
+        }
+        const alertsResp = await getAlerts(alertsParams);
         if (alertsResp && alertsResp.items) {
           setEvents(alertsResp.items);
         } else {

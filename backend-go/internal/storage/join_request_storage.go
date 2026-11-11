@@ -232,6 +232,12 @@ func (s *PostgresJoinRequestStorage) ApproveRequest(ctx context.Context, id int6
 		_, _ = tx.ExecContext(ctx, upsertDev, macBytes)
 	}
 
+	// Purge orphan events for (gateway_id, node_id) so the newly assigned node starts with clean charts
+	const deleteOrphanEvents = `DELETE FROM events WHERE gateway_id = $1 AND node_id = $2;`
+	if _, err := tx.ExecContext(ctx, deleteOrphanEvents, r.GatewayID, nodeID); err != nil {
+		return nil, fmt.Errorf("delete orphan events: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit approval: %w", err)
 	}

@@ -34,6 +34,11 @@ func NewPostgresStatusStorage(db *sql.DB) *PostgresStatusStorage {
 	return &PostgresStatusStorage{db: db}
 }
 
+// DB returns the underlying database handle.
+func (s *PostgresStatusStorage) DB() *sql.DB {
+	return s.db
+}
+
 // UpsertGatewayStatus idempotently stores or updates a Gateway status snapshot keyed by gateway_id.
 // Authority: DB-001, DB-002, DB-003.
 func (s *PostgresStatusStorage) UpsertGatewayStatus(ctx context.Context, status *domain.GatewayStatusRecord) error {
