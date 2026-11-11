@@ -269,6 +269,47 @@ static int test_lora_mac_v2_beacon_roundtrip(void)
     return 0;
 }
 
+static int test_lora_mac_v2_down_revoke_roundtrip(void)
+{
+    lora_mac_v2_down_revoke_t in_rev = {
+        .revoke_reason = 0xDEADBEEFU,
+    };
+    uint8_t buf[10];
+    size_t written = 0;
+
+    ASSERT_EQUAL_INT(ESP_OK, lora_mac_v2_down_revoke_serialize(&in_rev, buf, sizeof(buf), &written));
+    ASSERT_EQUAL_INT(4, written);
+    ASSERT_EQUAL_INT(0xDE, buf[0]);
+    ASSERT_EQUAL_INT(0xAD, buf[1]);
+    ASSERT_EQUAL_INT(0xBE, buf[2]);
+    ASSERT_EQUAL_INT(0xEF, buf[3]);
+
+    lora_mac_v2_down_revoke_t out_rev;
+    ASSERT_EQUAL_INT(ESP_OK, lora_mac_v2_down_revoke_deserialize(buf, written, &out_rev));
+    ASSERT_EQUAL_U32(in_rev.revoke_reason, out_rev.revoke_reason);
+
+    return 0;
+}
+
+static int test_lora_mac_v2_down_revoke_negative(void)
+{
+    lora_mac_v2_down_revoke_t rev = { .revoke_reason = 1U };
+    uint8_t buf[4];
+    size_t written = 0;
+
+    /* NULL checks */
+    ASSERT_EQUAL_INT(ESP_ERR_INVALID_ARG, lora_mac_v2_down_revoke_serialize(NULL, buf, sizeof(buf), &written));
+    ASSERT_EQUAL_INT(ESP_ERR_INVALID_ARG, lora_mac_v2_down_revoke_serialize(&rev, NULL, sizeof(buf), &written));
+    ASSERT_EQUAL_INT(ESP_ERR_INVALID_ARG, lora_mac_v2_down_revoke_deserialize(NULL, sizeof(buf), &rev));
+    ASSERT_EQUAL_INT(ESP_ERR_INVALID_ARG, lora_mac_v2_down_revoke_deserialize(buf, sizeof(buf), NULL));
+
+    /* Buffer too small */
+    ASSERT_EQUAL_INT(ESP_ERR_NO_MEM, lora_mac_v2_down_revoke_serialize(&rev, buf, 3, &written));
+    ASSERT_EQUAL_INT(ESP_ERR_INVALID_SIZE, lora_mac_v2_down_revoke_deserialize(buf, 3, &rev));
+
+    return 0;
+}
+
 int main(void)
 {
     int failures = 0;
@@ -279,6 +320,8 @@ int main(void)
     TEST_RUN(test_lora_mac_v2_build_nonce);
     TEST_RUN(test_lora_mac_v2_up_event_roundtrip);
     TEST_RUN(test_lora_mac_v2_down_event_ack_roundtrip);
+    TEST_RUN(test_lora_mac_v2_down_revoke_roundtrip);
+    TEST_RUN(test_lora_mac_v2_down_revoke_negative);
     TEST_RUN(test_lora_mac_v2_up_health_reply_roundtrip);
     TEST_RUN(test_lora_mac_v2_up_diag_metrics_roundtrip);
     TEST_RUN(test_lora_mac_v2_beacon_roundtrip);

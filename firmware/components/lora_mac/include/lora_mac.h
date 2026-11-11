@@ -51,6 +51,7 @@ typedef enum {
     LORA_MAC_V2_TYPE_DOWN_SCHED_DEC    = 0x4D,  /**< GW -> Bcast: Schedule decision commit/abort (80B) */
     LORA_MAC_V2_TYPE_DOWN_HEARTBEAT_PROBE = 0x4E, /**< GW -> Bcast: Periodic node health probe (7B total) */
     LORA_MAC_V2_TYPE_UP_HEARTBEAT_ACK    = 0x4F, /**< Node -> GW: Slotted liveness ACK (8B total) */
+    LORA_MAC_V2_TYPE_DOWN_REVOKE         = 0x50, /**< GW -> Node: Immediate node revocation command (19B total) */
 } lora_mac_v2_msg_type_t;
 
 /**
@@ -72,6 +73,7 @@ typedef enum {
 #define LORA_MAC_V2_LEN_UP_JOIN_KEY_CONF   (31U)     /**< 1B type + 1B gw_id + 1B node_id + 4B ctr + 8B tag + 16B proof */
 #define LORA_MAC_V2_LEN_DOWN_JOIN_FINISH   (31U)     /**< 1B type + 1B gw_id + 1B node_id + 4B ctr + 8B tag + 16B proof */
 #define LORA_MAC_V2_LEN_UP_JOIN_READY      (31U)     /**< 1B type + 1B gw_id + 1B node_id + 4B ctr + 8B tag + 16B proof */
+#define LORA_MAC_V2_LEN_DOWN_REVOKE        (19U)     /**< 7B header + 4B cipher + 8B tag */
 
 /**
  * @brief V2 Unicast Header (7 octets, unencrypted AAD)
@@ -99,6 +101,13 @@ typedef struct {
 typedef struct {
     uint32_t event_ref;      /**< Echoed local event reference (4B Big-Endian) */
 } lora_mac_v2_down_event_ack_t;
+
+/**
+ * @brief V2 DOWN_REVOKE Plaintext Payload (4 octets)
+ */
+typedef struct {
+    uint32_t revoke_reason;  /**< Reason code / eviction action code (4B Big-Endian) */
+} lora_mac_v2_down_revoke_t;
 
 /**
  * @brief V2 UP_HEALTH_REPLY Plaintext Payload (6 octets)
@@ -268,6 +277,21 @@ esp_err_t lora_mac_v2_down_event_ack_serialize(const lora_mac_v2_down_event_ack_
 esp_err_t lora_mac_v2_down_event_ack_deserialize(const uint8_t *buf,
                                                  size_t len,
                                                  lora_mac_v2_down_event_ack_t *out_ack);
+
+/**
+ * @brief Serialize DOWN_REVOKE plaintext payload (4 octets).
+ */
+esp_err_t lora_mac_v2_down_revoke_serialize(const lora_mac_v2_down_revoke_t *revoke,
+                                            uint8_t *out_buf,
+                                            size_t buf_size,
+                                            size_t *out_written);
+
+/**
+ * @brief Deserialize DOWN_REVOKE plaintext payload (4 octets).
+ */
+esp_err_t lora_mac_v2_down_revoke_deserialize(const uint8_t *buf,
+                                              size_t len,
+                                              lora_mac_v2_down_revoke_t *out_revoke);
 
 /**
  * @brief Serialize UP_HEALTH_REPLY plaintext payload (6 octets).

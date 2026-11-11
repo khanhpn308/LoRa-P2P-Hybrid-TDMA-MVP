@@ -139,6 +139,16 @@ static bool s_node_alive[MAX_LORA_TRACKED_NODES + 1] = {false};
 static uint32_t s_node_last_seen_s[MAX_LORA_TRACKED_NODES + 1] = {0};
 static uint32_t s_rx_events_total = 0;
 
+#define MAX_REVOKED_NODES (256)
+typedef struct {
+    bool revoked;
+    uint8_t k_session_dl[16];
+    uint8_t nonce_prefix[8];
+    bool has_key;
+} gateway_revoked_node_info_t;
+
+static gateway_revoked_node_info_t s_revoked_nodes[MAX_REVOKED_NODES];
+
 #define GATEWAY_TASK_STACK_SIZE_BYTES (16384U)
 static StackType_t s_gateway_task_stack[GATEWAY_TASK_STACK_SIZE_BYTES];
 static StaticTask_t s_gateway_task_tcb;
@@ -175,6 +185,61 @@ static esp_err_t hal_session_key_lookup(uint8_t node_id,
         }
     }
     return ESP_OK;
+}
+
+static void on_downlink_node_revoke(const uint8_t *data, size_t len)
+{
+    if (data == NULL || len == 0) return;
+    char buf[256];
+    if (len >= sizeof(buf)) len = sizeof(buf) - 1;
+    memcpy(buf, data, len);
+    buf[len] = '\0';
+    ESP_LOGI(TAG, "[DOWNLINK NODE_REVOKE] Received from Backend: %s", buf);
+
+    /* Parse node_id from {"node_id": X} */
+    const char *id_ptr = strstr(buf, "\"node_id\":");
+    if (!id_ptr) return;
+    id_ptr += 10;
+    while (*id_ptr == ' ' || *id_ptr == '\t') id_ptr++;
+    int node_id_val = atoi(id_ptr);
+    if (node_id_val <= 0 || node_id_val >= MAX_REVOKED_NODES) {
+        ESP_LOGW(TAG, "[DOWNLINK NODE_REVOKE] Invalid node_id: %d", node_id_val);
+        return;
+    }
+    uint8_t node_id = (uint8_t)node_id_val;
+
+    /* Lookup active session keys before revoking so we can authenticate DOWN_REVOKE */
+    uint8_t k_session_up[16];
+    uint8_t k_session_dl[16];
+    uint8_t nonce_prefix[8];
+    memcpy(nonce_prefix, DEFAULT_NONCE_PREFIX, sizeof(nonce_prefix));
+    esp_err_t key_err = hal_session_key_lookup(node_id, NULL, k_session_up, k_session_dl, nonce_prefix);
+    if (key_err != ESP_OK) {
+        size_t slot_idx = (size_t)(node_id - 1);
+        if (slot_idx < GATEWAY_V2_JOIN_MAX_PENDING_SESSIONS && s_join_engine.pending_joins[slot_idx].active) {
+            memcpy(k_session_up, s_join_engine.pending_joins[slot_idx].session_keys.k_session_up, 16);
+            memcpy(k_session_dl, s_join_engine.pending_joins[slot_idx].session_keys.k_session_dl, 16);
+            key_err = ESP_OK;
+        }
+    }
+
+    s_revoked_nodes[node_id].revoked = true;
+    if (key_err == ESP_OK) {
+        memcpy(s_revoked_nodes[node_id].k_session_dl, k_session_dl, 16);
+        memcpy(s_revoked_nodes[node_id].nonce_prefix, nonce_prefix, 8);
+        s_revoked_nodes[node_id].has_key = true;
+    } else {
+        s_revoked_nodes[node_id].has_key = false;
+    }
+
+    /* Release session keys in Session Key Store and pending joins */
+    (void)session_key_store_revoke(node_id);
+    size_t slot_idx = (size_t)(node_id - 1);
+    if (slot_idx < GATEWAY_V2_JOIN_MAX_PENDING_SESSIONS) {
+        memset(&s_join_engine.pending_joins[slot_idx], 0, sizeof(s_join_engine.pending_joins[slot_idx]));
+    }
+    ESP_LOGI(TAG, "[REVOKE] Node #%u added to revocation list (has_key=%d). Session keys evicted.",
+             node_id, s_revoked_nodes[node_id].has_key ? 1 : 0);
 }
 
 static void gateway_heartbeat_timer_cb(void *arg)
@@ -370,6 +435,8 @@ static esp_err_t process_join_packet(const uint8_t *payload, size_t length, int1
                 );
                 if (r_err == ESP_OK) {
                     ESP_LOGI(TAG, "[JOIN SUCCESS] Node #%u Join complete! Session committed in INSTALLED_INACTIVE state.", payload[2]);
+                    s_revoked_nodes[payload[2]].revoked = false;
+                    s_revoked_nodes[payload[2]].has_key = false;
                 } else {
                     ESP_LOGW(TAG, "[JOIN] Failed to handle UP_JOIN_READY: %s", esp_err_to_name(r_err));
                 }
@@ -385,6 +452,52 @@ static esp_err_t process_join_packet(const uint8_t *payload, size_t length, int1
                 if (hdr_err != ESP_OK || hdr.ver_type != LORA_MAC_V2_TYPE_UP_EVENT) {
                     ESP_LOGW(TAG, "[EVENT RX] Invalid UP_EVENT header");
                     return ESP_ERR_INVALID_ARG;
+                }
+
+                if (hdr.node_id > 0 && s_revoked_nodes[hdr.node_id].revoked) {
+                    ESP_LOGW(TAG, "[EVENT RX] Node #%u is REVOKED. Sending DOWN_REVOKE instead of ACK.", hdr.node_id);
+                    vTaskDelay(pdMS_TO_TICKS(20));
+
+                    uint8_t revoke_packet[19];
+                    lora_mac_v2_header_t rev_hdr = {
+                        .ver_type = LORA_MAC_V2_TYPE_DOWN_REVOKE,
+                        .node_id = hdr.node_id,
+                        .session_sel = hdr.session_sel,
+                        .frame_counter = ++s_downlink_frame_counter,
+                    };
+                    size_t rev_hdr_written = 0;
+                    (void)lora_mac_v2_header_encode(&rev_hdr, revoke_packet, 19U, &rev_hdr_written);
+
+                    lora_mac_v2_down_revoke_t rev_payload = {
+                        .revoke_reason = 0x01,
+                    };
+                    uint8_t rev_pt[4];
+                    size_t pt_written = 0;
+                    (void)lora_mac_v2_down_revoke_serialize(&rev_payload, rev_pt, 4U, &pt_written);
+
+                    uint8_t dl_nonce[13];
+                    (void)lora_mac_v2_build_nonce(s_revoked_nodes[hdr.node_id].nonce_prefix,
+                                                  LORA_MAC_V2_DIR_DOWNLINK,
+                                                  rev_hdr.frame_counter,
+                                                  dl_nonce);
+
+                    esp_err_t enc_err = lora_mac_crypto_encrypt_down_revoke(
+                        s_revoked_nodes[hdr.node_id].k_session_dl,
+                        dl_nonce,
+                        revoke_packet, 7U,
+                        rev_pt, 4U,
+                        &revoke_packet[7],
+                        &revoke_packet[11]);
+                    if (enc_err == ESP_OK) {
+                        ESP_LOGI(TAG, "[REVOKE TX] Sending DOWN_REVOKE (19B) to Node #%u...", hdr.node_id);
+                        esp_err_t tx_err = sx1276_tx(revoke_packet, 19U, pdMS_TO_TICKS(100));
+                        if (tx_err == ESP_OK) {
+                            ESP_LOGI(TAG, "[REVOKE TX] DOWN_REVOKE transmitted successfully to Node #%u", hdr.node_id);
+                        } else {
+                            ESP_LOGE(TAG, "[REVOKE TX] Failed to transmit DOWN_REVOKE: %s", esp_err_to_name(tx_err));
+                        }
+                    }
+                    return ESP_OK;
                 }
 
                 uint8_t k_session_up[16];
@@ -517,6 +630,51 @@ static esp_err_t process_join_packet(const uint8_t *payload, size_t length, int1
                     ESP_LOGI(TAG, "[HEARTBEAT ACK] Node #%u confirmed ALIVE via LoRa (RSSI=%d dBm)",
                              ack_node_id, rssi);
                 }
+                if (ack_node_id > 0 && s_revoked_nodes[ack_node_id].revoked) {
+                    ESP_LOGW(TAG, "[HEARTBEAT ACK] Node #%u is REVOKED. Sending DOWN_REVOKE in RX window.", ack_node_id);
+                    vTaskDelay(pdMS_TO_TICKS(20));
+
+                    uint8_t revoke_packet[19];
+                    lora_mac_v2_header_t rev_hdr = {
+                        .ver_type = LORA_MAC_V2_TYPE_DOWN_REVOKE,
+                        .node_id = ack_node_id,
+                        .session_sel = 0,
+                        .frame_counter = ++s_downlink_frame_counter,
+                    };
+                    size_t rev_hdr_written = 0;
+                    (void)lora_mac_v2_header_encode(&rev_hdr, revoke_packet, 19U, &rev_hdr_written);
+
+                    lora_mac_v2_down_revoke_t rev_payload = {
+                        .revoke_reason = 0x01,
+                    };
+                    uint8_t rev_pt[4];
+                    size_t pt_written = 0;
+                    (void)lora_mac_v2_down_revoke_serialize(&rev_payload, rev_pt, 4U, &pt_written);
+
+                    uint8_t dl_nonce[13];
+                    (void)lora_mac_v2_build_nonce(s_revoked_nodes[ack_node_id].nonce_prefix,
+                                                  LORA_MAC_V2_DIR_DOWNLINK,
+                                                  rev_hdr.frame_counter,
+                                                  dl_nonce);
+
+                    esp_err_t enc_err = lora_mac_crypto_encrypt_down_revoke(
+                        s_revoked_nodes[ack_node_id].k_session_dl,
+                        dl_nonce,
+                        revoke_packet, 7U,
+                        rev_pt, 4U,
+                        &revoke_packet[7],
+                        &revoke_packet[11]);
+                    if (enc_err == ESP_OK) {
+                        ESP_LOGI(TAG, "[HEARTBEAT REVOKE TX] Sending DOWN_REVOKE (19B) to Node #%u...", ack_node_id);
+                        esp_err_t tx_err = sx1276_tx(revoke_packet, 19U, pdMS_TO_TICKS(100));
+                        if (tx_err == ESP_OK) {
+                            ESP_LOGI(TAG, "[HEARTBEAT REVOKE TX] DOWN_REVOKE transmitted successfully to Node #%u", ack_node_id);
+                        } else {
+                            ESP_LOGE(TAG, "[HEARTBEAT REVOKE TX] Failed to transmit DOWN_REVOKE: %s", esp_err_to_name(tx_err));
+                        }
+                    }
+                    return ESP_OK;
+                }
             }
             return ESP_OK;
         }
@@ -624,6 +782,7 @@ void app_main(void)
         gateway_transport_register_session_key_callback(&on_downlink_session_key);
         gateway_transport_register_schedule_callback(&on_downlink_schedule);
         gateway_transport_register_join_grant_callback(&on_downlink_join_grant);
+        gateway_transport_register_node_revoke_callback(&on_downlink_node_revoke);
         gateway_transport_register_status_callback(&on_transport_connection_status);
     }
 

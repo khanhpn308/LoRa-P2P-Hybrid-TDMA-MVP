@@ -25,6 +25,7 @@ static char s_client_id[64];
 static char s_sub_topic_session_key[GATEWAY_MQTT_TOPIC_MAX_LEN];
 static char s_sub_topic_schedule[GATEWAY_MQTT_TOPIC_MAX_LEN];
 static char s_sub_topic_join_grant[GATEWAY_MQTT_TOPIC_MAX_LEN];
+static char s_sub_topic_node_revoke[GATEWAY_MQTT_TOPIC_MAX_LEN];
 static char s_pub_topic_status[GATEWAY_MQTT_TOPIC_MAX_LEN];
 static char s_will_msg[128];
 static char s_birth_msg[128];
@@ -51,6 +52,9 @@ static void mqtt5_event_handler(void *handler_args, esp_event_base_t base,
 
         int sub_id3 = esp_mqtt_client_subscribe(client, s_sub_topic_join_grant, 1);
         ESP_LOGI(TAG, "Subscribed to %s (msg_id=%d)", s_sub_topic_join_grant, sub_id3);
+
+        int sub_id4 = esp_mqtt_client_subscribe(client, s_sub_topic_node_revoke, 1);
+        ESP_LOGI(TAG, "Subscribed to %s (msg_id=%d)", s_sub_topic_node_revoke, sub_id4);
 
         /* Publish retained birth/online status */
         int pub_id = esp_mqtt_client_publish(client, s_pub_topic_status,
@@ -175,6 +179,10 @@ esp_err_t gateway_mqtt_init(const gateway_mqtt_config_t *config)
 
     err = gateway_mqtt_build_topic(s_sub_topic_join_grant, sizeof(s_sub_topic_join_grant),
                                    s_config.gateway_id, "downlink/join-grant");
+    if (err != ESP_OK) return err;
+
+    err = gateway_mqtt_build_topic(s_sub_topic_node_revoke, sizeof(s_sub_topic_node_revoke),
+                                   s_config.gateway_id, "downlink/node-revoke");
     if (err != ESP_OK) return err;
 
     err = gateway_mqtt_build_topic(s_pub_topic_status, sizeof(s_pub_topic_status),

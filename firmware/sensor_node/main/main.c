@@ -51,6 +51,8 @@ typedef struct {
 #define CONFIG_NODE_STRICT_PROVISIONING 1
 #endif
 
+static void node_update_oled_unjoined(void);
+
 /**
  * @brief Checks if buffer contains all zeros.
  */
@@ -251,7 +253,6 @@ static esp_err_t node_cad_event_tx_and_ack(const node_mac_config_t *cfg,
         if (ack_rx_err == ESP_OK && ack_len >= LORA_MAC_V2_LEN_DOWN_EVENT_ACK) {
             lora_mac_v2_header_t ack_hdr;
             if (lora_mac_v2_header_parse(ack_buf, ack_len, &ack_hdr) == ESP_OK &&
-                ack_hdr.ver_type == LORA_MAC_V2_TYPE_DOWN_EVENT_ACK &&
                 ack_hdr.node_id == cfg->node_id) {
 
                 uint8_t dl_nonce[13];
@@ -260,28 +261,50 @@ static esp_err_t node_cad_event_tx_and_ack(const node_mac_config_t *cfg,
                                               ack_hdr.frame_counter,
                                               dl_nonce);
 
-                uint8_t dl_pt[4];
-                if (lora_mac_crypto_decrypt_down_ack(cfg->k_session_down,
-                                                     dl_nonce,
-                                                     ack_buf, 7U,
-                                                     &ack_buf[7], 4U,
-                                                     &ack_buf[11],
-                                                     dl_pt) == ESP_OK) {
-                    lora_mac_v2_down_event_ack_t ack_payload;
-                    if (lora_mac_v2_down_event_ack_deserialize(dl_pt, 4U, &ack_payload) == ESP_OK &&
-                        ack_payload.event_ref == event_item.event_ref) {
-                        ack_valid = true;
+                if (ack_hdr.ver_type == LORA_MAC_V2_TYPE_DOWN_REVOKE) {
+                    uint8_t dl_pt[4];
+                    if (lora_mac_crypto_decrypt_down_revoke(cfg->k_session_down,
+                                                            dl_nonce,
+                                                            ack_buf, 7U,
+                                                            &ack_buf[7], 4U,
+                                                            &ack_buf[11],
+                                                            dl_pt) == ESP_OK) {
                         ESP_LOGI(TAG, "==================================================");
-                        ESP_LOGI(TAG, ">>> DOWN_EVENT_ACK RECEIVED & VERIFIED! <<< (Ref: %" PRIu32 ")",
-                                 ack_payload.event_ref);
+                        ESP_LOGI(TAG, ">>> DOWN_REVOKE RECEIVED & VERIFIED! <<<");
                         ESP_LOGI(TAG, "==================================================");
+                        lora_mac_crypto_zeroize(dl_pt, sizeof(dl_pt));
+                        node_update_oled_unjoined();
+                        (void)node_v2_join_erase_session(&s_join_ctx);
+                        return ESP_ERR_INVALID_STATE;
                     } else {
-                        ESP_LOGW(TAG, "ACK event_ref mismatch (received %" PRIu32 ", expected %" PRIu32 ")",
-                                 ack_payload.event_ref, event_item.event_ref);
+                        ESP_LOGW(TAG, "DOWN_REVOKE decryption/MIC check failed");
                     }
-                    lora_mac_crypto_zeroize(dl_pt, sizeof(dl_pt));
+                } else if (ack_hdr.ver_type == LORA_MAC_V2_TYPE_DOWN_EVENT_ACK) {
+                    uint8_t dl_pt[4];
+                    if (lora_mac_crypto_decrypt_down_ack(cfg->k_session_down,
+                                                         dl_nonce,
+                                                         ack_buf, 7U,
+                                                         &ack_buf[7], 4U,
+                                                         &ack_buf[11],
+                                                         dl_pt) == ESP_OK) {
+                        lora_mac_v2_down_event_ack_t ack_payload;
+                        if (lora_mac_v2_down_event_ack_deserialize(dl_pt, 4U, &ack_payload) == ESP_OK &&
+                            ack_payload.event_ref == event_item.event_ref) {
+                            ack_valid = true;
+                            ESP_LOGI(TAG, "==================================================");
+                            ESP_LOGI(TAG, ">>> DOWN_EVENT_ACK RECEIVED & VERIFIED! <<< (Ref: %" PRIu32 ")",
+                                     ack_payload.event_ref);
+                            ESP_LOGI(TAG, "==================================================");
+                        } else {
+                            ESP_LOGW(TAG, "ACK event_ref mismatch (received %" PRIu32 ", expected %" PRIu32 ")",
+                                     ack_payload.event_ref, event_item.event_ref);
+                        }
+                        lora_mac_crypto_zeroize(dl_pt, sizeof(dl_pt));
+                    } else {
+                        ESP_LOGW(TAG, "DOWN_EVENT_ACK decryption/MIC check failed");
+                    }
                 } else {
-                    ESP_LOGW(TAG, "DOWN_EVENT_ACK decryption/MIC check failed");
+                    ESP_LOGW(TAG, "Unexpected downlink message type: 0x%02X", ack_hdr.ver_type);
                 }
             } else {
                 ESP_LOGW(TAG, "Corrupted ACK header received");
@@ -318,6 +341,66 @@ static esp_err_t node_cad_event_tx_and_ack(const node_mac_config_t *cfg,
     (void)node_event_fifo_record_retry(fifo, event_item.event_ref);
     ESP_LOGW(TAG, "Event Ref #%" PRIu32 " preserved in FIFO for retry in next wake cycle", event_item.event_ref);
     return ESP_ERR_TIMEOUT;
+}
+
+static void node_update_oled_unjoined(void)
+{
+#if CONFIG_OLED_SSD1306_ENABLE
+    oled_ssd1306_dev_t oled_dev;
+    oled_ssd1306_config_t oled_cfg;
+    if (oled_ssd1306_get_default_config(&oled_cfg) == ESP_OK) {
+        oled_cfg.button_gpio = (gpio_num_t)CONFIG_NODE_BUTTON_GPIO;
+        if (oled_ssd1306_init(&oled_dev, &oled_cfg) == ESP_OK) {
+            (void)oled_ssd1306_clear(&oled_dev);
+            (void)oled_ssd1306_draw_string(&oled_dev, 8, 2, "STATUS: UNJOINED");
+            (void)oled_ssd1306_draw_string(&oled_dev, 8, 4, "NODE REVOKED");
+            (void)oled_ssd1306_refresh(&oled_dev);
+            (void)oled_ssd1306_deinit(&oled_dev);
+        }
+    }
+#endif
+}
+
+static void node_listen_downlink_revoke(const node_mac_config_t *cfg, uint32_t wait_ms)
+{
+    if (cfg == NULL) {
+        return;
+    }
+    (void)prod_radio_rx_single(wait_ms);
+    uint8_t dl_buf[64];
+    size_t dl_len = 0U;
+    esp_err_t dl_rx_err = prod_radio_read_frame(dl_buf, &dl_len, wait_ms);
+    (void)sx1276_standby();
+
+    if (dl_rx_err == ESP_OK && dl_len >= LORA_MAC_V2_LEN_DOWN_REVOKE) {
+        lora_mac_v2_header_t dl_hdr;
+        if (lora_mac_v2_header_parse(dl_buf, dl_len, &dl_hdr) == ESP_OK &&
+            dl_hdr.ver_type == LORA_MAC_V2_TYPE_DOWN_REVOKE &&
+            dl_hdr.node_id == cfg->node_id) {
+
+            uint8_t dl_nonce[13];
+            (void)lora_mac_v2_build_nonce(cfg->session_nonce_prefix,
+                                          LORA_MAC_V2_DIR_DOWNLINK,
+                                          dl_hdr.frame_counter,
+                                          dl_nonce);
+            uint8_t dl_pt[4];
+            if (lora_mac_crypto_decrypt_down_revoke(cfg->k_session_down,
+                                                    dl_nonce,
+                                                    dl_buf, 7U,
+                                                    &dl_buf[7], 4U,
+                                                    &dl_buf[11],
+                                                    dl_pt) == ESP_OK) {
+                ESP_LOGI(TAG, "==================================================");
+                ESP_LOGI(TAG, ">>> DOWN_REVOKE RECEIVED & VERIFIED! <<<");
+                ESP_LOGI(TAG, "==================================================");
+                lora_mac_crypto_zeroize(dl_pt, sizeof(dl_pt));
+                node_update_oled_unjoined();
+                (void)node_v2_join_erase_session(&s_join_ctx);
+            } else {
+                ESP_LOGW(TAG, "DOWN_REVOKE decryption/MIC check failed");
+            }
+        }
+    }
 }
 
 static esp_err_t node_send_heartbeat_ack(uint8_t node_id, uint16_t seq)
@@ -365,7 +448,9 @@ static esp_err_t node_listen_and_respond_probe(const node_mac_config_t *cfg, uin
             (void)node_smart_backoff(slot_delay_ms);
         }
 
-        return node_send_heartbeat_ack(cfg->node_id, probe_seq);
+        esp_err_t ack_err = node_send_heartbeat_ack(cfg->node_id, probe_seq);
+        node_listen_downlink_revoke(cfg, 400);
+        return ack_err;
     }
     return err;
 }
@@ -644,6 +729,7 @@ void app_main(void)
                 }
                 uint16_t hb_seq = (uint16_t)(esp_timer_get_time() / 1000000ULL);
                 (void)node_send_heartbeat_ack(mac_cfg.node_id, hb_seq);
+                node_listen_downlink_revoke(&mac_cfg, 400);
             }
             break;
         default:
