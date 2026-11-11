@@ -424,6 +424,16 @@ func (s *GatewayStatusSubscriber) handleJoinMessage(client paho.Client, msg paho
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
+		isRegistered, err := s.joinReqStore.IsDeviceRegistered(ctx, mac)
+		if err != nil {
+			log.Printf("[MQTT Subscriber] Failed to check device registration for %s: %v", mac, err)
+			return
+		}
+		if !isRegistered {
+			log.Printf("[MQTT Subscriber] Dropping join request from unregistered device: mac=%s", mac)
+			return
+		}
+
 		req := &domain.DeviceJoinRequest{
 			DeviceMAC:   mac,
 			GatewayID:   gwID,
