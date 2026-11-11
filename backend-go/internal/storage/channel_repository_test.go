@@ -180,6 +180,16 @@ func (s *mockStmt) Query(args []driver.Value) (driver.Rows, error) {
 	}
 
 	// 5. Join Storage Queries
+	if strings.Contains(q, "select 1 from devices d join device_generations g") {
+		if state == "join_device_not_found" || state == "device_unregistered" {
+			return &mockRows{columns: []string{"exists"}, rows: nil}, nil
+		}
+		return &mockRows{
+			columns: []string{"exists"},
+			rows:    [][]driver.Value{{1}},
+		}, nil
+	}
+
 	if strings.Contains(q, "from devices d join device_generations g") {
 		if state == "join_device_not_found" {
 			return &mockRows{columns: []string{"status", "generation", "k_join_wrapped"}, rows: nil}, nil

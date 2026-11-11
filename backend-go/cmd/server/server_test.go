@@ -84,6 +84,9 @@ func (m *mockServerJoinRequestStorage) ApproveRequest(ctx context.Context, id in
 func (m *mockServerJoinRequestStorage) RejectRequest(ctx context.Context, id int64) error {
 	return nil
 }
+func (m *mockServerJoinRequestStorage) IsDeviceRegistered(ctx context.Context, mac string) (bool, error) {
+	return true, nil
+}
 
 func TestBuildServeMux_RouteRegistration(t *testing.T) {
 	jwtSecret := "test-mvp-secret-key-minimum-32-bytes!!"

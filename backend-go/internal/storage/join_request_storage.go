@@ -23,6 +23,7 @@ type JoinRequestStorage interface {
 	ListPendingRequests(ctx context.Context) ([]*domain.DeviceJoinRequest, error)
 	ApproveRequest(ctx context.Context, id int64, requestedNodeID *int) (*domain.DeviceJoinRequest, error)
 	RejectRequest(ctx context.Context, id int64) error
+	IsDeviceRegistered(ctx context.Context, mac string) (bool, error)
 }
 
 // PostgresJoinRequestStorage implements JoinRequestStorage with PostgreSQL.
@@ -257,4 +258,31 @@ func (s *PostgresJoinRequestStorage) RejectRequest(ctx context.Context, id int64
 		return ErrRequestNotFound
 	}
 	return nil
+}
+
+// IsDeviceRegistered verifies if a device exists with ACTIVE status and has an active K_join generation.
+func (s *PostgresJoinRequestStorage) IsDeviceRegistered(ctx context.Context, mac string) (bool, error) {
+	cleanMAC := strings.ToLower(strings.TrimSpace(mac))
+	macBytes, err := hex.DecodeString(cleanMAC)
+	if err != nil || len(macBytes) != 6 {
+		return false, fmt.Errorf("invalid MAC address: %s", mac)
+	}
+
+	const query = `
+		SELECT 1
+		FROM devices d
+		JOIN device_generations g
+		  ON d.network_id = g.network_id AND d.device_mac = g.device_mac
+		WHERE d.device_mac = $1 AND d.status = 'ACTIVE' AND g.is_active = TRUE
+		LIMIT 1;
+	`
+	var exists int
+	err = s.db.QueryRowContext(ctx, query, macBytes).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to query device registration: %w", err)
+	}
+	return true, nil
 }

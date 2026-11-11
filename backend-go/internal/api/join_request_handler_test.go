@@ -73,6 +73,10 @@ func (m *mockJoinRequestStorage) RejectRequest(ctx context.Context, id int64) er
 	return nil
 }
 
+func (m *mockJoinRequestStorage) IsDeviceRegistered(ctx context.Context, mac string) (bool, error) {
+	return true, nil
+}
+
 type mockDownlinkPublisher struct {
 	published []string
 }
