@@ -123,4 +123,16 @@ menu "Sensor Node Configuration"
                 Maximum random backoff time in milliseconds before retransmission attempt.
     endmenu
 
+    menu "Node Provisioning & Security Enforcement"
+        config NODE_STRICT_PROVISIONING
+            bool "Enforce Strict Provisioning (Fail-closed if K_JOIN missing)"
+            default y
+            help
+                When enabled, node strictly requires a valid 32-byte K_JOIN provisioned in NVS
+                namespace 'nvs_sec'. If missing or corrupted, RF transmission is immediately
+                halted, SX1276 is forced into sleep, and the device halts/sleeps without
+                emitting any radio packets (DEC-SEC-01, DEC-SEC-06).
+                Disable only in lab testing environments where unprovisioned mock keys are explicitly permitted.
+    endmenu
+
 endmenu

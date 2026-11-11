@@ -47,6 +47,26 @@ typedef struct {
     uint8_t k_session_down[16];
 } node_mac_config_t;
 
+#ifndef CONFIG_NODE_STRICT_PROVISIONING
+#define CONFIG_NODE_STRICT_PROVISIONING 1
+#endif
+
+/**
+ * @brief Checks if buffer contains all zeros.
+ */
+static bool is_all_zeros(const uint8_t *buf, size_t len)
+{
+    if (buf == NULL || len == 0U) {
+        return true;
+    }
+    for (size_t i = 0; i < len; i++) {
+        if (buf[i] != 0U) {
+            return false;
+        }
+    }
+    return true;
+}
+
 /* Production SX1276 & FreeRTOS Radio HAL Callbacks */
 static esp_err_t prod_radio_cad(bool *out_activity_detected)
 {
@@ -410,19 +430,37 @@ void app_main(void)
     (void)node_v2_join_get_default_config(&join_cfg);
 
     /* Read provisioned device MAC and credentials from nvs_sec if present */
+    bool k_join_loaded = false;
     nvs_handle_t sec_handle;
     esp_err_t sec_err = nvs_open("nvs_sec", NVS_READONLY, &sec_handle);
     if (sec_err == ESP_OK) {
         size_t mac_len = sizeof(join_cfg.device_mac);
-        if (nvs_get_blob(sec_handle, "device_mac", join_cfg.device_mac, &mac_len) == ESP_OK) {
+        esp_err_t mac_err = nvs_get_blob(sec_handle, "device_mac", join_cfg.device_mac, &mac_len);
+        if (mac_err == ESP_OK && mac_len == sizeof(join_cfg.device_mac) &&
+            !is_all_zeros(join_cfg.device_mac, sizeof(join_cfg.device_mac))) {
             ESP_LOGI(TAG, "Loaded provisioned device MAC: %02x%02x%02x%02x%02x%02x",
                      join_cfg.device_mac[0], join_cfg.device_mac[1], join_cfg.device_mac[2],
                      join_cfg.device_mac[3], join_cfg.device_mac[4], join_cfg.device_mac[5]);
+        } else {
+            (void)esp_read_mac(join_cfg.device_mac, ESP_MAC_WIFI_STA);
+            ESP_LOGI(TAG, "Using factory Wi-Fi MAC: %02x%02x%02x%02x%02x%02x",
+                     join_cfg.device_mac[0], join_cfg.device_mac[1], join_cfg.device_mac[2],
+                     join_cfg.device_mac[3], join_cfg.device_mac[4], join_cfg.device_mac[5]);
         }
+
         size_t k_len = sizeof(join_cfg.k_join);
-        if (nvs_get_blob(sec_handle, "k_join", join_cfg.k_join, &k_len) == ESP_OK) {
-            ESP_LOGI(TAG, "Loaded provisioned K_JOIN from nvs_sec");
+        esp_err_t k_err = nvs_get_blob(sec_handle, "k_join", join_cfg.k_join, &k_len);
+        if (k_err == ESP_OK && k_len == sizeof(join_cfg.k_join)) {
+            if (!is_all_zeros(join_cfg.k_join, sizeof(join_cfg.k_join))) {
+                k_join_loaded = true;
+                ESP_LOGI(TAG, "Loaded provisioned K_JOIN from nvs_sec");
+            } else {
+                ESP_LOGE(TAG, "Provisioned K_JOIN in nvs_sec is invalid (all zeros)");
+            }
+        } else {
+            ESP_LOGW(TAG, "K_JOIN not found in nvs_sec: %s", esp_err_to_name(k_err));
         }
+
         uint32_t net_id = 0;
         if (nvs_get_u32(sec_handle, "network_id", &net_id) == ESP_OK) {
             join_cfg.network_id = net_id;
@@ -433,6 +471,52 @@ void app_main(void)
         ESP_LOGI(TAG, "Using factory Wi-Fi MAC: %02x%02x%02x%02x%02x%02x",
                  join_cfg.device_mac[0], join_cfg.device_mac[1], join_cfg.device_mac[2],
                  join_cfg.device_mac[3], join_cfg.device_mac[4], join_cfg.device_mac[5]);
+        ESP_LOGW(TAG, "Namespace nvs_sec not found: %s", esp_err_to_name(sec_err));
+    }
+
+    /* Strict Fail-Closed Provisioning Verification (DEC-SEC-01, DEC-SEC-06, Issue #324) */
+    if (s_join_ctx.state != NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
+#if CONFIG_NODE_STRICT_PROVISIONING
+        if (!k_join_loaded) {
+            ESP_LOGE(TAG, "[PROVISION ERROR] Missing provisioned K_JOIN in nvs_sec. Halting radio.");
+            s_join_ctx.state = NODE_V2_JOIN_STATE_ABORTED;
+            lora_mac_crypto_zeroize(join_cfg.k_join, sizeof(join_cfg.k_join));
+
+            if (!radio_initialized) {
+                if (sx1276_init(NULL, NULL) == ESP_OK) {
+                    radio_initialized = true;
+                }
+            }
+            if (radio_initialized) {
+                (void)sx1276_sleep();
+            }
+
+            button_driver_t halt_btn;
+            button_config_t halt_btn_cfg = {
+                .gpio_num = (gpio_num_t)CONFIG_NODE_BUTTON_GPIO,
+                .active_level = CONFIG_NODE_BUTTON_ACTIVE_LEVEL,
+                .debounce_ms = CONFIG_NODE_BUTTON_DEBOUNCE_MS,
+                .hold_time_ms = CONFIG_NODE_BUTTON_HOLD_TIME_MS,
+            };
+            if (button_driver_init(&halt_btn, &halt_btn_cfg) == ESP_OK) {
+                (void)button_driver_arm_sleep(&halt_btn);
+            }
+
+#if CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC > 0
+            ESP_LOGI(TAG, "Enabling Timer Wakeup in %d seconds", CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC);
+            (void)esp_sleep_enable_timer_wakeup((uint64_t)CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC * 1000000ULL);
+#endif
+
+            ESP_LOGE(TAG, "[PROVISION HALT] Node is unprovisioned. Entering Deep-Sleep mode.");
+            esp_deep_sleep_start();
+            vTaskSuspend(NULL);
+            return;
+        }
+#else
+        if (!k_join_loaded) {
+            ESP_LOGW(TAG, "[PROVISION WARN] Missing provisioned K_JOIN in nvs_sec, but strict provisioning is disabled (lab test mode).");
+        }
+#endif
     }
 
     /* Bind established session keys if already joined */
@@ -580,6 +664,15 @@ void app_main(void)
                     ESP_LOGE(TAG, "[JOIN LOCKOUT] Radio permanently locked due to counter rollback anomaly! Halting.");
                     break;
                 }
+#if CONFIG_NODE_STRICT_PROVISIONING
+                if (!k_join_loaded) {
+                    ESP_LOGE(TAG, "[PROVISION ERROR] Missing provisioned K_JOIN in nvs_sec. Halting radio.");
+                    if (radio_initialized) {
+                        (void)sx1276_sleep();
+                    }
+                    break;
+                }
+#endif
 
                 join_attempt++;
                 ESP_LOGI(TAG, "[JOIN] >>> Starting Join Attempt #%" PRIu32 " on Freq=920.250 MHz (CH0) <<<", join_attempt);
@@ -642,6 +735,9 @@ void app_main(void)
     if (radio_initialized && s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE && pending_events == 0U) {
         (void)node_listen_and_respond_probe(&mac_cfg, 150);
     }
+
+    /* Zeroize sensitive join key before entering sleep/suspend */
+    lora_mac_crypto_zeroize(join_cfg.k_join, sizeof(join_cfg.k_join));
 
     /* 10. Ensure radio is sleeping before entering Deep-Sleep */
     if (radio_initialized) {
