@@ -54,6 +54,10 @@ static approved_node_entry_t *find_or_create_node_entry(const uint8_t mac[6])
     return NULL;
 }
 
+static esp_err_t gateway_save_node_session(uint8_t node_id);
+static void gateway_restore_sessions_from_nvs(void);
+static esp_err_t gateway_erase_node_session(uint8_t node_id);
+
 static void on_downlink_session_key(const uint8_t *data, size_t len)
 {
     ESP_LOGI(TAG, "Downlink session-key-install received (%zu bytes)", len);
@@ -120,6 +124,7 @@ static void on_downlink_join_grant(const uint8_t *data, size_t len)
                 &grant_len
             );
             if (h_err == ESP_OK) {
+                (void)gateway_save_node_session(entry->node_id);
                 vTaskDelay(pdMS_TO_TICKS(40));
                 ESP_LOGI(TAG, "[JOIN TX] Transmitting DOWN_JOIN_GRANT (%zu bytes) to Node #%u...", grant_len, entry->node_id);
                 esp_err_t tx_err = sx1276_tx(grant_buf, (uint8_t)grant_len, pdMS_TO_TICKS(300));
@@ -162,6 +167,128 @@ static gateway_revoked_node_info_t s_revoked_nodes[MAX_REVOKED_NODES];
 static StackType_t s_gateway_task_stack[GATEWAY_TASK_STACK_SIZE_BYTES];
 static StaticTask_t s_gateway_task_tcb;
 
+#define GW_SESSION_NVS_NAMESPACE "gw_session"
+
+typedef struct {
+    uint8_t  active;
+    uint8_t  node_id;
+    uint8_t  device_mac[6];
+    uint32_t join_counter;
+    uint8_t  k_session_up[16];
+    uint8_t  k_session_dl[16];
+} gw_persisted_session_t;
+
+static esp_err_t gateway_save_node_session(uint8_t node_id)
+{
+    if (node_id < 1 || node_id > GATEWAY_V2_JOIN_MAX_PENDING_SESSIONS) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    size_t slot_idx = (size_t)(node_id - 1);
+    gateway_v2_pending_join_t *pending = &s_join_engine.pending_joins[slot_idx];
+    if (!pending->active) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    gw_persisted_session_t sess;
+    memset(&sess, 0, sizeof(sess));
+    sess.active = 1;
+    sess.node_id = node_id;
+    memcpy(sess.device_mac, pending->device_mac, 6);
+    sess.join_counter = pending->join_counter;
+    memcpy(sess.k_session_up, pending->session_keys.k_session_up, 16);
+    memcpy(sess.k_session_dl, pending->session_keys.k_session_dl, 16);
+
+    nvs_handle_t handle = 0;
+    esp_err_t err = nvs_open(GW_SESSION_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS namespace %s: %s", GW_SESSION_NVS_NAMESPACE, esp_err_to_name(err));
+        return err;
+    }
+
+    char key[16];
+    snprintf(key, sizeof(key), "node_%u", (unsigned int)node_id);
+    err = nvs_set_blob(handle, key, &sess, sizeof(sess));
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
+    nvs_close(handle);
+
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "[NVS SAVE] Persisted session keys for Node #%u to NVS flash", node_id);
+    } else {
+        ESP_LOGE(TAG, "[NVS SAVE] Failed to persist session keys for Node #%u: %s", node_id, esp_err_to_name(err));
+    }
+    return err;
+}
+
+static void gateway_restore_sessions_from_nvs(void)
+{
+    nvs_handle_t handle = 0;
+    esp_err_t err = nvs_open(GW_SESSION_NVS_NAMESPACE, NVS_READONLY, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGI(TAG, "No persistent sessions in NVS namespace %s (%s)",
+                 GW_SESSION_NVS_NAMESPACE, esp_err_to_name(err));
+        return;
+    }
+
+    size_t restored_count = 0;
+    for (uint8_t node_id = 1; node_id <= GATEWAY_V2_JOIN_MAX_PENDING_SESSIONS; node_id++) {
+        char key[16];
+        snprintf(key, sizeof(key), "node_%u", (unsigned int)node_id);
+        gw_persisted_session_t sess;
+        size_t len = sizeof(sess);
+        err = nvs_get_blob(handle, key, &sess, &len);
+        if (err == ESP_OK && len == sizeof(sess) && sess.active == 1 && sess.node_id == node_id) {
+            size_t slot_idx = (size_t)(node_id - 1);
+            gateway_v2_pending_join_t *pending = &s_join_engine.pending_joins[slot_idx];
+            memset(pending, 0, sizeof(*pending));
+            pending->active = true;
+            pending->assigned_node_id = sess.node_id;
+            memcpy(pending->device_mac, sess.device_mac, 6);
+            pending->join_counter = sess.join_counter;
+            memcpy(pending->session_keys.k_session_up, sess.k_session_up, 16);
+            memcpy(pending->session_keys.k_session_dl, sess.k_session_dl, 16);
+
+            /* Also restore into approved nodes table */
+            approved_node_entry_t *entry = find_or_create_node_entry(sess.device_mac);
+            if (entry != NULL) {
+                entry->node_id = sess.node_id;
+                entry->approved = true;
+                entry->has_cached_hello = false;
+            }
+
+            /* Mark node as known and not revoked */
+            s_revoked_nodes[node_id].revoked = false;
+            s_revoked_nodes[node_id].has_key = false;
+
+            ESP_LOGI(TAG, "[NVS RESTORE] Restored persistent session for Node #%u (MAC %02X:%02X:%02X:%02X:%02X:%02X, Ctr: %u)",
+                     node_id,
+                     sess.device_mac[0], sess.device_mac[1], sess.device_mac[2],
+                     sess.device_mac[3], sess.device_mac[4], sess.device_mac[5],
+                     (unsigned int)sess.join_counter);
+            restored_count++;
+        }
+    }
+    nvs_close(handle);
+    ESP_LOGI(TAG, "Gateway session restore completed: %zu active node sessions restored from NVS flash", restored_count);
+}
+
+static esp_err_t gateway_erase_node_session(uint8_t node_id)
+{
+    nvs_handle_t handle = 0;
+    esp_err_t err = nvs_open(GW_SESSION_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+    char key[16];
+    snprintf(key, sizeof(key), "node_%u", (unsigned int)node_id);
+    (void)nvs_erase_key(handle, key);
+    err = nvs_commit(handle);
+    nvs_close(handle);
+    ESP_LOGI(TAG, "[NVS ERASE] Erased session for Node #%u from NVS flash", node_id);
+    return err;
+}
+
 static esp_err_t hal_session_key_lookup(uint8_t node_id,
                                         uint8_t *out_session_sel,
                                         uint8_t out_k_session_up[16],
@@ -173,27 +300,48 @@ static esp_err_t hal_session_key_lookup(uint8_t node_id,
     if (err != ESP_OK) {
         err = session_key_store_get_staging(node_id, &rec);
     }
-    if (err != ESP_OK) {
-        return err;
+    if (err == ESP_OK) {
+        if (out_session_sel != NULL) {
+            *out_session_sel = rec.key_id & 1U;
+        }
+        if (out_k_session_up != NULL) {
+            (void)memcpy(out_k_session_up, rec.k_session_up, 16);
+        }
+        if (out_k_session_dl != NULL) {
+            (void)memcpy(out_k_session_dl, rec.k_session_dl, 16);
+        }
+        if (out_nonce_prefix != NULL) {
+            static const uint8_t s_all_zeros[8] = {0};
+            if (memcmp(rec.session_id, s_all_zeros, 8) == 0) {
+                (void)memcpy(out_nonce_prefix, DEFAULT_NONCE_PREFIX, 8);
+            } else {
+                (void)memcpy(out_nonce_prefix, rec.session_id, 8);
+            }
+        }
+        return ESP_OK;
     }
-    if (out_session_sel != NULL) {
-        *out_session_sel = rec.key_id & 1U;
-    }
-    if (out_k_session_up != NULL) {
-        (void)memcpy(out_k_session_up, rec.k_session_up, 16);
-    }
-    if (out_k_session_dl != NULL) {
-        (void)memcpy(out_k_session_dl, rec.k_session_dl, 16);
-    }
-    if (out_nonce_prefix != NULL) {
-        static const uint8_t s_all_zeros[8] = {0};
-        if (memcmp(rec.session_id, s_all_zeros, 8) == 0) {
-            (void)memcpy(out_nonce_prefix, DEFAULT_NONCE_PREFIX, 8);
-        } else {
-            (void)memcpy(out_nonce_prefix, rec.session_id, 8);
+
+    /* Fallback directly to V2 Join pending_joins in s_join_engine */
+    if (node_id >= 1 && node_id <= GATEWAY_V2_JOIN_MAX_PENDING_SESSIONS) {
+        size_t slot_idx = (size_t)(node_id - 1);
+        if (s_join_engine.pending_joins[slot_idx].active) {
+            if (out_session_sel != NULL) {
+                *out_session_sel = 0;
+            }
+            if (out_k_session_up != NULL) {
+                memcpy(out_k_session_up, s_join_engine.pending_joins[slot_idx].session_keys.k_session_up, 16);
+            }
+            if (out_k_session_dl != NULL) {
+                memcpy(out_k_session_dl, s_join_engine.pending_joins[slot_idx].session_keys.k_session_dl, 16);
+            }
+            if (out_nonce_prefix != NULL) {
+                memcpy(out_nonce_prefix, DEFAULT_NONCE_PREFIX, 8);
+            }
+            return ESP_OK;
         }
     }
-    return ESP_OK;
+
+    return ESP_ERR_NOT_FOUND;
 }
 
 static void on_downlink_node_revoke(const uint8_t *data, size_t len)
@@ -243,6 +391,7 @@ static void on_downlink_node_revoke(const uint8_t *data, size_t len)
 
     /* Release session keys in Session Key Store and pending joins */
     (void)session_key_store_revoke(node_id);
+    (void)gateway_erase_node_session(node_id);
     size_t slot_idx = (size_t)(node_id - 1);
     if (slot_idx < GATEWAY_V2_JOIN_MAX_PENDING_SESSIONS) {
         memset(&s_join_engine.pending_joins[slot_idx], 0, sizeof(s_join_engine.pending_joins[slot_idx]));
@@ -382,6 +531,8 @@ static esp_err_t process_join_packet(const uint8_t *payload, size_t length, int1
                         &grant_len
                     );
                     if (h_err == ESP_OK) {
+                        /* Persist session to NVS immediately */
+                        (void)gateway_save_node_session(entry->node_id);
                         /* Allow Node time to switch from TX to RXSINGLE (RF turnaround margin) */
                         vTaskDelay(pdMS_TO_TICKS(40));
                         ESP_LOGI(TAG, "[JOIN TX] Transmitting DOWN_JOIN_GRANT (%zu bytes) to Node #%u on 920.250 MHz (CH0)...", grant_len, entry->node_id);
@@ -445,6 +596,7 @@ static esp_err_t process_join_packet(const uint8_t *payload, size_t length, int1
                 );
                 if (r_err == ESP_OK) {
                     ESP_LOGI(TAG, "[JOIN SUCCESS] Node #%u Join complete! Session committed in INSTALLED_INACTIVE state.", payload[2]);
+                    (void)gateway_save_node_session(payload[2]);
                     s_revoked_nodes[payload[2]].revoked = false;
                     s_revoked_nodes[payload[2]].has_key = false;
                 } else {
@@ -812,6 +964,8 @@ void app_main(void)
         ESP_LOGE(TAG, "Failed to initialize Gateway V2 Join Engine: %s", esp_err_to_name(ret));
     } else {
         ESP_LOGI(TAG, "Gateway V2 Join Engine initialized successfully");
+        /* Restore persistent joined node sessions from NVS flash */
+        gateway_restore_sessions_from_nvs();
     }
 
     // Initialize Gateway SX1276 radio transceiver
