@@ -67,6 +67,7 @@ typedef struct {
 typedef void (*gateway_downlink_session_key_cb_t)(const uint8_t *data, size_t len);
 typedef void (*gateway_downlink_schedule_cb_t)(const uint8_t *data, size_t len);
 typedef void (*gateway_downlink_join_grant_cb_t)(const uint8_t *data, size_t len);
+typedef void (*gateway_downlink_node_revoke_cb_t)(const uint8_t *data, size_t len);
 typedef void (*gateway_transport_status_cb_t)(bool connected);
 
 /**
@@ -100,6 +101,14 @@ esp_err_t gateway_transport_register_schedule_callback(gateway_downlink_schedule
  * @return ESP_OK on success.
  */
 esp_err_t gateway_transport_register_join_grant_callback(gateway_downlink_join_grant_cb_t cb);
+
+/**
+ * @brief Register callback for downlink node-revoke messages from Backend.
+ *
+ * @param cb Callback function.
+ * @return ESP_OK on success.
+ */
+esp_err_t gateway_transport_register_node_revoke_callback(gateway_downlink_node_revoke_cb_t cb);
 
 /**
  * @brief Register callback for transport connection status changes (WiFi + MQTT).

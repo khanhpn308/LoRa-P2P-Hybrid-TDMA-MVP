@@ -171,6 +171,51 @@ esp_err_t lora_mac_crypto_decrypt_down_ack(const uint8_t *k_session_dl,
                                            uint8_t *out_plaintext);
 
 /**
+ * @brief Encrypt DOWN_REVOKE payload (4B) with AES-128-CCM-8.
+ *
+ * @param k_session_dl 16-byte downlink session key.
+ * @param nonce 13-byte standard V2 downlink nonce (dir=0x02).
+ * @param aad 7-byte V2 unicast header.
+ * @param aad_len Length of AAD (7).
+ * @param plaintext 4-byte DOWN_REVOKE plaintext.
+ * @param pt_len Length of plaintext (4).
+ * @param out_ciphertext Destination buffer for ciphertext.
+ * @param out_tag Destination buffer for 8-byte CCM-8 tag.
+ * @return ESP_OK on success, ESP_ERR_* on error.
+ */
+esp_err_t lora_mac_crypto_encrypt_down_revoke(const uint8_t *k_session_dl,
+                                              const uint8_t *nonce,
+                                              const uint8_t *aad,
+                                              size_t aad_len,
+                                              const uint8_t *plaintext,
+                                              size_t pt_len,
+                                              uint8_t *out_ciphertext,
+                                              uint8_t *out_tag);
+
+/**
+ * @brief Decrypt DOWN_REVOKE payload (4B) and verify AES-128-CCM-8 tag.
+ *
+ * @param k_session_dl 16-byte downlink session key.
+ * @param nonce 13-byte standard V2 downlink nonce.
+ * @param aad 7-byte V2 unicast header.
+ * @param aad_len Length of AAD (7).
+ * @param ciphertext 4-byte DOWN_REVOKE ciphertext.
+ * @param ct_len Length of ciphertext (4).
+ * @param tag 8-byte received CCM-8 tag.
+ * @param out_plaintext Destination buffer for decrypted plaintext.
+ * @return ESP_OK on valid tag and decryption, ESP_ERR_INVALID_CRC if tag mismatch,
+ *         ESP_ERR_INVALID_ARG on parameter bounds error.
+ */
+esp_err_t lora_mac_crypto_decrypt_down_revoke(const uint8_t *k_session_dl,
+                                              const uint8_t *nonce,
+                                              const uint8_t *aad,
+                                              size_t aad_len,
+                                              const uint8_t *ciphertext,
+                                              size_t ct_len,
+                                              const uint8_t *tag,
+                                              uint8_t *out_plaintext);
+
+/**
  * @brief Generic AES-128-CCM-8 encryption (M=8, L=2, Nonce=13).
  */
 esp_err_t lora_mac_crypto_ccm_encrypt(const uint8_t key[16],

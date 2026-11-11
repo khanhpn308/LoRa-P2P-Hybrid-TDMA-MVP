@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -83,6 +84,11 @@ type mockDownlinkPublisher struct {
 
 func (p *mockDownlinkPublisher) PublishJoinGrant(ctx context.Context, gatewayID string, deviceMAC string, nodeID int) error {
 	p.published = append(p.published, gatewayID+":"+deviceMAC)
+	return nil
+}
+
+func (p *mockDownlinkPublisher) PublishNodeRevoke(ctx context.Context, gatewayID string, nodeID int) error {
+	p.published = append(p.published, "REVOKE:"+gatewayID+":"+strconv.Itoa(nodeID))
 	return nil
 }
 

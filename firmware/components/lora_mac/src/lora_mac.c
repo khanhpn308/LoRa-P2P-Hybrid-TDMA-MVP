@@ -207,6 +207,49 @@ esp_err_t lora_mac_v2_down_event_ack_deserialize(const uint8_t *buf,
     return ESP_OK;
 }
 
+esp_err_t lora_mac_v2_down_revoke_serialize(const lora_mac_v2_down_revoke_t *revoke,
+                                            uint8_t *out_buf,
+                                            size_t buf_size,
+                                            size_t *out_written)
+{
+    if (revoke == NULL || out_buf == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (buf_size < 4U) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    out_buf[0] = (uint8_t)((revoke->revoke_reason >> 24) & 0xFFU);
+    out_buf[1] = (uint8_t)((revoke->revoke_reason >> 16) & 0xFFU);
+    out_buf[2] = (uint8_t)((revoke->revoke_reason >> 8) & 0xFFU);
+    out_buf[3] = (uint8_t)(revoke->revoke_reason & 0xFFU);
+
+    if (out_written != NULL) {
+        *out_written = 4U;
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t lora_mac_v2_down_revoke_deserialize(const uint8_t *buf,
+                                              size_t len,
+                                              lora_mac_v2_down_revoke_t *out_revoke)
+{
+    if (buf == NULL || out_revoke == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (len < 4U) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    out_revoke->revoke_reason = ((uint32_t)buf[0] << 24) |
+                                ((uint32_t)buf[1] << 16) |
+                                ((uint32_t)buf[2] << 8) |
+                                (uint32_t)buf[3];
+
+    return ESP_OK;
+}
+
 esp_err_t lora_mac_v2_up_health_reply_serialize(const lora_mac_v2_up_health_reply_t *health,
                                                 uint8_t *out_buf,
                                                 size_t buf_size,

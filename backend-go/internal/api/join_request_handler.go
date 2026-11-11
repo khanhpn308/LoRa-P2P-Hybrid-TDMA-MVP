@@ -16,6 +16,7 @@ import (
 // DownlinkPublisher publishes downlinks to Gateways.
 type DownlinkPublisher interface {
 	PublishJoinGrant(ctx context.Context, gatewayID string, deviceMAC string, nodeID int) error
+	PublishNodeRevoke(ctx context.Context, gatewayID string, nodeID int) error
 }
 
 // JoinRequestHandler provides endpoints for inspecting and approving/rejecting node join requests.
