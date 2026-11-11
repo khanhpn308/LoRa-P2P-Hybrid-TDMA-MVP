@@ -323,6 +323,12 @@ esp_err_t node_v2_join_load_session(node_v2_join_context_t *ctx)
 
 esp_err_t node_v2_join_erase_session(node_v2_join_context_t *ctx)
 {
+    if (ctx != NULL) {
+        lora_mac_crypto_zeroize(&ctx->session_keys, sizeof(ctx->session_keys));
+        ctx->assigned_node_id = 0U;
+        ctx->state = NODE_V2_JOIN_STATE_UNJOINED;
+    }
+
     nvs_handle_t handle = 0;
     esp_err_t err = nvs_open(NODE_V2_JOIN_NVS_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK) {
@@ -338,12 +344,6 @@ esp_err_t node_v2_join_erase_session(node_v2_join_context_t *ctx)
 
     err = nvs_commit(handle);
     nvs_close(handle);
-
-    if (ctx != NULL) {
-        lora_mac_crypto_zeroize(&ctx->session_keys, sizeof(ctx->session_keys));
-        ctx->assigned_node_id = 0U;
-        ctx->state = NODE_V2_JOIN_STATE_UNJOINED;
-    }
 
     ESP_LOGI(TAG, "Revoked and erased session state from NVS flash (monotonic counter preserved)");
     return err;
@@ -795,7 +795,9 @@ esp_err_t node_v2_join_run(const node_v2_join_config_t *cfg,
     /* Commit session keys, assigned node_id, and joined flag to NVS Flash (Issue #322) */
     err = node_v2_join_save_session(ctx);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to commit session state to NVS Flash: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "Failed to commit session state to NVS Flash: %s (fail-closed abort)", esp_err_to_name(err));
+        lora_mac_crypto_zeroize(&ctx->session_keys, sizeof(ctx->session_keys));
+        ctx->state = NODE_V2_JOIN_STATE_ABORTED;
         return err;
     }
 
