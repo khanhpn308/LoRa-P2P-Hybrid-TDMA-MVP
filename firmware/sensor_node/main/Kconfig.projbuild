@@ -123,6 +123,16 @@ menu "Sensor Node Configuration"
                 Maximum random backoff time in milliseconds before retransmission attempt.
     endmenu
 
+    menu "OTA V2 Join Configuration"
+        config NODE_JOIN_GRANT_TIMEOUT_MS
+            int "Join Grant Listen Timeout in ms"
+            default 5000
+            range 1000 15000
+            help
+                Listen timeout window for DOWN_JOIN_GRANT frame (default 5000 ms).
+                Provides sufficient margin for MQTT relay to Backend and User Approval roundtrip.
+    endmenu
+
     menu "Node Provisioning & Security Enforcement"
         config NODE_STRICT_PROVISIONING
             bool "Enforce Strict Provisioning (Fail-closed if K_JOIN missing)"

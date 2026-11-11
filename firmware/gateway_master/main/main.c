@@ -122,9 +122,18 @@ static void on_downlink_join_grant(const uint8_t *data, size_t len)
             if (h_err == ESP_OK) {
                 vTaskDelay(pdMS_TO_TICKS(40));
                 ESP_LOGI(TAG, "[JOIN TX] Transmitting DOWN_JOIN_GRANT (%zu bytes) to Node #%u...", grant_len, entry->node_id);
-                (void)sx1276_tx(grant_buf, (uint8_t)grant_len, pdMS_TO_TICKS(300));
+                esp_err_t tx_err = sx1276_tx(grant_buf, (uint8_t)grant_len, pdMS_TO_TICKS(300));
+                if (tx_err == ESP_OK) {
+                    ESP_LOGI(TAG, "[JOIN TX] DOWN_JOIN_GRANT transmitted successfully for Node #%u", entry->node_id);
+                } else {
+                    ESP_LOGE(TAG, "[JOIN TX] Failed to transmit DOWN_JOIN_GRANT: %s", esp_err_to_name(tx_err));
+                }
             }
+            entry->has_cached_hello = false;
         }
+
+        /* Re-enable 24/7 continuous RX on Gateway to receive retries or subsequent frames */
+        (void)sx1276_start_rx_continuous();
     }
 }
 
@@ -385,6 +394,7 @@ static esp_err_t process_join_packet(const uint8_t *payload, size_t length, int1
                     } else {
                         ESP_LOGW(TAG, "[JOIN] Failed to handle UP_JOIN_HELLO: %s", esp_err_to_name(h_err));
                     }
+                    entry->has_cached_hello = false;
                     return h_err;
                 }
                 return ESP_OK;

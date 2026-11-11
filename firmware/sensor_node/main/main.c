@@ -536,6 +536,9 @@ void app_main(void)
 
     node_v2_join_config_t join_cfg;
     (void)node_v2_join_get_default_config(&join_cfg);
+#ifdef CONFIG_NODE_JOIN_GRANT_TIMEOUT_MS
+    join_cfg.grant_listen_timeout_ms = (uint32_t)CONFIG_NODE_JOIN_GRANT_TIMEOUT_MS;
+#endif
 
     /* Read provisioned device MAC and credentials from nvs_sec if present */
     bool k_join_loaded = false;
