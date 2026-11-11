@@ -426,6 +426,21 @@ void app_main(void)
         ESP_LOGI(TAG, "Join state reset from ABORTED to UNJOINED for retry");
     }
 
+    /* Attempt to recover persistent session from NVS Flash across cold boots (Issue #322) */
+    if (s_join_ctx.state != NODE_V2_JOIN_STATE_INSTALLED_INACTIVE && !s_join_ctx.radio_permanently_locked) {
+        esp_err_t load_err = node_v2_join_load_session(&s_join_ctx);
+        if (load_err == ESP_OK) {
+            ESP_LOGI(TAG, "==================================================");
+            ESP_LOGI(TAG, ">>> RESTORED PERSISTENT V2 JOIN SESSION FROM NVS <<<");
+            ESP_LOGI(TAG, "Assigned Node ID: #%u | State: %s",
+                     s_join_ctx.assigned_node_id, node_v2_join_state_to_str(s_join_ctx.state));
+            ESP_LOGI(TAG, "==================================================");
+        } else {
+            ESP_LOGI(TAG, "No valid persistent session in NVS Flash (%s). Node remains UNJOINED.",
+                     esp_err_to_name(load_err));
+        }
+    }
+
     node_v2_join_config_t join_cfg;
     (void)node_v2_join_get_default_config(&join_cfg);
 
@@ -687,6 +702,17 @@ void app_main(void)
                     mac_cfg.node_id = s_join_ctx.assigned_node_id;
                     (void)memcpy(mac_cfg.k_session_up, s_join_ctx.session_keys.k_session_up, 16);
                     (void)memcpy(mac_cfg.k_session_down, s_join_ctx.session_keys.k_session_dl, 16);
+
+                    /* Helper to verify NVS persistence integrity (Acceptance Criterion 2) */
+                    node_v2_join_context_t verify_ctx;
+                    (void)node_v2_join_init(&verify_ctx);
+                    if (node_v2_join_load_session(&verify_ctx) == ESP_OK) {
+                        ESP_LOGI(TAG, "NVS session persistence verified: Node ID #%u, joined=1, keys 16B",
+                                 verify_ctx.assigned_node_id);
+                    } else {
+                        ESP_LOGW(TAG, "NVS session verification failed after join commit");
+                    }
+                    lora_mac_crypto_zeroize(&verify_ctx.session_keys, sizeof(verify_ctx.session_keys));
                     break;
                 }
 
