@@ -426,7 +426,7 @@ void app_main(void)
         ESP_LOGI(TAG, "Join state reset from ABORTED to UNJOINED for retry");
     }
 
-    /* Attempt to recover persistent session from NVS Flash across cold boots (Issue #322) */
+    /* Attempt to recover persistent session from NVS Flash across cold boots (Issue #322, #323) */
     if (s_join_ctx.state != NODE_V2_JOIN_STATE_INSTALLED_INACTIVE && !s_join_ctx.radio_permanently_locked) {
         esp_err_t load_err = node_v2_join_load_session(&s_join_ctx);
         if (load_err == ESP_OK) {
@@ -435,10 +435,18 @@ void app_main(void)
             ESP_LOGI(TAG, "Assigned Node ID: #%u | State: %s",
                      s_join_ctx.assigned_node_id, node_v2_join_state_to_str(s_join_ctx.state));
             ESP_LOGI(TAG, "==================================================");
+            mac_cfg.node_id = s_join_ctx.assigned_node_id;
+            (void)memcpy(mac_cfg.k_session_up, s_join_ctx.session_keys.k_session_up, 16);
+            (void)memcpy(mac_cfg.k_session_down, s_join_ctx.session_keys.k_session_dl, 16);
         } else {
             ESP_LOGI(TAG, "No valid persistent session in NVS Flash (%s). Node remains UNJOINED.",
                      esp_err_to_name(load_err));
         }
+    } else if (s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
+        /* Session preserved in RTC RAM across deep-sleep wake */
+        mac_cfg.node_id = s_join_ctx.assigned_node_id;
+        (void)memcpy(mac_cfg.k_session_up, s_join_ctx.session_keys.k_session_up, 16);
+        (void)memcpy(mac_cfg.k_session_down, s_join_ctx.session_keys.k_session_dl, 16);
     }
 
     node_v2_join_config_t join_cfg;
@@ -640,13 +648,25 @@ void app_main(void)
             break;
         default:
             ESP_LOGI(TAG, "[WAKE CAUSE] Power-On Reset or Software Restart");
-            /* Cold boot: initialize SX1276 radio into STANDBY (Fail-closed RF) */
-            esp_err_t sx_err = sx1276_init(NULL, NULL);
-            if (sx_err != ESP_OK) {
-                ESP_LOGW(TAG, "SX1276 init returned: %s (safe standby default)", esp_err_to_name(sx_err));
+            if (s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
+                /* Cold boot with active session: transition SX1276 to safe SLEEP mode immediately */
+                esp_err_t sx_err = sx1276_init(NULL, NULL);
+                if (sx_err == ESP_OK) {
+                    radio_initialized = true;
+                    (void)sx1276_sleep();
+                    ESP_LOGI(TAG, "[COLD BOOT] Radio placed in SLEEP mode (Session restored from NVS)");
+                } else {
+                    ESP_LOGW(TAG, "SX1276 init returned: %s (safe sleep default)", esp_err_to_name(sx_err));
+                }
             } else {
-                ESP_LOGI(TAG, "SX1276 initialized successfully in STANDBY mode");
-                radio_initialized = true;
+                /* Cold boot unjoined: initialize SX1276 radio into STANDBY (Fail-closed RF) */
+                esp_err_t sx_err = sx1276_init(NULL, NULL);
+                if (sx_err != ESP_OK) {
+                    ESP_LOGW(TAG, "SX1276 init returned: %s (safe standby default)", esp_err_to_name(sx_err));
+                } else {
+                    ESP_LOGI(TAG, "SX1276 initialized successfully in STANDBY mode");
+                    radio_initialized = true;
+                }
             }
             break;
     }
@@ -757,8 +777,9 @@ void app_main(void)
                  node_v2_join_state_to_str(s_join_ctx.state));
     }
 
-    /* 9b. If joined and idle, briefly listen for Gateway DOWN_HEARTBEAT_PROBE (150ms window) */
-    if (radio_initialized && s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE && pending_events == 0U) {
+    /* 9b. If joined and idle, briefly listen for Gateway DOWN_HEARTBEAT_PROBE (150ms window) on active wakeups */
+    if (wake_cause != BUTTON_CAUSE_RESET_OR_OTHER && radio_initialized &&
+        s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE && pending_events == 0U) {
         (void)node_listen_and_respond_probe(&mac_cfg, 150);
     }
 
