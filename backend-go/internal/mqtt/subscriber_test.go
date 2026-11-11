@@ -246,3 +246,11 @@ func TestHandleJoinMessage_ExtractMACFromRawFrame(t *testing.T) {
 		t.Fatalf("expected MAC 010203040506, got %s", mockStore.createdReq.DeviceMAC)
 	}
 }
+
+func TestPublishNodeRevoke_DisconnectedClient_ReturnsError(t *testing.T) {
+	subscriber := NewGatewayStatusSubscriber("tcp://localhost:1883", nil, nil, nil, nil, nil)
+	err := subscriber.PublishNodeRevoke(context.Background(), "gw-test-01", 42)
+	if err == nil {
+		t.Fatal("expected error when MQTT client is not connected")
+	}
+}

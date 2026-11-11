@@ -499,6 +499,31 @@ func (s *GatewayStatusSubscriber) PublishJoinGrant(ctx context.Context, gatewayI
 	return nil
 }
 
+// PublishNodeRevoke sends a downlink revoke message to the Gateway over MQTT.
+func (s *GatewayStatusSubscriber) PublishNodeRevoke(ctx context.Context, gatewayID string, nodeID int) error {
+	if s.client == nil || !s.client.IsConnected() {
+		return fmt.Errorf("MQTT client is not connected")
+	}
+
+	topic := fmt.Sprintf("iot/v1/gw/%s/downlink/node-revoke", gatewayID)
+	payloadMap := map[string]interface{}{
+		"node_id": nodeID,
+	}
+
+	payloadBytes, err := json.Marshal(payloadMap)
+	if err != nil {
+		return fmt.Errorf("marshal node revoke: %w", err)
+	}
+
+	token := s.client.Publish(topic, 1, false, payloadBytes)
+	if token.Wait() && token.Error() != nil {
+		return fmt.Errorf("publish node revoke error: %w", token.Error())
+	}
+
+	log.Printf("[MQTT Downlink] Successfully published node revoke to %s: %s", topic, string(payloadBytes))
+	return nil
+}
+
 // Stop closes the subscriber connection.
 func (s *GatewayStatusSubscriber) Stop() {
 	select {
