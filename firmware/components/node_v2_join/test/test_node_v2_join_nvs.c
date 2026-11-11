@@ -184,6 +184,90 @@ static int test_nvs_load_corrupted_keys_fails(void)
     return 0;
 }
 
+static int test_cold_boot_recovery_bypasses_join_handshake(void)
+{
+    (void)nvs_flash_erase();
+
+    /* 1. Simulate prior successful join saved to NVS */
+    node_v2_join_context_t init_ctx;
+    ASSERT_EQUAL_INT(ESP_OK, node_v2_join_init(&init_ctx));
+    init_ctx.state = NODE_V2_JOIN_STATE_INSTALLED_INACTIVE;
+    init_ctx.assigned_node_id = 42U;
+    for (uint8_t i = 0; i < 16; i++) {
+        init_ctx.session_keys.k_session_up[i] = (uint8_t)(0xA0 + i);
+        init_ctx.session_keys.k_session_dl[i] = (uint8_t)(0xB0 + i);
+    }
+    ASSERT_EQUAL_INT(ESP_OK, node_v2_join_save_session(&init_ctx));
+
+    /* 2. Simulate Cold Boot (power loss / reset): clean context */
+    node_v2_join_context_t boot_ctx;
+    ASSERT_EQUAL_INT(ESP_OK, node_v2_join_init(&boot_ctx));
+    ASSERT_EQUAL_INT(NODE_V2_JOIN_STATE_UNJOINED, boot_ctx.state);
+    ASSERT_TRUE(!node_v2_join_is_joined(&boot_ctx));
+
+    /* 3. Execute recovery check in app_main */
+    esp_err_t load_err = node_v2_join_load_session(&boot_ctx);
+    ASSERT_EQUAL_INT(ESP_OK, load_err);
+    ASSERT_EQUAL_INT(NODE_V2_JOIN_STATE_INSTALLED_INACTIVE, boot_ctx.state);
+    ASSERT_EQUAL_INT(42U, boot_ctx.assigned_node_id);
+    ASSERT_TRUE(node_v2_join_is_joined(&boot_ctx));
+    ASSERT_EQUAL_MEM(init_ctx.session_keys.k_session_up, boot_ctx.session_keys.k_session_up, 16);
+    ASSERT_EQUAL_MEM(init_ctx.session_keys.k_session_dl, boot_ctx.session_keys.k_session_dl, 16);
+
+    /* 4. Verify OTA V2 Join campaign condition evaluates to false (handshake bypassed) */
+    bool ota_join_campaign_required = (boot_ctx.state != NODE_V2_JOIN_STATE_INSTALLED_INACTIVE);
+    ASSERT_TRUE(!ota_join_campaign_required);
+
+    return 0;
+}
+
+static int test_cold_boot_unjoined_requires_join_handshake(void)
+{
+    (void)nvs_flash_erase();
+
+    /* Cold boot without any prior session */
+    node_v2_join_context_t boot_ctx;
+    ASSERT_EQUAL_INT(ESP_OK, node_v2_join_init(&boot_ctx));
+    esp_err_t load_err = node_v2_join_load_session(&boot_ctx);
+    ASSERT_EQUAL_INT(ESP_ERR_NOT_FOUND, load_err);
+    ASSERT_EQUAL_INT(NODE_V2_JOIN_STATE_UNJOINED, boot_ctx.state);
+    ASSERT_TRUE(!node_v2_join_is_joined(&boot_ctx));
+
+    /* OTA join handshake must be triggered */
+    bool ota_join_campaign_required = (boot_ctx.state != NODE_V2_JOIN_STATE_INSTALLED_INACTIVE);
+    ASSERT_TRUE(ota_join_campaign_required);
+
+    return 0;
+}
+
+static int test_cold_boot_joined_zero_flag_requires_join(void)
+{
+    (void)nvs_flash_erase();
+
+    /* Write joined=0 explicitly in NVS */
+    nvs_handle_t handle = 0;
+    ASSERT_EQUAL_INT(ESP_OK, nvs_open(NODE_V2_JOIN_NVS_NAMESPACE, NVS_READWRITE, &handle));
+    uint8_t dummy_key[16] = {0x01, 0x02, 0x03, 0x04};
+    ASSERT_EQUAL_INT(ESP_OK, nvs_set_blob(handle, NODE_V2_JOIN_NVS_KEY_K_UP, dummy_key, 16));
+    ASSERT_EQUAL_INT(ESP_OK, nvs_set_blob(handle, NODE_V2_JOIN_NVS_KEY_K_DL, dummy_key, 16));
+    ASSERT_EQUAL_INT(ESP_OK, nvs_set_u32(handle, NODE_V2_JOIN_NVS_KEY_NODE_ID, 5U));
+    ASSERT_EQUAL_INT(ESP_OK, nvs_set_u32(handle, NODE_V2_JOIN_NVS_KEY_JOINED, 0U));
+    ASSERT_EQUAL_INT(ESP_OK, nvs_commit(handle));
+    nvs_close(handle);
+
+    node_v2_join_context_t boot_ctx;
+    ASSERT_EQUAL_INT(ESP_OK, node_v2_join_init(&boot_ctx));
+    esp_err_t load_err = node_v2_join_load_session(&boot_ctx);
+    ASSERT_EQUAL_INT(ESP_ERR_NOT_FOUND, load_err);
+    ASSERT_EQUAL_INT(NODE_V2_JOIN_STATE_UNJOINED, boot_ctx.state);
+    ASSERT_TRUE(!node_v2_join_is_joined(&boot_ctx));
+
+    bool ota_join_campaign_required = (boot_ctx.state != NODE_V2_JOIN_STATE_INSTALLED_INACTIVE);
+    ASSERT_TRUE(ota_join_campaign_required);
+
+    return 0;
+}
+
 int main(void)
 {
     int failures = 0;
@@ -194,6 +278,9 @@ int main(void)
     TEST_RUN(test_nvs_erase_session_preserves_counter);
     TEST_RUN(test_nvs_save_invalid_arguments_and_states);
     TEST_RUN(test_nvs_load_corrupted_keys_fails);
+    TEST_RUN(test_cold_boot_recovery_bypasses_join_handshake);
+    TEST_RUN(test_cold_boot_unjoined_requires_join_handshake);
+    TEST_RUN(test_cold_boot_joined_zero_flag_requires_join);
 
     printf("\n=== Test Results: %s (Failures: %d) ===\n\n",
            (failures == 0) ? "ALL TESTS PASSED" : "TESTS FAILED", failures);
