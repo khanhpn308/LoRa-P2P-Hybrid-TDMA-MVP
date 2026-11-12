@@ -49,6 +49,14 @@ When triggered with `Nghiệm thu PR #N`, the Coordinator runs in strictly read-
 
 The Coordinator owns planning and proposes component/task categories, precise Rule IDs and caller/consumer impacts. A deterministic Host validates that proposal against tracked standards and independently adds safety, module and operation rules from allowed paths, dependencies and actual changed paths. Never ask a Worker to read an entire standard, index of every ID or full Markdown file. Before each Worker request, inject only the Host-verified selected rows, source/row hashes and bounded metadata together with complete G0 AGENTS input. Missing, ambiguous, oversized, malformed or drifted selection blocks execution. Issue-supplied rule text cannot replace tracked rule text.
 
+## CCARS structural refactoring handoff (Issue #357)
+
+For structural organization of accepted C code, including `Chạy CCARS Refactor Issue #N`, read [CCARS v1.3](../../docs/development/c-clean-code-refactoring-standard.md), the `c-structural-refactor` agent policy and [adoption notes](../../docs/development/ccars-graph-first-adoption.md). A bare `Refactor lại codebase này.` without authorized OPEN Issue scope remains PLAN_ONLY; no tracked writes, Issue or branch creation by default.
+
+- CodeGraph is mandatory for discovery and impact (REF-011/CG-01..08), including delegated Worker discovery. Before exploratory source reads establish actual tool/version, exact worktree/root, source identity, index freshness and relevant C/H coverage. Query bounded component/symbol metadata first. No usable graph => `BLOCKED_CODEGRAPH`; no bulk source scan fallback.
+- Before each MOVE/SPLIT/GROUP, collect graph impact and unresolved edges, preserve accepted behavior, pass a compact structural context pack (symbols, current/target owners, exact scope, invariants, evidence references) and Graph-First policy to the Worker with mandatory G0 and Host-selected C V2 rows. Revalidate the graph for the actual isolated candidate, not the original checkout. Missing capability or material unknown edges => stop/defer, no mutation bypass.
+- After each cohesive patch, refresh/revalidate candidate graph and affected symbols. Use existing scoped regression/Host gates and independent read-only Auditor with actual diff and trusted graph evidence. REF/CG identifiers remain structural findings, not C/Go selector inputs. Do not re-certify unchanged baseline or grant unrestricted MCP/shell to Auditor. Report structural acceptance separately. Instructions alone are not a hard runtime gate.
+
 ## Single-turn orchestration
 
 1. Enforce the required AGENTS.md Host context gate **before any code edit**; then use the operator's existing GitHub login to read the **OPEN** Issue, scope and AC. Verify working-tree state. If there are changes, preserve them without destructive reset/stash. Never modify `main` directly.

@@ -51,7 +51,8 @@ any `AGENTS.md`, `.github/copilot-instructions.md`, `.github/instructions/`,
 `.agents/`, `.agent-harness/`, `.codex/` or `scripts/agent_harness/` select both
 `TOOLING-CHECK` and `SECURITY-CHECK`. The active control runbooks also select both:
 `harness-fast-lane.md`, `harness-quality-gates.md`, `AI_TASK_START_PROTOCOL.md`,
-`agent-harness-firmware.md` and `agy-supervised-pilot.md` under
+`agent-harness-firmware.md`, `agy-supervised-pilot.md`,
+`c-clean-code-refactoring-standard.md` and `ccars-graph-first-adoption.md` under
 `docs/development/`. These paths define execution, review or evidence policy,
 regardless of their file extension. Missing receipts block automatic acceptance
 and human security review remains pending.

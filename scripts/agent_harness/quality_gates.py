@@ -27,6 +27,8 @@ POLICY_FILES = {
     "docs/development/ai_task_start_protocol.md",
     "docs/development/agent-harness-firmware.md",
     "docs/development/agy-supervised-pilot.md",
+    "docs/development/c-clean-code-refactoring-standard.md",
+    "docs/development/ccars-graph-first-adoption.md",
     "docs/development/firmware/c_coding_standard_v2.md",
     "docs/development/backend-go/go_backend_engineering_standard_v2.md",
 }
