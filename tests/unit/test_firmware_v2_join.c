@@ -841,6 +841,112 @@ static int test_gateway_relay_engine_and_mqtt_schema(void)
     return 0;
 }
 
+static int test_gateway_v2_join_build_wait_and_reject(void)
+{
+    gateway_v2_join_engine_t engine;
+    gateway_v2_join_config_t cfg = {
+        .gateway_id = "gw-test-01",
+        .gateway_epoch = "01234567-89ab-cdef-0123-456789abcdef",
+        .target_gw_id = 7,
+        .network_id = 100,
+    };
+    ASSERT_EQUAL_INT(ESP_OK, gateway_v2_join_init(&engine, &cfg));
+
+    /* Synthesize valid UP_JOIN_HELLO (68 bytes) */
+    lora_mac_v2_up_join_hello_t hello = {
+        .ver_type = LORA_MAC_V2_TYPE_UP_JOIN_HELLO,
+        .device_mac = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66},
+        .target_gw_id = 7,
+        .join_counter = 0x12345678,
+    };
+    memset(hello.node_nonce, 0xAA, 8);
+    memset(hello.node_x25519_pub, 0xBB, 32);
+    memset(hello.join_proof, 0xCC, 16);
+
+    uint8_t hello_raw[LORA_MAC_V2_LEN_UP_JOIN_HELLO];
+    size_t hello_len = 0;
+    ASSERT_EQUAL_INT(ESP_OK, lora_mac_v2_up_join_hello_serialize(&hello, hello_raw, sizeof(hello_raw), &hello_len));
+    ASSERT_EQUAL_U32(LORA_MAC_V2_LEN_UP_JOIN_HELLO, (uint32_t)hello_len);
+
+    /* 1. Test gateway_v2_join_build_wait */
+    uint8_t wait_wire[LORA_MAC_V2_LEN_DOWN_JOIN_WAIT];
+    size_t wait_len = 0;
+    const uint8_t sample_tag[8] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
+
+    /* Positive build with custom auth_tag */
+    ASSERT_EQUAL_INT(ESP_OK, gateway_v2_join_build_wait(&engine, hello_raw, hello_len,
+                                                        sample_tag, wait_wire, &wait_len));
+    ASSERT_EQUAL_U32(20, (uint32_t)wait_len);
+    ASSERT_EQUAL_INT(LORA_MAC_V2_TYPE_DOWN_JOIN_WAIT, wait_wire[0]);
+    ASSERT_EQUAL_INT(0x51, wait_wire[0]);
+    ASSERT_EQUAL_MEM(hello.device_mac, &wait_wire[1], 6);
+    ASSERT_EQUAL_INT(7, wait_wire[7]);
+    ASSERT_EQUAL_MEM(sample_tag, &wait_wire[12], 8);
+
+    /* Deserialize wait frame and verify */
+    lora_mac_v2_down_join_wait_t parsed_wait;
+    ASSERT_EQUAL_INT(ESP_OK, lora_mac_v2_down_join_wait_deserialize(wait_wire, wait_len, &parsed_wait));
+    ASSERT_EQUAL_INT(LORA_MAC_V2_TYPE_DOWN_JOIN_WAIT, parsed_wait.ver_type);
+    ASSERT_EQUAL_MEM(hello.device_mac, parsed_wait.device_mac, 6);
+    ASSERT_EQUAL_INT(7, parsed_wait.gw_id);
+    ASSERT_EQUAL_U32(0x12345678, parsed_wait.join_counter);
+    ASSERT_EQUAL_MEM(sample_tag, parsed_wait.auth_tag, 8);
+
+    /* Build with NULL auth_tag -> zeroed */
+    ASSERT_EQUAL_INT(ESP_OK, gateway_v2_join_build_wait(&engine, hello_raw, hello_len,
+                                                        NULL, wait_wire, &wait_len));
+    ASSERT_EQUAL_U32(20, (uint32_t)wait_len);
+    ASSERT_EQUAL_INT(ESP_OK, lora_mac_v2_down_join_wait_deserialize(wait_wire, wait_len, &parsed_wait));
+    uint8_t zero_tag[8] = {0};
+    ASSERT_EQUAL_MEM(zero_tag, parsed_wait.auth_tag, 8);
+
+    /* Negative tests for wait */
+    ASSERT_EQUAL_INT(ESP_ERR_INVALID_ARG, gateway_v2_join_build_wait(NULL, hello_raw, hello_len, sample_tag, wait_wire, &wait_len));
+    ASSERT_EQUAL_INT(ESP_ERR_INVALID_ARG, gateway_v2_join_build_wait(&engine, NULL, hello_len, sample_tag, wait_wire, &wait_len));
+    ASSERT_EQUAL_INT(ESP_ERR_INVALID_ARG, gateway_v2_join_build_wait(&engine, hello_raw, hello_len, sample_tag, NULL, &wait_len));
+    ASSERT_EQUAL_INT(ESP_ERR_INVALID_ARG, gateway_v2_join_build_wait(&engine, hello_raw, hello_len, sample_tag, wait_wire, NULL));
+    ASSERT_EQUAL_INT(ESP_ERR_INVALID_SIZE, gateway_v2_join_build_wait(&engine, hello_raw, hello_len - 1, sample_tag, wait_wire, &wait_len));
+
+    /* 2. Test gateway_v2_join_build_reject */
+    uint8_t reject_wire[LORA_MAC_V2_LEN_DOWN_JOIN_REJECT];
+    size_t reject_len = 0;
+
+    /* Positive build with custom auth_tag */
+    ASSERT_EQUAL_INT(ESP_OK, gateway_v2_join_build_reject(&engine, hello_raw, hello_len,
+                                                          sample_tag, reject_wire, &reject_len));
+    ASSERT_EQUAL_U32(20, (uint32_t)reject_len);
+    ASSERT_EQUAL_INT(LORA_MAC_V2_TYPE_DOWN_JOIN_REJECT, reject_wire[0]);
+    ASSERT_EQUAL_INT(0x52, reject_wire[0]);
+    ASSERT_EQUAL_MEM(hello.device_mac, &reject_wire[1], 6);
+    ASSERT_EQUAL_INT(7, reject_wire[7]);
+    ASSERT_EQUAL_MEM(sample_tag, &reject_wire[12], 8);
+
+    /* Deserialize reject frame and verify */
+    lora_mac_v2_down_join_reject_t parsed_reject;
+    ASSERT_EQUAL_INT(ESP_OK, lora_mac_v2_down_join_reject_deserialize(reject_wire, reject_len, &parsed_reject));
+    ASSERT_EQUAL_INT(LORA_MAC_V2_TYPE_DOWN_JOIN_REJECT, parsed_reject.ver_type);
+    ASSERT_EQUAL_MEM(hello.device_mac, parsed_reject.device_mac, 6);
+    ASSERT_EQUAL_INT(7, parsed_reject.gw_id);
+    ASSERT_EQUAL_U32(0x12345678, parsed_reject.join_counter);
+    ASSERT_EQUAL_MEM(sample_tag, parsed_reject.auth_tag, 8);
+
+    /* Build with NULL auth_tag -> zeroed */
+    ASSERT_EQUAL_INT(ESP_OK, gateway_v2_join_build_reject(&engine, hello_raw, hello_len,
+                                                          NULL, reject_wire, &reject_len));
+    ASSERT_EQUAL_U32(20, (uint32_t)reject_len);
+    ASSERT_EQUAL_INT(ESP_OK, lora_mac_v2_down_join_reject_deserialize(reject_wire, reject_len, &parsed_reject));
+    ASSERT_EQUAL_MEM(zero_tag, parsed_reject.auth_tag, 8);
+
+    /* Negative tests for reject */
+    ASSERT_EQUAL_INT(ESP_ERR_INVALID_ARG, gateway_v2_join_build_reject(NULL, hello_raw, hello_len, sample_tag, reject_wire, &reject_len));
+    ASSERT_EQUAL_INT(ESP_ERR_INVALID_ARG, gateway_v2_join_build_reject(&engine, NULL, hello_len, sample_tag, reject_wire, &reject_len));
+    ASSERT_EQUAL_INT(ESP_ERR_INVALID_ARG, gateway_v2_join_build_reject(&engine, hello_raw, hello_len, sample_tag, NULL, &reject_len));
+    ASSERT_EQUAL_INT(ESP_ERR_INVALID_ARG, gateway_v2_join_build_reject(&engine, hello_raw, hello_len, sample_tag, reject_wire, NULL));
+    ASSERT_EQUAL_INT(ESP_ERR_INVALID_SIZE, gateway_v2_join_build_reject(&engine, hello_raw, hello_len - 1, sample_tag, reject_wire, &reject_len));
+
+    return 0;
+}
+
 /* =========================================================================
  * Main Runner
  * ========================================================================= */
@@ -857,6 +963,7 @@ int main(void)
     TEST_RUN(test_cad_retry_exhaustion);
     TEST_RUN(test_node_complete_handshake_end_to_end);
     TEST_RUN(test_gateway_relay_engine_and_mqtt_schema);
+    TEST_RUN(test_gateway_v2_join_build_wait_and_reject);
 
     printf("\n=== Test Results: %s (Failures: %d) ===\n\n",
            (failures == 0) ? "ALL TESTS PASSED" : "TESTS FAILED", failures);

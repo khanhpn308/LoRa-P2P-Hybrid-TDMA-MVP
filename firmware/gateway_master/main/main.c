@@ -142,6 +142,165 @@ static void on_downlink_join_grant(const uint8_t *data, size_t len)
     }
 }
 
+static void on_downlink_join_wait(const uint8_t *data, size_t len)
+{
+    if (data == NULL || len == 0) return;
+    char buf[256];
+    if (len >= sizeof(buf)) len = sizeof(buf) - 1;
+    memcpy(buf, data, len);
+    buf[len] = '\0';
+    ESP_LOGI(TAG, "[DOWNLINK JOIN_WAIT] Received from Backend: %s", buf);
+
+    /* Parse device_mac */
+    const char *mac_ptr = strstr(buf, "\"device_mac\":\"");
+    if (!mac_ptr) return;
+    mac_ptr += 14;
+    uint8_t mac[6];
+    for (int i = 0; i < 6; i++) {
+        unsigned int byte_val = 0;
+        if (sscanf(mac_ptr + (i * 2), "%02x", &byte_val) != 1) {
+            return;
+        }
+        mac[i] = (uint8_t)byte_val;
+    }
+
+    /* Optional auth_tag parsing */
+    uint8_t auth_tag[8];
+    bool has_auth_tag = false;
+    const char *tag_ptr = strstr(buf, "\"auth_tag\":\"");
+    if (tag_ptr) {
+        tag_ptr += 12;
+        int parsed = 0;
+        for (int i = 0; i < 8; i++) {
+            unsigned int byte_val = 0;
+            if (sscanf(tag_ptr + (i * 2), "%02x", &byte_val) == 1) {
+                auth_tag[i] = (uint8_t)byte_val;
+                parsed++;
+            }
+        }
+        if (parsed == 8) {
+            has_auth_tag = true;
+        }
+    }
+
+    approved_node_entry_t *entry = find_or_create_node_entry(mac);
+    if (entry && entry->has_cached_hello) {
+        uint8_t wait_buf[LORA_MAC_V2_LEN_DOWN_JOIN_WAIT];
+        size_t wait_len = 0;
+
+        esp_err_t b_err = gateway_v2_join_build_wait(
+            &s_join_engine,
+            entry->cached_hello,
+            LORA_MAC_V2_LEN_UP_JOIN_HELLO,
+            has_auth_tag ? auth_tag : NULL,
+            wait_buf,
+            &wait_len
+        );
+        if (b_err == ESP_OK) {
+            /* Allow Node time to switch from TX to RX (RF turnaround margin) */
+            vTaskDelay(pdMS_TO_TICKS(40));
+            ESP_LOGI(TAG, "[JOIN TX] Transmitting DOWN_JOIN_WAIT (%zu bytes) to MAC %02X:%02X:%02X:%02X:%02X:%02X...",
+                     wait_len, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+            esp_err_t tx_err = sx1276_tx(wait_buf, (uint8_t)wait_len, pdMS_TO_TICKS(300));
+            if (tx_err == ESP_OK) {
+                ESP_LOGI(TAG, "[JOIN TX] DOWN_JOIN_WAIT transmitted successfully for MAC %02X:%02X:%02X:%02X:%02X:%02X",
+                         mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+            } else {
+                ESP_LOGE(TAG, "[JOIN TX] Failed to transmit DOWN_JOIN_WAIT: %s", esp_err_to_name(tx_err));
+            }
+        } else {
+            ESP_LOGE(TAG, "[JOIN TX] Failed to build DOWN_JOIN_WAIT: %s", esp_err_to_name(b_err));
+        }
+    } else {
+        ESP_LOGW(TAG, "[JOIN TX] No cached UP_JOIN_HELLO for MAC %02X:%02X:%02X:%02X:%02X:%02X, cannot send DOWN_JOIN_WAIT",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    }
+
+    /* Re-enable 24/7 continuous RX on Gateway immediately (stateless radio bridge) */
+    (void)sx1276_start_rx_continuous();
+}
+
+static void on_downlink_join_reject(const uint8_t *data, size_t len)
+{
+    if (data == NULL || len == 0) return;
+    char buf[256];
+    if (len >= sizeof(buf)) len = sizeof(buf) - 1;
+    memcpy(buf, data, len);
+    buf[len] = '\0';
+    ESP_LOGI(TAG, "[DOWNLINK JOIN_REJECT] Received from Backend: %s", buf);
+
+    /* Parse device_mac */
+    const char *mac_ptr = strstr(buf, "\"device_mac\":\"");
+    if (!mac_ptr) return;
+    mac_ptr += 14;
+    uint8_t mac[6];
+    for (int i = 0; i < 6; i++) {
+        unsigned int byte_val = 0;
+        if (sscanf(mac_ptr + (i * 2), "%02x", &byte_val) != 1) {
+            return;
+        }
+        mac[i] = (uint8_t)byte_val;
+    }
+
+    /* Optional auth_tag parsing */
+    uint8_t auth_tag[8];
+    bool has_auth_tag = false;
+    const char *tag_ptr = strstr(buf, "\"auth_tag\":\"");
+    if (tag_ptr) {
+        tag_ptr += 12;
+        int parsed = 0;
+        for (int i = 0; i < 8; i++) {
+            unsigned int byte_val = 0;
+            if (sscanf(tag_ptr + (i * 2), "%02x", &byte_val) == 1) {
+                auth_tag[i] = (uint8_t)byte_val;
+                parsed++;
+            }
+        }
+        if (parsed == 8) {
+            has_auth_tag = true;
+        }
+    }
+
+    approved_node_entry_t *entry = find_or_create_node_entry(mac);
+    if (entry && entry->has_cached_hello) {
+        uint8_t reject_buf[LORA_MAC_V2_LEN_DOWN_JOIN_REJECT];
+        size_t reject_len = 0;
+
+        esp_err_t b_err = gateway_v2_join_build_reject(
+            &s_join_engine,
+            entry->cached_hello,
+            LORA_MAC_V2_LEN_UP_JOIN_HELLO,
+            has_auth_tag ? auth_tag : NULL,
+            reject_buf,
+            &reject_len
+        );
+        if (b_err == ESP_OK) {
+            /* Allow Node time to switch from TX to RX (RF turnaround margin) */
+            vTaskDelay(pdMS_TO_TICKS(40));
+            ESP_LOGI(TAG, "[JOIN TX] Transmitting DOWN_JOIN_REJECT (%zu bytes) to MAC %02X:%02X:%02X:%02X:%02X:%02X...",
+                     reject_len, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+            esp_err_t tx_err = sx1276_tx(reject_buf, (uint8_t)reject_len, pdMS_TO_TICKS(300));
+            if (tx_err == ESP_OK) {
+                ESP_LOGI(TAG, "[JOIN TX] DOWN_JOIN_REJECT transmitted successfully for MAC %02X:%02X:%02X:%02X:%02X:%02X",
+                         mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+            } else {
+                ESP_LOGE(TAG, "[JOIN TX] Failed to transmit DOWN_JOIN_REJECT: %s", esp_err_to_name(tx_err));
+            }
+        } else {
+            ESP_LOGE(TAG, "[JOIN TX] Failed to build DOWN_JOIN_REJECT: %s", esp_err_to_name(b_err));
+        }
+        /* Clear cached hello and approval on reject */
+        entry->has_cached_hello = false;
+        entry->approved = false;
+    } else {
+        ESP_LOGW(TAG, "[JOIN TX] No cached UP_JOIN_HELLO for MAC %02X:%02X:%02X:%02X:%02X:%02X, cannot send DOWN_JOIN_REJECT",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    }
+
+    /* Re-enable 24/7 continuous RX on Gateway immediately (stateless radio bridge) */
+    (void)sx1276_start_rx_continuous();
+}
+
 static gateway_wal_t s_gateway_wal;
 static uint32_t s_downlink_frame_counter = 0;
 static TaskHandle_t s_gateway_rx_task_handle = NULL;
@@ -944,6 +1103,8 @@ void app_main(void)
         gateway_transport_register_session_key_callback(&on_downlink_session_key);
         gateway_transport_register_schedule_callback(&on_downlink_schedule);
         gateway_transport_register_join_grant_callback(&on_downlink_join_grant);
+        gateway_transport_register_join_wait_callback(&on_downlink_join_wait);
+        gateway_transport_register_join_reject_callback(&on_downlink_join_reject);
         gateway_transport_register_node_revoke_callback(&on_downlink_node_revoke);
         gateway_transport_register_status_callback(&on_transport_connection_status);
     }

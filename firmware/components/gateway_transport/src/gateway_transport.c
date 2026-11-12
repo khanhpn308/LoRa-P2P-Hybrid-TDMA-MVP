@@ -30,6 +30,8 @@ static gateway_transport_status_t s_status = GATEWAY_TRANSPORT_STATUS_DISCONNECT
 static gateway_downlink_session_key_cb_t s_session_key_cb = NULL;
 static gateway_downlink_schedule_cb_t s_schedule_cb = NULL;
 static gateway_downlink_join_grant_cb_t s_join_grant_cb = NULL;
+static gateway_downlink_join_wait_cb_t s_join_wait_cb = NULL;
+static gateway_downlink_join_reject_cb_t s_join_reject_cb = NULL;
 static gateway_downlink_node_revoke_cb_t s_node_revoke_cb = NULL;
 static gateway_transport_status_cb_t s_transport_status_cb = NULL;
 
@@ -188,6 +190,14 @@ static void on_mqtt_downlink(const char *topic, size_t topic_len,
     } else if (strstr(topic_buf, "downlink/join-grant") != NULL) {
         if (s_join_grant_cb) {
             s_join_grant_cb(data, data_len);
+        }
+    } else if (strstr(topic_buf, "downlink/join-wait") != NULL) {
+        if (s_join_wait_cb) {
+            s_join_wait_cb(data, data_len);
+        }
+    } else if (strstr(topic_buf, "downlink/join-reject") != NULL) {
+        if (s_join_reject_cb) {
+            s_join_reject_cb(data, data_len);
         }
     } else if (strstr(topic_buf, "downlink/node-revoke") != NULL) {
         if (s_node_revoke_cb) {
@@ -369,6 +379,32 @@ esp_err_t gateway_transport_register_join_grant_callback(gateway_downlink_join_g
     return ESP_OK;
 }
 
+esp_err_t gateway_transport_register_join_wait_callback(gateway_downlink_join_wait_cb_t cb)
+{
+#ifdef ESP_PLATFORM
+    if (s_state_mutex && xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        s_join_wait_cb = cb;
+        xSemaphoreGive(s_state_mutex);
+        return ESP_OK;
+    }
+#endif
+    s_join_wait_cb = cb;
+    return ESP_OK;
+}
+
+esp_err_t gateway_transport_register_join_reject_callback(gateway_downlink_join_reject_cb_t cb)
+{
+#ifdef ESP_PLATFORM
+    if (s_state_mutex && xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        s_join_reject_cb = cb;
+        xSemaphoreGive(s_state_mutex);
+        return ESP_OK;
+    }
+#endif
+    s_join_reject_cb = cb;
+    return ESP_OK;
+}
+
 esp_err_t gateway_transport_register_node_revoke_callback(gateway_downlink_node_revoke_cb_t cb)
 {
 #ifdef ESP_PLATFORM
@@ -493,6 +529,13 @@ esp_err_t gateway_transport_deinit(void)
 #endif
 
     s_status = GATEWAY_TRANSPORT_STATUS_DISCONNECTED;
+    s_session_key_cb = NULL;
+    s_schedule_cb = NULL;
+    s_join_grant_cb = NULL;
+    s_join_wait_cb = NULL;
+    s_join_reject_cb = NULL;
+    s_node_revoke_cb = NULL;
+    s_transport_status_cb = NULL;
     s_initialized = false;
     return ESP_OK;
 }

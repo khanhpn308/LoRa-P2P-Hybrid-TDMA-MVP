@@ -393,3 +393,75 @@ esp_err_t gateway_v2_join_handle_ready(gateway_v2_join_engine_t *engine,
              ready.node_id);
     return ESP_OK;
 }
+
+esp_err_t gateway_v2_join_build_wait(gateway_v2_join_engine_t *engine,
+                                     const uint8_t *hello_raw,
+                                     size_t hello_len,
+                                     const uint8_t auth_tag8[8],
+                                     uint8_t out_wait[LORA_MAC_V2_LEN_DOWN_JOIN_WAIT],
+                                     size_t *out_wait_len)
+{
+    if (engine == NULL || hello_raw == NULL || out_wait == NULL || out_wait_len == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (hello_len != LORA_MAC_V2_LEN_UP_JOIN_HELLO) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    lora_mac_v2_up_join_hello_t hello;
+    esp_err_t err = lora_mac_v2_up_join_hello_deserialize(hello_raw, hello_len, &hello);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to parse UP_JOIN_HELLO for wait: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    lora_mac_v2_down_join_wait_t wait_frame;
+    memset(&wait_frame, 0, sizeof(wait_frame));
+    wait_frame.ver_type = LORA_MAC_V2_TYPE_DOWN_JOIN_WAIT;
+    memcpy(wait_frame.device_mac, hello.device_mac, 6);
+    wait_frame.gw_id = engine->config.target_gw_id;
+    wait_frame.join_counter = hello.join_counter;
+    if (auth_tag8 != NULL) {
+        memcpy(wait_frame.auth_tag, auth_tag8, 8);
+    } else {
+        memset(wait_frame.auth_tag, 0, sizeof(wait_frame.auth_tag));
+    }
+
+    return lora_mac_v2_down_join_wait_serialize(&wait_frame, out_wait, LORA_MAC_V2_LEN_DOWN_JOIN_WAIT, out_wait_len);
+}
+
+esp_err_t gateway_v2_join_build_reject(gateway_v2_join_engine_t *engine,
+                                       const uint8_t *hello_raw,
+                                       size_t hello_len,
+                                       const uint8_t auth_tag8[8],
+                                       uint8_t out_reject[LORA_MAC_V2_LEN_DOWN_JOIN_REJECT],
+                                       size_t *out_reject_len)
+{
+    if (engine == NULL || hello_raw == NULL || out_reject == NULL || out_reject_len == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (hello_len != LORA_MAC_V2_LEN_UP_JOIN_HELLO) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    lora_mac_v2_up_join_hello_t hello;
+    esp_err_t err = lora_mac_v2_up_join_hello_deserialize(hello_raw, hello_len, &hello);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to parse UP_JOIN_HELLO for reject: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    lora_mac_v2_down_join_reject_t reject_frame;
+    memset(&reject_frame, 0, sizeof(reject_frame));
+    reject_frame.ver_type = LORA_MAC_V2_TYPE_DOWN_JOIN_REJECT;
+    memcpy(reject_frame.device_mac, hello.device_mac, 6);
+    reject_frame.gw_id = engine->config.target_gw_id;
+    reject_frame.join_counter = hello.join_counter;
+    if (auth_tag8 != NULL) {
+        memcpy(reject_frame.auth_tag, auth_tag8, 8);
+    } else {
+        memset(reject_frame.auth_tag, 0, sizeof(reject_frame.auth_tag));
+    }
+
+    return lora_mac_v2_down_join_reject_serialize(&reject_frame, out_reject, LORA_MAC_V2_LEN_DOWN_JOIN_REJECT, out_reject_len);
+}
