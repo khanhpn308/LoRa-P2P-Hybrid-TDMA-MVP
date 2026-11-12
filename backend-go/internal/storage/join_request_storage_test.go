@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/domain"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/storage"
 )
 
@@ -95,5 +96,112 @@ func TestPostgresJoinRequestStorage_ApproveRequest_PurgesOrphanEvents(t *testing
 
 	if !foundEventPurge {
 		t.Fatalf("expected orphan event purge query 'DELETE FROM events WHERE gateway_id = $1 AND node_id = $2;' to be executed, but got: %+v", queries)
+	}
+}
+
+func TestPostgresJoinRequestStorage_CreateOrUpdate_NewRequest(t *testing.T) {
+	db := initMockDB("default")
+	store := storage.NewPostgresJoinRequestStorage(db)
+
+	req := &domain.DeviceJoinRequest{
+		DeviceMAC: "001122334455",
+		GatewayID: "gw01",
+		RSSI:      -70,
+		SNR:       8.5,
+	}
+
+	saved, isNew, err := store.CreateOrUpdateJoinRequest(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error creating join request: %v", err)
+	}
+	if !isNew {
+		t.Fatal("expected isNew=true for new join request")
+	}
+	if saved.ID != 101 {
+		t.Fatalf("expected ID 101, got %d", saved.ID)
+	}
+	if saved.Status != "PENDING" {
+		t.Fatalf("expected status PENDING, got %s", saved.Status)
+	}
+}
+
+func TestPostgresJoinRequestStorage_CreateOrUpdate_PendingDuplicate(t *testing.T) {
+	db := initMockDB("join_req_pending")
+	store := storage.NewPostgresJoinRequestStorage(db)
+
+	req := &domain.DeviceJoinRequest{
+		DeviceMAC: "001122334455",
+		GatewayID: "gw01",
+		RSSI:      -65,
+		SNR:       9.0,
+	}
+
+	saved, isNew, err := store.CreateOrUpdateJoinRequest(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error updating join request: %v", err)
+	}
+	if isNew {
+		t.Fatal("expected isNew=false for duplicate pending join request")
+	}
+	if saved.ID != 10 {
+		t.Fatalf("expected ID 10, got %d", saved.ID)
+	}
+	if saved.Status != "PENDING" {
+		t.Fatalf("expected status PENDING, got %s", saved.Status)
+	}
+}
+
+func TestPostgresJoinRequestStorage_CreateOrUpdate_AlreadyApproved(t *testing.T) {
+	db := initMockDB("join_req_approved")
+	store := storage.NewPostgresJoinRequestStorage(db)
+
+	req := &domain.DeviceJoinRequest{
+		DeviceMAC: "001122334455",
+		GatewayID: "gw01",
+		RSSI:      -60,
+		SNR:       11.0,
+	}
+
+	saved, isNew, err := store.CreateOrUpdateJoinRequest(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error checking approved request: %v", err)
+	}
+	if isNew {
+		t.Fatal("expected isNew=false for already approved device")
+	}
+	if saved.Status != "APPROVED" {
+		t.Fatalf("expected status APPROVED, got %s", saved.Status)
+	}
+	if saved.AssignedNodeID == nil || *saved.AssignedNodeID != 5 {
+		t.Fatalf("expected assigned node ID 5, got %v", saved.AssignedNodeID)
+	}
+}
+
+func TestPostgresJoinRequestStorage_RejectRequestWithDetails_Success(t *testing.T) {
+	db := initMockDB("default")
+	store := storage.NewPostgresJoinRequestStorage(db)
+
+	rejected, err := store.RejectRequestWithDetails(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("unexpected error rejecting request: %v", err)
+	}
+	if rejected == nil || rejected.Status != "REJECTED" {
+		t.Fatalf("expected status REJECTED, got %+v", rejected)
+	}
+	if rejected.DeviceMAC != "001122334455" {
+		t.Fatalf("expected MAC 001122334455, got %s", rejected.DeviceMAC)
+	}
+	if rejected.GatewayID != "gw01" {
+		t.Fatalf("expected GatewayID gw01, got %s", rejected.GatewayID)
+	}
+}
+
+func TestPostgresJoinRequestStorage_RejectRequestWithDetails_NotFound(t *testing.T) {
+	db := initMockDB("join_req_not_found")
+	store := storage.NewPostgresJoinRequestStorage(db)
+
+	_, err := store.RejectRequestWithDetails(context.Background(), 999)
+	if err == nil || !strings.Contains(err.Error(), "join request not found") {
+		t.Fatalf("expected ErrRequestNotFound, got %v", err)
 	}
 }

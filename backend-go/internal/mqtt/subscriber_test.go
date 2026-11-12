@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	paho "github.com/eclipse/paho.mqtt.golang"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/domain"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/realtime"
 )
@@ -36,6 +37,9 @@ type mockJoinReqStorage struct {
 
 	createdReq *domain.DeviceJoinRequest
 	createErr  error
+
+	customReq *domain.DeviceJoinRequest
+	isNew     bool
 }
 
 func (m *mockJoinReqStorage) IsDeviceRegistered(ctx context.Context, mac string) (bool, error) {
@@ -44,11 +48,15 @@ func (m *mockJoinReqStorage) IsDeviceRegistered(ctx context.Context, mac string)
 	return m.isRegistered, m.checkErr
 }
 
-func (m *mockJoinReqStorage) CreateOrUpdatePendingRequest(ctx context.Context, req *domain.DeviceJoinRequest) (*domain.DeviceJoinRequest, error) {
+func (m *mockJoinReqStorage) CreateOrUpdateJoinRequest(ctx context.Context, req *domain.DeviceJoinRequest) (*domain.DeviceJoinRequest, bool, error) {
 	if m.createErr != nil {
-		return nil, m.createErr
+		return nil, false, m.createErr
 	}
 	m.createdReq = req
+	if m.customReq != nil {
+		return m.customReq, m.isNew, nil
+	}
+	now := time.Now().UTC()
 	return &domain.DeviceJoinRequest{
 		ID:          101,
 		DeviceMAC:   req.DeviceMAC,
@@ -57,9 +65,14 @@ func (m *mockJoinReqStorage) CreateOrUpdatePendingRequest(ctx context.Context, r
 		SNR:         req.SNR,
 		RawFrameHex: req.RawFrameHex,
 		Status:      "PENDING",
-		CreatedAt:   time.Now().UTC(),
-		UpdatedAt:   time.Now().UTC(),
-	}, nil
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}, true, nil
+}
+
+func (m *mockJoinReqStorage) CreateOrUpdatePendingRequest(ctx context.Context, req *domain.DeviceJoinRequest) (*domain.DeviceJoinRequest, error) {
+	saved, _, err := m.CreateOrUpdateJoinRequest(ctx, req)
+	return saved, err
 }
 
 func (m *mockJoinReqStorage) ListPendingRequests(ctx context.Context) ([]*domain.DeviceJoinRequest, error) {
@@ -252,5 +265,262 @@ func TestPublishNodeRevoke_DisconnectedClient_ReturnsError(t *testing.T) {
 	err := subscriber.PublishNodeRevoke(context.Background(), "gw-test-01", 42)
 	if err == nil {
 		t.Fatal("expected error when MQTT client is not connected")
+	}
+}
+
+type mockMqttToken struct {
+	paho.Token
+	err error
+}
+
+func (t *mockMqttToken) Wait() bool                       { return true }
+func (t *mockMqttToken) WaitTimeout(d time.Duration) bool { return true }
+func (t *mockMqttToken) Error() error                     { return t.err }
+
+type mockMqttClient struct {
+	paho.Client
+	connected bool
+	published map[string][]byte
+}
+
+func (c *mockMqttClient) IsConnected() bool { return c.connected }
+
+func (c *mockMqttClient) Publish(topic string, qos byte, retained bool, payload interface{}) paho.Token {
+	if c.published == nil {
+		c.published = make(map[string][]byte)
+	}
+	switch p := payload.(type) {
+	case []byte:
+		c.published[topic] = p
+	case string:
+		c.published[topic] = []byte(p)
+	default:
+		b, _ := json.Marshal(p)
+		c.published[topic] = b
+	}
+	return &mockMqttToken{}
+}
+
+type mockHub struct {
+	envelopes []*realtime.RealtimeEnvelope
+}
+
+func (m *mockHub) BroadcastEnvelope(ctx context.Context, env *realtime.RealtimeEnvelope) error {
+	m.envelopes = append(m.envelopes, env)
+	return nil
+}
+
+func (m *mockHub) BroadcastGatewayStatus(ctx context.Context, payload realtime.GatewayStatusChangedPayload) error {
+	return nil
+}
+
+func (m *mockHub) BroadcastAlert(ctx context.Context, payload realtime.AlertTriggeredPayload) error {
+	return nil
+}
+
+func TestPublishJoinWait_DisconnectedClient_ReturnsError(t *testing.T) {
+	subscriber := NewGatewayStatusSubscriber("tcp://localhost:1883", nil, nil, nil, nil, nil)
+	err := subscriber.PublishJoinWait(context.Background(), "gw-test-01", "aabbccddeeff")
+	if err == nil {
+		t.Fatal("expected error when MQTT client is not connected")
+	}
+}
+
+func TestPublishJoinReject_DisconnectedClient_ReturnsError(t *testing.T) {
+	subscriber := NewGatewayStatusSubscriber("tcp://localhost:1883", nil, nil, nil, nil, nil)
+	err := subscriber.PublishJoinReject(context.Background(), "gw-test-01", "aabbccddeeff")
+	if err == nil {
+		t.Fatal("expected error when MQTT client is not connected")
+	}
+}
+
+func TestPublishJoinWait_Success(t *testing.T) {
+	mockClient := &mockMqttClient{connected: true}
+	subscriber := NewGatewayStatusSubscriber("tcp://localhost:1883", nil, nil, nil, nil, nil)
+	subscriber.client = mockClient
+
+	err := subscriber.PublishJoinWait(context.Background(), "gw-test-01", "aabbccddeeff")
+	if err != nil {
+		t.Fatalf("unexpected error publishing join wait: %v", err)
+	}
+
+	expectedTopic := "iot/v1/gw/gw-test-01/downlink/join-wait"
+	payload, ok := mockClient.published[expectedTopic]
+	if !ok {
+		t.Fatalf("expected message on topic %s, published topics: %+v", expectedTopic, mockClient.published)
+	}
+
+	var data map[string]interface{}
+	if err := json.Unmarshal(payload, &data); err != nil {
+		t.Fatalf("failed to unmarshal payload: %v", err)
+	}
+
+	if data["gateway_id"] != "gw-test-01" {
+		t.Errorf("expected gateway_id gw-test-01, got %v", data["gateway_id"])
+	}
+	if data["device_mac"] != "aabbccddeeff" {
+		t.Errorf("expected device_mac aabbccddeeff, got %v", data["device_mac"])
+	}
+	if data["status"] != "WAIT" {
+		t.Errorf("expected status WAIT, got %v", data["status"])
+	}
+}
+
+func TestPublishJoinReject_Success(t *testing.T) {
+	mockClient := &mockMqttClient{connected: true}
+	subscriber := NewGatewayStatusSubscriber("tcp://localhost:1883", nil, nil, nil, nil, nil)
+	subscriber.client = mockClient
+
+	err := subscriber.PublishJoinReject(context.Background(), "gw-test-01", "aabbccddeeff")
+	if err != nil {
+		t.Fatalf("unexpected error publishing join reject: %v", err)
+	}
+
+	expectedTopic := "iot/v1/gw/gw-test-01/downlink/join-reject"
+	payload, ok := mockClient.published[expectedTopic]
+	if !ok {
+		t.Fatalf("expected message on topic %s, published topics: %+v", expectedTopic, mockClient.published)
+	}
+
+	var data map[string]interface{}
+	if err := json.Unmarshal(payload, &data); err != nil {
+		t.Fatalf("failed to unmarshal payload: %v", err)
+	}
+
+	if data["gateway_id"] != "gw-test-01" {
+		t.Errorf("expected gateway_id gw-test-01, got %v", data["gateway_id"])
+	}
+	if data["device_mac"] != "aabbccddeeff" {
+		t.Errorf("expected device_mac aabbccddeeff, got %v", data["device_mac"])
+	}
+	if data["status"] != "REJECTED" {
+		t.Errorf("expected status REJECTED, got %v", data["status"])
+	}
+}
+
+func TestHandleJoinMessage_ValidDevice_PublishesJoinWaitAndBroadcastsWS(t *testing.T) {
+	mockClient := &mockMqttClient{connected: true}
+	mockStore := &mockJoinReqStorage{
+		isRegistered: true,
+	}
+	mHub := &mockHub{}
+
+	subscriber := NewGatewayStatusSubscriber("tcp://localhost:1883", nil, nil, nil, mockStore, nil)
+	subscriber.client = mockClient
+	subscriber.hub = mHub
+
+	payloadBytes, _ := json.Marshal(JoinRelayPayload{
+		GatewayID: "gw-test-01",
+		DeviceMAC: "aabbccddeeff",
+		RSSI:      -75,
+		SNR:       10.2,
+	})
+	msg := &mockMessage{
+		topic:   "iot/v1/gw/gw-test-01/uplink/join-hello",
+		payload: payloadBytes,
+	}
+
+	subscriber.handleJoinMessage(nil, msg)
+
+	// Verify downlink join-wait was published
+	waitTopic := "iot/v1/gw/gw-test-01/downlink/join-wait"
+	if _, ok := mockClient.published[waitTopic]; !ok {
+		t.Fatalf("expected downlink join-wait on topic %s", waitTopic)
+	}
+
+	// Verify WebSocket broadcast occurred for new request
+	if len(mHub.envelopes) != 1 {
+		t.Fatalf("expected 1 WebSocket envelope broadcast, got %d", len(mHub.envelopes))
+	}
+	if mHub.envelopes[0].Type != "NODE_JOIN_REQUEST" {
+		t.Errorf("expected envelope type NODE_JOIN_REQUEST, got %s", mHub.envelopes[0].Type)
+	}
+}
+
+func TestHandleJoinMessage_Deduplication_PendingDoesNotBroadcastWS(t *testing.T) {
+	mockClient := &mockMqttClient{connected: true}
+	now := time.Now().UTC()
+	mockStore := &mockJoinReqStorage{
+		isRegistered: true,
+		customReq: &domain.DeviceJoinRequest{
+			ID:        10,
+			DeviceMAC: "aabbccddeeff",
+			GatewayID: "gw-test-01",
+			Status:    "PENDING",
+			CreatedAt: now.Add(-time.Minute),
+			UpdatedAt: now,
+		},
+		isNew: false, // duplicate pending request
+	}
+	mHub := &mockHub{}
+
+	subscriber := NewGatewayStatusSubscriber("tcp://localhost:1883", nil, nil, nil, mockStore, nil)
+	subscriber.client = mockClient
+	subscriber.hub = mHub
+
+	payloadBytes, _ := json.Marshal(JoinRelayPayload{
+		GatewayID: "gw-test-01",
+		DeviceMAC: "aabbccddeeff",
+		RSSI:      -75,
+		SNR:       10.2,
+	})
+	msg := &mockMessage{
+		topic:   "iot/v1/gw/gw-test-01/uplink/join-hello",
+		payload: payloadBytes,
+	}
+
+	subscriber.handleJoinMessage(nil, msg)
+
+	// Verify downlink join-wait was still published to keep node in rxsingle
+	waitTopic := "iot/v1/gw/gw-test-01/downlink/join-wait"
+	if _, ok := mockClient.published[waitTopic]; !ok {
+		t.Fatalf("expected downlink join-wait on topic %s", waitTopic)
+	}
+
+	// Verify WebSocket broadcast was suppressed for duplicate pending request
+	if len(mHub.envelopes) != 0 {
+		t.Fatalf("expected 0 WebSocket envelope broadcasts for duplicate pending request, got %d", len(mHub.envelopes))
+	}
+}
+
+func TestHandleJoinMessage_Deduplication_ApprovedDoesNotBroadcastWS(t *testing.T) {
+	mockClient := &mockMqttClient{connected: true}
+	now := time.Now().UTC()
+	nodeID := 4
+	mockStore := &mockJoinReqStorage{
+		isRegistered: true,
+		customReq: &domain.DeviceJoinRequest{
+			ID:             10,
+			DeviceMAC:      "aabbccddeeff",
+			GatewayID:      "gw-test-01",
+			Status:         "APPROVED",
+			AssignedNodeID: &nodeID,
+			CreatedAt:      now.Add(-time.Hour),
+			UpdatedAt:      now,
+		},
+		isNew: false, // already approved
+	}
+	mHub := &mockHub{}
+
+	subscriber := NewGatewayStatusSubscriber("tcp://localhost:1883", nil, nil, nil, mockStore, nil)
+	subscriber.client = mockClient
+	subscriber.hub = mHub
+
+	payloadBytes, _ := json.Marshal(JoinRelayPayload{
+		GatewayID: "gw-test-01",
+		DeviceMAC: "aabbccddeeff",
+		RSSI:      -75,
+		SNR:       10.2,
+	})
+	msg := &mockMessage{
+		topic:   "iot/v1/gw/gw-test-01/uplink/join-hello",
+		payload: payloadBytes,
+	}
+
+	subscriber.handleJoinMessage(nil, msg)
+
+	// Verify WebSocket broadcast was suppressed for already approved device
+	if len(mHub.envelopes) != 0 {
+		t.Fatalf("expected 0 WebSocket envelope broadcasts for already approved device, got %d", len(mHub.envelopes))
 	}
 }
