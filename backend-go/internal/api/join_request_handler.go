@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/auth"
+	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/domain"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/storage"
 )
 
@@ -17,6 +18,13 @@ import (
 type DownlinkPublisher interface {
 	PublishJoinGrant(ctx context.Context, gatewayID string, deviceMAC string, nodeID int) error
 	PublishNodeRevoke(ctx context.Context, gatewayID string, nodeID int) error
+	PublishJoinWait(ctx context.Context, gatewayID string, deviceMAC string) error
+	PublishJoinReject(ctx context.Context, gatewayID string, deviceMAC string) error
+}
+
+// RequestDetailRejecter is an optional interface for storages that return request details on rejection.
+type RequestDetailRejecter interface {
+	RejectRequestWithDetails(ctx context.Context, id int64) (*domain.DeviceJoinRequest, error)
 }
 
 // JoinRequestHandler provides endpoints for inspecting and approving/rejecting node join requests.
@@ -184,13 +192,36 @@ func (h *JoinRequestHandler) handleReject(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := h.store.RejectRequest(r.Context(), id); err != nil {
-		if errors.Is(err, storage.ErrRequestNotFound) {
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "join request not found")
+	var req *domain.DeviceJoinRequest
+	if detailRejecter, ok := h.store.(RequestDetailRejecter); ok {
+		rReq, err := detailRejecter.RejectRequestWithDetails(r.Context(), id)
+		if err != nil {
+			if errors.Is(err, storage.ErrRequestNotFound) {
+				writeError(w, http.StatusNotFound, "NOT_FOUND", "join request not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to reject request")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to reject request")
-		return
+		req = rReq
+	} else {
+		if err := h.store.RejectRequest(r.Context(), id); err != nil {
+			if errors.Is(err, storage.ErrRequestNotFound) {
+				writeError(w, http.StatusNotFound, "NOT_FOUND", "join request not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to reject request")
+			return
+		}
+	}
+
+	// Dispatch downlink to Gateway if publisher configured
+	if h.publisher != nil && req != nil {
+		if err := h.publisher.PublishJoinReject(r.Context(), req.GatewayID, req.DeviceMAC); err != nil {
+			log.Printf("[JoinRequestHandler] Warning: failed to dispatch join-reject downlink: %v", err)
+		} else {
+			log.Printf("[JoinRequestHandler] Dispatched join reject downlink: gw=%s mac=%s", req.GatewayID, req.DeviceMAC)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

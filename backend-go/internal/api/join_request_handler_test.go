@@ -65,13 +65,18 @@ func (m *mockJoinRequestStorage) ApproveRequest(ctx context.Context, id int64, r
 	return req, nil
 }
 
-func (m *mockJoinRequestStorage) RejectRequest(ctx context.Context, id int64) error {
+func (m *mockJoinRequestStorage) RejectRequestWithDetails(ctx context.Context, id int64) (*domain.DeviceJoinRequest, error) {
 	req, ok := m.requests[id]
 	if !ok {
-		return storage.ErrRequestNotFound
+		return nil, storage.ErrRequestNotFound
 	}
 	req.Status = "REJECTED"
-	return nil
+	return req, nil
+}
+
+func (m *mockJoinRequestStorage) RejectRequest(ctx context.Context, id int64) error {
+	_, err := m.RejectRequestWithDetails(ctx, id)
+	return err
 }
 
 func (m *mockJoinRequestStorage) IsDeviceRegistered(ctx context.Context, mac string) (bool, error) {
@@ -89,6 +94,16 @@ func (p *mockDownlinkPublisher) PublishJoinGrant(ctx context.Context, gatewayID 
 
 func (p *mockDownlinkPublisher) PublishNodeRevoke(ctx context.Context, gatewayID string, nodeID int) error {
 	p.published = append(p.published, "REVOKE:"+gatewayID+":"+strconv.Itoa(nodeID))
+	return nil
+}
+
+func (p *mockDownlinkPublisher) PublishJoinWait(ctx context.Context, gatewayID string, deviceMAC string) error {
+	p.published = append(p.published, "WAIT:"+gatewayID+":"+deviceMAC)
+	return nil
+}
+
+func (p *mockDownlinkPublisher) PublishJoinReject(ctx context.Context, gatewayID string, deviceMAC string) error {
+	p.published = append(p.published, "REJECT:"+gatewayID+":"+deviceMAC)
 	return nil
 }
 
@@ -335,6 +350,44 @@ func TestJoinRequestHandler_RBAC_Table(t *testing.T) {
 		mux.ServeHTTP(recReject, reqReject)
 		if recReject.Code != http.StatusBadRequest {
 			t.Errorf("expected 400 for negative ID on reject, got %d", recReject.Code)
+		}
+	})
+
+	t.Run("functional: reject publishes downlink join-reject", func(t *testing.T) {
+		store.requests[2] = &domain.DeviceJoinRequest{
+			ID:        2,
+			DeviceMAC: "aabbccddeeff",
+			GatewayID: "gw-test-02",
+			Status:    "PENDING",
+		}
+		pub.published = nil
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/devices/requests/2/reject", nil)
+		req.Header.Set("Authorization", "Bearer admin-tok")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d (body: %s)", rec.Code, rec.Body.String())
+		}
+
+		if len(pub.published) == 0 {
+			t.Fatal("expected downlink publish on reject, got none")
+		}
+		expected := "REJECT:gw-test-02:aabbccddeeff"
+		var found bool
+		for _, p := range pub.published {
+			if p == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected downlink %q, got: %+v", expected, pub.published)
+		}
+
+		if store.requests[2].Status != "REJECTED" {
+			t.Fatalf("expected status REJECTED, got %s", store.requests[2].Status)
 		}
 	})
 }
