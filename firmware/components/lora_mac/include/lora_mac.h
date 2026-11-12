@@ -52,6 +52,8 @@ typedef enum {
     LORA_MAC_V2_TYPE_DOWN_HEARTBEAT_PROBE = 0x4E, /**< GW -> Bcast: Periodic node health probe (7B total) */
     LORA_MAC_V2_TYPE_UP_HEARTBEAT_ACK    = 0x4F, /**< Node -> GW: Slotted liveness ACK (8B total) */
     LORA_MAC_V2_TYPE_DOWN_REVOKE         = 0x50, /**< GW -> Node: Immediate node revocation command (19B total) */
+    LORA_MAC_V2_TYPE_DOWN_JOIN_WAIT      = 0x51, /**< GW -> Node: Join wait pending approval (20B total) */
+    LORA_MAC_V2_TYPE_DOWN_JOIN_REJECT    = 0x52, /**< GW -> Node: Join reject notice (20B total) */
 } lora_mac_v2_msg_type_t;
 
 /**
@@ -74,6 +76,8 @@ typedef enum {
 #define LORA_MAC_V2_LEN_DOWN_JOIN_FINISH   (31U)     /**< 1B type + 1B gw_id + 1B node_id + 4B ctr + 8B tag + 16B proof */
 #define LORA_MAC_V2_LEN_UP_JOIN_READY      (31U)     /**< 1B type + 1B gw_id + 1B node_id + 4B ctr + 8B tag + 16B proof */
 #define LORA_MAC_V2_LEN_DOWN_REVOKE        (19U)     /**< 7B header + 4B cipher + 8B tag */
+#define LORA_MAC_V2_LEN_DOWN_JOIN_WAIT     (20U)     /**< 1B type + 6B MAC + 1B gw_id + 4B ctr + 8B tag */
+#define LORA_MAC_V2_LEN_DOWN_JOIN_REJECT   (20U)     /**< 1B type + 6B MAC + 1B gw_id + 4B ctr + 8B tag */
 
 /**
  * @brief V2 Unicast Header (7 octets, unencrypted AAD)
@@ -202,6 +206,28 @@ typedef struct {
     uint8_t  gw_ready_tag[8];         /**< 8-byte HMAC tag under K_KC_UP */
     uint8_t  backend_ready_proof[16]; /**< 16-byte HMAC proof under K_JREADY */
 } lora_mac_v2_up_join_ready_t;
+
+/**
+ * @brief V2 DOWN_JOIN_WAIT Wire Representation (20 octets, DEC-SEC-01 / Issue #337)
+ */
+typedef struct {
+    uint8_t  ver_type;       /**< Fixed 0x51 (LORA_MAC_V2_TYPE_DOWN_JOIN_WAIT) */
+    uint8_t  device_mac[6];  /**< Echoed 6-byte device MAC address */
+    uint8_t  gw_id;          /**< Gateway ID (1..254) */
+    uint32_t join_counter;   /**< Echoed monotonic join counter (4B Big-Endian) */
+    uint8_t  auth_tag[8];    /**< 8-byte HMAC-SHA256-64 tag on prefix12 under K_JREQ */
+} lora_mac_v2_down_join_wait_t;
+
+/**
+ * @brief V2 DOWN_JOIN_REJECT Wire Representation (20 octets, DEC-SEC-01 / Issue #337)
+ */
+typedef struct {
+    uint8_t  ver_type;       /**< Fixed 0x52 (LORA_MAC_V2_TYPE_DOWN_JOIN_REJECT) */
+    uint8_t  device_mac[6];  /**< Echoed 6-byte device MAC address */
+    uint8_t  gw_id;          /**< Gateway ID (1..254) */
+    uint32_t join_counter;   /**< Echoed monotonic join counter (4B Big-Endian) */
+    uint8_t  auth_tag[8];    /**< 8-byte HMAC-SHA256-64 tag on prefix12 under K_JREQ */
+} lora_mac_v2_down_join_reject_t;
 
 /* =========================================================================
  * V2 API FUNCTIONS
@@ -412,6 +438,36 @@ esp_err_t lora_mac_v2_up_join_ready_serialize(const lora_mac_v2_up_join_ready_t 
 esp_err_t lora_mac_v2_up_join_ready_deserialize(const uint8_t *buf,
                                                 size_t len,
                                                 lora_mac_v2_up_join_ready_t *out_ready);
+
+/**
+ * @brief Serialize DOWN_JOIN_WAIT frame (20 octets).
+ */
+esp_err_t lora_mac_v2_down_join_wait_serialize(const lora_mac_v2_down_join_wait_t *wait,
+                                               uint8_t *out_buf,
+                                               size_t buf_size,
+                                               size_t *out_written);
+
+/**
+ * @brief Deserialize DOWN_JOIN_WAIT frame (20 octets).
+ */
+esp_err_t lora_mac_v2_down_join_wait_deserialize(const uint8_t *buf,
+                                                 size_t len,
+                                                 lora_mac_v2_down_join_wait_t *out_wait);
+
+/**
+ * @brief Serialize DOWN_JOIN_REJECT frame (20 octets).
+ */
+esp_err_t lora_mac_v2_down_join_reject_serialize(const lora_mac_v2_down_join_reject_t *reject,
+                                                 uint8_t *out_buf,
+                                                 size_t buf_size,
+                                                 size_t *out_written);
+
+/**
+ * @brief Deserialize DOWN_JOIN_REJECT frame (20 octets).
+ */
+esp_err_t lora_mac_v2_down_join_reject_deserialize(const uint8_t *buf,
+                                                   size_t len,
+                                                   lora_mac_v2_down_join_reject_t *out_reject);
 
 /* =========================================================================
  * V1 CANDIDATE DEFINITIONS (HISTORICAL PROVENANCE ONLY — SUPERSEDED)

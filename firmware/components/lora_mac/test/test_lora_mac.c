@@ -290,3 +290,147 @@ TEST_CASE("lora_mac crypto zeroize and negative bounds checks", "[lora_mac][cryp
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, lora_mac_crypto_ccm_decrypt(dummy, dummy, dummy, 7, oversized_buf, 49, tag, dummy));
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, lora_mac_crypto_ccm_encrypt(dummy, dummy, oversized_buf, 49, dummy, 4, dummy, tag));
 }
+
+TEST_CASE("lora_mac V2 DOWN_JOIN_WAIT wire size and codec roundtrip", "[lora_mac][join_v2]")
+{
+    /* 1. Verify standard wire size and struct size are exactly 20 bytes */
+    TEST_ASSERT_EQUAL_UINT32(20, LORA_MAC_V2_LEN_DOWN_JOIN_WAIT);
+    TEST_ASSERT_EQUAL_UINT32(20, sizeof(lora_mac_v2_down_join_wait_t));
+
+    const lora_mac_v2_down_join_wait_t in_wait = {
+        .ver_type = LORA_MAC_V2_TYPE_DOWN_JOIN_WAIT,
+        .device_mac = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55},
+        .gw_id = 0x07,
+        .join_counter = 0xA1B2C3D4,
+        .auth_tag = {0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80},
+    };
+
+    uint8_t wire_buf[32] = {0};
+    size_t written = 0;
+
+    /* 2. Positive serialization */
+    esp_err_t err = lora_mac_v2_down_join_wait_serialize(&in_wait, wire_buf, sizeof(wire_buf), &written);
+    TEST_ASSERT_EQUAL(ESP_OK, err);
+    TEST_ASSERT_EQUAL_UINT32(20, written);
+
+    /* Verify wire layout: offset 0 = ver_type */
+    TEST_ASSERT_EQUAL_HEX8(0x51, wire_buf[0]);
+    /* Offsets 1..6 = device_mac */
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(in_wait.device_mac, &wire_buf[1], 6);
+    /* Offset 7 = gw_id */
+    TEST_ASSERT_EQUAL_HEX8(0x07, wire_buf[7]);
+    /* Offsets 8..11 = Big-Endian join_counter */
+    TEST_ASSERT_EQUAL_HEX8(0xA1, wire_buf[8]);
+    TEST_ASSERT_EQUAL_HEX8(0xB2, wire_buf[9]);
+    TEST_ASSERT_EQUAL_HEX8(0xC3, wire_buf[10]);
+    TEST_ASSERT_EQUAL_HEX8(0xD4, wire_buf[11]);
+    /* Offsets 12..19 = auth_tag */
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(in_wait.auth_tag, &wire_buf[12], 8);
+
+    /* 3. Positive deserialization */
+    lora_mac_v2_down_join_wait_t out_wait;
+    memset(&out_wait, 0, sizeof(out_wait));
+
+    err = lora_mac_v2_down_join_wait_deserialize(wire_buf, written, &out_wait);
+    TEST_ASSERT_EQUAL(ESP_OK, err);
+    TEST_ASSERT_EQUAL_HEX8(in_wait.ver_type, out_wait.ver_type);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(in_wait.device_mac, out_wait.device_mac, 6);
+    TEST_ASSERT_EQUAL_HEX8(in_wait.gw_id, out_wait.gw_id);
+    TEST_ASSERT_EQUAL_HEX32(in_wait.join_counter, out_wait.join_counter);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(in_wait.auth_tag, out_wait.auth_tag, 8);
+
+    /* 4. Serialize with ver_type = 0 defaults to LORA_MAC_V2_TYPE_DOWN_JOIN_WAIT (0x51) */
+    lora_mac_v2_down_join_wait_t zero_ver = in_wait;
+    zero_ver.ver_type = 0U;
+    memset(wire_buf, 0, sizeof(wire_buf));
+    err = lora_mac_v2_down_join_wait_serialize(&zero_ver, wire_buf, sizeof(wire_buf), &written);
+    TEST_ASSERT_EQUAL(ESP_OK, err);
+    TEST_ASSERT_EQUAL_HEX8(0x51, wire_buf[0]);
+
+    /* 5. Negative tests */
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, lora_mac_v2_down_join_wait_serialize(NULL, wire_buf, sizeof(wire_buf), &written));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, lora_mac_v2_down_join_wait_serialize(&in_wait, NULL, sizeof(wire_buf), &written));
+    TEST_ASSERT_EQUAL(ESP_ERR_NO_MEM, lora_mac_v2_down_join_wait_serialize(&in_wait, wire_buf, 19, &written));
+
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, lora_mac_v2_down_join_wait_deserialize(NULL, written, &out_wait));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, lora_mac_v2_down_join_wait_deserialize(wire_buf, written, NULL));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_SIZE, lora_mac_v2_down_join_wait_deserialize(wire_buf, 19, &out_wait));
+
+    /* Wrong message type */
+    uint8_t bad_type_buf[20];
+    memcpy(bad_type_buf, wire_buf, 20);
+    bad_type_buf[0] = 0x52; /* REJECT type on WAIT deserializer */
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_VERSION, lora_mac_v2_down_join_wait_deserialize(bad_type_buf, 20, &out_wait));
+}
+
+TEST_CASE("lora_mac V2 DOWN_JOIN_REJECT wire size and codec roundtrip", "[lora_mac][join_v2]")
+{
+    /* 1. Verify standard wire size and struct size are exactly 20 bytes */
+    TEST_ASSERT_EQUAL_UINT32(20, LORA_MAC_V2_LEN_DOWN_JOIN_REJECT);
+    TEST_ASSERT_EQUAL_UINT32(20, sizeof(lora_mac_v2_down_join_reject_t));
+
+    const lora_mac_v2_down_join_reject_t in_reject = {
+        .ver_type = LORA_MAC_V2_TYPE_DOWN_JOIN_REJECT,
+        .device_mac = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF},
+        .gw_id = 0x0E,
+        .join_counter = 0xFEDCBA98,
+        .auth_tag = {0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11},
+    };
+
+    uint8_t wire_buf[32] = {0};
+    size_t written = 0;
+
+    /* 2. Positive serialization */
+    esp_err_t err = lora_mac_v2_down_join_reject_serialize(&in_reject, wire_buf, sizeof(wire_buf), &written);
+    TEST_ASSERT_EQUAL(ESP_OK, err);
+    TEST_ASSERT_EQUAL_UINT32(20, written);
+
+    /* Verify wire layout: offset 0 = ver_type */
+    TEST_ASSERT_EQUAL_HEX8(0x52, wire_buf[0]);
+    /* Offsets 1..6 = device_mac */
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(in_reject.device_mac, &wire_buf[1], 6);
+    /* Offset 7 = gw_id */
+    TEST_ASSERT_EQUAL_HEX8(0x0E, wire_buf[7]);
+    /* Offsets 8..11 = Big-Endian join_counter */
+    TEST_ASSERT_EQUAL_HEX8(0xFE, wire_buf[8]);
+    TEST_ASSERT_EQUAL_HEX8(0xDC, wire_buf[9]);
+    TEST_ASSERT_EQUAL_HEX8(0xBA, wire_buf[10]);
+    TEST_ASSERT_EQUAL_HEX8(0x98, wire_buf[11]);
+    /* Offsets 12..19 = auth_tag */
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(in_reject.auth_tag, &wire_buf[12], 8);
+
+    /* 3. Positive deserialization */
+    lora_mac_v2_down_join_reject_t out_reject;
+    memset(&out_reject, 0, sizeof(out_reject));
+
+    err = lora_mac_v2_down_join_reject_deserialize(wire_buf, written, &out_reject);
+    TEST_ASSERT_EQUAL(ESP_OK, err);
+    TEST_ASSERT_EQUAL_HEX8(in_reject.ver_type, out_reject.ver_type);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(in_reject.device_mac, out_reject.device_mac, 6);
+    TEST_ASSERT_EQUAL_HEX8(in_reject.gw_id, out_reject.gw_id);
+    TEST_ASSERT_EQUAL_HEX32(in_reject.join_counter, out_reject.join_counter);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(in_reject.auth_tag, out_reject.auth_tag, 8);
+
+    /* 4. Serialize with ver_type = 0 defaults to LORA_MAC_V2_TYPE_DOWN_JOIN_REJECT (0x52) */
+    lora_mac_v2_down_join_reject_t zero_ver = in_reject;
+    zero_ver.ver_type = 0U;
+    memset(wire_buf, 0, sizeof(wire_buf));
+    err = lora_mac_v2_down_join_reject_serialize(&zero_ver, wire_buf, sizeof(wire_buf), &written);
+    TEST_ASSERT_EQUAL(ESP_OK, err);
+    TEST_ASSERT_EQUAL_HEX8(0x52, wire_buf[0]);
+
+    /* 5. Negative tests */
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, lora_mac_v2_down_join_reject_serialize(NULL, wire_buf, sizeof(wire_buf), &written));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, lora_mac_v2_down_join_reject_serialize(&in_reject, NULL, sizeof(wire_buf), &written));
+    TEST_ASSERT_EQUAL(ESP_ERR_NO_MEM, lora_mac_v2_down_join_reject_serialize(&in_reject, wire_buf, 19, &written));
+
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, lora_mac_v2_down_join_reject_deserialize(NULL, written, &out_reject));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, lora_mac_v2_down_join_reject_deserialize(wire_buf, written, NULL));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_SIZE, lora_mac_v2_down_join_reject_deserialize(wire_buf, 19, &out_reject));
+
+    /* Wrong message type */
+    uint8_t bad_type_buf[20];
+    memcpy(bad_type_buf, wire_buf, 20);
+    bad_type_buf[0] = 0x51; /* WAIT type on REJECT deserializer */
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_VERSION, lora_mac_v2_down_join_reject_deserialize(bad_type_buf, 20, &out_reject));
+}

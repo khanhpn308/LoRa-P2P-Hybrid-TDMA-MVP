@@ -100,6 +100,8 @@ Mọi gói tin V2 Unicast sử dụng **Header chuẩn 7 byte** không mã hóa 
 | `0x4B` | `DOWN_SCHED_PREPARE` | Backend-signed GW → Broadcast | **80** | Canonical header16 + Backend Ed25519 signature64 | **80B/CRYPTO APPROVED, TYPE CODE CANDIDATE** | #208 |
 | `0x4C` | `UP_SCHED_READY` | Node → GW | **41** | Header7 + ciphertext26 (generation/target/status/reason/Backend proof16) + CCM8 | **OWNER_APPROVED_MVP_DESIGN** | #208 |
 | `0x4D` | `DOWN_SCHED_DECISION` | Backend-signed GW → Broadcast | **80** | Canonical header16 + Backend Ed25519 signature64, COMMIT/ABORT | **80B/CRYPTO APPROVED, TYPE CODE CANDIDATE** | #208 |
+| `0x51` | `DOWN_JOIN_WAIT` | GW $\to$ Node | 20 | HMAC-SHA256-64 (8B) trên prefix12 dưới khóa $K_{\text{JREQ}}$ | **OWNER_APPROVED_DESIGN** | Issue #337 |
+| `0x52` | `DOWN_JOIN_REJECT` | GW $\to$ Node | 20 | HMAC-SHA256-64 (8B) trên prefix12 dưới khóa $K_{\text{JREQ}}$ | **OWNER_APPROVED_DESIGN** | Issue #337 |
 
 ---
 
@@ -179,6 +181,22 @@ Bytes 0..6: `0x4A | NODE_ID | SESSION_SEL | FRAME_COUNTER:u32BE` (AAD). Bytes 7.
 - Gateway may COMMIT **only when `VERIFIED_READY_SET == AFFECTED_NODE_SET` (100%)**, including offline still-authorized affected Nodes; `UP_JOIN_READY 0x49` is NOT `UP_SCHED_READY 0x4C`. Activate at common `K_TARGET`; prepared Nodes missing valid COMMIT must inhibit DATA TX from K_TARGET, including after reboot.
 - No `3→2→1` Beacon countdown, no Schedule Lease. Shared Maintenance Control allocated only on demand; Join proceeds asynchronously via CAD at any time and can collide with scheduled traffic, leading to missing READY and ABORT/defer.
 - Wire codepoint allocation 0x4B/0x4D, canonical Ed25519 signing transcript and `K_SCHED_READY` HKDF bytes must be frozen/tested before RF implementation. Their 80B signed Broadcast **format direction is approved**, not evidence of G2/HIL PASS.
+
+#### 8. `DOWN_JOIN_WAIT` (0x51, 20 octets)
+Khung xác nhận Gateway/Backend đã tiếp nhận yêu cầu gia nhập và yêu cầu Node giữ trạng thái thu (`rxsingle`) chờ phê duyệt từ người vận hành (GW $\to$ Node, 20B):
+- `VER_TYPE` (1B): Cố định `0x51` (`LORA_MAC_V2_TYPE_DOWN_JOIN_WAIT`).
+- `DEVICE_MAC` (6B): Echoed MAC của Node yêu cầu.
+- `GW_ID` (1B): ID của Gateway phát bản tin (`0x01`..`0xFE`).
+- `JOIN_COUNTER` (4B, Big-Endian): Echoed Big-Endian join counter từ `UP_JOIN_HELLO` (chống Replay).
+- `AUTH_TAG` (8B): Thẻ xác thực HMAC-SHA256-64 trên tiền tố 12 bytes đầu (`prefix12`) dưới khóa $K_{\text{JREQ}}$ hoặc Gateway Tag.
+
+#### 9. `DOWN_JOIN_REJECT` (0x52, 20 octets)
+Khung thông báo yêu cầu gia nhập bị từ chối để Node hủy phiên và vào chế độ ngủ sâu tiết kiệm năng lượng (GW $\to$ Node, 20B):
+- `VER_TYPE` (1B): Cố định `0x52` (`LORA_MAC_V2_TYPE_DOWN_JOIN_REJECT`).
+- `DEVICE_MAC` (6B): Echoed MAC của Node yêu cầu.
+- `GW_ID` (1B): ID của Gateway phát bản tin (`0x01`..`0xFE`).
+- `JOIN_COUNTER` (4B, Big-Endian): Echoed Big-Endian join counter từ `UP_JOIN_HELLO` (chống Replay).
+- `AUTH_TAG` (8B): Thẻ xác thực HMAC-SHA256-64 trên tiền tố 12 bytes đầu (`prefix12`) dưới khóa $K_{\text{JREQ}}$ hoặc Gateway Tag.
 ---
 
 ## 4. Ranh giới Mật mã & Thẩm quyền Khóa phiên (Cryptographic Authority)

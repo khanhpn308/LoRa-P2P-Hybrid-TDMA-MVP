@@ -738,6 +738,120 @@ esp_err_t lora_mac_v2_up_join_ready_deserialize(const uint8_t *buf,
     return ESP_OK;
 }
 
+esp_err_t lora_mac_v2_down_join_wait_serialize(const lora_mac_v2_down_join_wait_t *wait,
+                                               uint8_t *out_buf,
+                                               size_t buf_size,
+                                               size_t *out_written)
+{
+    if (wait == NULL || out_buf == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (buf_size < LORA_MAC_V2_LEN_DOWN_JOIN_WAIT) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    out_buf[0] = (wait->ver_type == 0U) ? (uint8_t)LORA_MAC_V2_TYPE_DOWN_JOIN_WAIT : wait->ver_type;
+    (void)memcpy(&out_buf[1], wait->device_mac, 6);
+    out_buf[7] = wait->gw_id;
+
+    out_buf[8]  = (uint8_t)((wait->join_counter >> 24) & 0xFFU);
+    out_buf[9]  = (uint8_t)((wait->join_counter >> 16) & 0xFFU);
+    out_buf[10] = (uint8_t)((wait->join_counter >> 8) & 0xFFU);
+    out_buf[11] = (uint8_t)(wait->join_counter & 0xFFU);
+
+    (void)memcpy(&out_buf[12], wait->auth_tag, 8);
+
+    if (out_written != NULL) {
+        *out_written = LORA_MAC_V2_LEN_DOWN_JOIN_WAIT;
+    }
+    return ESP_OK;
+}
+
+esp_err_t lora_mac_v2_down_join_wait_deserialize(const uint8_t *buf,
+                                                 size_t len,
+                                                 lora_mac_v2_down_join_wait_t *out_wait)
+{
+    if (buf == NULL || out_wait == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (len < LORA_MAC_V2_LEN_DOWN_JOIN_WAIT) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    if (buf[0] != LORA_MAC_V2_TYPE_DOWN_JOIN_WAIT) {
+        return ESP_ERR_INVALID_VERSION;
+    }
+
+    out_wait->ver_type = buf[0];
+    (void)memcpy(out_wait->device_mac, &buf[1], 6);
+    out_wait->gw_id = buf[7];
+
+    out_wait->join_counter = ((uint32_t)buf[8] << 24) |
+                             ((uint32_t)buf[9] << 16) |
+                             ((uint32_t)buf[10] << 8) |
+                             (uint32_t)buf[11];
+
+    (void)memcpy(out_wait->auth_tag, &buf[12], 8);
+
+    return ESP_OK;
+}
+
+esp_err_t lora_mac_v2_down_join_reject_serialize(const lora_mac_v2_down_join_reject_t *reject,
+                                                 uint8_t *out_buf,
+                                                 size_t buf_size,
+                                                 size_t *out_written)
+{
+    if (reject == NULL || out_buf == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (buf_size < LORA_MAC_V2_LEN_DOWN_JOIN_REJECT) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    out_buf[0] = (reject->ver_type == 0U) ? (uint8_t)LORA_MAC_V2_TYPE_DOWN_JOIN_REJECT : reject->ver_type;
+    (void)memcpy(&out_buf[1], reject->device_mac, 6);
+    out_buf[7] = reject->gw_id;
+
+    out_buf[8]  = (uint8_t)((reject->join_counter >> 24) & 0xFFU);
+    out_buf[9]  = (uint8_t)((reject->join_counter >> 16) & 0xFFU);
+    out_buf[10] = (uint8_t)((reject->join_counter >> 8) & 0xFFU);
+    out_buf[11] = (uint8_t)(reject->join_counter & 0xFFU);
+
+    (void)memcpy(&out_buf[12], reject->auth_tag, 8);
+
+    if (out_written != NULL) {
+        *out_written = LORA_MAC_V2_LEN_DOWN_JOIN_REJECT;
+    }
+    return ESP_OK;
+}
+
+esp_err_t lora_mac_v2_down_join_reject_deserialize(const uint8_t *buf,
+                                                   size_t len,
+                                                   lora_mac_v2_down_join_reject_t *out_reject)
+{
+    if (buf == NULL || out_reject == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (len < LORA_MAC_V2_LEN_DOWN_JOIN_REJECT) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    if (buf[0] != LORA_MAC_V2_TYPE_DOWN_JOIN_REJECT) {
+        return ESP_ERR_INVALID_VERSION;
+    }
+
+    out_reject->ver_type = buf[0];
+    (void)memcpy(out_reject->device_mac, &buf[1], 6);
+    out_reject->gw_id = buf[7];
+
+    out_reject->join_counter = ((uint32_t)buf[8] << 24) |
+                               ((uint32_t)buf[9] << 16) |
+                               ((uint32_t)buf[10] << 8) |
+                               (uint32_t)buf[11];
+
+    (void)memcpy(out_reject->auth_tag, &buf[12], 8);
+
+    return ESP_OK;
+}
+
 /* =========================================================================
  * V1 CANDIDATE CODECS (HISTORICAL PROVENANCE ONLY — SUPERSEDED)
  * ========================================================================= */
