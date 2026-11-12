@@ -474,7 +474,21 @@ func (s *GatewayStatusSubscriber) handleJoinMessage(client paho.Client, msg paho
 			isNew = (saved != nil && saved.CreatedAt.Equal(saved.UpdatedAt))
 		}
 
-		// Dispatch join-wait downlink to Gateway for valid device
+		// Already approved device: auto re-dispatch join-grant without sending join-wait or broadcasting UI request
+		if saved != nil && saved.Status == "APPROVED" {
+			if saved.AssignedNodeID != nil && *saved.AssignedNodeID > 0 && *saved.AssignedNodeID <= 254 {
+				if err := s.PublishJoinGrant(ctx, gwID, mac, *saved.AssignedNodeID); err != nil {
+					log.Printf("[MQTT Subscriber] Warning: failed to auto re-dispatch join-grant downlink: %v", err)
+				} else {
+					log.Printf("[MQTT Subscriber] Auto re-dispatched join grant downlink: gw=%s mac=%s node_id=%d", gwID, mac, *saved.AssignedNodeID)
+				}
+			} else {
+				log.Printf("[MQTT Subscriber] Warning: approved join request missing valid assigned_node_id: gw=%s mac=%s", gwID, mac)
+			}
+			return
+		}
+
+		// Dispatch join-wait downlink to Gateway for pending device
 		if err := s.PublishJoinWait(ctx, gwID, mac); err != nil {
 			log.Printf("[MQTT Subscriber] Warning: failed to dispatch join-wait downlink: %v", err)
 		} else {

@@ -533,26 +533,41 @@ esp_err_t node_v2_join_run(const node_v2_join_config_t *cfg,
     ESP_LOGI(TAG, "[RF RX] Listening for DOWN_JOIN_GRANT / WAIT on Freq=920.250 MHz (CH0) for %u ms...",
              (unsigned int)cfg->grant_listen_timeout_ms);
     if (hal->radio_rx_single != NULL) {
-        (void)hal->radio_rx_single(cfg->grant_listen_timeout_ms);
+        err = hal->radio_rx_single(cfg->grant_listen_timeout_ms);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "[RF RX] Failed to start RX in GRANT_RX: %s", esp_err_to_name(err));
+            lora_mac_crypto_zeroize(&k_join_keys, sizeof(k_join_keys));
+            lora_mac_crypto_zeroize(priv_node, sizeof(priv_node));
+            ctx->state = NODE_V2_JOIN_STATE_ABORTED;
+            if (hal->radio_sleep != NULL) {
+                (void)hal->radio_sleep();
+            }
+            return err;
+        }
     }
 
     size_t rx_len = 0;
     err = hal->radio_read_frame(rx_tmp, &rx_len, cfg->grant_listen_timeout_ms);
-    if (hal->radio_standby != NULL) {
-        (void)hal->radio_standby();
-    }
 
-    /* Check if initial response is DOWN_JOIN_WAIT (0x51, 20B) */
+    /* Check if initial response is DOWN_JOIN_WAIT (0x51, 20B) before dropping out of RX */
     if (err == ESP_OK && rx_len == LORA_MAC_V2_LEN_DOWN_JOIN_WAIT && rx_tmp[0] == LORA_MAC_V2_TYPE_DOWN_JOIN_WAIT) {
         lora_mac_v2_down_join_wait_t wait_frame;
         if (lora_mac_v2_down_join_wait_deserialize(rx_tmp, rx_len, &wait_frame) == ESP_OK &&
             memcmp(wait_frame.device_mac, cfg->device_mac, 6) == 0 &&
             wait_frame.join_counter == join_counter) {
-            ESP_LOGI(TAG, "[RF RX] Received DOWN_JOIN_WAIT (20B) from Gateway #%u | Ctr=%u. Transitioning to WAIT_RX...",
+            ESP_LOGI(TAG, "[RF RX] Received DOWN_JOIN_WAIT (20B) from Gateway #%u | Ctr=%u. Transitioning to continuous WAIT_RX...",
                      wait_frame.gw_id, (unsigned int)wait_frame.join_counter);
             ctx->state = NODE_V2_JOIN_STATE_WAIT_RX;
         }
-    } else if (err == ESP_OK && rx_len == LORA_MAC_V2_LEN_DOWN_JOIN_REJECT && rx_tmp[0] == LORA_MAC_V2_TYPE_DOWN_JOIN_REJECT) {
+    }
+
+    /* Keep SX1276 continuously in RXCONT when entering WAIT_RX; otherwise return radio to STANDBY */
+    if (ctx->state != NODE_V2_JOIN_STATE_WAIT_RX && hal->radio_standby != NULL) {
+        (void)hal->radio_standby();
+    }
+
+    if (ctx->state != NODE_V2_JOIN_STATE_WAIT_RX &&
+        err == ESP_OK && rx_len == LORA_MAC_V2_LEN_DOWN_JOIN_REJECT && rx_tmp[0] == LORA_MAC_V2_TYPE_DOWN_JOIN_REJECT) {
         lora_mac_v2_down_join_reject_t reject_frame;
         if (lora_mac_v2_down_join_reject_deserialize(rx_tmp, rx_len, &reject_frame) == ESP_OK &&
             memcmp(reject_frame.device_mac, cfg->device_mac, 6) == 0 &&
@@ -571,16 +586,12 @@ esp_err_t node_v2_join_run(const node_v2_join_config_t *cfg,
         }
     }
 
-    /* While in WAIT_RX, keep radio in rxsingle awaiting operator decision (GRANT or REJECT) */
+    /* While in WAIT_RX, keep radio continuously in RXCONT indefinitely awaiting GRANT or REJECT.
+     * Avoid radio_rx_single(), radio_standby(), and delay_ms() on timeouts to prevent blind gaps. */
+    uint32_t wait_timeout_chunks = 0;
     while (ctx->state == NODE_V2_JOIN_STATE_WAIT_RX) {
-        if (hal->radio_rx_single != NULL) {
-            (void)hal->radio_rx_single(1000U);
-        }
         rx_len = 0;
         err = hal->radio_read_frame(rx_tmp, &rx_len, 1000U);
-        if (hal->radio_standby != NULL) {
-            (void)hal->radio_standby();
-        }
         if (err == ESP_OK && rx_len > 0) {
             uint8_t msg_type = rx_tmp[0];
             if (msg_type == LORA_MAC_V2_TYPE_DOWN_JOIN_GRANT && rx_len == LORA_MAC_V2_LEN_DOWN_JOIN_GRANT) {
@@ -590,6 +601,9 @@ esp_err_t node_v2_join_run(const node_v2_join_config_t *cfg,
                     grant_check.join_counter == join_counter) {
                     ESP_LOGI(TAG, "[RF RX] Received DOWN_JOIN_GRANT (66B) while in WAIT_RX. Resuming handshake!");
                     ctx->state = NODE_V2_JOIN_STATE_GRANT_RX;
+                    if (hal->radio_standby != NULL) {
+                        (void)hal->radio_standby();
+                    }
                     break;
                 }
             } else if (msg_type == LORA_MAC_V2_TYPE_DOWN_JOIN_REJECT && rx_len == LORA_MAC_V2_LEN_DOWN_JOIN_REJECT) {
@@ -604,6 +618,9 @@ esp_err_t node_v2_join_run(const node_v2_join_config_t *cfg,
                     lora_mac_crypto_zeroize(priv_node, sizeof(priv_node));
                     lora_mac_crypto_zeroize(&ctx->session_keys, sizeof(ctx->session_keys));
                     ctx->state = NODE_V2_JOIN_STATE_ABORTED;
+                    if (hal->radio_standby != NULL) {
+                        (void)hal->radio_standby();
+                    }
                     if (hal->radio_sleep != NULL) {
                         (void)hal->radio_sleep();
                     }
@@ -618,19 +635,25 @@ esp_err_t node_v2_join_run(const node_v2_join_config_t *cfg,
                              wait_check.gw_id, (unsigned int)wait_check.join_counter);
                 }
             }
-        } else if (err != ESP_OK && err != ESP_ERR_TIMEOUT) {
+        } else if (err == ESP_ERR_TIMEOUT) {
+            wait_timeout_chunks++;
+            if ((wait_timeout_chunks % 10U) == 0U) {
+                ESP_LOGI(TAG, "[WAIT_RX] Continuous RX active (%u s elapsed) awaiting DOWN_JOIN_GRANT / DOWN_JOIN_REJECT...",
+                         (unsigned int)wait_timeout_chunks);
+            }
+        } else if (err != ESP_OK) {
             ESP_LOGE(TAG, "[RF RX] Radio read frame failure during WAIT_RX: %s", esp_err_to_name(err));
             lora_mac_crypto_zeroize(&k_join_keys, sizeof(k_join_keys));
             lora_mac_crypto_zeroize(priv_node, sizeof(priv_node));
             lora_mac_crypto_zeroize(&ctx->session_keys, sizeof(ctx->session_keys));
             ctx->state = NODE_V2_JOIN_STATE_ABORTED;
+            if (hal->radio_standby != NULL) {
+                (void)hal->radio_standby();
+            }
             if (hal->radio_sleep != NULL) {
                 (void)hal->radio_sleep();
             }
             return err;
-        }
-        if (hal->delay_ms != NULL) {
-            hal->delay_ms(10U);
         }
     }
 

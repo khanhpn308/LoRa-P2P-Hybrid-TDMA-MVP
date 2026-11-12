@@ -691,6 +691,158 @@ static int test_node_complete_handshake_end_to_end(void)
     return 0;
 }
 
+typedef struct {
+    uint32_t step;
+    uint32_t rx_single_calls;
+    uint32_t standby_calls;
+    uint32_t delay_calls;
+    uint32_t standby_calls_during_wait;
+    uint32_t rx_single_calls_during_wait;
+} wait_rx_probe_t;
+
+static wait_rx_probe_t s_wait_probe;
+
+static esp_err_t mock_wait_rx_single(uint32_t timeout_ms)
+{
+    (void)timeout_ms;
+    s_wait_probe.rx_single_calls++;
+    return ESP_OK;
+}
+
+static esp_err_t mock_wait_rx_standby(void)
+{
+    s_wait_probe.standby_calls++;
+    return ESP_OK;
+}
+
+static void mock_wait_rx_delay(uint32_t ms)
+{
+    (void)ms;
+    s_wait_probe.delay_calls++;
+}
+
+static esp_err_t mock_wait_rx_read_frame(uint8_t *out_buf, size_t *out_len, uint32_t wait_ms)
+{
+    (void)wait_ms;
+    if (s_wait_probe.step == 0U) {
+        /* 1. Initial response in GRANT_RX is DOWN_JOIN_WAIT */
+        lora_mac_v2_up_join_hello_t hello;
+        lora_mac_v2_up_join_hello_deserialize(s_mock_gw.last_tx_buf, s_mock_gw.last_tx_len, &hello);
+
+        lora_mac_v2_down_join_wait_t wait_f;
+        memset(&wait_f, 0, sizeof(wait_f));
+        wait_f.ver_type = LORA_MAC_V2_TYPE_DOWN_JOIN_WAIT;
+        memcpy(wait_f.device_mac, hello.device_mac, 6);
+        wait_f.gw_id = hello.target_gw_id;
+        wait_f.join_counter = hello.join_counter;
+
+        size_t wr = 0;
+        lora_mac_v2_down_join_wait_serialize(&wait_f, out_buf, 128, &wr);
+        *out_len = wr;
+        s_wait_probe.step = 1U;
+        return ESP_OK;
+    }
+
+    if (s_wait_probe.step <= 10U) {
+        /* Snapshot that GRANT_RX -> WAIT_RX did NOT leave RXCONT or re-arm rx_single */
+        s_wait_probe.standby_calls_during_wait = s_wait_probe.standby_calls;
+        s_wait_probe.rx_single_calls_during_wait = s_wait_probe.rx_single_calls;
+        s_wait_probe.step++;
+        return ESP_ERR_TIMEOUT;
+    }
+
+    if (s_wait_probe.step == 11U) {
+        /* Repeated DOWN_JOIN_WAIT during continuous WAIT_RX */
+        lora_mac_v2_up_join_hello_t hello;
+        lora_mac_v2_up_join_hello_deserialize(s_mock_gw.last_tx_buf, s_mock_gw.last_tx_len, &hello);
+
+        lora_mac_v2_down_join_wait_t wait_f;
+        memset(&wait_f, 0, sizeof(wait_f));
+        wait_f.ver_type = LORA_MAC_V2_TYPE_DOWN_JOIN_WAIT;
+        memcpy(wait_f.device_mac, hello.device_mac, 6);
+        wait_f.gw_id = hello.target_gw_id;
+        wait_f.join_counter = hello.join_counter;
+
+        size_t wr = 0;
+        lora_mac_v2_down_join_wait_serialize(&wait_f, out_buf, 128, &wr);
+        *out_len = wr;
+        s_wait_probe.step = 12U;
+        return ESP_OK;
+    }
+
+    if (s_wait_probe.step == 12U) {
+        /* Unrelated frame / different MAC GRANT must be ignored without leaving WAIT_RX */
+        lora_mac_v2_up_join_hello_t hello;
+        lora_mac_v2_up_join_hello_deserialize(s_mock_gw.last_tx_buf, s_mock_gw.last_tx_len, &hello);
+
+        lora_mac_v2_down_join_grant_t wrong_grant;
+        memset(&wrong_grant, 0, sizeof(wrong_grant));
+        wrong_grant.ver_type = LORA_MAC_V2_TYPE_DOWN_JOIN_GRANT;
+        memcpy(wrong_grant.device_mac, hello.device_mac, 6);
+        wrong_grant.device_mac[5] ^= 0xFFU;
+        wrong_grant.node_id = 3U;
+        wrong_grant.join_counter = hello.join_counter;
+
+        size_t wr = 0;
+        lora_mac_v2_down_join_grant_serialize(&wrong_grant, out_buf, 128, &wr);
+        *out_len = wr;
+        s_wait_probe.step = 13U;
+        return ESP_OK;
+    }
+
+    if (s_wait_probe.step == 13U) {
+        /* Matching DOWN_JOIN_GRANT finally arrives after extended WAIT_RX */
+        s_wait_probe.standby_calls_during_wait = s_wait_probe.standby_calls;
+        s_wait_probe.rx_single_calls_during_wait = s_wait_probe.rx_single_calls;
+        s_mock_gw.step = 1U;
+        s_wait_probe.step = 14U;
+        return mock_e2e_radio_read_frame(out_buf, out_len, wait_ms);
+    }
+
+    /* Phase 4a: DOWN_JOIN_FINISH */
+    return mock_e2e_radio_read_frame(out_buf, out_len, wait_ms);
+}
+
+static int test_node_wait_rx_continuous_indefinite_until_grant(void)
+{
+    mock_nvs_reset();
+    memset(&s_mock_gw, 0, sizeof(s_mock_gw));
+    memset(&s_wait_probe, 0, sizeof(s_wait_probe));
+
+    node_v2_join_get_default_config(&s_mock_gw.cfg);
+    for (int i = 0; i < 32; i++) s_mock_gw.cfg.k_join[i] = (uint8_t)(0x55 + i);
+
+    lora_mac_join_derive_k_join_keys(s_mock_gw.cfg.network_id, s_mock_gw.cfg.device_mac,
+                                     s_mock_gw.cfg.device_generation, s_mock_gw.cfg.k_join,
+                                     &s_mock_gw.k_join_keys);
+
+    node_v2_join_radio_hal_t hal;
+    memset(&hal, 0, sizeof(hal));
+    hal.radio_cad = mock_e2e_radio_cad;
+    hal.radio_tx = mock_e2e_radio_tx;
+    hal.radio_rx_single = mock_wait_rx_single;
+    hal.radio_read_frame = mock_wait_rx_read_frame;
+    hal.radio_standby = mock_wait_rx_standby;
+    hal.delay_ms = mock_wait_rx_delay;
+
+    node_v2_join_context_t ctx;
+    ASSERT_EQUAL_INT(ESP_OK, node_v2_join_init(&ctx));
+
+    ASSERT_EQUAL_INT(ESP_OK, node_v2_join_run(&s_mock_gw.cfg, &hal, &ctx));
+    ASSERT_EQUAL_INT(NODE_V2_JOIN_STATE_INSTALLED_INACTIVE, ctx.state);
+    ASSERT_EQUAL_INT(5U, ctx.assigned_node_id);
+
+    /* Throughout entire WAIT_RX (10 timeouts + repeated WAIT + wrong-MAC frame), RXCONT was never interrupted */
+    ASSERT_EQUAL_U32(0U, s_wait_probe.standby_calls_during_wait);
+    ASSERT_EQUAL_U32(1U, s_wait_probe.rx_single_calls_during_wait);
+    ASSERT_EQUAL_U32(0U, s_wait_probe.delay_calls);
+    /* Overall: rx_single called twice (GRANT_RX and FINISH_RX), standby called twice (exit GRANT and exit FINISH) */
+    ASSERT_EQUAL_U32(2U, s_wait_probe.rx_single_calls);
+    ASSERT_EQUAL_U32(2U, s_wait_probe.standby_calls);
+
+    return 0;
+}
+
 /* =========================================================================
  * 7. Gateway Relay Engine and MQTT Schema Conformance Test
  * ========================================================================= */
@@ -962,6 +1114,7 @@ int main(void)
     TEST_RUN(test_monotonic_nvs_counter_commit_and_rollback_lockout);
     TEST_RUN(test_cad_retry_exhaustion);
     TEST_RUN(test_node_complete_handshake_end_to_end);
+    TEST_RUN(test_node_wait_rx_continuous_indefinite_until_grant);
     TEST_RUN(test_gateway_relay_engine_and_mqtt_schema);
     TEST_RUN(test_gateway_v2_join_build_wait_and_reject);
 
