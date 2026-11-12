@@ -585,51 +585,6 @@ void app_main(void)
         ESP_LOGW(TAG, "Namespace nvs_sec not found: %s", esp_err_to_name(sec_err));
     }
 
-    /* Strict Fail-Closed Provisioning Verification (DEC-SEC-01, DEC-SEC-06, Issue #324) */
-    if (s_join_ctx.state != NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
-#if CONFIG_NODE_STRICT_PROVISIONING
-        if (!k_join_loaded) {
-            ESP_LOGE(TAG, "[PROVISION ERROR] Missing provisioned K_JOIN in nvs_sec. Halting radio.");
-            s_join_ctx.state = NODE_V2_JOIN_STATE_ABORTED;
-            lora_mac_crypto_zeroize(join_cfg.k_join, sizeof(join_cfg.k_join));
-
-            if (!radio_initialized) {
-                if (sx1276_init(NULL, NULL) == ESP_OK) {
-                    radio_initialized = true;
-                }
-            }
-            if (radio_initialized) {
-                (void)sx1276_sleep();
-            }
-
-            button_driver_t halt_btn;
-            button_config_t halt_btn_cfg = {
-                .gpio_num = (gpio_num_t)CONFIG_NODE_BUTTON_GPIO,
-                .active_level = CONFIG_NODE_BUTTON_ACTIVE_LEVEL,
-                .debounce_ms = CONFIG_NODE_BUTTON_DEBOUNCE_MS,
-                .hold_time_ms = CONFIG_NODE_BUTTON_HOLD_TIME_MS,
-            };
-            if (button_driver_init(&halt_btn, &halt_btn_cfg) == ESP_OK) {
-                (void)button_driver_arm_sleep(&halt_btn);
-            }
-
-#if CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC > 0
-            ESP_LOGI(TAG, "Enabling Timer Wakeup in %d seconds", CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC);
-            (void)esp_sleep_enable_timer_wakeup((uint64_t)CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC * 1000000ULL);
-#endif
-
-            ESP_LOGE(TAG, "[PROVISION HALT] Node is unprovisioned. Entering Deep-Sleep mode.");
-            esp_deep_sleep_start();
-            vTaskSuspend(NULL);
-            return;
-        }
-#else
-        if (!k_join_loaded) {
-            ESP_LOGW(TAG, "[PROVISION WARN] Missing provisioned K_JOIN in nvs_sec, but strict provisioning is disabled (lab test mode).");
-        }
-#endif
-    }
-
     /* Bind established session keys if already joined */
     if (s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
         mac_cfg.node_id = s_join_ctx.assigned_node_id;
@@ -670,11 +625,158 @@ void app_main(void)
         ESP_LOGE(TAG, "Button driver initialization failed: %s", esp_err_to_name(btn_err));
     }
 
-    /* 7. Identify wake-up cause and service button events */
+    /* 7. Identify wake-up cause */
     button_wakeup_cause_t wake_cause = button_driver_get_wakeup_cause();
+
+    /* =========================================================================
+     * UNJOINED FLOW (Issue #340)
+     * When unjoined, the node MUST NOT automatically transmit RF on cold boot / reset.
+     * It immediately enters Deep Sleep and only initiates Join upon GPIO button press.
+     * ========================================================================= */
+    if (s_join_ctx.state != NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
+        if (wake_cause != BUTTON_CAUSE_EXT0_BUTTON) {
+            ESP_LOGI(TAG, "[UNJOINED BOOT] Cold boot or non-button wake detected (cause=%d) while UNJOINED.", (int)wake_cause);
+            ESP_LOGI(TAG, "[UNJOINED BOOT] Putting radio to SLEEP, arming button GPIO %d, entering Deep-Sleep immediately.",
+                     CONFIG_NODE_BUTTON_GPIO);
+
+            if (sx1276_init(NULL, NULL) == ESP_OK) {
+                (void)sx1276_sleep();
+            }
+            if (btn_driver.is_initialized) {
+                (void)button_driver_arm_sleep(&btn_driver);
+            }
+            node_update_oled_unjoined();
+            esp_deep_sleep_start();
+            vTaskSuspend(NULL);
+            return;
+        }
+
+        /* Wake cause is EXT0 physical button press while UNJOINED */
+        ESP_LOGI(TAG, "[WAKE CAUSE] EXT0 Button Wakeup detected on GPIO %d while UNJOINED", CONFIG_NODE_BUTTON_GPIO);
+        bool button_qualified = false;
+        esp_err_t q_err = button_driver_qualify_press(&btn_driver, &button_qualified);
+        if (q_err != ESP_OK || !button_qualified) {
+            ESP_LOGW(TAG, "Transient wake without qualified button press (bounce/noise filtered). Returning to Deep-Sleep.");
+            if (btn_driver.is_initialized) {
+                (void)button_driver_arm_sleep(&btn_driver);
+            }
+            esp_deep_sleep_start();
+            vTaskSuspend(NULL);
+            return;
+        }
+
+        /* Strict Fail-Closed Provisioning Verification (DEC-SEC-01, DEC-SEC-06, Issue #324) */
+#if CONFIG_NODE_STRICT_PROVISIONING
+        if (!k_join_loaded) {
+            ESP_LOGE(TAG, "[PROVISION ERROR] Missing provisioned K_JOIN in nvs_sec. Halting radio.");
+            s_join_ctx.state = NODE_V2_JOIN_STATE_ABORTED;
+            lora_mac_crypto_zeroize(join_cfg.k_join, sizeof(join_cfg.k_join));
+            if (sx1276_init(NULL, NULL) == ESP_OK) {
+                (void)sx1276_sleep();
+            }
+            if (btn_driver.is_initialized) {
+                (void)button_driver_arm_sleep(&btn_driver);
+            }
+            esp_deep_sleep_start();
+            vTaskSuspend(NULL);
+            return;
+        }
+#else
+        if (!k_join_loaded) {
+            ESP_LOGW(TAG, "[PROVISION WARN] Missing provisioned K_JOIN in nvs_sec, but strict provisioning is disabled (lab test mode).");
+        }
+#endif
+
+        /* Initialize SX1276 radio for OTA V2 Join Handshake */
+        if (!radio_initialized) {
+            esp_err_t sx_err = sx1276_init(NULL, NULL);
+            if (sx_err == ESP_OK) {
+                radio_initialized = true;
+            } else {
+                ESP_LOGE(TAG, "SX1276 initialization failed for join: %s", esp_err_to_name(sx_err));
+            }
+        }
+
+        if (radio_initialized) {
+            ESP_LOGI(TAG, "==================================================");
+            ESP_LOGI(TAG, "[JOIN TRIGGER] Physical button press qualified on GPIO %d. Starting OTA V2 Join!", CONFIG_NODE_BUTTON_GPIO);
+            ESP_LOGI(TAG, "[RF PHY CONFIG] Freq: 920.250 MHz | Channel: 0 (VN920) | SF: 7 | BW: 125 kHz | CR: 4/5 | Preamble: 8 | SyncWord: 0x12 | PA: PA_BOOST (+14 dBm)");
+            ESP_LOGI(TAG, "[RF IDENTITY] Node MAC: %02X:%02X:%02X:%02X:%02X:%02X | Target GW: %u | Network ID: %" PRIu32,
+                     join_cfg.device_mac[0], join_cfg.device_mac[1], join_cfg.device_mac[2],
+                     join_cfg.device_mac[3], join_cfg.device_mac[4], join_cfg.device_mac[5],
+                     join_cfg.target_gw_id, join_cfg.network_id);
+            ESP_LOGI(TAG, "==================================================");
+
+            esp_err_t join_err = node_v2_join_run(&join_cfg, &join_hal, &s_join_ctx);
+            if (join_err == ESP_OK && s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
+                ESP_LOGI(TAG, "==================================================");
+                ESP_LOGI(TAG, ">>> V2 JOIN HANDSHAKE SUCCESSFUL! <<<");
+                ESP_LOGI(TAG, "Assigned Node ID: #%u | State: %s",
+                         s_join_ctx.assigned_node_id, node_v2_join_state_to_str(s_join_ctx.state));
+                ESP_LOGI(TAG, "==================================================");
+                mac_cfg.node_id = s_join_ctx.assigned_node_id;
+                (void)memcpy(mac_cfg.k_session_up, s_join_ctx.session_keys.k_session_up, 16);
+                (void)memcpy(mac_cfg.k_session_down, s_join_ctx.session_keys.k_session_dl, 16);
+
+                /* Verify NVS persistence integrity */
+                node_v2_join_context_t verify_ctx;
+                (void)node_v2_join_init(&verify_ctx);
+                if (node_v2_join_load_session(&verify_ctx) == ESP_OK) {
+                    ESP_LOGI(TAG, "NVS session persistence verified: Node ID #%u, joined=1, keys 16B",
+                             verify_ctx.assigned_node_id);
+                } else {
+                    ESP_LOGW(TAG, "NVS session verification failed after join commit");
+                }
+                lora_mac_crypto_zeroize(&verify_ctx.session_keys, sizeof(verify_ctx.session_keys));
+
+                lora_mac_crypto_zeroize(join_cfg.k_join, sizeof(join_cfg.k_join));
+                (void)sx1276_sleep();
+                if (btn_driver.is_initialized) {
+                    (void)button_driver_arm_sleep(&btn_driver);
+                }
+#if CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC > 0
+                (void)esp_sleep_enable_timer_wakeup((uint64_t)CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC * 1000000ULL);
+#endif
+                ESP_LOGI(TAG, "Node is JOINED. Entering Deep-Sleep mode. Press button on GPIO %d to wake up...", CONFIG_NODE_BUTTON_GPIO);
+                esp_deep_sleep_start();
+                vTaskSuspend(NULL);
+                return;
+            } else if (node_v2_join_is_rejected(&s_join_ctx)) {
+                ESP_LOGW(TAG, "==================================================");
+                ESP_LOGW(TAG, ">>> V2 JOIN REJECTED BY GATEWAY/BACKEND! <<<");
+                ESP_LOGW(TAG, "Putting radio to SLEEP, arming button GPIO %d, entering Deep-Sleep.", CONFIG_NODE_BUTTON_GPIO);
+                ESP_LOGW(TAG, "==================================================");
+                lora_mac_crypto_zeroize(join_cfg.k_join, sizeof(join_cfg.k_join));
+                (void)sx1276_sleep();
+                if (btn_driver.is_initialized) {
+                    (void)button_driver_arm_sleep(&btn_driver);
+                }
+                node_update_oled_unjoined();
+                esp_deep_sleep_start();
+                vTaskSuspend(NULL);
+                return;
+            } else {
+                ESP_LOGW(TAG, "[JOIN ATTEMPT FAILED] %s (State: %s). Entering Deep-Sleep ready for next button press.",
+                         esp_err_to_name(join_err), node_v2_join_state_to_str(s_join_ctx.state));
+                lora_mac_crypto_zeroize(join_cfg.k_join, sizeof(join_cfg.k_join));
+                (void)sx1276_sleep();
+                if (btn_driver.is_initialized) {
+                    (void)button_driver_arm_sleep(&btn_driver);
+                }
+                node_update_oled_unjoined();
+                esp_deep_sleep_start();
+                vTaskSuspend(NULL);
+                return;
+            }
+        }
+    }
+
+    /* =========================================================================
+     * JOINED FLOW (Node has active session in INSTALLED_INACTIVE)
+     * ========================================================================= */
     switch (wake_cause) {
         case BUTTON_CAUSE_EXT0_BUTTON: {
-            ESP_LOGI(TAG, "[WAKE CAUSE] EXT0 Button Wakeup detected on GPIO %d", CONFIG_NODE_BUTTON_GPIO);
+            ESP_LOGI(TAG, "[WAKE CAUSE] EXT0 Button Wakeup detected on GPIO %d (JOINED Node)", CONFIG_NODE_BUTTON_GPIO);
             bool qualified = false;
             esp_err_t q_err = button_driver_qualify_press(&btn_driver, &qualified);
             if (q_err == ESP_OK && qualified) {
@@ -725,7 +827,7 @@ void app_main(void)
                     ESP_LOGW(TAG, "SX1276 init for timer wakeup failed: %s", esp_err_to_name(sx_err));
                 }
             }
-            if (radio_initialized && s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
+            if (radio_initialized) {
                 uint32_t slot_delay_ms = (uint32_t)mac_cfg.node_id * 40U;
                 if (slot_delay_ms > 0) {
                     (void)node_smart_backoff(slot_delay_ms);
@@ -736,9 +838,8 @@ void app_main(void)
             }
             break;
         default:
-            ESP_LOGI(TAG, "[WAKE CAUSE] Power-On Reset or Software Restart");
-            if (s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
-                /* Cold boot with active session: transition SX1276 to safe SLEEP mode immediately */
+            ESP_LOGI(TAG, "[WAKE CAUSE] Power-On Reset or Software Restart with active session");
+            if (!radio_initialized) {
                 esp_err_t sx_err = sx1276_init(NULL, NULL);
                 if (sx_err == ESP_OK) {
                     radio_initialized = true;
@@ -747,96 +848,8 @@ void app_main(void)
                 } else {
                     ESP_LOGW(TAG, "SX1276 init returned: %s (safe sleep default)", esp_err_to_name(sx_err));
                 }
-            } else {
-                /* Cold boot unjoined: initialize SX1276 radio into STANDBY (Fail-closed RF) */
-                esp_err_t sx_err = sx1276_init(NULL, NULL);
-                if (sx_err != ESP_OK) {
-                    ESP_LOGW(TAG, "SX1276 init returned: %s (safe standby default)", esp_err_to_name(sx_err));
-                } else {
-                    ESP_LOGI(TAG, "SX1276 initialized successfully in STANDBY mode");
-                    radio_initialized = true;
-                }
             }
             break;
-    }
-
-    /* 8. Over-the-Air V2 Join Handshake Campaign if node is UNJOINED */
-    if (s_join_ctx.state != NODE_V2_JOIN_STATE_INSTALLED_INACTIVE && !s_join_ctx.radio_permanently_locked) {
-        if (!radio_initialized) {
-            ESP_LOGI(TAG, "Initializing SX1276 radio for OTA V2 Join Handshake");
-            esp_err_t sx_err = sx1276_init(NULL, NULL);
-            if (sx_err != ESP_OK) {
-                ESP_LOGE(TAG, "SX1276 initialization failed for join: %s", esp_err_to_name(sx_err));
-            } else {
-                radio_initialized = true;
-            }
-        }
-
-        if (radio_initialized) {
-            ESP_LOGI(TAG, "==================================================");
-            ESP_LOGI(TAG, "[JOIN MODE] Node UNJOINED - Operating in STANDBY retry loop until joined");
-            ESP_LOGI(TAG, "[RF PHY CONFIG] Freq: 920.250 MHz | Channel: 0 (VN920) | SF: 7 | BW: 125 kHz | CR: 4/5 | Preamble: 8 | SyncWord: 0x12 | PA: PA_BOOST (+14 dBm)");
-            ESP_LOGI(TAG, "[RF IDENTITY] Node MAC: %02X:%02X:%02X:%02X:%02X:%02X | Target GW: %u | Network ID: %" PRIu32,
-                     join_cfg.device_mac[0], join_cfg.device_mac[1], join_cfg.device_mac[2],
-                     join_cfg.device_mac[3], join_cfg.device_mac[4], join_cfg.device_mac[5],
-                     join_cfg.target_gw_id, join_cfg.network_id);
-            ESP_LOGI(TAG, "==================================================");
-
-            uint32_t join_attempt = 0;
-            while (s_join_ctx.state != NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
-                if (s_join_ctx.radio_permanently_locked) {
-                    ESP_LOGE(TAG, "[JOIN LOCKOUT] Radio permanently locked due to counter rollback anomaly! Halting.");
-                    break;
-                }
-#if CONFIG_NODE_STRICT_PROVISIONING
-                if (!k_join_loaded) {
-                    ESP_LOGE(TAG, "[PROVISION ERROR] Missing provisioned K_JOIN in nvs_sec. Halting radio.");
-                    if (radio_initialized) {
-                        (void)sx1276_sleep();
-                    }
-                    break;
-                }
-#endif
-
-                join_attempt++;
-                ESP_LOGI(TAG, "[JOIN] >>> Starting Join Attempt #%" PRIu32 " on Freq=920.250 MHz (CH0) <<<", join_attempt);
-
-                esp_err_t join_err = node_v2_join_run(&join_cfg, &join_hal, &s_join_ctx);
-                if (join_err == ESP_OK && s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
-                    ESP_LOGI(TAG, "==================================================");
-                    ESP_LOGI(TAG, ">>> V2 JOIN HANDSHAKE SUCCESSFUL! <<<");
-                    ESP_LOGI(TAG, "Assigned Node ID: #%u | State: %s",
-                             s_join_ctx.assigned_node_id, node_v2_join_state_to_str(s_join_ctx.state));
-                    ESP_LOGI(TAG, "==================================================");
-                    mac_cfg.node_id = s_join_ctx.assigned_node_id;
-                    (void)memcpy(mac_cfg.k_session_up, s_join_ctx.session_keys.k_session_up, 16);
-                    (void)memcpy(mac_cfg.k_session_down, s_join_ctx.session_keys.k_session_dl, 16);
-
-                    /* Helper to verify NVS persistence integrity (Acceptance Criterion 2) */
-                    node_v2_join_context_t verify_ctx;
-                    (void)node_v2_join_init(&verify_ctx);
-                    if (node_v2_join_load_session(&verify_ctx) == ESP_OK) {
-                        ESP_LOGI(TAG, "NVS session persistence verified: Node ID #%u, joined=1, keys 16B",
-                                 verify_ctx.assigned_node_id);
-                    } else {
-                        ESP_LOGW(TAG, "NVS session verification failed after join commit");
-                    }
-                    lora_mac_crypto_zeroize(&verify_ctx.session_keys, sizeof(verify_ctx.session_keys));
-                    break;
-                }
-
-                ESP_LOGW(TAG, "[JOIN FAILED] Attempt #%" PRIu32 " failed: %s (State: %s)",
-                         join_attempt, esp_err_to_name(join_err), node_v2_join_state_to_str(s_join_ctx.state));
-
-                /* Keep radio in STANDBY mode between join retries */
-                (void)prod_radio_standby();
-                s_join_ctx.state = NODE_V2_JOIN_STATE_UNJOINED;
-
-                uint32_t backoff_ms = 2000U + (esp_random() % 1000U);
-                ESP_LOGI(TAG, "[STANDBY] Radio standing by on 920.250 MHz. Retrying Join in %" PRIu32 " ms...", backoff_ms);
-                (void)node_smart_backoff(backoff_ms);
-            }
-        }
     }
 
     size_t pending_events = node_event_fifo_get_pending_count(&s_event_fifo);
@@ -844,7 +857,7 @@ void app_main(void)
              pending_events, node_event_fifo_get_dropped_count(&s_event_fifo));
 
     /* 9. Execute CAD + Random Backoff Event Transmission if joined and pending events exist */
-    if (s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE && pending_events > 0U) {
+    if (pending_events > 0U) {
         if (!radio_initialized) {
             ESP_LOGI(TAG, "Initializing SX1276 radio for Event transmission");
             esp_err_t sx_err = sx1276_init(NULL, NULL);
@@ -861,14 +874,10 @@ void app_main(void)
                      esp_err_to_name(cycle_err),
                      node_event_fifo_get_pending_count(&s_event_fifo));
         }
-    } else if (s_join_ctx.state != NODE_V2_JOIN_STATE_INSTALLED_INACTIVE && pending_events > 0U) {
-        ESP_LOGW(TAG, "Node is not yet joined (State: %s). Event transmission deferred until joined.",
-                 node_v2_join_state_to_str(s_join_ctx.state));
     }
 
-    /* 9b. If joined and idle, briefly listen for Gateway DOWN_HEARTBEAT_PROBE (150ms window) on active wakeups */
-    if (wake_cause != BUTTON_CAUSE_RESET_OR_OTHER && radio_initialized &&
-        s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE && pending_events == 0U) {
+    /* 9b. Briefly listen for Gateway DOWN_HEARTBEAT_PROBE (150ms window) on active wakeups */
+    if (wake_cause != BUTTON_CAUSE_RESET_OR_OTHER && radio_initialized && pending_events == 0U) {
         (void)node_listen_and_respond_probe(&mac_cfg, 150);
     }
 
@@ -880,24 +889,18 @@ void app_main(void)
         (void)sx1276_sleep();
     }
 
-    /* 11. Enter Deep-Sleep ONLY after successful Join */
-    if (s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
-        if (btn_driver.is_initialized) {
-            button_driver_arm_sleep(&btn_driver);
-        }
+    /* 11. Enter Deep-Sleep */
+    if (btn_driver.is_initialized) {
+        button_driver_arm_sleep(&btn_driver);
+    }
 
 #if CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC > 0
-        ESP_LOGI(TAG, "Enabling Timer Wakeup in %d seconds", CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC);
-        esp_sleep_enable_timer_wakeup((uint64_t)CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC * 1000000ULL);
+    ESP_LOGI(TAG, "Enabling Timer Wakeup in %d seconds", CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC);
+    esp_sleep_enable_timer_wakeup((uint64_t)CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC * 1000000ULL);
 #endif
 
-        ESP_LOGI(TAG, "Node is JOINED. Entering Deep-Sleep mode. Press button on GPIO %d to wake up...", CONFIG_NODE_BUTTON_GPIO);
-        ESP_LOGI(TAG, "==================================================");
+    ESP_LOGI(TAG, "Node is JOINED. Entering Deep-Sleep mode. Press button on GPIO %d to wake up...", CONFIG_NODE_BUTTON_GPIO);
+    ESP_LOGI(TAG, "==================================================");
 
-        esp_deep_sleep_start();
-    } else {
-        ESP_LOGE(TAG, "[SAFETY] Node is not joined (State: %s). Suspending task instead of deep sleep.",
-                 node_v2_join_state_to_str(s_join_ctx.state));
-        vTaskSuspend(NULL);
-    }
+    esp_deep_sleep_start();
 }

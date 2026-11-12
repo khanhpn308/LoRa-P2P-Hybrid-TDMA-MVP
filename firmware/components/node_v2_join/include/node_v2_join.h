@@ -29,6 +29,7 @@ typedef enum {
     NODE_V2_JOIN_STATE_COUNTER_COMMIT,
     NODE_V2_JOIN_STATE_HELLO_TX,
     NODE_V2_JOIN_STATE_GRANT_RX,
+    NODE_V2_JOIN_STATE_WAIT_RX,
     NODE_V2_JOIN_STATE_CONFIRM_TX,
     NODE_V2_JOIN_STATE_FINISH_RX,
     NODE_V2_JOIN_STATE_READY_TX,
@@ -67,6 +68,7 @@ typedef struct {
     uint8_t last_finish31[31];
     lora_mac_session_keys_t session_keys;
     bool radio_permanently_locked;
+    bool join_rejected;
 } node_v2_join_context_t;
 
 /**
@@ -167,6 +169,14 @@ esp_err_t node_v2_join_erase_session(node_v2_join_context_t *ctx);
  * @return true if state is NODE_V2_JOIN_STATE_INSTALLED_INACTIVE and assigned_node_id != 0.
  */
 bool node_v2_join_is_joined(const node_v2_join_context_t *ctx);
+
+/**
+ * @brief Check if join context was aborted due to explicit DOWN_JOIN_REJECT.
+ *
+ * @param[in] ctx Join context.
+ * @return true if join was rejected with DOWN_JOIN_REJECT.
+ */
+bool node_v2_join_is_rejected(const node_v2_join_context_t *ctx);
 
 #ifdef __cplusplus
 }

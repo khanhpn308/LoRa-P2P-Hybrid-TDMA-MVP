@@ -11,6 +11,8 @@
 #include <string.h>
 
 #include "node_v2_join.h"
+#include "lora_mac.h"
+#include "lora_mac_join_crypto.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 
@@ -268,6 +270,407 @@ static int test_cold_boot_joined_zero_flag_requires_join(void)
     return 0;
 }
 
+/* =========================================================================
+ * Issue #340: Button Join, DOWN_JOIN_WAIT and DOWN_JOIN_REJECT Unit Tests
+ * ========================================================================= */
+
+typedef enum {
+    MOCK_SCENARIO_WAIT_THEN_GRANT = 0,
+    MOCK_SCENARIO_WAIT_THEN_REJECT,
+    MOCK_SCENARIO_DIRECT_REJECT,
+} mock_scenario_t;
+
+static mock_scenario_t s_mock_scenario = MOCK_SCENARIO_WAIT_THEN_GRANT;
+static size_t s_mock_step = 0;
+static uint8_t s_last_tx[128];
+static size_t s_last_tx_len = 0;
+static uint32_t s_sleep_calls = 0;
+static uint32_t s_rx_single_calls = 0;
+static node_v2_join_config_t s_mock_peer_cfg;
+static lora_mac_k_join_expanded_keys_t s_mock_peer_k_join_keys;
+static uint8_t s_mock_th[32];
+static lora_mac_session_keys_t s_mock_peer_session_keys;
+
+static esp_err_t mock_radio_cad(bool *out_activity_detected)
+{
+    if (out_activity_detected != NULL) {
+        *out_activity_detected = false;
+    }
+    return ESP_OK;
+}
+
+static esp_err_t mock_radio_tx(const uint8_t *payload, uint8_t length, uint32_t timeout_ms)
+{
+    (void)timeout_ms;
+    if (payload == NULL || length > sizeof(s_last_tx)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    memcpy(s_last_tx, payload, length);
+    s_last_tx_len = length;
+    return ESP_OK;
+}
+
+static esp_err_t mock_radio_sleep(void)
+{
+    s_sleep_calls++;
+    return ESP_OK;
+}
+
+static esp_err_t mock_radio_rx_single(uint32_t window_ms)
+{
+    (void)window_ms;
+    s_rx_single_calls++;
+    return ESP_OK;
+}
+
+static esp_err_t mock_radio_standby(void)
+{
+    return ESP_OK;
+}
+
+static void mock_delay_ms(uint32_t ms)
+{
+    (void)ms;
+}
+
+static esp_err_t mock_radio_read_frame(uint8_t *out_buf, size_t *out_len, uint32_t wait_ms)
+{
+    (void)wait_ms;
+    if (out_buf == NULL || out_len == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (s_mock_scenario == MOCK_SCENARIO_DIRECT_REJECT) {
+        if (s_last_tx_len != LORA_MAC_V2_LEN_UP_JOIN_HELLO) {
+            return ESP_ERR_INVALID_SIZE;
+        }
+        lora_mac_v2_up_join_hello_t hello;
+        if (lora_mac_v2_up_join_hello_deserialize(s_last_tx, s_last_tx_len, &hello) != ESP_OK) {
+            return ESP_ERR_INVALID_ARG;
+        }
+        lora_mac_v2_down_join_reject_t reject;
+        memset(&reject, 0, sizeof(reject));
+        reject.ver_type = LORA_MAC_V2_TYPE_DOWN_JOIN_REJECT;
+        memcpy(reject.device_mac, hello.device_mac, 6);
+        reject.gw_id = hello.target_gw_id;
+        reject.join_counter = hello.join_counter;
+        memset(reject.auth_tag, 0xEE, sizeof(reject.auth_tag));
+
+        size_t written = 0;
+        esp_err_t ser_err = lora_mac_v2_down_join_reject_serialize(&reject, out_buf, 128, &written);
+        if (ser_err != ESP_OK) {
+            return ser_err;
+        }
+        *out_len = written;
+        return ESP_OK;
+    }
+
+    if (s_mock_scenario == MOCK_SCENARIO_WAIT_THEN_REJECT) {
+        if (s_mock_step == 0) {
+            if (s_last_tx_len != LORA_MAC_V2_LEN_UP_JOIN_HELLO) {
+                return ESP_ERR_INVALID_SIZE;
+            }
+            lora_mac_v2_up_join_hello_t hello;
+            if (lora_mac_v2_up_join_hello_deserialize(s_last_tx, s_last_tx_len, &hello) != ESP_OK) {
+                return ESP_ERR_INVALID_ARG;
+            }
+            lora_mac_v2_down_join_wait_t wait_frame;
+            memset(&wait_frame, 0, sizeof(wait_frame));
+            wait_frame.ver_type = LORA_MAC_V2_TYPE_DOWN_JOIN_WAIT;
+            memcpy(wait_frame.device_mac, hello.device_mac, 6);
+            wait_frame.gw_id = hello.target_gw_id;
+            wait_frame.join_counter = hello.join_counter;
+            memset(wait_frame.auth_tag, 0x51, sizeof(wait_frame.auth_tag));
+
+            size_t written = 0;
+            esp_err_t ser_err = lora_mac_v2_down_join_wait_serialize(&wait_frame, out_buf, 128, &written);
+            if (ser_err != ESP_OK) {
+                return ser_err;
+            }
+            *out_len = written;
+            s_mock_step = 1;
+            return ESP_OK;
+        } else if (s_mock_step == 1) {
+            lora_mac_v2_up_join_hello_t hello;
+            if (lora_mac_v2_up_join_hello_deserialize(s_last_tx, s_last_tx_len, &hello) != ESP_OK) {
+                return ESP_ERR_INVALID_ARG;
+            }
+            lora_mac_v2_down_join_reject_t reject;
+            memset(&reject, 0, sizeof(reject));
+            reject.ver_type = LORA_MAC_V2_TYPE_DOWN_JOIN_REJECT;
+            memcpy(reject.device_mac, hello.device_mac, 6);
+            reject.gw_id = hello.target_gw_id;
+            reject.join_counter = hello.join_counter;
+            memset(reject.auth_tag, 0x52, sizeof(reject.auth_tag));
+
+            size_t written = 0;
+            esp_err_t ser_err = lora_mac_v2_down_join_reject_serialize(&reject, out_buf, 128, &written);
+            if (ser_err != ESP_OK) {
+                return ser_err;
+            }
+            *out_len = written;
+            s_mock_step = 2;
+            return ESP_OK;
+        }
+    }
+
+    if (s_mock_scenario == MOCK_SCENARIO_WAIT_THEN_GRANT) {
+        if (s_mock_step == 0) {
+            if (s_last_tx_len != LORA_MAC_V2_LEN_UP_JOIN_HELLO) {
+                return ESP_ERR_INVALID_SIZE;
+            }
+            lora_mac_v2_up_join_hello_t hello;
+            if (lora_mac_v2_up_join_hello_deserialize(s_last_tx, s_last_tx_len, &hello) != ESP_OK) {
+                return ESP_ERR_INVALID_ARG;
+            }
+            lora_mac_v2_down_join_wait_t wait_frame;
+            memset(&wait_frame, 0, sizeof(wait_frame));
+            wait_frame.ver_type = LORA_MAC_V2_TYPE_DOWN_JOIN_WAIT;
+            memcpy(wait_frame.device_mac, hello.device_mac, 6);
+            wait_frame.gw_id = hello.target_gw_id;
+            wait_frame.join_counter = hello.join_counter;
+            memset(wait_frame.auth_tag, 0x51, sizeof(wait_frame.auth_tag));
+
+            size_t written = 0;
+            esp_err_t ser_err = lora_mac_v2_down_join_wait_serialize(&wait_frame, out_buf, 128, &written);
+            if (ser_err != ESP_OK) {
+                return ser_err;
+            }
+            *out_len = written;
+            s_mock_step = 1;
+            return ESP_OK;
+        } else if (s_mock_step == 1) {
+            lora_mac_v2_up_join_hello_t hello;
+            if (lora_mac_v2_up_join_hello_deserialize(s_last_tx, s_last_tx_len, &hello) != ESP_OK) {
+                return ESP_ERR_INVALID_ARG;
+            }
+            lora_mac_v2_down_join_grant_t grant;
+            memset(&grant, 0, sizeof(grant));
+            grant.ver_type = LORA_MAC_V2_TYPE_DOWN_JOIN_GRANT;
+            memcpy(grant.device_mac, hello.device_mac, 6);
+            grant.node_id = 9U;
+            grant.join_counter = hello.join_counter;
+            for (int i = 0; i < 6; i++) {
+                grant.gw_nonce[i] = (uint8_t)(i + 0x40);
+            }
+
+            uint8_t priv_gw[32], pub_gw[32];
+            lora_mac_crypto_x25519_keypair(priv_gw, pub_gw);
+            memcpy(grant.gw_x25519_pub, pub_gw, 32);
+
+            uint8_t z[32];
+            lora_mac_crypto_x25519_ecdh(priv_gw, hello.node_x25519_pub, z);
+
+            uint8_t grant_wire[66];
+            size_t wr = 0;
+            lora_mac_v2_down_join_grant_serialize(&grant, grant_wire, sizeof(grant_wire), &wr);
+
+            lora_mac_join_compute_grant_proof(s_mock_peer_cfg.network_id, s_last_tx, grant_wire,
+                                             s_mock_peer_k_join_keys.k_jgrant, grant.grant_proof);
+            lora_mac_v2_down_join_grant_serialize(&grant, grant_wire, sizeof(grant_wire), &wr);
+
+            lora_mac_join_compute_th(s_mock_peer_cfg.network_id, s_last_tx, grant_wire, s_mock_th);
+            lora_mac_join_derive_session_keys(s_mock_th, z, &s_mock_peer_session_keys);
+
+            memcpy(out_buf, grant_wire, 66);
+            *out_len = 66;
+            s_mock_step = 2;
+            return ESP_OK;
+        } else if (s_mock_step == 2) {
+            if (s_last_tx_len != LORA_MAC_V2_LEN_UP_JOIN_KEY_CONF) {
+                return ESP_ERR_INVALID_SIZE;
+            }
+            lora_mac_v2_up_join_key_confirm_t conf;
+            if (lora_mac_v2_up_join_key_confirm_deserialize(s_last_tx, s_last_tx_len, &conf) != ESP_OK) {
+                return ESP_ERR_INVALID_ARG;
+            }
+            lora_mac_v2_down_join_finish_t finish;
+            memset(&finish, 0, sizeof(finish));
+            finish.ver_type = LORA_MAC_V2_TYPE_DOWN_JOIN_FINISH;
+            finish.gw_id = conf.gw_id;
+            finish.node_id = conf.node_id;
+            finish.join_counter = conf.join_counter;
+
+            uint8_t finish_prefix7[7] = {
+                finish.ver_type, finish.gw_id, finish.node_id,
+                (uint8_t)(finish.join_counter >> 24), (uint8_t)(finish.join_counter >> 16),
+                (uint8_t)(finish.join_counter >> 8), (uint8_t)(finish.join_counter)
+            };
+            lora_mac_join_compute_finish_tags(s_mock_peer_cfg.network_id, s_mock_th, finish_prefix7,
+                                             s_mock_peer_session_keys.k_kc_down, s_mock_peer_k_join_keys.k_jfinish,
+                                             finish.gw_finish_tag, finish.backend_finish_proof);
+
+            uint8_t finish_wire[31];
+            size_t wr = 0;
+            lora_mac_v2_down_join_finish_serialize(&finish, finish_wire, sizeof(finish_wire), &wr);
+            memcpy(out_buf, finish_wire, 31);
+            *out_len = 31;
+            s_mock_step = 3;
+            return ESP_OK;
+        }
+    }
+
+    return ESP_ERR_TIMEOUT;
+}
+
+static int test_node_v2_join_state_strings(void)
+{
+    ASSERT_TRUE(strcmp("UNJOINED", node_v2_join_state_to_str(NODE_V2_JOIN_STATE_UNJOINED)) == 0);
+    ASSERT_TRUE(strcmp("CAD_EVAL", node_v2_join_state_to_str(NODE_V2_JOIN_STATE_CAD_EVAL)) == 0);
+    ASSERT_TRUE(strcmp("COUNTER_COMMIT", node_v2_join_state_to_str(NODE_V2_JOIN_STATE_COUNTER_COMMIT)) == 0);
+    ASSERT_TRUE(strcmp("HELLO_TX", node_v2_join_state_to_str(NODE_V2_JOIN_STATE_HELLO_TX)) == 0);
+    ASSERT_TRUE(strcmp("GRANT_RX", node_v2_join_state_to_str(NODE_V2_JOIN_STATE_GRANT_RX)) == 0);
+    ASSERT_TRUE(strcmp("WAIT_RX", node_v2_join_state_to_str(NODE_V2_JOIN_STATE_WAIT_RX)) == 0);
+    ASSERT_TRUE(strcmp("CONFIRM_TX", node_v2_join_state_to_str(NODE_V2_JOIN_STATE_CONFIRM_TX)) == 0);
+    ASSERT_TRUE(strcmp("FINISH_RX", node_v2_join_state_to_str(NODE_V2_JOIN_STATE_FINISH_RX)) == 0);
+    ASSERT_TRUE(strcmp("READY_TX", node_v2_join_state_to_str(NODE_V2_JOIN_STATE_READY_TX)) == 0);
+    ASSERT_TRUE(strcmp("INSTALLED_INACTIVE", node_v2_join_state_to_str(NODE_V2_JOIN_STATE_INSTALLED_INACTIVE)) == 0);
+    ASSERT_TRUE(strcmp("ABORTED", node_v2_join_state_to_str(NODE_V2_JOIN_STATE_ABORTED)) == 0);
+    ASSERT_TRUE(strcmp("LOCKED_OUT", node_v2_join_state_to_str(NODE_V2_JOIN_STATE_LOCKED_OUT)) == 0);
+    ASSERT_TRUE(strcmp("UNKNOWN", node_v2_join_state_to_str((node_v2_join_state_t)999)) == 0);
+    return 0;
+}
+
+static int test_node_v2_join_reject_helper(void)
+{
+    ASSERT_TRUE(!node_v2_join_is_rejected(NULL));
+
+    node_v2_join_context_t ctx;
+    ASSERT_EQUAL_INT(ESP_OK, node_v2_join_init(&ctx));
+    ASSERT_TRUE(!node_v2_join_is_rejected(&ctx));
+
+    ctx.join_rejected = true;
+    ASSERT_TRUE(node_v2_join_is_rejected(&ctx));
+
+    ASSERT_EQUAL_INT(ESP_OK, node_v2_join_erase_session(&ctx));
+    ASSERT_TRUE(!node_v2_join_is_rejected(&ctx));
+    return 0;
+}
+
+static int test_node_v2_join_direct_reject(void)
+{
+    (void)nvs_flash_erase();
+    s_mock_scenario = MOCK_SCENARIO_DIRECT_REJECT;
+    s_mock_step = 0;
+    s_last_tx_len = 0;
+    s_sleep_calls = 0;
+
+    node_v2_join_config_t cfg;
+    ASSERT_EQUAL_INT(ESP_OK, node_v2_join_get_default_config(&cfg));
+    for (int i = 0; i < 32; i++) {
+        cfg.k_join[i] = (uint8_t)(0x33 + i);
+    }
+
+    node_v2_join_radio_hal_t hal;
+    memset(&hal, 0, sizeof(hal));
+    hal.radio_cad = mock_radio_cad;
+    hal.radio_tx = mock_radio_tx;
+    hal.radio_read_frame = mock_radio_read_frame;
+    hal.radio_sleep = mock_radio_sleep;
+    hal.radio_rx_single = mock_radio_rx_single;
+    hal.radio_standby = mock_radio_standby;
+    hal.delay_ms = mock_delay_ms;
+
+    node_v2_join_context_t ctx;
+    ASSERT_EQUAL_INT(ESP_OK, node_v2_join_init(&ctx));
+
+    esp_err_t err = node_v2_join_run(&cfg, &hal, &ctx);
+    ASSERT_EQUAL_INT(ESP_ERR_INVALID_RESPONSE, err);
+    ASSERT_EQUAL_INT(NODE_V2_JOIN_STATE_ABORTED, ctx.state);
+    ASSERT_TRUE(node_v2_join_is_rejected(&ctx));
+    ASSERT_TRUE(!node_v2_join_is_joined(&ctx));
+    ASSERT_TRUE(s_sleep_calls > 0);
+    return 0;
+}
+
+static int test_node_v2_join_wait_then_reject(void)
+{
+    (void)nvs_flash_erase();
+    s_mock_scenario = MOCK_SCENARIO_WAIT_THEN_REJECT;
+    s_mock_step = 0;
+    s_last_tx_len = 0;
+    s_sleep_calls = 0;
+
+    node_v2_join_config_t cfg;
+    ASSERT_EQUAL_INT(ESP_OK, node_v2_join_get_default_config(&cfg));
+    for (int i = 0; i < 32; i++) {
+        cfg.k_join[i] = (uint8_t)(0x44 + i);
+    }
+
+    node_v2_join_radio_hal_t hal;
+    memset(&hal, 0, sizeof(hal));
+    hal.radio_cad = mock_radio_cad;
+    hal.radio_tx = mock_radio_tx;
+    hal.radio_read_frame = mock_radio_read_frame;
+    hal.radio_sleep = mock_radio_sleep;
+    hal.radio_rx_single = mock_radio_rx_single;
+    hal.radio_standby = mock_radio_standby;
+    hal.delay_ms = mock_delay_ms;
+
+    node_v2_join_context_t ctx;
+    ASSERT_EQUAL_INT(ESP_OK, node_v2_join_init(&ctx));
+
+    esp_err_t err = node_v2_join_run(&cfg, &hal, &ctx);
+    ASSERT_EQUAL_INT(ESP_ERR_INVALID_RESPONSE, err);
+    ASSERT_EQUAL_INT(NODE_V2_JOIN_STATE_ABORTED, ctx.state);
+    ASSERT_TRUE(node_v2_join_is_rejected(&ctx));
+    ASSERT_TRUE(!node_v2_join_is_joined(&ctx));
+    ASSERT_TRUE(s_sleep_calls > 0);
+    return 0;
+}
+
+static int test_node_v2_join_wait_then_grant(void)
+{
+    (void)nvs_flash_erase();
+    s_mock_scenario = MOCK_SCENARIO_WAIT_THEN_GRANT;
+    s_mock_step = 0;
+    s_last_tx_len = 0;
+    s_sleep_calls = 0;
+
+    ASSERT_EQUAL_INT(ESP_OK, node_v2_join_get_default_config(&s_mock_peer_cfg));
+    for (int i = 0; i < 32; i++) {
+        s_mock_peer_cfg.k_join[i] = (uint8_t)(0x55 + i);
+    }
+
+    lora_mac_join_derive_k_join_keys(s_mock_peer_cfg.network_id, s_mock_peer_cfg.device_mac,
+                                     s_mock_peer_cfg.device_generation, s_mock_peer_cfg.k_join,
+                                     &s_mock_peer_k_join_keys);
+
+    node_v2_join_radio_hal_t hal;
+    memset(&hal, 0, sizeof(hal));
+    hal.radio_cad = mock_radio_cad;
+    hal.radio_tx = mock_radio_tx;
+    hal.radio_read_frame = mock_radio_read_frame;
+    hal.radio_sleep = mock_radio_sleep;
+    hal.radio_rx_single = mock_radio_rx_single;
+    hal.radio_standby = mock_radio_standby;
+    hal.delay_ms = mock_delay_ms;
+
+    node_v2_join_context_t ctx;
+    ASSERT_EQUAL_INT(ESP_OK, node_v2_join_init(&ctx));
+
+    esp_err_t err = node_v2_join_run(&s_mock_peer_cfg, &hal, &ctx);
+    ASSERT_EQUAL_INT(ESP_OK, err);
+    ASSERT_EQUAL_INT(NODE_V2_JOIN_STATE_INSTALLED_INACTIVE, ctx.state);
+    ASSERT_TRUE(node_v2_join_is_joined(&ctx));
+    ASSERT_TRUE(!node_v2_join_is_rejected(&ctx));
+    ASSERT_EQUAL_INT(9U, ctx.assigned_node_id);
+    ASSERT_EQUAL_MEM(s_mock_peer_session_keys.k_session_up, ctx.session_keys.k_session_up, 16);
+    ASSERT_EQUAL_MEM(s_mock_peer_session_keys.k_session_dl, ctx.session_keys.k_session_dl, 16);
+
+    /* Verify session persistence to NVS */
+    ASSERT_EQUAL_INT(ESP_OK, node_v2_join_save_session(&ctx));
+
+    node_v2_join_context_t loaded_ctx;
+    ASSERT_EQUAL_INT(ESP_OK, node_v2_join_init(&loaded_ctx));
+    ASSERT_EQUAL_INT(ESP_OK, node_v2_join_load_session(&loaded_ctx));
+    ASSERT_EQUAL_INT(NODE_V2_JOIN_STATE_INSTALLED_INACTIVE, loaded_ctx.state);
+    ASSERT_EQUAL_INT(9U, loaded_ctx.assigned_node_id);
+    ASSERT_TRUE(node_v2_join_is_joined(&loaded_ctx));
+
+    return 0;
+}
+
 int main(void)
 {
     int failures = 0;
@@ -281,6 +684,11 @@ int main(void)
     TEST_RUN(test_cold_boot_recovery_bypasses_join_handshake);
     TEST_RUN(test_cold_boot_unjoined_requires_join_handshake);
     TEST_RUN(test_cold_boot_joined_zero_flag_requires_join);
+    TEST_RUN(test_node_v2_join_state_strings);
+    TEST_RUN(test_node_v2_join_reject_helper);
+    TEST_RUN(test_node_v2_join_direct_reject);
+    TEST_RUN(test_node_v2_join_wait_then_reject);
+    TEST_RUN(test_node_v2_join_wait_then_grant);
 
     printf("\n=== Test Results: %s (Failures: %d) ===\n\n",
            (failures == 0) ? "ALL TESTS PASSED" : "TESTS FAILED", failures);

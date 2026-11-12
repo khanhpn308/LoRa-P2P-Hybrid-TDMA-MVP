@@ -51,6 +51,7 @@ const char *node_v2_join_state_to_str(node_v2_join_state_t state)
         case NODE_V2_JOIN_STATE_COUNTER_COMMIT:     return "COUNTER_COMMIT";
         case NODE_V2_JOIN_STATE_HELLO_TX:           return "HELLO_TX";
         case NODE_V2_JOIN_STATE_GRANT_RX:           return "GRANT_RX";
+        case NODE_V2_JOIN_STATE_WAIT_RX:            return "WAIT_RX";
         case NODE_V2_JOIN_STATE_CONFIRM_TX:         return "CONFIRM_TX";
         case NODE_V2_JOIN_STATE_FINISH_RX:          return "FINISH_RX";
         case NODE_V2_JOIN_STATE_READY_TX:           return "READY_TX";
@@ -91,6 +92,7 @@ esp_err_t node_v2_join_init(node_v2_join_context_t *ctx)
     memset(ctx, 0, sizeof(*ctx));
     ctx->state = NODE_V2_JOIN_STATE_UNJOINED;
     ctx->radio_permanently_locked = false;
+    ctx->join_rejected = false;
     return ESP_OK;
 }
 
@@ -327,6 +329,7 @@ esp_err_t node_v2_join_erase_session(node_v2_join_context_t *ctx)
         lora_mac_crypto_zeroize(&ctx->session_keys, sizeof(ctx->session_keys));
         ctx->assigned_node_id = 0U;
         ctx->state = NODE_V2_JOIN_STATE_UNJOINED;
+        ctx->join_rejected = false;
     }
 
     nvs_handle_t handle = 0;
@@ -355,6 +358,14 @@ bool node_v2_join_is_joined(const node_v2_join_context_t *ctx)
         return false;
     }
     return (ctx->state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE && ctx->assigned_node_id != 0U);
+}
+
+bool node_v2_join_is_rejected(const node_v2_join_context_t *ctx)
+{
+    if (ctx == NULL) {
+        return false;
+    }
+    return ctx->join_rejected;
 }
 
 esp_err_t node_v2_join_run(const node_v2_join_config_t *cfg,
@@ -516,10 +527,10 @@ esp_err_t node_v2_join_run(const node_v2_join_config_t *cfg,
     }
 
     /* -------------------------------------------------------------
-     * Step 4: Phase 2 (DOWN_JOIN_GRANT 0x46, 66B)
+     * Step 4: Phase 2 (DOWN_JOIN_GRANT 0x46, 66B or DOWN_JOIN_WAIT 0x51, 20B)
      * ------------------------------------------------------------- */
     ctx->state = NODE_V2_JOIN_STATE_GRANT_RX;
-    ESP_LOGI(TAG, "[RF RX] Listening for DOWN_JOIN_GRANT on Freq=920.250 MHz (CH0) for %u ms...",
+    ESP_LOGI(TAG, "[RF RX] Listening for DOWN_JOIN_GRANT / WAIT on Freq=920.250 MHz (CH0) for %u ms...",
              (unsigned int)cfg->grant_listen_timeout_ms);
     if (hal->radio_rx_single != NULL) {
         (void)hal->radio_rx_single(cfg->grant_listen_timeout_ms);
@@ -530,6 +541,91 @@ esp_err_t node_v2_join_run(const node_v2_join_config_t *cfg,
     if (hal->radio_standby != NULL) {
         (void)hal->radio_standby();
     }
+
+    /* Check if initial response is DOWN_JOIN_WAIT (0x51, 20B) */
+    if (err == ESP_OK && rx_len == LORA_MAC_V2_LEN_DOWN_JOIN_WAIT && rx_tmp[0] == LORA_MAC_V2_TYPE_DOWN_JOIN_WAIT) {
+        lora_mac_v2_down_join_wait_t wait_frame;
+        if (lora_mac_v2_down_join_wait_deserialize(rx_tmp, rx_len, &wait_frame) == ESP_OK &&
+            memcmp(wait_frame.device_mac, cfg->device_mac, 6) == 0 &&
+            wait_frame.join_counter == join_counter) {
+            ESP_LOGI(TAG, "[RF RX] Received DOWN_JOIN_WAIT (20B) from Gateway #%u | Ctr=%u. Transitioning to WAIT_RX...",
+                     wait_frame.gw_id, (unsigned int)wait_frame.join_counter);
+            ctx->state = NODE_V2_JOIN_STATE_WAIT_RX;
+        }
+    } else if (err == ESP_OK && rx_len == LORA_MAC_V2_LEN_DOWN_JOIN_REJECT && rx_tmp[0] == LORA_MAC_V2_TYPE_DOWN_JOIN_REJECT) {
+        lora_mac_v2_down_join_reject_t reject_frame;
+        if (lora_mac_v2_down_join_reject_deserialize(rx_tmp, rx_len, &reject_frame) == ESP_OK &&
+            memcmp(reject_frame.device_mac, cfg->device_mac, 6) == 0 &&
+            reject_frame.join_counter == join_counter) {
+            ESP_LOGW(TAG, "[RF RX] Received DOWN_JOIN_REJECT (20B) from Gateway #%u | Ctr=%u. Join rejected.",
+                     reject_frame.gw_id, (unsigned int)reject_frame.join_counter);
+            ctx->join_rejected = true;
+            lora_mac_crypto_zeroize(&k_join_keys, sizeof(k_join_keys));
+            lora_mac_crypto_zeroize(priv_node, sizeof(priv_node));
+            lora_mac_crypto_zeroize(&ctx->session_keys, sizeof(ctx->session_keys));
+            ctx->state = NODE_V2_JOIN_STATE_ABORTED;
+            if (hal->radio_sleep != NULL) {
+                (void)hal->radio_sleep();
+            }
+            return ESP_ERR_INVALID_RESPONSE;
+        }
+    }
+
+    /* While in WAIT_RX, keep radio in rxsingle awaiting operator decision (GRANT or REJECT) */
+    while (ctx->state == NODE_V2_JOIN_STATE_WAIT_RX) {
+        if (hal->radio_rx_single != NULL) {
+            (void)hal->radio_rx_single(1000U);
+        }
+        rx_len = 0;
+        err = hal->radio_read_frame(rx_tmp, &rx_len, 1000U);
+        if (hal->radio_standby != NULL) {
+            (void)hal->radio_standby();
+        }
+        if (err == ESP_OK && rx_len > 0) {
+            uint8_t msg_type = rx_tmp[0];
+            if (msg_type == LORA_MAC_V2_TYPE_DOWN_JOIN_GRANT && rx_len == LORA_MAC_V2_LEN_DOWN_JOIN_GRANT) {
+                lora_mac_v2_down_join_grant_t grant_check;
+                if (lora_mac_v2_down_join_grant_deserialize(rx_tmp, rx_len, &grant_check) == ESP_OK &&
+                    memcmp(grant_check.device_mac, cfg->device_mac, 6) == 0 &&
+                    grant_check.join_counter == join_counter) {
+                    ESP_LOGI(TAG, "[RF RX] Received DOWN_JOIN_GRANT (66B) while in WAIT_RX. Resuming handshake!");
+                    ctx->state = NODE_V2_JOIN_STATE_GRANT_RX;
+                    break;
+                }
+            } else if (msg_type == LORA_MAC_V2_TYPE_DOWN_JOIN_REJECT && rx_len == LORA_MAC_V2_LEN_DOWN_JOIN_REJECT) {
+                lora_mac_v2_down_join_reject_t reject_check;
+                if (lora_mac_v2_down_join_reject_deserialize(rx_tmp, rx_len, &reject_check) == ESP_OK &&
+                    memcmp(reject_check.device_mac, cfg->device_mac, 6) == 0 &&
+                    reject_check.join_counter == join_counter) {
+                    ESP_LOGW(TAG, "[RF RX] Received DOWN_JOIN_REJECT (20B) while in WAIT_RX from Gateway #%u. Aborting.",
+                             reject_check.gw_id);
+                    ctx->join_rejected = true;
+                    lora_mac_crypto_zeroize(&k_join_keys, sizeof(k_join_keys));
+                    lora_mac_crypto_zeroize(priv_node, sizeof(priv_node));
+                    lora_mac_crypto_zeroize(&ctx->session_keys, sizeof(ctx->session_keys));
+                    ctx->state = NODE_V2_JOIN_STATE_ABORTED;
+                    if (hal->radio_sleep != NULL) {
+                        (void)hal->radio_sleep();
+                    }
+                    return ESP_ERR_INVALID_RESPONSE;
+                }
+            }
+        } else if (err != ESP_OK && err != ESP_ERR_TIMEOUT) {
+            ESP_LOGE(TAG, "[RF RX] Radio read frame failure during WAIT_RX: %s", esp_err_to_name(err));
+            lora_mac_crypto_zeroize(&k_join_keys, sizeof(k_join_keys));
+            lora_mac_crypto_zeroize(priv_node, sizeof(priv_node));
+            lora_mac_crypto_zeroize(&ctx->session_keys, sizeof(ctx->session_keys));
+            ctx->state = NODE_V2_JOIN_STATE_ABORTED;
+            if (hal->radio_sleep != NULL) {
+                (void)hal->radio_sleep();
+            }
+            return err;
+        }
+        if (hal->delay_ms != NULL) {
+            hal->delay_ms(10U);
+        }
+    }
+
     if (err != ESP_OK || rx_len != LORA_MAC_V2_LEN_DOWN_JOIN_GRANT) {
         ESP_LOGW(TAG, "[RF RX TIMEOUT] Grant reception timed out (len: %zu, expected 66B) on Freq=920.250 MHz: %s",
                  rx_len, esp_err_to_name(err));
