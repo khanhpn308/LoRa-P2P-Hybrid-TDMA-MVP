@@ -30,6 +30,12 @@ Status: repository integration candidate, Issue [#357](https://github.com/khanhp
 
    Reuse [Native Fast Lane](harness-fast-lane.md), G0, scoped C V2 selection, existing Host checks and independent Auditor. Verify actual candidate graph before and after each patch. Pilot suggestion: only Node OLED presentation, preserve existing behavior and Kconfig. Issue #357 does not authorize firmware edits.
 
+## AGY executor tool-name collision (v1.5.7 owner report)
+
+The failure `failed to construct executor: tool name conflict: multiple tools resolved with name "read_file"` happens before the model can run CCARS. The original two project agents both declared `read_file` and `view_file`; the prior test mistakenly accepted overlapping/legacy identifiers. Both now use a small canonical native allowlist: `run_command`, `view_file`, `write_to_file`, `replace_file_content`, `invoke_subagent`. The existing configuration regression tests cover both agents, duplicate names, legacy aliases, malformed lists and unreviewed tools. Do not declare permission actions as native tools or re-add aliases merely because an earlier release accepted them. See [custom agents](https://antigravity.google/docs/cli/subagents), [native tool identifiers](https://antigravity.google/docs/hooks?tab=ide), and [plugin agent configuration](https://antigravity.google/docs/build-plugins). This change does not disable inherited MCPs or change user permissions.
+
+From the updated checkout, exit and restart AGY, select the agent in `/agents`, verify `/mcp`, and run the bare PLAN_ONLY command again. If the same error remains, compare with the default agent and inspect global `~/.gemini/config/mcp_config.json`, workspace `.agents/mcp_config.json`, and enabled plugins via `/mcp` or `/plugin` for duplicate *effective tool names* or duplicate agent definitions. Do not expose config secrets, delete configs wholesale, or disable CodeGraph as a workaround. Temporarily disable only an identified redundant/conflicting server using the client-supported controls, reload, and repeat the smoke; a server rename alone does not necessarily rename its exported tools. If CodeGraph MCP is unavailable, the approved equivalent CodeGraph CLI remains mandatory; if neither works, stop with BLOCKED_CODEGRAPH. See [MCP manager](https://antigravity.google/docs/cli/mcp/). AGY runtime resolution on the operator's exact version and MCP registry is NOT_VERIFIED by static tests.
+
 ## Existing Host tests and limits
 
 Run from a trusted checkout:

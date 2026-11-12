@@ -6,15 +6,9 @@ subagent: false
 model: inherit
 tools:
   - run_command
-  - read_file
   - view_file
-  - write_file
-  - edit_file
-  - send_message
-  - manage_task
-  - search_web
-  - schedule
-  - generate_image
+  - write_to_file
+  - replace_file_content
   - invoke_subagent
 ---
 
