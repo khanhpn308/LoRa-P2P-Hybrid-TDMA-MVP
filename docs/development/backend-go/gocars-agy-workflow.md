@@ -16,7 +16,13 @@ codegraph explore "Map backend-go server initialization, package dependencies an
 
 If the index does not exist, use `codegraph init --local-only` only when supported and local index creation is authorized. Check the installed command help rather than guessing flags. Confirm Go files and representative symbols appear in the graph, not just a successful exit code. Use an index associated with each candidate worktree; do not reuse stale main-branch evidence. Local `.codegraph/` artifacts are already ignored by the repository.
 
-4. Run `agy` from the repository root, open `/agents` and select `gocars-refactor`. Confirm native tool permissions include MCP or CLI access; tool availability depends on the installed AGY version and operator setup.
+4. Run `agy` from the repository root, open `/agents` and select `gocars-refactor`. Confirm native tool permissions include MCP or CLI access; tool availability depends on the installed AGY version and operator setup. Restart AGY after updating the agent definition so an existing session does not retain the old executor configuration.
+
+### AGY 1.5.7 executor compatibility
+
+Observed failure: `failed to construct executor: unknown component` for `call_mcp_tool`, `list_resources` and `read_resource`. These are not valid static native tool registry entries in the observed AGY release. Agent v1.1 removes them and the redundant `read_file` alias (historical Issue #213); uses `view_file` and a minimal native allowlist instead. Do not add plugin names or generic MCP tool aliases to the static `tools` list. The connected CodeGraph MCP server can be used if its actual tool is exposed and callable in the selected agent; `/mcp` connection status alone is insufficient. Otherwise invoke CodeGraph CLI via `run_command`. The graph remains mandatory: both transports unavailable => `BLOCKED_CODEGRAPH`, not a bulk file-read fallback.
+
+After syncing the patched branch, exit and restart AGY, select the agent, and first run a harmless read-only CodeGraph smoke query, for example `AUDIT_ONLY: use CodeGraph to identify cmd/server/main.go and BuildServeMux; do not edit files.` Record actual tool output and version. Success must show both executor startup and a genuine graph result. Static tests cannot prove compatibility with a running AGY installation. If a future release reports another unknown tool, record the exact error and update the reviewed native allowlist and regression tests; do not silently downgrade graph requirements or turn on unrelated MCP servers. No Espressif docs authentication is required for a Go backend-only task.
 
 ## 2. Normal activation
 

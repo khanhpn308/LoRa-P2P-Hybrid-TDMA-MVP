@@ -28,10 +28,38 @@ class GocarsAgentConfigTests(unittest.TestCase):
         self.assertIs(config["mainAgent"], True)
         self.assertIs(config["subagent"], False)
         self.assertEqual(config["model"], "inherit")
-        required = {"run_command", "read_file", "view_file", "call_mcp_tool",
-                    "list_resources", "read_resource", "invoke_subagent",
-                    "define_subagent", "manage_task"}
-        self.assertTrue(required.issubset(config["tools"]))
+        # Explicit native profile: do not treat generic MCP aliases or plugin
+        # tools as static registry entries. Changes require runtime smoke evidence
+        # with the intended AGY release before extending this list.
+        expected = [
+            "run_command", "view_file", "write_file", "edit_file",
+            "manage_task", "invoke_subagent", "send_message",
+        ]
+        self.assertEqual(config["tools"], expected)
+        self.assertEqual(len(config["tools"]), len(set(config["tools"])))
+
+    def test_reject_unsupported_executor_tools(self):
+        config = yaml.safe_load(self.agent.split("---", 2)[1])
+        unsupported = {
+            "call_mcp_tool", "list_resources", "read_resource",
+            "read_file", "codegraph_explore", "define_subagent",
+        }
+        self.assertFalse(unsupported.intersection(config["tools"]))
+        self.assertIn("view_file", config["tools"])
+        self.assertIn("run_command", config["tools"])
+
+    def test_runtime_mcp_is_not_startup_dependency(self):
+        for token in (
+            "AGY executor compatibility (1.5.7 incident)",
+            "actually callable in this selected agent",
+            "CodeGraph CLI via `run_command`",
+            "never loosen CG-005",
+            "BLOCKED_CODEGRAPH",
+        ):
+            self.assertIn(token, self.agent)
+        self.assertIn("executor", self.workflow)
+        self.assertIn("unknown component", self.workflow)
+        self.assertIn("1.5.7", self.workflow)
 
     def test_rule_id_registries(self):
         ids = re.findall(r"(?m)^\| (GO-[A-Z]+-\d{3}) \| (?:MUST NOT|MUST|SHOULD|MAY) \|", self.standard)

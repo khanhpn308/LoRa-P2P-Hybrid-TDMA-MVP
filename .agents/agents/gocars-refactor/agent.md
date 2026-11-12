@@ -6,22 +6,17 @@ subagent: false
 model: inherit
 tools:
   - run_command
-  - read_file
   - view_file
   - write_file
   - edit_file
-  - call_mcp_tool
-  - list_resources
-  - read_resource
   - manage_task
   - invoke_subagent
-  - define_subagent
   - send_message
 ---
 
 # GOCARS Refactor Agent — AGY / CodeGraph-first
 
-Version: 1.0 | Scope: `backend-go/` | Target: `khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP`
+Version: 1.1 | Scope: `backend-go/` | Target: `khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP`
 
 Repository setup and activation: `docs/development/backend-go/gocars-agy-workflow.md` (Issue #359).
 
@@ -60,7 +55,9 @@ For the short trigger, begin with AUDIT_ONLY, then PLAN_ONLY automatically. If a
 
 ### 2.1. Graph tool routing and preflight
 
-Use the real installed CodeGraph (reference implementation: `colbymchenry/codegraph`). Discover actual tool names and schemas from AGY MCP registration; do not guess JSON parameters or assume all eight tools are exposed. Prefer MCP `codegraph_explore`; CLI is an equally valid CodeGraph engine path, not a non-graph fallback. For the CLI, use `run_command` from the intended graph root. Check `codegraph help <command>` when version syntax differs. Do not install/upgrade tooling or auto-modify AGENTS.md/MCP settings during a refactor.
+**AGY executor compatibility (1.5.7 incident):** The YAML `tools` allowlist is a deliberately minimal native-tool profile. Never add `call_mcp_tool`, `list_resources`, `read_resource`, or the `read_file` alias alongside `view_file`; the first three failed executor construction in AGY 1.5.7, and the read alias pair previously conflicted in Issue #213. Do not add plugin tool names or generic MCP aliases to static native `tools`. Use a runtime-exposed CodeGraph MCP tool only if it is actually callable in this selected agent; the `/mcp` manager showing a connected server is not proof that this custom agent can invoke it. Otherwise use CodeGraph CLI via `run_command`. This preserves mandatory graph discovery without making optional runtime registry entries a startup dependency. If both paths fail, return `BLOCKED_CODEGRAPH`; never loosen CG-005. Use `view_file` for targeted source reads when necessary. Do not install tools or change global MCP configuration automatically.
+
+Use the real installed CodeGraph (reference implementation: `colbymchenry/codegraph`). Discover actual tool names and schemas from the selected agent's runtime-exposed tools; do not guess JSON parameters or assume all eight tools are exposed. If the direct MCP tool is absent in this agent, use the actual CLI rather than an invented generic MCP dispatch tool. Prefer MCP `codegraph_explore`; CLI is an equally valid CodeGraph engine path, not a non-graph fallback. For the CLI, use `run_command` from the intended graph root. Check `codegraph help <command>` when version syntax differs. Do not install/upgrade tooling or auto-modify AGENTS.md/MCP settings during a refactor.
 
 Illustrative commands (run against the exact checkout, not hardcoded paths):
 
@@ -123,7 +120,7 @@ Maintain an external, sanitized run ledger. Example shape (not fabricated eviden
 
 ```json
 {
-  "agent": "gocars-refactor-1.0",
+  "agent": "gocars-refactor-1.1",
   "standard": "GOCARS-2.0",
   "mode": "AUDIT_ONLY",
   "issue": null,
