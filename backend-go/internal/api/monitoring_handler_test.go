@@ -2,17 +2,22 @@ package api_test
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/api"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/domain"
+	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/presence"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/storage"
 )
 
@@ -719,5 +724,310 @@ func TestMonitoringHandler_DeleteNode_WithGatewayQueryHint(t *testing.T) {
 
 	if pub.calls[0].nodeID != 15 {
 		t.Fatalf("expected nodeID 15, got %d", pub.calls[0].nodeID)
+	}
+}
+
+var deleteDriverOnce sync.Once
+
+type mockDeleteExec struct {
+	query string
+	args  []driver.Value
+}
+
+type mockDeleteQuery struct {
+	query string
+	args  []driver.Value
+}
+
+type mockDeleteTracker struct {
+	mu             sync.Mutex
+	execs          []mockDeleteExec
+	queries        []mockDeleteQuery
+	assignedNodeID int
+	assignedGwID   string
+}
+
+func (t *mockDeleteTracker) reset() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.execs = nil
+	t.queries = nil
+	t.assignedNodeID = 1
+	t.assignedGwID = "gw-test-01"
+}
+
+func (t *mockDeleteTracker) addExec(q string, args []driver.Value) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.execs = append(t.execs, mockDeleteExec{query: q, args: args})
+}
+
+func (t *mockDeleteTracker) addQuery(q string, args []driver.Value) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.queries = append(t.queries, mockDeleteQuery{query: q, args: args})
+}
+
+func (t *mockDeleteTracker) getExecs() []mockDeleteExec {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	res := make([]mockDeleteExec, len(t.execs))
+	copy(res, t.execs)
+	return res
+}
+
+var globalDeleteTracker = &mockDeleteTracker{
+	assignedNodeID: 1,
+	assignedGwID:   "gw-test-01",
+}
+
+type mockDeleteDriver struct{}
+
+func (d *mockDeleteDriver) Open(name string) (driver.Conn, error) {
+	return &mockDeleteConn{}, nil
+}
+
+type mockDeleteConn struct{}
+
+func (c *mockDeleteConn) Prepare(query string) (driver.Stmt, error) {
+	return &mockDeleteStmt{query: query}, nil
+}
+
+func (c *mockDeleteConn) Close() error { return nil }
+func (c *mockDeleteConn) Begin() (driver.Tx, error) {
+	return &mockDeleteTx{}, nil
+}
+func (c *mockDeleteConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	return &mockDeleteTx{}, nil
+}
+
+type mockDeleteTx struct{}
+
+func (t *mockDeleteTx) Commit() error   { return nil }
+func (t *mockDeleteTx) Rollback() error { return nil }
+
+type mockDeleteStmt struct {
+	query string
+}
+
+func (s *mockDeleteStmt) Close() error  { return nil }
+func (s *mockDeleteStmt) NumInput() int { return -1 }
+
+func (s *mockDeleteStmt) Exec(args []driver.Value) (driver.Result, error) {
+	globalDeleteTracker.addExec(s.query, args)
+	return driver.RowsAffected(1), nil
+}
+
+func (s *mockDeleteStmt) Query(args []driver.Value) (driver.Rows, error) {
+	globalDeleteTracker.addQuery(s.query, args)
+	q := strings.ToLower(s.query)
+
+	if strings.Contains(q, "from device_join_requests where lower(device_mac) = $1") {
+		globalDeleteTracker.mu.Lock()
+		nid := int64(globalDeleteTracker.assignedNodeID)
+		gid := globalDeleteTracker.assignedGwID
+		globalDeleteTracker.mu.Unlock()
+		return &mockDeleteRows{
+			cols: []string{"gateway_id", "assigned_node_id"},
+			data: [][]driver.Value{{gid, nid}},
+		}, nil
+	}
+
+	if strings.Contains(q, "from node_health where node_id = $1") {
+		globalDeleteTracker.mu.Lock()
+		gid := globalDeleteTracker.assignedGwID
+		globalDeleteTracker.mu.Unlock()
+		return &mockDeleteRows{
+			cols: []string{"gateway_id"},
+			data: [][]driver.Value{{gid}},
+		}, nil
+	}
+
+	if strings.Contains(q, "from device_join_requests where assigned_node_id = $1") {
+		globalDeleteTracker.mu.Lock()
+		gid := globalDeleteTracker.assignedGwID
+		globalDeleteTracker.mu.Unlock()
+		return &mockDeleteRows{
+			cols: []string{"gateway_id"},
+			data: [][]driver.Value{{gid}},
+		}, nil
+	}
+
+	return &mockDeleteRows{cols: []string{"id"}, data: nil}, nil
+}
+
+type mockDeleteRows struct {
+	cols []string
+	data [][]driver.Value
+	idx  int
+}
+
+func (r *mockDeleteRows) Columns() []string {
+	return r.cols
+}
+
+func (r *mockDeleteRows) Close() error {
+	return nil
+}
+
+func (r *mockDeleteRows) Next(dest []driver.Value) error {
+	if r.idx >= len(r.data) {
+		return io.EOF
+	}
+	row := r.data[r.idx]
+	for i, val := range row {
+		if i < len(dest) {
+			dest[i] = val
+		}
+	}
+	r.idx++
+	return nil
+}
+
+func initMockDeleteDB() *sql.DB {
+	deleteDriverOnce.Do(func() {
+		sql.Register("mock_delete_postgres", &mockDeleteDriver{})
+	})
+	db, err := sql.Open("mock_delete_postgres", "default")
+	if err != nil {
+		panic(err)
+	}
+	return db
+}
+
+func TestMonitoringHandler_DeleteNode_PurgesEventsAndFormats(t *testing.T) {
+	authMap := map[string]api.Role{
+		"token-admin": api.RoleAdmin,
+	}
+	staticAuth := api.NewStaticAuthenticator(authMap)
+	db := initMockDeleteDB()
+
+	tests := []struct {
+		name                 string
+		nodeIDPath           string
+		configuredNodeID     int
+		configuredGwID       string
+		expectedTargetNodeID int
+		expectedEventsTarget int
+		expectedGatewayScope string
+	}{
+		{
+			name:                 "numeric ID '1'",
+			nodeIDPath:           "1",
+			configuredNodeID:     1,
+			configuredGwID:       "gw-test-01",
+			expectedTargetNodeID: 1,
+			expectedEventsTarget: 1,
+			expectedGatewayScope: "gw-test-01",
+		},
+		{
+			name:                 "prefixed ID 'N-042'",
+			nodeIDPath:           "N-042",
+			configuredNodeID:     42,
+			configuredGwID:       "gw-test-01",
+			expectedTargetNodeID: 42,
+			expectedEventsTarget: 42,
+			expectedGatewayScope: "gw-test-01",
+		},
+		{
+			name:                 "MAC hex '001122334455' resolves assigned node id",
+			nodeIDPath:           "001122334455",
+			configuredNodeID:     10,
+			configuredGwID:       "gw-test-mac",
+			expectedTargetNodeID: 10,
+			expectedEventsTarget: 10,
+			expectedGatewayScope: "gw-test-mac",
+		},
+		{
+			name:                 "prefixed ID with gateway hint 'N-005?gateway_id=gw-custom-scope'",
+			nodeIDPath:           "N-005?gateway_id=gw-custom-scope",
+			configuredNodeID:     5,
+			configuredGwID:       "gw-test-01",
+			expectedTargetNodeID: 5,
+			expectedEventsTarget: 5,
+			expectedGatewayScope: "gw-custom-scope",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			globalDeleteTracker.reset()
+			globalDeleteTracker.assignedNodeID = tc.configuredNodeID
+			globalDeleteTracker.assignedGwID = tc.configuredGwID
+
+			tracker := presence.NewTracker()
+			tracker.SetNodeStatus(tc.expectedTargetNodeID, true)
+			if !tracker.IsNodeOnline(tc.expectedTargetNodeID) {
+				t.Fatalf("expected node %d to be online before delete", tc.expectedTargetNodeID)
+			}
+
+			store := newMockMonitoringStorage()
+			handler := api.NewMonitoringHandler(store, 5*time.Minute, tracker, staticAuth)
+			handler.SetDB(db)
+
+			pub := &mockRevocationPublisher{}
+			handler.SetRevocationPublisher(pub)
+
+			mux := http.NewServeMux()
+			handler.RegisterRoutes(mux)
+
+			req := httptest.NewRequest(http.MethodDelete, "/api/v1/nodes/"+tc.nodeIDPath, nil)
+			req.Header.Set("Authorization", "Bearer token-admin")
+			rec := httptest.NewRecorder()
+
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected status 200 OK, got %d: %s", rec.Code, rec.Body.String())
+			}
+
+			// Verify presenceTracker was cleared for targetNodeID
+			if tracker.IsNodeOnline(tc.expectedTargetNodeID) {
+				t.Fatalf("expected presenceTracker to mark node %d offline after delete", tc.expectedTargetNodeID)
+			}
+
+			// Verify revocation downlink was published
+			if len(pub.calls) != 1 {
+				t.Fatalf("expected 1 revocation downlink call, got %d", len(pub.calls))
+			}
+			if pub.calls[0].nodeID != tc.expectedTargetNodeID {
+				t.Fatalf("expected revocation call for nodeID %d, got %d", tc.expectedTargetNodeID, pub.calls[0].nodeID)
+			}
+			if pub.calls[0].gatewayID != tc.expectedGatewayScope {
+				t.Fatalf("expected revocation call for gatewayID %s, got %s", tc.expectedGatewayScope, pub.calls[0].gatewayID)
+			}
+
+			// Verify database statements executed
+			execs := globalDeleteTracker.getExecs()
+			var foundEventsDelete, foundHealthDelete, foundRequestsDelete bool
+			for _, e := range execs {
+				lower := strings.ToLower(e.query)
+				if strings.Contains(lower, "delete from events") {
+					foundEventsDelete = true
+					if len(e.args) < 1 || e.args[0] != int64(tc.expectedEventsTarget) && e.args[0] != tc.expectedEventsTarget {
+						t.Errorf("events delete arg 0 expected %d, got %v", tc.expectedEventsTarget, e.args[0])
+					}
+					if len(e.args) >= 2 && e.args[1] != tc.expectedGatewayScope {
+						t.Errorf("events delete arg 1 expected gateway %s, got %v", tc.expectedGatewayScope, e.args[1])
+					}
+				}
+				if strings.Contains(lower, "delete from node_health") {
+					foundHealthDelete = true
+				}
+				if strings.Contains(lower, "delete from device_join_requests") {
+					foundRequestsDelete = true
+				}
+			}
+
+			if !foundEventsDelete {
+				t.Fatalf("expected DELETE FROM events to be executed, but not found in execs: %+v", execs)
+			}
+			if !foundHealthDelete {
+				t.Fatalf("expected DELETE FROM node_health to be executed, but not found in execs: %+v", execs)
+			}
+			if !foundRequestsDelete {
+				t.Fatalf("expected DELETE FROM device_join_requests to be executed, but not found in execs: %+v", execs)
+			}
+		})
 	}
 }

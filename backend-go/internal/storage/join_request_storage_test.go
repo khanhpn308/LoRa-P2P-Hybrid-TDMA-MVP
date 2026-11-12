@@ -2,6 +2,7 @@ package storage_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/storage"
@@ -56,5 +57,43 @@ func TestPostgresJoinRequestStorage_IsDeviceRegistered_InvalidMAC(t *testing.T) 
 				t.Fatalf("expected isRegistered false for invalid MAC %q", tt.mac)
 			}
 		})
+	}
+}
+
+func TestPostgresJoinRequestStorage_ApproveRequest_PurgesOrphanEvents(t *testing.T) {
+	db := initMockDB("default")
+	store := storage.NewPostgresJoinRequestStorage(db)
+
+	mockExecMu.Lock()
+	mockExecQueries = nil
+	mockExecMu.Unlock()
+
+	req, err := store.ApproveRequest(context.Background(), 10, nil)
+	if err != nil {
+		t.Fatalf("unexpected error approving request: %v", err)
+	}
+
+	if req == nil || req.Status != "APPROVED" {
+		t.Fatalf("expected status APPROVED, got %+v", req)
+	}
+	if req.AssignedNodeID == nil || *req.AssignedNodeID != 1 {
+		t.Fatalf("expected assigned_node_id 1, got %v", req.AssignedNodeID)
+	}
+
+	mockExecMu.Lock()
+	queries := make([]string, len(mockExecQueries))
+	copy(queries, mockExecQueries)
+	mockExecMu.Unlock()
+
+	var foundEventPurge bool
+	for _, q := range queries {
+		if strings.Contains(strings.ToLower(q), "delete from events where gateway_id = $1 and node_id = $2") {
+			foundEventPurge = true
+			break
+		}
+	}
+
+	if !foundEventPurge {
+		t.Fatalf("expected orphan event purge query 'DELETE FROM events WHERE gateway_id = $1 AND node_id = $2;' to be executed, but got: %+v", queries)
 	}
 }

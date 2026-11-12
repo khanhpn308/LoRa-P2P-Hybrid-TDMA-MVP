@@ -61,7 +61,15 @@ type mockStmt struct {
 func (s *mockStmt) Close() error  { return nil }
 func (s *mockStmt) NumInput() int { return -1 }
 
+var (
+	mockExecMu      sync.Mutex
+	mockExecQueries []string
+)
+
 func (s *mockStmt) Exec(args []driver.Value) (driver.Result, error) {
+	mockExecMu.Lock()
+	mockExecQueries = append(mockExecQueries, s.query)
+	mockExecMu.Unlock()
 	return driver.RowsAffected(1), nil
 }
 
@@ -431,6 +439,36 @@ func (s *mockStmt) Query(args []driver.Value) (driver.Rows, error) {
 				{"gw01", 1, 1, int64(100), int64(10), 0, 0, "ONLINE", now},
 				{"gw01", 2, 1, int64(95), int64(10), 0, 0, "ONLINE", now},
 			},
+		}, nil
+	}
+
+	// 7. Join Request Approval Queries
+	if strings.Contains(q, "from device_join_requests") && strings.Contains(q, "where id = $1") && strings.Contains(q, "for update") {
+		if state == "join_req_not_found" {
+			return &mockRows{columns: []string{"id"}, rows: nil}, nil
+		}
+		return &mockRows{
+			columns: []string{"id", "device_mac", "gateway_id", "status"},
+			rows: [][]driver.Value{
+				{int64(10), "001122334455", "gw01", "PENDING"},
+			},
+		}, nil
+	}
+
+	if strings.Contains(q, "from generate_series(1, 254)") {
+		if state == "no_slots" {
+			return &mockRows{columns: []string{"id"}, rows: nil}, nil
+		}
+		return &mockRows{
+			columns: []string{"id"},
+			rows:    [][]driver.Value{{1}},
+		}, nil
+	}
+
+	if strings.Contains(q, "update device_join_requests") && strings.Contains(q, "returning updated_at") {
+		return &mockRows{
+			columns: []string{"updated_at"},
+			rows:    [][]driver.Value{{time.Now().UTC()}},
 		}, nil
 	}
 
