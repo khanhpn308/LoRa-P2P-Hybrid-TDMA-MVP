@@ -36,37 +36,59 @@ func NewPostgresJoinRequestStorage(db *sql.DB) *PostgresJoinRequestStorage {
 	return &PostgresJoinRequestStorage{db: db}
 }
 
-// CreateOrUpdatePendingRequest inserts a new request or updates an existing pending request for the MAC.
-func (s *PostgresJoinRequestStorage) CreateOrUpdatePendingRequest(ctx context.Context, req *domain.DeviceJoinRequest) (*domain.DeviceJoinRequest, error) {
+// CreateOrUpdateJoinRequest inserts a new request or updates an existing pending request for the MAC.
+// Returns the saved request and a boolean isNew indicating if this is a newly created request.
+// If the device already has an APPROVED request, it does not create a new record and returns isNew=false.
+func (s *PostgresJoinRequestStorage) CreateOrUpdateJoinRequest(ctx context.Context, req *domain.DeviceJoinRequest) (*domain.DeviceJoinRequest, bool, error) {
 	if req == nil {
-		return nil, errors.New("request cannot be nil")
+		return nil, false, errors.New("request cannot be nil")
 	}
 	cleanMAC := strings.ToLower(strings.TrimSpace(req.DeviceMAC))
 
 	const checkQuery = `
-		SELECT id, created_at FROM device_join_requests
-		WHERE device_mac = $1 AND status = 'PENDING'
+		SELECT id, status, assigned_node_id, created_at, updated_at
+		FROM device_join_requests
+		WHERE device_mac = $1 AND status IN ('PENDING', 'APPROVED')
+		ORDER BY id DESC
 		LIMIT 1;
 	`
 	var existingID int64
-	var createdAt time.Time
-	err := s.db.QueryRowContext(ctx, checkQuery, cleanMAC).Scan(&existingID, &createdAt)
+	var status string
+	var assignedNodeID *int
+	var createdAt, updatedAt time.Time
+	err := s.db.QueryRowContext(ctx, checkQuery, cleanMAC).Scan(&existingID, &status, &assignedNodeID, &createdAt, &updatedAt)
 	if err == nil {
+		if status == "APPROVED" {
+			// Device is already approved: do not create a new record
+			return &domain.DeviceJoinRequest{
+				ID:             existingID,
+				DeviceMAC:      cleanMAC,
+				GatewayID:      req.GatewayID,
+				RSSI:           req.RSSI,
+				SNR:            req.SNR,
+				RawFrameHex:    req.RawFrameHex,
+				Status:         "APPROVED",
+				AssignedNodeID: assignedNodeID,
+				CreatedAt:      createdAt.UTC(),
+				UpdatedAt:      updatedAt.UTC(),
+			}, false, nil
+		}
+
 		const updateQuery = `
 			UPDATE device_join_requests
 			SET gateway_id = $1, rssi = $2, snr = $3, raw_frame_hex = $4, updated_at = CURRENT_TIMESTAMP
 			WHERE id = $5
 			RETURNING updated_at;
 		`
-		var updatedAt time.Time
-		if err := s.db.QueryRowContext(ctx, updateQuery, req.GatewayID, req.RSSI, req.SNR, req.RawFrameHex, existingID).Scan(&updatedAt); err != nil {
-			return nil, fmt.Errorf("failed to update pending join request: %w", err)
+		var newUpdatedAt time.Time
+		if err := s.db.QueryRowContext(ctx, updateQuery, req.GatewayID, req.RSSI, req.SNR, req.RawFrameHex, existingID).Scan(&newUpdatedAt); err != nil {
+			return nil, false, fmt.Errorf("failed to update pending join request: %w", err)
 		}
 		req.ID = existingID
 		req.Status = "PENDING"
 		req.CreatedAt = createdAt.UTC()
-		req.UpdatedAt = updatedAt.UTC()
-		return req, nil
+		req.UpdatedAt = newUpdatedAt.UTC()
+		return req, false, nil
 	}
 
 	const insertQuery = `
@@ -77,7 +99,7 @@ func (s *PostgresJoinRequestStorage) CreateOrUpdatePendingRequest(ctx context.Co
 	var id int64
 	var created, updated time.Time
 	if err := s.db.QueryRowContext(ctx, insertQuery, cleanMAC, req.GatewayID, req.RSSI, req.SNR, req.RawFrameHex).Scan(&id, &created, &updated); err != nil {
-		return nil, fmt.Errorf("failed to insert pending join request: %w", err)
+		return nil, false, fmt.Errorf("failed to insert pending join request: %w", err)
 	}
 
 	req.ID = id
@@ -85,7 +107,13 @@ func (s *PostgresJoinRequestStorage) CreateOrUpdatePendingRequest(ctx context.Co
 	req.Status = "PENDING"
 	req.CreatedAt = created.UTC()
 	req.UpdatedAt = updated.UTC()
-	return req, nil
+	return req, true, nil
+}
+
+// CreateOrUpdatePendingRequest inserts a new request or updates an existing pending request for the MAC.
+func (s *PostgresJoinRequestStorage) CreateOrUpdatePendingRequest(ctx context.Context, req *domain.DeviceJoinRequest) (*domain.DeviceJoinRequest, error) {
+	saved, _, err := s.CreateOrUpdateJoinRequest(ctx, req)
+	return saved, err
 }
 
 // ListPendingRequests returns all pending join requests.
@@ -248,22 +276,43 @@ func (s *PostgresJoinRequestStorage) ApproveRequest(ctx context.Context, id int6
 	return &r, nil
 }
 
-// RejectRequest marks a request as REJECTED.
-func (s *PostgresJoinRequestStorage) RejectRequest(ctx context.Context, id int64) error {
+// RejectRequestWithDetails marks a request as REJECTED and returns the updated request record.
+func (s *PostgresJoinRequestStorage) RejectRequestWithDetails(ctx context.Context, id int64) (*domain.DeviceJoinRequest, error) {
 	const query = `
 		UPDATE device_join_requests
 		SET status = 'REJECTED', updated_at = CURRENT_TIMESTAMP
-		WHERE id = $1;
+		WHERE id = $1
+		RETURNING id, device_mac, gateway_id, rssi, snr, raw_frame_hex, status, assigned_node_id, created_at, updated_at;
 	`
-	res, err := s.db.ExecContext(ctx, query, id)
+	var r domain.DeviceJoinRequest
+	var createdAt, updatedAt time.Time
+	err := s.db.QueryRowContext(ctx, query, id).Scan(
+		&r.ID,
+		&r.DeviceMAC,
+		&r.GatewayID,
+		&r.RSSI,
+		&r.SNR,
+		&r.RawFrameHex,
+		&r.Status,
+		&r.AssignedNodeID,
+		&createdAt,
+		&updatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrRequestNotFound
+	}
 	if err != nil {
-		return fmt.Errorf("reject request: %w", err)
+		return nil, fmt.Errorf("reject request: %w", err)
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return ErrRequestNotFound
-	}
-	return nil
+	r.CreatedAt = createdAt.UTC()
+	r.UpdatedAt = updatedAt.UTC()
+	return &r, nil
+}
+
+// RejectRequest marks a request as REJECTED.
+func (s *PostgresJoinRequestStorage) RejectRequest(ctx context.Context, id int64) error {
+	_, err := s.RejectRequestWithDetails(ctx, id)
+	return err
 }
 
 // IsDeviceRegistered verifies if a device exists with ACTIVE status and has an active K_join generation.

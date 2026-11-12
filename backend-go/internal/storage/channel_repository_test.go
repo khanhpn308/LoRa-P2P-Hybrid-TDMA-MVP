@@ -443,6 +443,52 @@ func (s *mockStmt) Query(args []driver.Value) (driver.Rows, error) {
 	}
 
 	// 7. Join Request Approval Queries
+	if strings.Contains(q, "from device_join_requests") && strings.Contains(q, "status in ('pending', 'approved')") {
+		if state == "join_req_pending" {
+			createdAt := time.Now().Add(-10 * time.Minute).UTC()
+			return &mockRows{
+				columns: []string{"id", "status", "assigned_node_id", "created_at", "updated_at"},
+				rows: [][]driver.Value{
+					{int64(10), "PENDING", nil, createdAt, createdAt},
+				},
+			}, nil
+		}
+		if state == "join_req_approved" {
+			nodeID := 5
+			createdAt := time.Now().Add(-1 * time.Hour).UTC()
+			return &mockRows{
+				columns: []string{"id", "status", "assigned_node_id", "created_at", "updated_at"},
+				rows: [][]driver.Value{
+					{int64(10), "APPROVED", nodeID, createdAt, createdAt},
+				},
+			}, nil
+		}
+		return &mockRows{columns: []string{"id", "status", "assigned_node_id", "created_at", "updated_at"}, rows: nil}, nil
+	}
+
+	if strings.Contains(q, "insert into device_join_requests") && strings.Contains(q, "returning id, created_at, updated_at") {
+		now := time.Now().UTC()
+		return &mockRows{
+			columns: []string{"id", "created_at", "updated_at"},
+			rows: [][]driver.Value{
+				{int64(101), now, now},
+			},
+		}, nil
+	}
+
+	if strings.Contains(q, "update device_join_requests") && strings.Contains(q, "set status = 'rejected'") {
+		if state == "join_req_not_found" {
+			return &mockRows{columns: []string{"id"}, rows: nil}, nil
+		}
+		now := time.Now().UTC()
+		return &mockRows{
+			columns: []string{"id", "device_mac", "gateway_id", "rssi", "snr", "raw_frame_hex", "status", "assigned_node_id", "created_at", "updated_at"},
+			rows: [][]driver.Value{
+				{int64(10), "001122334455", "gw01", 0, 0.0, "", "REJECTED", nil, now.Add(-time.Hour), now},
+			},
+		}, nil
+	}
+
 	if strings.Contains(q, "from device_join_requests") && strings.Contains(q, "where id = $1") && strings.Contains(q, "for update") {
 		if state == "join_req_not_found" {
 			return &mockRows{columns: []string{"id"}, rows: nil}, nil
