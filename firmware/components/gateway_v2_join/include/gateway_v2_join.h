@@ -154,6 +154,42 @@ esp_err_t gateway_v2_join_handle_ready(gateway_v2_join_engine_t *engine,
                                        const uint8_t *ready_raw,
                                        size_t ready_len);
 
+/**
+ * @brief Build 20-byte DOWN_JOIN_WAIT (0x51) frame from cached UP_JOIN_HELLO.
+ *
+ * @param[in]  engine        Engine instance.
+ * @param[in]  hello_raw     68-byte UP_JOIN_HELLO frame.
+ * @param[in]  hello_len     Length of frame (must be 68).
+ * @param[in]  auth_tag8     Optional 8-byte auth tag (or NULL for zeroed tag).
+ * @param[out] out_wait      Destination buffer for 20-byte DOWN_JOIN_WAIT.
+ * @param[out] out_wait_len  Written length.
+ * @return ESP_OK on success, or esp_err_t failure code.
+ */
+esp_err_t gateway_v2_join_build_wait(gateway_v2_join_engine_t *engine,
+                                     const uint8_t *hello_raw,
+                                     size_t hello_len,
+                                     const uint8_t auth_tag8[8],
+                                     uint8_t out_wait[LORA_MAC_V2_LEN_DOWN_JOIN_WAIT],
+                                     size_t *out_wait_len);
+
+/**
+ * @brief Build 20-byte DOWN_JOIN_REJECT (0x52) frame from cached UP_JOIN_HELLO.
+ *
+ * @param[in]  engine          Engine instance.
+ * @param[in]  hello_raw       68-byte UP_JOIN_HELLO frame.
+ * @param[in]  hello_len       Length of frame (must be 68).
+ * @param[in]  auth_tag8       Optional 8-byte auth tag (or NULL for zeroed tag).
+ * @param[out] out_reject      Destination buffer for 20-byte DOWN_JOIN_REJECT.
+ * @param[out] out_reject_len  Written length.
+ * @return ESP_OK on success, or esp_err_t failure code.
+ */
+esp_err_t gateway_v2_join_build_reject(gateway_v2_join_engine_t *engine,
+                                       const uint8_t *hello_raw,
+                                       size_t hello_len,
+                                       const uint8_t auth_tag8[8],
+                                       uint8_t out_reject[LORA_MAC_V2_LEN_DOWN_JOIN_REJECT],
+                                       size_t *out_reject_len);
+
 #ifdef __cplusplus
 }
 #endif

@@ -45,6 +45,32 @@ static void mock_node_revoke_cb(const uint8_t *data, size_t len)
     }
 }
 
+static bool s_mock_join_wait_cb_called = false;
+static uint8_t s_mock_join_wait_data[64];
+static size_t s_mock_join_wait_len = 0;
+
+static void mock_join_wait_cb(const uint8_t *data, size_t len)
+{
+    s_mock_join_wait_cb_called = true;
+    s_mock_join_wait_len = len;
+    if (len <= sizeof(s_mock_join_wait_data)) {
+        memcpy(s_mock_join_wait_data, data, len);
+    }
+}
+
+static bool s_mock_join_reject_cb_called = false;
+static uint8_t s_mock_join_reject_data[64];
+static size_t s_mock_join_reject_len = 0;
+
+static void mock_join_reject_cb(const uint8_t *data, size_t len)
+{
+    s_mock_join_reject_cb_called = true;
+    s_mock_join_reject_len = len;
+    if (len <= sizeof(s_mock_join_reject_data)) {
+        memcpy(s_mock_join_reject_data, data, len);
+    }
+}
+
 static void test_client_id_generation(void)
 {
     printf("  Testing MQTT Client ID generation (ADR-0002)...\n");
@@ -107,6 +133,14 @@ static void test_canonical_topics_generation(void)
     err = gateway_mqtt_build_topic(topic, sizeof(topic), "gw-a", "downlink/schedule");
     assert(err == ESP_OK);
     assert(strcmp(topic, "iot/v1/gw/gw-a/downlink/schedule") == 0);
+
+    err = gateway_mqtt_build_topic(topic, sizeof(topic), "gw-a", "downlink/join-wait");
+    assert(err == ESP_OK);
+    assert(strcmp(topic, "iot/v1/gw/gw-a/downlink/join-wait") == 0);
+
+    err = gateway_mqtt_build_topic(topic, sizeof(topic), "gw-a", "downlink/join-reject");
+    assert(err == ESP_OK);
+    assert(strcmp(topic, "iot/v1/gw/gw-a/downlink/join-reject") == 0);
 
     err = gateway_mqtt_build_topic(topic, sizeof(topic), "gw-a", "downlink/node-revoke");
     assert(err == ESP_OK);
@@ -207,10 +241,14 @@ static void test_downlink_callbacks(void)
 
     s_mock_session_key_cb_called = false;
     s_mock_schedule_cb_called = false;
+    s_mock_join_wait_cb_called = false;
+    s_mock_join_reject_cb_called = false;
     s_mock_node_revoke_cb_called = false;
 
     assert(gateway_transport_register_session_key_callback(&mock_session_key_cb) == ESP_OK);
     assert(gateway_transport_register_schedule_callback(&mock_schedule_cb) == ESP_OK);
+    assert(gateway_transport_register_join_wait_callback(&mock_join_wait_cb) == ESP_OK);
+    assert(gateway_transport_register_join_reject_callback(&mock_join_reject_cb) == ESP_OK);
     assert(gateway_transport_register_node_revoke_callback(&mock_node_revoke_cb) == ESP_OK);
 
     printf("  [PASS] test_downlink_callbacks\n");

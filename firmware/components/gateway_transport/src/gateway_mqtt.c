@@ -25,6 +25,8 @@ static char s_client_id[64];
 static char s_sub_topic_session_key[GATEWAY_MQTT_TOPIC_MAX_LEN];
 static char s_sub_topic_schedule[GATEWAY_MQTT_TOPIC_MAX_LEN];
 static char s_sub_topic_join_grant[GATEWAY_MQTT_TOPIC_MAX_LEN];
+static char s_sub_topic_join_wait[GATEWAY_MQTT_TOPIC_MAX_LEN];
+static char s_sub_topic_join_reject[GATEWAY_MQTT_TOPIC_MAX_LEN];
 static char s_sub_topic_node_revoke[GATEWAY_MQTT_TOPIC_MAX_LEN];
 static char s_pub_topic_status[GATEWAY_MQTT_TOPIC_MAX_LEN];
 static char s_will_msg[128];
@@ -53,8 +55,14 @@ static void mqtt5_event_handler(void *handler_args, esp_event_base_t base,
         int sub_id3 = esp_mqtt_client_subscribe(client, s_sub_topic_join_grant, 1);
         ESP_LOGI(TAG, "Subscribed to %s (msg_id=%d)", s_sub_topic_join_grant, sub_id3);
 
-        int sub_id4 = esp_mqtt_client_subscribe(client, s_sub_topic_node_revoke, 1);
-        ESP_LOGI(TAG, "Subscribed to %s (msg_id=%d)", s_sub_topic_node_revoke, sub_id4);
+        int sub_id4 = esp_mqtt_client_subscribe(client, s_sub_topic_join_wait, 1);
+        ESP_LOGI(TAG, "Subscribed to %s (msg_id=%d)", s_sub_topic_join_wait, sub_id4);
+
+        int sub_id5 = esp_mqtt_client_subscribe(client, s_sub_topic_join_reject, 1);
+        ESP_LOGI(TAG, "Subscribed to %s (msg_id=%d)", s_sub_topic_join_reject, sub_id5);
+
+        int sub_id6 = esp_mqtt_client_subscribe(client, s_sub_topic_node_revoke, 1);
+        ESP_LOGI(TAG, "Subscribed to %s (msg_id=%d)", s_sub_topic_node_revoke, sub_id6);
 
         /* Publish retained birth/online status */
         int pub_id = esp_mqtt_client_publish(client, s_pub_topic_status,
@@ -179,6 +187,14 @@ esp_err_t gateway_mqtt_init(const gateway_mqtt_config_t *config)
 
     err = gateway_mqtt_build_topic(s_sub_topic_join_grant, sizeof(s_sub_topic_join_grant),
                                    s_config.gateway_id, "downlink/join-grant");
+    if (err != ESP_OK) return err;
+
+    err = gateway_mqtt_build_topic(s_sub_topic_join_wait, sizeof(s_sub_topic_join_wait),
+                                   s_config.gateway_id, "downlink/join-wait");
+    if (err != ESP_OK) return err;
+
+    err = gateway_mqtt_build_topic(s_sub_topic_join_reject, sizeof(s_sub_topic_join_reject),
+                                   s_config.gateway_id, "downlink/join-reject");
     if (err != ESP_OK) return err;
 
     err = gateway_mqtt_build_topic(s_sub_topic_node_revoke, sizeof(s_sub_topic_node_revoke),
