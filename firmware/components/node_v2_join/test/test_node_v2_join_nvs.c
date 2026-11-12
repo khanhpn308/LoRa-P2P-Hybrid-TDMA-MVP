@@ -278,6 +278,7 @@ typedef enum {
     MOCK_SCENARIO_WAIT_THEN_GRANT = 0,
     MOCK_SCENARIO_WAIT_THEN_REJECT,
     MOCK_SCENARIO_DIRECT_REJECT,
+    MOCK_SCENARIO_WAIT_TIMEOUTS_NOISE_THEN_GRANT,
 } mock_scenario_t;
 
 static mock_scenario_t s_mock_scenario = MOCK_SCENARIO_WAIT_THEN_GRANT;
@@ -286,6 +287,11 @@ static uint8_t s_last_tx[128];
 static size_t s_last_tx_len = 0;
 static uint32_t s_sleep_calls = 0;
 static uint32_t s_rx_single_calls = 0;
+static uint32_t s_standby_calls = 0;
+static uint32_t s_delay_calls = 0;
+static uint32_t s_standby_during_wait = 0;
+static uint32_t s_rx_single_during_wait = 0;
+static uint32_t s_delay_during_wait = 0;
 static node_v2_join_config_t s_mock_peer_cfg;
 static lora_mac_k_join_expanded_keys_t s_mock_peer_k_join_keys;
 static uint8_t s_mock_th[32];
@@ -325,12 +331,14 @@ static esp_err_t mock_radio_rx_single(uint32_t window_ms)
 
 static esp_err_t mock_radio_standby(void)
 {
+    s_standby_calls++;
     return ESP_OK;
 }
 
 static void mock_delay_ms(uint32_t ms)
 {
     (void)ms;
+    s_delay_calls++;
 }
 
 static esp_err_t mock_radio_read_frame(uint8_t *out_buf, size_t *out_len, uint32_t wait_ms)
@@ -414,8 +422,28 @@ static esp_err_t mock_radio_read_frame(uint8_t *out_buf, size_t *out_len, uint32
         }
     }
 
-    if (s_mock_scenario == MOCK_SCENARIO_WAIT_THEN_GRANT) {
-        if (s_mock_step == 0) {
+    if (s_mock_scenario == MOCK_SCENARIO_WAIT_TIMEOUTS_NOISE_THEN_GRANT) {
+        if (s_mock_step >= 100 && s_mock_step < 110) {
+            s_mock_step++;
+            return ESP_ERR_TIMEOUT;
+        } else if (s_mock_step == 111) {
+            memset(out_buf, 0, 26);
+            out_buf[0] = LORA_MAC_V2_TYPE_UP_EVENT;
+            *out_len = 26;
+            s_mock_step = 112;
+            return ESP_OK;
+        } else if (s_mock_step == 112) {
+            s_standby_during_wait = s_standby_calls;
+            s_rx_single_during_wait = s_rx_single_calls;
+            s_delay_during_wait = s_delay_calls;
+            s_mock_scenario = MOCK_SCENARIO_WAIT_THEN_GRANT;
+            s_mock_step = 1;
+        }
+    }
+
+    if (s_mock_scenario == MOCK_SCENARIO_WAIT_THEN_GRANT ||
+        s_mock_scenario == MOCK_SCENARIO_WAIT_TIMEOUTS_NOISE_THEN_GRANT) {
+        if (s_mock_step == 0 || s_mock_step == 110) {
             if (s_last_tx_len != LORA_MAC_V2_LEN_UP_JOIN_HELLO) {
                 return ESP_ERR_INVALID_SIZE;
             }
@@ -437,7 +465,11 @@ static esp_err_t mock_radio_read_frame(uint8_t *out_buf, size_t *out_len, uint32
                 return ser_err;
             }
             *out_len = written;
-            s_mock_step = 1;
+            if (s_mock_scenario == MOCK_SCENARIO_WAIT_TIMEOUTS_NOISE_THEN_GRANT) {
+                s_mock_step = (s_mock_step == 0) ? 100 : 111;
+            } else {
+                s_mock_step = 1;
+            }
             return ESP_OK;
         } else if (s_mock_step == 1) {
             lora_mac_v2_up_join_hello_t hello;
@@ -671,6 +703,57 @@ static int test_node_v2_join_wait_then_grant(void)
     return 0;
 }
 
+static int test_node_v2_join_wait_rx_keeps_continuous_rx(void)
+{
+    (void)nvs_flash_erase();
+    s_mock_scenario = MOCK_SCENARIO_WAIT_TIMEOUTS_NOISE_THEN_GRANT;
+    s_mock_step = 0;
+    s_last_tx_len = 0;
+    s_sleep_calls = 0;
+    s_rx_single_calls = 0;
+    s_standby_calls = 0;
+    s_delay_calls = 0;
+    s_standby_during_wait = 0;
+    s_rx_single_during_wait = 0;
+    s_delay_during_wait = 0;
+
+    ASSERT_EQUAL_INT(ESP_OK, node_v2_join_get_default_config(&s_mock_peer_cfg));
+    for (int i = 0; i < 32; i++) {
+        s_mock_peer_cfg.k_join[i] = (uint8_t)(0x66 + i);
+    }
+
+    lora_mac_join_derive_k_join_keys(s_mock_peer_cfg.network_id, s_mock_peer_cfg.device_mac,
+                                     s_mock_peer_cfg.device_generation, s_mock_peer_cfg.k_join,
+                                     &s_mock_peer_k_join_keys);
+
+    node_v2_join_radio_hal_t hal;
+    memset(&hal, 0, sizeof(hal));
+    hal.radio_cad = mock_radio_cad;
+    hal.radio_tx = mock_radio_tx;
+    hal.radio_read_frame = mock_radio_read_frame;
+    hal.radio_sleep = mock_radio_sleep;
+    hal.radio_rx_single = mock_radio_rx_single;
+    hal.radio_standby = mock_radio_standby;
+    hal.delay_ms = mock_delay_ms;
+
+    node_v2_join_context_t ctx;
+    ASSERT_EQUAL_INT(ESP_OK, node_v2_join_init(&ctx));
+
+    esp_err_t err = node_v2_join_run(&s_mock_peer_cfg, &hal, &ctx);
+    ASSERT_EQUAL_INT(ESP_OK, err);
+    ASSERT_EQUAL_INT(NODE_V2_JOIN_STATE_INSTALLED_INACTIVE, ctx.state);
+    ASSERT_EQUAL_INT(9U, ctx.assigned_node_id);
+
+    /* Continuous RXCONT was never interrupted by standby/rx_single/delay during WAIT_RX */
+    ASSERT_EQUAL_INT(0, (int)s_standby_during_wait);
+    ASSERT_EQUAL_INT(1, (int)s_rx_single_during_wait);
+    ASSERT_EQUAL_INT(0, (int)s_delay_during_wait);
+    ASSERT_EQUAL_INT(2, (int)s_rx_single_calls);
+    ASSERT_EQUAL_INT(2, (int)s_standby_calls);
+
+    return 0;
+}
+
 int main(void)
 {
     int failures = 0;
@@ -689,6 +772,7 @@ int main(void)
     TEST_RUN(test_node_v2_join_direct_reject);
     TEST_RUN(test_node_v2_join_wait_then_reject);
     TEST_RUN(test_node_v2_join_wait_then_grant);
+    TEST_RUN(test_node_v2_join_wait_rx_keeps_continuous_rx);
 
     printf("\n=== Test Results: %s (Failures: %d) ===\n\n",
            (failures == 0) ? "ALL TESTS PASSED" : "TESTS FAILED", failures);

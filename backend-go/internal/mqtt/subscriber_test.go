@@ -519,8 +519,137 @@ func TestHandleJoinMessage_Deduplication_ApprovedDoesNotBroadcastWS(t *testing.T
 
 	subscriber.handleJoinMessage(nil, msg)
 
+	// Verify join-wait was NOT published for an already-approved device
+	waitTopic := "iot/v1/gw/gw-test-01/downlink/join-wait"
+	if _, ok := mockClient.published[waitTopic]; ok {
+		t.Fatalf("expected NO downlink join-wait for already approved device")
+	}
+
+	// Verify downlink join-grant WAS automatically re-dispatched
+	grantTopic := "iot/v1/gw/gw-test-01/downlink/join-grant"
+	grantPayload, ok := mockClient.published[grantTopic]
+	if !ok {
+		t.Fatalf("expected auto re-dispatched join-grant on topic %s", grantTopic)
+	}
+	var grantData map[string]interface{}
+	if err := json.Unmarshal(grantPayload, &grantData); err != nil {
+		t.Fatalf("failed to unmarshal grant payload: %v", err)
+	}
+	if grantData["gateway_id"] != "gw-test-01" {
+		t.Errorf("expected gateway_id gw-test-01, got %v", grantData["gateway_id"])
+	}
+	if grantData["device_mac"] != "aabbccddeeff" {
+		t.Errorf("expected device_mac aabbccddeeff, got %v", grantData["device_mac"])
+	}
+	if grantData["node_id"] != float64(4) {
+		t.Errorf("expected node_id 4, got %v", grantData["node_id"])
+	}
+	if grantData["status"] != "APPROVED" {
+		t.Errorf("expected status APPROVED, got %v", grantData["status"])
+	}
+
 	// Verify WebSocket broadcast was suppressed for already approved device
 	if len(mHub.envelopes) != 0 {
 		t.Fatalf("expected 0 WebSocket envelope broadcasts for already approved device, got %d", len(mHub.envelopes))
+	}
+}
+
+func TestHandleJoinMessage_ApprovedWithRawFrameHexOnly_ReDispatchesGrantWithoutWS(t *testing.T) {
+	mockClient := &mockMqttClient{connected: true}
+	now := time.Now().UTC()
+	nodeID := 1
+	mockStore := &mockJoinReqStorage{
+		isRegistered: true,
+		customReq: &domain.DeviceJoinRequest{
+			ID:             22,
+			DeviceMAC:      "a0b765cdb33c",
+			GatewayID:      "gw-a",
+			Status:         "APPROVED",
+			AssignedNodeID: &nodeID,
+			CreatedAt:      now.Add(-time.Minute),
+			UpdatedAt:      now,
+		},
+		isNew: false,
+	}
+	mHub := &mockHub{}
+
+	subscriber := NewGatewayStatusSubscriber("tcp://localhost:1883", nil, nil, nil, mockStore, nil)
+	subscriber.client = mockClient
+	subscriber.hub = mHub
+
+	// Matches gateway_v2_join_build_relay_json where device_mac is omitted and extracted from raw_frame_hex[1:7]
+	rawHex := "45a0b765cdb33c0100000002" + strings.Repeat("aa", 56)
+	payloadBytes, _ := json.Marshal(JoinRelayPayload{
+		GatewayID:   "gw-a",
+		RawFrameHex: rawHex,
+		RSSI:        -61,
+		SNR:         6.2,
+	})
+	msg := &mockMessage{
+		topic:   "iot/v1/gw/gw-a/uplink/join-hello",
+		payload: payloadBytes,
+	}
+
+	subscriber.handleJoinMessage(nil, msg)
+
+	if _, ok := mockClient.published["iot/v1/gw/gw-a/downlink/join-wait"]; ok {
+		t.Fatalf("expected NO downlink join-wait when device is already APPROVED")
+	}
+	grantPayload, ok := mockClient.published["iot/v1/gw/gw-a/downlink/join-grant"]
+	if !ok {
+		t.Fatalf("expected downlink join-grant on iot/v1/gw/gw-a/downlink/join-grant")
+	}
+	var grantData map[string]interface{}
+	if err := json.Unmarshal(grantPayload, &grantData); err != nil {
+		t.Fatalf("failed to unmarshal grant payload: %v", err)
+	}
+	if grantData["device_mac"] != "a0b765cdb33c" || grantData["node_id"] != float64(1) {
+		t.Fatalf("unexpected grant payload: %+v", grantData)
+	}
+	if len(mHub.envelopes) != 0 {
+		t.Fatalf("expected 0 WebSocket broadcasts for already approved device, got %d", len(mHub.envelopes))
+	}
+}
+
+func TestHandleJoinMessage_ApprovedInvalidNodeID_DoesNotPublishWaitOrGrant(t *testing.T) {
+	mockClient := &mockMqttClient{connected: true}
+	now := time.Now().UTC()
+	mockStore := &mockJoinReqStorage{
+		isRegistered: true,
+		customReq: &domain.DeviceJoinRequest{
+			ID:             33,
+			DeviceMAC:      "aabbccddeeff",
+			GatewayID:      "gw-test-01",
+			Status:         "APPROVED",
+			AssignedNodeID: nil,
+			CreatedAt:      now.Add(-time.Minute),
+			UpdatedAt:      now,
+		},
+		isNew: false,
+	}
+	mHub := &mockHub{}
+
+	subscriber := NewGatewayStatusSubscriber("tcp://localhost:1883", nil, nil, nil, mockStore, nil)
+	subscriber.client = mockClient
+	subscriber.hub = mHub
+
+	payloadBytes, _ := json.Marshal(JoinRelayPayload{
+		GatewayID: "gw-test-01",
+		DeviceMAC: "aabbccddeeff",
+		RSSI:      -75,
+		SNR:       10.2,
+	})
+	msg := &mockMessage{
+		topic:   "iot/v1/gw/gw-test-01/uplink/join-hello",
+		payload: payloadBytes,
+	}
+
+	subscriber.handleJoinMessage(nil, msg)
+
+	if len(mockClient.published) != 0 {
+		t.Fatalf("expected no MQTT downlink publications when assigned_node_id is nil, got: %+v", mockClient.published)
+	}
+	if len(mHub.envelopes) != 0 {
+		t.Fatalf("expected 0 WebSocket broadcasts, got %d", len(mHub.envelopes))
 	}
 }

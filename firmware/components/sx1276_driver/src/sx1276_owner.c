@@ -373,6 +373,11 @@ static void sx1276_owner_task(void *pvParameters)
                     res = execute_rx_single(cmd.params.rx_single.timeout_ticks);
                     break;
                 case SX1276_CMD_START_RX_CONT:
+                    if (s_current_mode == SX1276_MODE_RXCONT) {
+                        /* Already operating in RXCONT; do not write 0xFF to RegIrqFlags or drop DIO0 IRQ notifications. */
+                        res = ESP_OK;
+                        break;
+                    }
                     sx1276_hal_write_reg(SX1276_REG_IRQ_FLAGS, 0xFFU);
                     sx1276_hal_read_modify_write(SX1276_REG_DIO_MAPPING_1, SX1276_DIOMAPPING1_DIO0_MASK, SX1276_DIOMAPPING1_DIO0_RXDONE);
                     ulTaskNotifyTake(pdTRUE, 0);
