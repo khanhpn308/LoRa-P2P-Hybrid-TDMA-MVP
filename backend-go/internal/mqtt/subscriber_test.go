@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
+	paho "github.com/eclipse/paho.mqtt.golang"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/domain"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/realtime"
-	paho "github.com/eclipse/paho.mqtt.golang"
 )
 
 type mockMessage struct {
