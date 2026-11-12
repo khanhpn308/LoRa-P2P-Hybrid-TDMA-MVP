@@ -49,6 +49,13 @@ type JoinRelayPayload struct {
 	RawFrameHex string  `json:"raw_frame_hex"`
 }
 
+// RealtimeBroadcaster broadcasts realtime events to clients.
+type RealtimeBroadcaster interface {
+	BroadcastEnvelope(ctx context.Context, env *realtime.RealtimeEnvelope) error
+	BroadcastGatewayStatus(ctx context.Context, payload realtime.GatewayStatusChangedPayload) error
+	BroadcastAlert(ctx context.Context, payload realtime.AlertTriggeredPayload) error
+}
+
 // GatewayStatusSubscriber subscribes to MQTT gateway status, node alerts, and join requests.
 type GatewayStatusSubscriber struct {
 	client          paho.Client
@@ -56,7 +63,7 @@ type GatewayStatusSubscriber struct {
 	eventStore      storage.EventRepository
 	joinReqStore    storage.JoinRequestStorage
 	presenceTracker *presence.Tracker
-	hub             *realtime.Hub
+	hub             RealtimeBroadcaster
 	brokerURI       string
 	mu              sync.Mutex
 	stopTicker      chan struct{}
@@ -387,6 +394,11 @@ func (s *GatewayStatusSubscriber) handleAlertMessage(client paho.Client, msg pah
 	}
 }
 
+// DeduplicatingJoinStore is an optional interface implemented by storages that track whether a join request is new.
+type DeduplicatingJoinStore interface {
+	CreateOrUpdateJoinRequest(ctx context.Context, req *domain.DeviceJoinRequest) (*domain.DeviceJoinRequest, bool, error)
+}
+
 // handleJoinMessage processes node join requests from Gateway over MQTT.
 func (s *GatewayStatusSubscriber) handleJoinMessage(client paho.Client, msg paho.Message) {
 	topic := msg.Topic()
@@ -441,14 +453,36 @@ func (s *GatewayStatusSubscriber) handleJoinMessage(client paho.Client, msg paho
 			SNR:         wire.SNR,
 			RawFrameHex: wire.RawFrameHex,
 		}
-		saved, err := s.joinReqStore.CreateOrUpdatePendingRequest(ctx, req)
-		if err != nil {
-			log.Printf("[MQTT Subscriber] Failed to save pending join request: %v", err)
-			return
+
+		var saved *domain.DeviceJoinRequest
+		var isNew bool
+		if dedupStore, ok := s.joinReqStore.(DeduplicatingJoinStore); ok {
+			sReq, isNewReq, err := dedupStore.CreateOrUpdateJoinRequest(ctx, req)
+			if err != nil {
+				log.Printf("[MQTT Subscriber] Failed to save pending join request: %v", err)
+				return
+			}
+			saved = sReq
+			isNew = isNewReq
+		} else {
+			sReq, err := s.joinReqStore.CreateOrUpdatePendingRequest(ctx, req)
+			if err != nil {
+				log.Printf("[MQTT Subscriber] Failed to save pending join request: %v", err)
+				return
+			}
+			saved = sReq
+			isNew = (saved != nil && saved.CreatedAt.Equal(saved.UpdatedAt))
 		}
 
-		// Broadcast realtime notification to WebSocket clients
-		if s.hub != nil {
+		// Dispatch join-wait downlink to Gateway for valid device
+		if err := s.PublishJoinWait(ctx, gwID, mac); err != nil {
+			log.Printf("[MQTT Subscriber] Warning: failed to dispatch join-wait downlink: %v", err)
+		} else {
+			log.Printf("[MQTT Subscriber] Dispatched join wait downlink: gw=%s mac=%s", gwID, mac)
+		}
+
+		// Broadcast realtime notification to WebSocket clients ONLY if this is a newly created pending request
+		if saved != nil && isNew && saved.Status == "PENDING" && s.hub != nil {
 			payloadBytes, _ := json.Marshal(map[string]interface{}{
 				"id":         saved.ID,
 				"device_mac": saved.DeviceMAC,
@@ -468,6 +502,62 @@ func (s *GatewayStatusSubscriber) handleJoinMessage(client paho.Client, msg paho
 			_ = s.hub.BroadcastEnvelope(context.Background(), envelope)
 		}
 	}
+}
+
+// PublishJoinWait sends a downlink wait message to the Gateway over MQTT.
+func (s *GatewayStatusSubscriber) PublishJoinWait(ctx context.Context, gatewayID string, deviceMAC string) error {
+	if s.client == nil || !s.client.IsConnected() {
+		return fmt.Errorf("MQTT client is not connected")
+	}
+
+	topic := fmt.Sprintf("iot/v1/gw/%s/downlink/join-wait", gatewayID)
+	payloadMap := map[string]interface{}{
+		"gateway_id": gatewayID,
+		"device_mac": deviceMAC,
+		"status":     "WAIT",
+		"timestamp":  time.Now().UTC().Format(time.RFC3339),
+	}
+
+	payloadBytes, err := json.Marshal(payloadMap)
+	if err != nil {
+		return fmt.Errorf("marshal join wait: %w", err)
+	}
+
+	token := s.client.Publish(topic, 1, false, payloadBytes)
+	if token.Wait() && token.Error() != nil {
+		return fmt.Errorf("publish join wait error: %w", token.Error())
+	}
+
+	log.Printf("[MQTT Downlink] Successfully published join wait to %s: %s", topic, string(payloadBytes))
+	return nil
+}
+
+// PublishJoinReject sends a downlink reject message to the Gateway over MQTT.
+func (s *GatewayStatusSubscriber) PublishJoinReject(ctx context.Context, gatewayID string, deviceMAC string) error {
+	if s.client == nil || !s.client.IsConnected() {
+		return fmt.Errorf("MQTT client is not connected")
+	}
+
+	topic := fmt.Sprintf("iot/v1/gw/%s/downlink/join-reject", gatewayID)
+	payloadMap := map[string]interface{}{
+		"gateway_id": gatewayID,
+		"device_mac": deviceMAC,
+		"status":     "REJECTED",
+		"timestamp":  time.Now().UTC().Format(time.RFC3339),
+	}
+
+	payloadBytes, err := json.Marshal(payloadMap)
+	if err != nil {
+		return fmt.Errorf("marshal join reject: %w", err)
+	}
+
+	token := s.client.Publish(topic, 1, false, payloadBytes)
+	if token.Wait() && token.Error() != nil {
+		return fmt.Errorf("publish join reject error: %w", token.Error())
+	}
+
+	log.Printf("[MQTT Downlink] Successfully published join reject to %s: %s", topic, string(payloadBytes))
+	return nil
 }
 
 // PublishJoinGrant sends a downlink grant message to the Gateway over MQTT.
