@@ -31,7 +31,7 @@ a service also starts it without its profile flag.
 
 `pg_data` persists PostgreSQL data. Changing `.env` does not rotate credentials
 in an initialized database. Its healthcheck tests readiness, not application
-authentication or migrations.
+authentication or migrations. For interactive queries, schema details, table truncation, and maintenance commands, see [`docs/development/POSTGRESQL_OPERATIONS_GUIDE.md`](../docs/development/POSTGRESQL_OPERATIONS_GUIDE.md).
 
 ## Provision local test certificates outside Git
 
@@ -162,6 +162,9 @@ docker compose --env-file .env -f deploy/compose.yaml build web-dashboard
 # 2. Khởi chạy toàn bộ hệ thống (PostgreSQL, Backend, Frontend):
 docker compose --env-file .env -f deploy/compose.yaml --profile fullstack up -d
 
+# Hoặc khởi chạy toàn bộ hệ thống gồm cả MQTT Broker (PostgreSQL, MQTT, Backend, Frontend):
+docker compose --env-file .env -f deploy/compose.yaml --profile fullstack --profile dev-insecure up -d
+
 # 3. Kiểm tra trạng thái và sức khỏe các container:
 docker compose --env-file .env -f deploy/compose.yaml ps
 
@@ -171,6 +174,14 @@ docker compose --env-file .env -f deploy/compose.yaml logs -f backend
 # Xem log Web Dashboard:
 docker compose --env-file .env -f deploy/compose.yaml logs -f web-dashboard
 ```
+
+> [!NOTE]
+> Trong cấu hình `deploy/compose.yaml`, container `backend` tự động kết nối tới MQTT Broker (`mqtt-dev:1883`) để lắng nghe trạng thái Gateway.
+> Nếu chỉ chạy `--profile fullstack`, Docker chỉ khởi chạy `postgres`, `backend` và `web-dashboard` (chưa có `mqtt-dev`).
+> Để khởi chạy toàn bộ hệ thống gồm cả Backend, Web Dashboard, PostgreSQL **và MQTT Broker**:
+> ```bash
+> docker compose --env-file .env -f deploy/compose.yaml --profile fullstack --profile dev-insecure up -d
+> ```
 
 ### External & LAN Access (Laptop & Mobile)
 
@@ -197,7 +208,11 @@ Khi cần truy cập từ các thiết bị ngoài trong cùng mạng Wi-Fi/LAN 
 ### Stop Full-stack Services
 
 ```bash
+# Dừng full-stack (PostgreSQL, Backend, Frontend):
 docker compose --env-file .env -f deploy/compose.yaml --profile fullstack down
+
+# Dừng và dọn dẹp toàn bộ (PostgreSQL, MQTT TLS/Dev, Backend, Frontend):
+docker compose --env-file .env -f deploy/compose.yaml --profile tls --profile dev-insecure --profile fullstack down
 ```
 To also remove persistent database and broker volumes, append `-v`.
 
