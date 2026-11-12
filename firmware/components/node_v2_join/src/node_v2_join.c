@@ -609,6 +609,14 @@ esp_err_t node_v2_join_run(const node_v2_join_config_t *cfg,
                     }
                     return ESP_ERR_INVALID_RESPONSE;
                 }
+            } else if (msg_type == LORA_MAC_V2_TYPE_DOWN_JOIN_WAIT && rx_len == LORA_MAC_V2_LEN_DOWN_JOIN_WAIT) {
+                lora_mac_v2_down_join_wait_t wait_check;
+                if (lora_mac_v2_down_join_wait_deserialize(rx_tmp, rx_len, &wait_check) == ESP_OK &&
+                    memcmp(wait_check.device_mac, cfg->device_mac, 6) == 0 &&
+                    wait_check.join_counter == join_counter) {
+                    ESP_LOGI(TAG, "[RF RX] Received repeated DOWN_JOIN_WAIT (20B) while in WAIT_RX from Gateway #%u | Ctr=%u. Awaiting operator approval...",
+                             wait_check.gw_id, (unsigned int)wait_check.join_counter);
+                }
             }
         } else if (err != ESP_OK && err != ESP_ERR_TIMEOUT) {
             ESP_LOGE(TAG, "[RF RX] Radio read frame failure during WAIT_RX: %s", esp_err_to_name(err));
