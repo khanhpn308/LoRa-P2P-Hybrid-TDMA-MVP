@@ -38,12 +38,33 @@ typedef struct {
 static approved_node_entry_t s_approved_nodes[MAX_APPROVED_NODES];
 static size_t s_approved_count = 0;
 
+#define MAX_REVOKED_NODES (256)
+typedef struct {
+    bool revoked;
+    uint8_t k_session_dl[16];
+    uint8_t nonce_prefix[8];
+    bool has_key;
+} gateway_revoked_node_info_t;
+
+static gateway_revoked_node_info_t s_revoked_nodes[MAX_REVOKED_NODES];
+
 static approved_node_entry_t *find_or_create_node_entry(const uint8_t mac[6])
 {
+    approved_node_entry_t *reusable_entry = NULL;
+    static const uint8_t s_zero_mac[6] = {0};
+
     for (size_t i = 0; i < s_approved_count; i++) {
         if (memcmp(s_approved_nodes[i].mac, mac, 6) == 0) {
             return &s_approved_nodes[i];
         }
+        if (reusable_entry == NULL && memcmp(s_approved_nodes[i].mac, s_zero_mac, 6) == 0 && s_approved_nodes[i].node_id == 0) {
+            reusable_entry = &s_approved_nodes[i];
+        }
+    }
+    if (reusable_entry != NULL) {
+        memset(reusable_entry, 0, sizeof(*reusable_entry));
+        memcpy(reusable_entry->mac, mac, 6);
+        return reusable_entry;
     }
     if (s_approved_count < MAX_APPROVED_NODES) {
         approved_node_entry_t *entry = &s_approved_nodes[s_approved_count++];
@@ -101,6 +122,8 @@ static void on_downlink_join_grant(const uint8_t *data, size_t len)
     if (entry) {
         entry->node_id = (uint8_t)assigned_id;
         entry->approved = true;
+        s_revoked_nodes[entry->node_id].revoked = false;
+        s_revoked_nodes[entry->node_id].has_key = false;
         ESP_LOGI(TAG, "[APPROVED] Node %02X:%02X:%02X:%02X:%02X:%02X approved by User! Assigned Node ID #%u",
                  mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], entry->node_id);
 
@@ -124,7 +147,6 @@ static void on_downlink_join_grant(const uint8_t *data, size_t len)
                 &grant_len
             );
             if (h_err == ESP_OK) {
-                (void)gateway_save_node_session(entry->node_id);
                 vTaskDelay(pdMS_TO_TICKS(40));
                 ESP_LOGI(TAG, "[JOIN TX] Transmitting DOWN_JOIN_GRANT (%zu bytes) to Node #%u...", grant_len, entry->node_id);
                 esp_err_t tx_err = sx1276_tx(grant_buf, (uint8_t)grant_len, pdMS_TO_TICKS(300));
@@ -133,8 +155,14 @@ static void on_downlink_join_grant(const uint8_t *data, size_t len)
                 } else {
                     ESP_LOGE(TAG, "[JOIN TX] Failed to transmit DOWN_JOIN_GRANT: %s", esp_err_to_name(tx_err));
                 }
+                (void)gateway_save_node_session(entry->node_id);
+            } else {
+                ESP_LOGE(TAG, "[JOIN TX] Failed to handle UP_JOIN_HELLO with ID: %s", esp_err_to_name(h_err));
             }
             entry->has_cached_hello = false;
+        } else {
+            ESP_LOGW(TAG, "[JOIN TX] No cached UP_JOIN_HELLO for MAC %02X:%02X:%02X:%02X:%02X:%02X, cannot send DOWN_JOIN_GRANT",
+                     mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
         }
 
         /* Re-enable 24/7 continuous RX on Gateway to receive retries or subsequent frames */
@@ -262,39 +290,41 @@ static void on_downlink_join_reject(const uint8_t *data, size_t len)
     }
 
     approved_node_entry_t *entry = find_or_create_node_entry(mac);
-    if (entry && entry->has_cached_hello) {
-        uint8_t reject_buf[LORA_MAC_V2_LEN_DOWN_JOIN_REJECT];
-        size_t reject_len = 0;
+    if (entry) {
+        if (entry->has_cached_hello) {
+            uint8_t reject_buf[LORA_MAC_V2_LEN_DOWN_JOIN_REJECT];
+            size_t reject_len = 0;
 
-        esp_err_t b_err = gateway_v2_join_build_reject(
-            &s_join_engine,
-            entry->cached_hello,
-            LORA_MAC_V2_LEN_UP_JOIN_HELLO,
-            has_auth_tag ? auth_tag : NULL,
-            reject_buf,
-            &reject_len
-        );
-        if (b_err == ESP_OK) {
-            /* Allow Node time to switch from TX to RX (RF turnaround margin) */
-            vTaskDelay(pdMS_TO_TICKS(40));
-            ESP_LOGI(TAG, "[JOIN TX] Transmitting DOWN_JOIN_REJECT (%zu bytes) to MAC %02X:%02X:%02X:%02X:%02X:%02X...",
-                     reject_len, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-            esp_err_t tx_err = sx1276_tx(reject_buf, (uint8_t)reject_len, pdMS_TO_TICKS(300));
-            if (tx_err == ESP_OK) {
-                ESP_LOGI(TAG, "[JOIN TX] DOWN_JOIN_REJECT transmitted successfully for MAC %02X:%02X:%02X:%02X:%02X:%02X",
-                         mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+            esp_err_t b_err = gateway_v2_join_build_reject(
+                &s_join_engine,
+                entry->cached_hello,
+                LORA_MAC_V2_LEN_UP_JOIN_HELLO,
+                has_auth_tag ? auth_tag : NULL,
+                reject_buf,
+                &reject_len
+            );
+            if (b_err == ESP_OK) {
+                /* Allow Node time to switch from TX to RX (RF turnaround margin) */
+                vTaskDelay(pdMS_TO_TICKS(40));
+                ESP_LOGI(TAG, "[JOIN TX] Transmitting DOWN_JOIN_REJECT (%zu bytes) to MAC %02X:%02X:%02X:%02X:%02X:%02X...",
+                         reject_len, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+                esp_err_t tx_err = sx1276_tx(reject_buf, (uint8_t)reject_len, pdMS_TO_TICKS(300));
+                if (tx_err == ESP_OK) {
+                    ESP_LOGI(TAG, "[JOIN TX] DOWN_JOIN_REJECT transmitted successfully for MAC %02X:%02X:%02X:%02X:%02X:%02X",
+                             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+                } else {
+                    ESP_LOGE(TAG, "[JOIN TX] Failed to transmit DOWN_JOIN_REJECT: %s", esp_err_to_name(tx_err));
+                }
             } else {
-                ESP_LOGE(TAG, "[JOIN TX] Failed to transmit DOWN_JOIN_REJECT: %s", esp_err_to_name(tx_err));
+                ESP_LOGE(TAG, "[JOIN TX] Failed to build DOWN_JOIN_REJECT: %s", esp_err_to_name(b_err));
             }
+            entry->has_cached_hello = false;
         } else {
-            ESP_LOGE(TAG, "[JOIN TX] Failed to build DOWN_JOIN_REJECT: %s", esp_err_to_name(b_err));
+            ESP_LOGW(TAG, "[JOIN TX] No cached UP_JOIN_HELLO for MAC %02X:%02X:%02X:%02X:%02X:%02X, cannot send DOWN_JOIN_REJECT",
+                     mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
         }
         /* Clear cached hello and approval on reject */
-        entry->has_cached_hello = false;
         entry->approved = false;
-    } else {
-        ESP_LOGW(TAG, "[JOIN TX] No cached UP_JOIN_HELLO for MAC %02X:%02X:%02X:%02X:%02X:%02X, cannot send DOWN_JOIN_REJECT",
-                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     }
 
     /* Re-enable 24/7 continuous RX on Gateway immediately (stateless radio bridge) */
@@ -312,15 +342,7 @@ static bool s_node_alive[MAX_LORA_TRACKED_NODES + 1] = {false};
 static uint32_t s_node_last_seen_s[MAX_LORA_TRACKED_NODES + 1] = {0};
 static uint32_t s_rx_events_total = 0;
 
-#define MAX_REVOKED_NODES (256)
-typedef struct {
-    bool revoked;
-    uint8_t k_session_dl[16];
-    uint8_t nonce_prefix[8];
-    bool has_key;
-} gateway_revoked_node_info_t;
 
-static gateway_revoked_node_info_t s_revoked_nodes[MAX_REVOKED_NODES];
 
 #define GATEWAY_TASK_STACK_SIZE_BYTES (16384U)
 static StackType_t s_gateway_task_stack[GATEWAY_TASK_STACK_SIZE_BYTES];
@@ -408,11 +430,11 @@ static void gateway_restore_sessions_from_nvs(void)
             memcpy(pending->session_keys.k_session_up, sess.k_session_up, 16);
             memcpy(pending->session_keys.k_session_dl, sess.k_session_dl, 16);
 
-            /* Also restore into approved nodes table */
+            /* Also restore into approved nodes table without auto-approving (stateless bridge) */
             approved_node_entry_t *entry = find_or_create_node_entry(sess.device_mac);
             if (entry != NULL) {
                 entry->node_id = sess.node_id;
-                entry->approved = true;
+                entry->approved = false;
                 entry->has_cached_hello = false;
             }
 
@@ -555,6 +577,15 @@ static void on_downlink_node_revoke(const uint8_t *data, size_t len)
     if (slot_idx < GATEWAY_V2_JOIN_MAX_PENDING_SESSIONS) {
         memset(&s_join_engine.pending_joins[slot_idx], 0, sizeof(s_join_engine.pending_joins[slot_idx]));
     }
+
+    /* Clean up s_approved_nodes cache for this node_id */
+    for (size_t i = 0; i < s_approved_count; i++) {
+        if (s_approved_nodes[i].node_id == node_id) {
+            memset(&s_approved_nodes[i], 0, sizeof(s_approved_nodes[i]));
+            ESP_LOGI(TAG, "[REVOKE] Cleared s_approved_nodes cache for Node #%u", (unsigned int)node_id);
+        }
+    }
+
     ESP_LOGI(TAG, "[REVOKE] Node #%u added to revocation list (has_key=%d). Session keys evicted.",
              node_id, s_revoked_nodes[node_id].has_key ? 1 : 0);
 }
@@ -635,7 +666,6 @@ static esp_err_t process_join_packet(const uint8_t *payload, size_t length, int1
         return ESP_ERR_INVALID_ARG;
     }
     uint8_t msg_type = payload[0];
-    uint64_t now_us = (uint64_t)esp_timer_get_time();
     float snr_f = (float)snr / 4.0f;
 
     switch (msg_type) {
@@ -644,19 +674,6 @@ static esp_err_t process_join_packet(const uint8_t *payload, size_t length, int1
                 ESP_LOGI(TAG, "[JOIN RX] Received UP_JOIN_HELLO (68B): MAC=%02X:%02X:%02X:%02X:%02X:%02X, RSSI=%d dBm, SNR=%.1f dB | Freq=920.250 MHz (CH0)",
                          payload[1], payload[2], payload[3], payload[4], payload[5], payload[6],
                          rssi, (double)snr_f);
-
-                /* Forward Join Request to Backend over MQTT for User Approval */
-                char join_json[256];
-                int join_len = snprintf(join_json, sizeof(join_json),
-                    "{\"gateway_id\":\"%s\",\"device_mac\":\"%02x%02x%02x%02x%02x%02x\",\"rssi\":%d,\"snr\":%.1f}",
-                    s_gateway_id,
-                    payload[1], payload[2], payload[3], payload[4], payload[5], payload[6],
-                    rssi, (double)snr_f);
-                if (join_len > 0) {
-                    (void)gateway_transport_publish_join_relay((const uint8_t *)join_json, (size_t)join_len);
-                    ESP_LOGI(TAG, "[JOIN RELAY] Forwarded UP_JOIN_HELLO (MAC=%02X:%02X:%02X:%02X:%02X:%02X) to Backend MQTT for user approval",
-                             payload[1], payload[2], payload[3], payload[4], payload[5], payload[6]);
-                }
 
                 uint8_t req_mac[6];
                 memcpy(req_mac, &payload[1], 6);
@@ -667,46 +684,51 @@ static esp_err_t process_join_packet(const uint8_t *payload, size_t length, int1
                     entry->cached_rssi = rssi;
                     entry->cached_snr = snr;
                     entry->has_cached_hello = true;
-
-                    if (!entry->approved) {
-                        ESP_LOGI(TAG, "[JOIN PENDING] Node %02X:%02X:%02X:%02X:%02X:%02X is awaiting User Approval on Web Dashboard. No grant sent.",
-                                 req_mac[0], req_mac[1], req_mac[2], req_mac[3], req_mac[4], req_mac[5]);
-                        return ESP_OK;
-                    }
-
-                    /* Node IS approved by user! Send DOWN_JOIN_GRANT with assigned node_id */
-                    uint8_t grant_buf[LORA_MAC_V2_LEN_DOWN_JOIN_GRANT];
-                    size_t grant_len = 0;
-                    esp_err_t h_err = gateway_v2_join_handle_hello_with_id(
-                        &s_join_engine,
-                        payload,
-                        length,
-                        rssi,
-                        snr_f,
-                        now_us,
-                        NULL,
-                        entry->node_id,
-                        grant_buf,
-                        &grant_len
-                    );
-                    if (h_err == ESP_OK) {
-                        /* Persist session to NVS immediately */
-                        (void)gateway_save_node_session(entry->node_id);
-                        /* Allow Node time to switch from TX to RXSINGLE (RF turnaround margin) */
-                        vTaskDelay(pdMS_TO_TICKS(40));
-                        ESP_LOGI(TAG, "[JOIN TX] Transmitting DOWN_JOIN_GRANT (%zu bytes) to Node #%u on 920.250 MHz (CH0)...", grant_len, entry->node_id);
-                        esp_err_t tx_err = sx1276_tx(grant_buf, (uint8_t)grant_len, pdMS_TO_TICKS(300));
-                        if (tx_err == ESP_OK) {
-                            ESP_LOGI(TAG, "[JOIN TX] DOWN_JOIN_GRANT transmitted successfully for Node #%u", entry->node_id);
-                        } else {
-                            ESP_LOGE(TAG, "[JOIN TX] Failed to transmit DOWN_JOIN_GRANT: %s", esp_err_to_name(tx_err));
-                        }
-                    } else {
-                        ESP_LOGW(TAG, "[JOIN] Failed to handle UP_JOIN_HELLO: %s", esp_err_to_name(h_err));
-                    }
-                    entry->has_cached_hello = false;
-                    return h_err;
+                    entry->approved = false; /* Stateless bridge: no auto-grant */
                 }
+
+                /* Build and immediately transmit DOWN_JOIN_WAIT (20B) to the Node */
+                uint8_t wait_buf[LORA_MAC_V2_LEN_DOWN_JOIN_WAIT];
+                size_t wait_len = 0;
+                esp_err_t b_err = gateway_v2_join_build_wait(
+                    &s_join_engine,
+                    payload,
+                    length,
+                    NULL,
+                    wait_buf,
+                    &wait_len
+                );
+                if (b_err == ESP_OK) {
+                    /* Allow Node time to switch from TX to RX (RF turnaround margin ~40ms) */
+                    vTaskDelay(pdMS_TO_TICKS(40));
+                    ESP_LOGI(TAG, "[JOIN TX] Transmitting immediate DOWN_JOIN_WAIT (%zu bytes) to MAC %02X:%02X:%02X:%02X:%02X:%02X...",
+                             wait_len, req_mac[0], req_mac[1], req_mac[2], req_mac[3], req_mac[4], req_mac[5]);
+                    esp_err_t tx_err = sx1276_tx(wait_buf, (uint8_t)wait_len, pdMS_TO_TICKS(300));
+                    if (tx_err == ESP_OK) {
+                        ESP_LOGI(TAG, "[JOIN TX] DOWN_JOIN_WAIT transmitted successfully for MAC %02X:%02X:%02X:%02X:%02X:%02X",
+                                 req_mac[0], req_mac[1], req_mac[2], req_mac[3], req_mac[4], req_mac[5]);
+                    } else {
+                        ESP_LOGE(TAG, "[JOIN TX] Failed to transmit DOWN_JOIN_WAIT: %s", esp_err_to_name(tx_err));
+                    }
+                } else {
+                    ESP_LOGE(TAG, "[JOIN TX] Failed to build DOWN_JOIN_WAIT: %s", esp_err_to_name(b_err));
+                }
+
+                /* Forward Join Request to Backend over MQTT for User Approval */
+                char join_json[256];
+                int join_len = snprintf(join_json, sizeof(join_json),
+                    "{\"gateway_id\":\"%s\",\"device_mac\":\"%02x%02x%02x%02x%02x%02x\",\"rssi\":%d,\"snr\":%.1f}",
+                    s_gateway_id,
+                    req_mac[0], req_mac[1], req_mac[2], req_mac[3], req_mac[4], req_mac[5],
+                    rssi, (double)snr_f);
+                if (join_len > 0) {
+                    (void)gateway_transport_publish_join_relay((const uint8_t *)join_json, (size_t)join_len);
+                    ESP_LOGI(TAG, "[JOIN RELAY] Forwarded UP_JOIN_HELLO (MAC=%02X:%02X:%02X:%02X:%02X:%02X) to Backend MQTT for user approval",
+                             req_mac[0], req_mac[1], req_mac[2], req_mac[3], req_mac[4], req_mac[5]);
+                }
+
+                /* Re-enable 24/7 continuous RX on Gateway */
+                (void)sx1276_start_rx_continuous();
                 return ESP_OK;
             }
             break;
