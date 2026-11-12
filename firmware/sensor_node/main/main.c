@@ -51,7 +51,10 @@ typedef struct {
 #define CONFIG_NODE_STRICT_PROVISIONING 1
 #endif
 
+static button_driver_t s_btn_driver;
+
 static void node_update_oled_unjoined(void);
+static void node_handle_revoke_and_sleep(button_driver_t *btn_driver);
 
 /**
  * @brief Checks if buffer contains all zeros.
@@ -269,12 +272,8 @@ static esp_err_t node_cad_event_tx_and_ack(const node_mac_config_t *cfg,
                                                             &ack_buf[7], 4U,
                                                             &ack_buf[11],
                                                             dl_pt) == ESP_OK) {
-                        ESP_LOGI(TAG, "==================================================");
-                        ESP_LOGI(TAG, ">>> DOWN_REVOKE RECEIVED & VERIFIED! <<<");
-                        ESP_LOGI(TAG, "==================================================");
                         lora_mac_crypto_zeroize(dl_pt, sizeof(dl_pt));
-                        node_update_oled_unjoined();
-                        (void)node_v2_join_erase_session(&s_join_ctx);
+                        node_handle_revoke_and_sleep(&s_btn_driver);
                         return ESP_ERR_INVALID_STATE;
                     } else {
                         ESP_LOGW(TAG, "DOWN_REVOKE decryption/MIC check failed");
@@ -361,6 +360,37 @@ static void node_update_oled_unjoined(void)
 #endif
 }
 
+static void node_handle_revoke_and_sleep(button_driver_t *btn_driver)
+{
+    ESP_LOGI(TAG, "==================================================");
+    ESP_LOGI(TAG, ">>> DOWN_REVOKE RECEIVED & VERIFIED! <<<");
+    ESP_LOGI(TAG, "Erasing session NVS, putting radio to SLEEP, entering indefinite Deep-Sleep.");
+    ESP_LOGI(TAG, "==================================================");
+
+    /* 1. Update OLED if configured */
+    node_update_oled_unjoined();
+
+    /* 2. Erase session from NVS and transition state */
+    (void)node_v2_join_erase_session(&s_join_ctx);
+    s_join_ctx.state = NODE_V2_JOIN_STATE_UNJOINED;
+
+    /* 3. Put radio completely to sleep */
+    (void)sx1276_sleep();
+
+    /* 4. Disable timer wakeup explicitly to prevent periodic wakes */
+    (void)esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+
+    /* 5. Arm EXT0 wakeup on button GPIO only */
+    if (btn_driver != NULL && btn_driver->is_initialized) {
+        (void)button_driver_arm_sleep(btn_driver);
+    }
+
+    ESP_LOGI(TAG, "Revoked: Entering Deep-Sleep mode. Press button on GPIO %d to request new join...",
+             CONFIG_NODE_BUTTON_GPIO);
+    esp_deep_sleep_start();
+    vTaskSuspend(NULL);
+}
+
 static void node_listen_downlink_revoke(const node_mac_config_t *cfg, uint32_t wait_ms)
 {
     if (cfg == NULL) {
@@ -390,12 +420,8 @@ static void node_listen_downlink_revoke(const node_mac_config_t *cfg, uint32_t w
                                                     &dl_buf[7], 4U,
                                                     &dl_buf[11],
                                                     dl_pt) == ESP_OK) {
-                ESP_LOGI(TAG, "==================================================");
-                ESP_LOGI(TAG, ">>> DOWN_REVOKE RECEIVED & VERIFIED! <<<");
-                ESP_LOGI(TAG, "==================================================");
                 lora_mac_crypto_zeroize(dl_pt, sizeof(dl_pt));
-                node_update_oled_unjoined();
-                (void)node_v2_join_erase_session(&s_join_ctx);
+                node_handle_revoke_and_sleep(&s_btn_driver);
             } else {
                 ESP_LOGW(TAG, "DOWN_REVOKE decryption/MIC check failed");
             }
@@ -612,7 +638,6 @@ void app_main(void)
     (void)lora_mac_crypto_init();
 
     /* 6. Initialize button driver from Kconfig settings */
-    button_driver_t btn_driver;
     button_config_t btn_cfg = {
         .gpio_num = (gpio_num_t)CONFIG_NODE_BUTTON_GPIO,
         .active_level = CONFIG_NODE_BUTTON_ACTIVE_LEVEL,
@@ -620,7 +645,7 @@ void app_main(void)
         .hold_time_ms = CONFIG_NODE_BUTTON_HOLD_TIME_MS,
     };
 
-    esp_err_t btn_err = button_driver_init(&btn_driver, &btn_cfg);
+    esp_err_t btn_err = button_driver_init(&s_btn_driver, &btn_cfg);
     if (btn_err != ESP_OK) {
         ESP_LOGE(TAG, "Button driver initialization failed: %s", esp_err_to_name(btn_err));
     }
@@ -642,8 +667,8 @@ void app_main(void)
             if (sx1276_init(NULL, NULL) == ESP_OK) {
                 (void)sx1276_sleep();
             }
-            if (btn_driver.is_initialized) {
-                (void)button_driver_arm_sleep(&btn_driver);
+            if (s_btn_driver.is_initialized) {
+                (void)button_driver_arm_sleep(&s_btn_driver);
             }
             node_update_oled_unjoined();
             esp_deep_sleep_start();
@@ -654,11 +679,11 @@ void app_main(void)
         /* Wake cause is EXT0 physical button press while UNJOINED */
         ESP_LOGI(TAG, "[WAKE CAUSE] EXT0 Button Wakeup detected on GPIO %d while UNJOINED", CONFIG_NODE_BUTTON_GPIO);
         bool button_qualified = false;
-        esp_err_t q_err = button_driver_qualify_press(&btn_driver, &button_qualified);
+        esp_err_t q_err = button_driver_qualify_press(&s_btn_driver, &button_qualified);
         if (q_err != ESP_OK || !button_qualified) {
             ESP_LOGW(TAG, "Transient wake without qualified button press (bounce/noise filtered). Returning to Deep-Sleep.");
-            if (btn_driver.is_initialized) {
-                (void)button_driver_arm_sleep(&btn_driver);
+            if (s_btn_driver.is_initialized) {
+                (void)button_driver_arm_sleep(&s_btn_driver);
             }
             esp_deep_sleep_start();
             vTaskSuspend(NULL);
@@ -674,8 +699,8 @@ void app_main(void)
             if (sx1276_init(NULL, NULL) == ESP_OK) {
                 (void)sx1276_sleep();
             }
-            if (btn_driver.is_initialized) {
-                (void)button_driver_arm_sleep(&btn_driver);
+            if (s_btn_driver.is_initialized) {
+                (void)button_driver_arm_sleep(&s_btn_driver);
             }
             esp_deep_sleep_start();
             vTaskSuspend(NULL);
@@ -731,8 +756,8 @@ void app_main(void)
 
                 lora_mac_crypto_zeroize(join_cfg.k_join, sizeof(join_cfg.k_join));
                 (void)sx1276_sleep();
-                if (btn_driver.is_initialized) {
-                    (void)button_driver_arm_sleep(&btn_driver);
+                if (s_btn_driver.is_initialized) {
+                    (void)button_driver_arm_sleep(&s_btn_driver);
                 }
 #if CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC > 0
                 (void)esp_sleep_enable_timer_wakeup((uint64_t)CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC * 1000000ULL);
@@ -747,9 +772,12 @@ void app_main(void)
                 ESP_LOGW(TAG, "Putting radio to SLEEP, arming button GPIO %d, entering Deep-Sleep.", CONFIG_NODE_BUTTON_GPIO);
                 ESP_LOGW(TAG, "==================================================");
                 lora_mac_crypto_zeroize(join_cfg.k_join, sizeof(join_cfg.k_join));
+                (void)node_v2_join_erase_session(&s_join_ctx);
+                s_join_ctx.state = NODE_V2_JOIN_STATE_UNJOINED;
                 (void)sx1276_sleep();
-                if (btn_driver.is_initialized) {
-                    (void)button_driver_arm_sleep(&btn_driver);
+                (void)esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+                if (s_btn_driver.is_initialized) {
+                    (void)button_driver_arm_sleep(&s_btn_driver);
                 }
                 node_update_oled_unjoined();
                 esp_deep_sleep_start();
@@ -759,9 +787,12 @@ void app_main(void)
                 ESP_LOGW(TAG, "[JOIN ATTEMPT FAILED] %s (State: %s). Entering Deep-Sleep ready for next button press.",
                          esp_err_to_name(join_err), node_v2_join_state_to_str(s_join_ctx.state));
                 lora_mac_crypto_zeroize(join_cfg.k_join, sizeof(join_cfg.k_join));
+                (void)node_v2_join_erase_session(&s_join_ctx);
+                s_join_ctx.state = NODE_V2_JOIN_STATE_UNJOINED;
                 (void)sx1276_sleep();
-                if (btn_driver.is_initialized) {
-                    (void)button_driver_arm_sleep(&btn_driver);
+                (void)esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+                if (s_btn_driver.is_initialized) {
+                    (void)button_driver_arm_sleep(&s_btn_driver);
                 }
                 node_update_oled_unjoined();
                 esp_deep_sleep_start();
@@ -778,7 +809,7 @@ void app_main(void)
         case BUTTON_CAUSE_EXT0_BUTTON: {
             ESP_LOGI(TAG, "[WAKE CAUSE] EXT0 Button Wakeup detected on GPIO %d (JOINED Node)", CONFIG_NODE_BUTTON_GPIO);
             bool qualified = false;
-            esp_err_t q_err = button_driver_qualify_press(&btn_driver, &qualified);
+            esp_err_t q_err = button_driver_qualify_press(&s_btn_driver, &qualified);
             if (q_err == ESP_OK && qualified) {
                 s_button_events++;
                 uint32_t event_ref = 0;
@@ -890,16 +921,24 @@ void app_main(void)
     }
 
     /* 11. Enter Deep-Sleep */
-    if (btn_driver.is_initialized) {
-        button_driver_arm_sleep(&btn_driver);
+    if (s_btn_driver.is_initialized) {
+        (void)button_driver_arm_sleep(&s_btn_driver);
     }
 
 #if CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC > 0
-    ESP_LOGI(TAG, "Enabling Timer Wakeup in %d seconds", CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC);
-    esp_sleep_enable_timer_wakeup((uint64_t)CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC * 1000000ULL);
+    if (s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
+        ESP_LOGI(TAG, "Enabling Timer Wakeup in %d seconds", CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC);
+        (void)esp_sleep_enable_timer_wakeup((uint64_t)CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC * 1000000ULL);
+    } else {
+        (void)esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+    }
 #endif
 
-    ESP_LOGI(TAG, "Node is JOINED. Entering Deep-Sleep mode. Press button on GPIO %d to wake up...", CONFIG_NODE_BUTTON_GPIO);
+    if (s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
+        ESP_LOGI(TAG, "Node is JOINED. Entering Deep-Sleep mode. Press button on GPIO %d to wake up...", CONFIG_NODE_BUTTON_GPIO);
+    } else {
+        ESP_LOGI(TAG, "Node is UNJOINED. Entering Deep-Sleep mode. Press button on GPIO %d to wake up...", CONFIG_NODE_BUTTON_GPIO);
+    }
     ESP_LOGI(TAG, "==================================================");
 
     esp_deep_sleep_start();
