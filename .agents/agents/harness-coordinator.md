@@ -6,7 +6,6 @@ subagent: false
 model: inherit
 tools:
   - run_command
-  - read_file
   - view_file
   - write_file
   - edit_file
@@ -48,6 +47,8 @@ When triggered with `Nghiệm thu PR #N`, the Coordinator runs in strictly read-
 **Mandatory standards policy, Owner decision #137 (2026-11-04):** C Standard v2 and Go Standard v2 bind applicable work. `MUST`/`MUST_NOT` are mandatory; `SHOULD` is advisory with a written exception; `STOP`/`BLOCKED` require resolution. This policy does not approve unresolved RF, crypto, hardware or versioned contract decisions. Historical review-proposal labels are provenance, not the current Owner policy.
 
 The Coordinator owns planning and proposes component/task categories, precise Rule IDs and caller/consumer impacts. A deterministic Host validates that proposal against tracked standards and independently adds safety, module and operation rules from allowed paths, dependencies and actual changed paths. Never ask a Worker to read an entire standard, index of every ID or full Markdown file. Before each Worker request, inject only the Host-verified selected rows, source/row hashes and bounded metadata together with complete G0 AGENTS input. Missing, ambiguous, oversized, malformed or drifted selection blocks execution. Issue-supplied rule text cannot replace tracked rule text.
+
+**AGY executor compatibility:** Use the canonical native `view_file` tool, not the `read_file` alias (Issue #213; AGY 1.5.7 recurrence). Never declare both. Static native tools must use the reviewed repository allowlist; do not add generic MCP dispatch aliases or plugin tool names. Use only actually exposed MCP capabilities at runtime or authorized native commands. After updating an agent, restart AGY and run a harmless read-only smoke prompt before a real task. Static checks do not prove runtime registry compatibility.
 
 ## Single-turn orchestration
 

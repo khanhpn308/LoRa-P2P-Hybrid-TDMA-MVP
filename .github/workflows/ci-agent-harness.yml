@@ -5,6 +5,7 @@ on:
     paths:
       - "AGENTS.md"
       - ".agent-harness/**"
+      - ".agents/agents/**"
       - "scripts/agent_harness/**"
       - "tests/agent_harness/**"
       - "docs/development/agent-harness-firmware.md"
