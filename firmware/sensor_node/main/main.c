@@ -16,7 +16,7 @@
 #include "button_driver.h"
 #include "airtime_policy.h"
 #include "node_v2_join.h"
-#include "oled_ssd1306.h"
+#include "node_ui.h"
 #include "node_smart_backoff.h"
 #include "node_cad_backoff.h"
 #include "node_arq.h"
@@ -53,7 +53,6 @@ typedef struct {
 
 static button_driver_t s_btn_driver;
 
-static void node_update_oled_unjoined(void);
 static void node_handle_revoke_and_sleep(button_driver_t *btn_driver);
 
 /**
@@ -342,24 +341,6 @@ static esp_err_t node_cad_event_tx_and_ack(const node_mac_config_t *cfg,
     return ESP_ERR_TIMEOUT;
 }
 
-static void node_update_oled_unjoined(void)
-{
-#if CONFIG_OLED_SSD1306_ENABLE
-    oled_ssd1306_dev_t oled_dev;
-    oled_ssd1306_config_t oled_cfg;
-    if (oled_ssd1306_get_default_config(&oled_cfg) == ESP_OK) {
-        oled_cfg.button_gpio = (gpio_num_t)CONFIG_NODE_BUTTON_GPIO;
-        if (oled_ssd1306_init(&oled_dev, &oled_cfg) == ESP_OK) {
-            (void)oled_ssd1306_clear(&oled_dev);
-            (void)oled_ssd1306_draw_string(&oled_dev, 8, 2, "STATUS: UNJOINED");
-            (void)oled_ssd1306_draw_string(&oled_dev, 8, 4, "NODE REVOKED");
-            (void)oled_ssd1306_refresh(&oled_dev);
-            (void)oled_ssd1306_deinit(&oled_dev);
-        }
-    }
-#endif
-}
-
 static void node_handle_revoke_and_sleep(button_driver_t *btn_driver)
 {
     ESP_LOGI(TAG, "==================================================");
@@ -368,7 +349,7 @@ static void node_handle_revoke_and_sleep(button_driver_t *btn_driver)
     ESP_LOGI(TAG, "==================================================");
 
     /* 1. Update OLED if configured */
-    node_update_oled_unjoined();
+    (void)node_ui_show_unjoined();
 
     /* 2. Erase session from NVS and transition state */
     (void)node_v2_join_erase_session(&s_join_ctx);
@@ -670,7 +651,7 @@ void app_main(void)
             if (s_btn_driver.is_initialized) {
                 (void)button_driver_arm_sleep(&s_btn_driver);
             }
-            node_update_oled_unjoined();
+            (void)node_ui_show_unjoined();
             esp_deep_sleep_start();
             vTaskSuspend(NULL);
             return;
@@ -779,7 +760,7 @@ void app_main(void)
                 if (s_btn_driver.is_initialized) {
                     (void)button_driver_arm_sleep(&s_btn_driver);
                 }
-                node_update_oled_unjoined();
+                (void)node_ui_show_unjoined();
                 esp_deep_sleep_start();
                 vTaskSuspend(NULL);
                 return;
@@ -794,7 +775,7 @@ void app_main(void)
                 if (s_btn_driver.is_initialized) {
                     (void)button_driver_arm_sleep(&s_btn_driver);
                 }
-                node_update_oled_unjoined();
+                (void)node_ui_show_unjoined();
                 esp_deep_sleep_start();
                 vTaskSuspend(NULL);
                 return;
@@ -827,22 +808,7 @@ void app_main(void)
                 }
 
                 /* Local OLED display update for confirmed button event */
-#if CONFIG_OLED_SSD1306_ENABLE
-                oled_ssd1306_dev_t oled_dev;
-                oled_ssd1306_config_t oled_cfg;
-                (void)oled_ssd1306_get_default_config(&oled_cfg);
-                oled_cfg.button_gpio = (gpio_num_t)CONFIG_NODE_BUTTON_GPIO;
-                esp_err_t oled_err = oled_ssd1306_init(&oled_dev, &oled_cfg);
-                if (oled_err == ESP_OK) {
-                    oled_err = oled_ssd1306_display_event(&oled_dev, rand_val, now_sec, s_button_events);
-                    if (oled_err != ESP_OK) {
-                        ESP_LOGW(TAG, "OLED display event failed: %s", esp_err_to_name(oled_err));
-                    }
-                    (void)oled_ssd1306_deinit(&oled_dev);
-                } else {
-                    ESP_LOGW(TAG, "OLED init failed: %s (non-fatal, continuing event flow)", esp_err_to_name(oled_err));
-                }
-#endif
+                (void)node_ui_show_event(rand_val, now_sec, s_button_events);
             } else {
                 ESP_LOGW(TAG, "Transient wake without qualified button press (bounce/noise filtered)");
             }

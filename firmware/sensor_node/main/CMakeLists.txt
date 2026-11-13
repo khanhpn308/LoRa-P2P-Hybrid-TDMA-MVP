@@ -4,7 +4,7 @@ idf_component_register(
         "node_cad_backoff.c"
     INCLUDE_DIRS "."
     REQUIRES
-        oled_ssd1306
+        node_ui
         node_v2_join
         node_smart_backoff
         node_arq
