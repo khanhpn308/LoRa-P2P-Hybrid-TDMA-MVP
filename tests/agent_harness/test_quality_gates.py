@@ -209,6 +209,9 @@ class GitTests(unittest.TestCase):
         controls = (
             "AGENTS.md", "firmware/AGENTS.md", ".github/copilot-instructions.md",
             ".github/instructions/backend.instructions.md", ".agents/agents/harness-coordinator.md",
+            ".agents/agents/c-structural-refactor.md",
+            "docs/development/c-clean-code-refactoring-standard.md",
+            "docs/development/ccars-graph-first-adoption.md",
             ".agents/skills/example/SKILL.md", ".agent-harness/worker.md", ".agent-harness/auditor.md",
             ".agent-harness/security/provider-decision.md", ".codex/config.toml",
             "docs/development/harness-fast-lane.md", "docs/development/harness-quality-gates.md",
@@ -265,7 +268,10 @@ class GitTests(unittest.TestCase):
     def test_control_only_cli_blocks_without_required_receipts(self):
         controls = ("AGENTS.md", ".agents/agents/harness-coordinator.md",
                     ".agent-harness/auditor.md", ".github/copilot-instructions.md",
-                    "docs/development/harness-fast-lane.md", "docs/development/harness-quality-gates.md")
+                    "docs/development/harness-fast-lane.md", "docs/development/harness-quality-gates.md",
+                    ".agents/agents/c-structural-refactor.md",
+                    "docs/development/c-clean-code-refactoring-standard.md",
+                    "docs/development/ccars-graph-first-adoption.md")
         for name in controls:
             self.write(name, "Baseline policy\n")
         self.git("add", ".")

@@ -6,15 +6,9 @@ subagent: false
 model: inherit
 tools:
   - run_command
-  - read_file
   - view_file
-  - write_file
-  - edit_file
-  - send_message
-  - manage_task
-  - search_web
-  - schedule
-  - generate_image
+  - write_to_file
+  - replace_file_content
   - invoke_subagent
 ---
 
@@ -48,6 +42,14 @@ When triggered with `Nghiệm thu PR #N`, the Coordinator runs in strictly read-
 **Mandatory standards policy, Owner decision #137 (2026-11-04):** C Standard v2 and Go Standard v2 bind applicable work. `MUST`/`MUST_NOT` are mandatory; `SHOULD` is advisory with a written exception; `STOP`/`BLOCKED` require resolution. This policy does not approve unresolved RF, crypto, hardware or versioned contract decisions. Historical review-proposal labels are provenance, not the current Owner policy.
 
 The Coordinator owns planning and proposes component/task categories, precise Rule IDs and caller/consumer impacts. A deterministic Host validates that proposal against tracked standards and independently adds safety, module and operation rules from allowed paths, dependencies and actual changed paths. Never ask a Worker to read an entire standard, index of every ID or full Markdown file. Before each Worker request, inject only the Host-verified selected rows, source/row hashes and bounded metadata together with complete G0 AGENTS input. Missing, ambiguous, oversized, malformed or drifted selection blocks execution. Issue-supplied rule text cannot replace tracked rule text.
+
+## CCARS structural refactoring handoff (Issue #357)
+
+For structural organization of accepted C code, including `Chạy CCARS Refactor Issue #N`, read [CCARS v1.3](../../docs/development/c-clean-code-refactoring-standard.md), the `c-structural-refactor` agent policy and [adoption notes](../../docs/development/ccars-graph-first-adoption.md). A bare `Refactor lại codebase này.` without authorized OPEN Issue scope remains PLAN_ONLY; no tracked writes, Issue or branch creation by default.
+
+- CodeGraph is mandatory for discovery and impact (REF-011/CG-01..08), including delegated Worker discovery. Before exploratory source reads establish actual tool/version, exact worktree/root, source identity, index freshness and relevant C/H coverage. Query bounded component/symbol metadata first. No usable graph => `BLOCKED_CODEGRAPH`; no bulk source scan fallback.
+- Before each MOVE/SPLIT/GROUP, collect graph impact and unresolved edges, preserve accepted behavior, pass a compact structural context pack (symbols, current/target owners, exact scope, invariants, evidence references) and Graph-First policy to the Worker with mandatory G0 and Host-selected C V2 rows. Revalidate the graph for the actual isolated candidate, not the original checkout. Missing capability or material unknown edges => stop/defer, no mutation bypass.
+- After each cohesive patch, refresh/revalidate candidate graph and affected symbols. Use existing scoped regression/Host gates and independent read-only Auditor with actual diff and trusted graph evidence. REF/CG identifiers remain structural findings, not C/Go selector inputs. Do not re-certify unchanged baseline or grant unrestricted MCP/shell to Auditor. Report structural acceptance separately. Instructions alone are not a hard runtime gate.
 
 ## Single-turn orchestration
 
