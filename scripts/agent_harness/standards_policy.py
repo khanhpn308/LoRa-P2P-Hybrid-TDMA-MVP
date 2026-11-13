@@ -44,7 +44,8 @@ PATH_GROUPS = {
     "C": {"sx1276": ("RTOS", "RAD"), "lora_mac": ("SEC", "MAC"),
           "tdma": ("ARCH", "TDMA", "RTOS"), "airtime": ("RAD", "TDMA"),
           "gateway_master": ("ARCH", "RTOS"), "sensor_node": ("ARCH", "RTOS")},
-    "GO": {"cmd/server": ("AR", "RT", "OB"), "internal/api": ("CT", "RT", "SE", "TS"),
+    "GO": {"cmd/server": ("AR", "RT", "OB"), "internal/app": ("AR", "RT", "OB"),
+           "internal/config": ("AR", "OB"), "internal/api": ("CT", "RT", "SE", "TS"),
            "mqtt": ("MQ", "CT", "RT", "SE", "TS"),
            "scheduler": ("SC", "RT", "TS"), "storage": ("DB", "CT", "RT", "SE", "TS"),
            "migrations": ("DB", "CT", "RT", "SE", "TS"),
@@ -62,6 +63,41 @@ OPERATIONS = {
            (r"\b(?:goroutine|go[ \t]+\w+|chan|sync|context)\b", ("RT",)),
            (r"(?i)\b(?:json|http|websocket|decode|validate)\w*", ("CT", "SE"))),
 }
+GO_COMPOSITION_AND_CONFIG_PREFIXES = (
+    "backend-go/cmd/server/",
+    "backend-go/internal/app/",
+    "backend-go/internal/config/",
+)
+CONCRETE_DB_OPS = re.compile(
+    r"(?i)(?:"
+    r"\b(?:select\s+.+\s+from|insert\s+into|update\s+.+\s+set|delete\s+from|"
+    r"create\s+table|drop\s+table|alter\s+table|truncate\s+table)\b|"
+    r"\.(?:QueryRow|QueryContext|QueryRowContext|Exec|ExecContext|"
+    r"Prepare|PrepareContext|Begin|BeginTx|Commit|Rollback|Ping|PingContext)\s*\("
+    r"|\.Query\s*\([^)]|"
+    r"\b(?:SetMaxOpenConns|SetMaxIdleConns|SetConnMaxLifetime|SetConnMaxIdleTime)\s*\("
+    r"|"
+    r"\b(?:sql\.Tx|sql\.Stmt|sql\.Rows|sql\.Result|pgx\.Batch|pgxpool\.Pool)\b"
+    r")"
+)
+CONCRETE_MQ_OPS = re.compile(
+    r"(?i)(?:"
+    r"\b(?:puback|mosquitto)\b|"
+    r"\.(?:Publish|Subscribe|Unsubscribe|SubscribeMultiple|UnsubscribeMultiple)\s*\("
+    r"|"
+    r"\b(?:AddBroker|SetClientID|SetCleanSession|SetKeepAlive|SetAutoReconnect|"
+    r"SetConnectRetry|SetConnectRetryInterval|SetMaxReconnectInterval|"
+    r"SetSessionExpiryInterval|SetOrderMatters|SetDefaultPublishHandler|"
+    r"SetConnectionLostHandler|SetOnConnectHandler|SetReconnectingHandler|"
+    r"NewClientOptions)\s*\("
+    r"|"
+    r"\b(?:mqtt\.Message|mqtt\.Client|mqtt\.Token|mqtt\.ClientOptions|"
+    r"paho\.Message|paho\.Client|paho\.Token|paho\.ClientOptions)\b"
+    r")"
+)
+CONCRETE_SC_OPS = re.compile(
+    r"(?i)(?:\b(?:superframe|slot_id|beacon_sync|scheduler\.\w+)\b|\w*(?:tdma|timeslot)\w*)"
+)
 
 
 class StandardsError(ValueError):
@@ -449,12 +485,27 @@ def select_rules(repo: Path, allowed_paths=(), changed_paths=None, requested_ids
                         groups.update(applicable)
                 text = (path + "\n" + code.get(path, b"").decode())
                 text += "\n" + text.replace("_", " ")
-                is_comp_root = component == "GO" and ("cmd" in parts and "server" in parts)
-                for expression, applicable in OPERATIONS[component]:
-                    if is_comp_root and any(g in ("DB", "MQ", "SC") for g in applicable):
-                        continue
-                    if re.search(expression, text):
-                        groups.update(applicable)
+                is_comp_or_config = component == "GO" and any(
+                    (path.rstrip("/") + "/").startswith(prefix)
+                    for prefix in GO_COMPOSITION_AND_CONFIG_PREFIXES
+                )
+                if is_comp_or_config:
+                    if CONCRETE_DB_OPS.search(text):
+                        groups.add("DB")
+                    if CONCRETE_MQ_OPS.search(text):
+                        groups.update(("MQ", "CT"))
+                    sc_text = text.replace("LoRa-P2P-Hybrid-TDMA-MVP", "").replace("Hybrid TDMA", "")
+                    if CONCRETE_SC_OPS.search(sc_text):
+                        groups.add("SC")
+                    for expression, applicable in OPERATIONS[component]:
+                        if any(g in ("DB", "MQ", "SC") for g in applicable):
+                            continue
+                        if re.search(expression, text):
+                            groups.update(applicable)
+                else:
+                    for expression, applicable in OPERATIONS[component]:
+                        if re.search(expression, text):
+                            groups.update(applicable)
             if component == "GO" and "SC" in groups:
                 selected.update(("MQ-009", "DB-004"))
             if component == "GO" and "MQ" in groups:
