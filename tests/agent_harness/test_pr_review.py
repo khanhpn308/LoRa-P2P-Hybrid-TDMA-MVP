@@ -379,6 +379,20 @@ class PRReviewPolicyUnitTests(unittest.TestCase):
         self.assertEqual(res["status"], policy.GateStatus.BLOCKED.value)
         self.assertIn("Entire standard selection is forbidden", res["summary"])
 
+    def test_pr03_relocated_composition_and_config_selection_within_budget(self):
+        """Issue #365: PR-03 accepts valid scoped rule selection for relocated composition root & config."""
+        rule_selection = {
+            "standards": ["GO"],
+            "rules": ["AR-001", "AR-002", "OB-001", "RT-001", "GB-001", "TS-001"],
+            "source": "verified_host",
+            "selection_sha256": "f" * 64,
+        }
+        res = policy.eval_pr03_rule_id(
+            rule_selection,
+            ["backend-go/internal/app/wiring.go", "backend-go/internal/config/config.go", "backend-go/internal/app/app_test.go"],
+        )
+        self.assertEqual(res["status"], policy.GateStatus.PASS.value)
+
     # --- Issue #144 R-02: Independent Auditor and Per-ID Evidence Tests ---
 
     def test_auditor_report_none_results_in_not_verified(self):

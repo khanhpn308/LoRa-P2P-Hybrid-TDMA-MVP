@@ -668,6 +668,131 @@ class RoutingTests(PolicyFixture):
         groups = {r.split("-")[0] for r in selected_ids}
         self.assertIn("MQ", groups)
 
+    def test_relocated_composition_alone_routes_ar_rt_ob(self):
+        """Issue #365: internal/app alone selects AR, RT, OB without DB or MQ rules."""
+        self.write("backend-go/internal/app/app.go", (
+            "package app\n\n"
+            "type App struct {}\n"
+            "func New() *App { return &App{} }\n"
+        ))
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        self.write("backend-go/internal/app/app.go", (
+            "package app\n\n"
+            "type App struct {}\n"
+            "func New() *App { println(\"app\"); return &App{} }\n"
+        ))
+        selection = self.select(["backend-go/internal/app/app.go"])
+        selected_ids = set(selection["selected_ids"])
+        groups = {r.split("-")[0] for r in selected_ids}
+
+        self.assertLess(len(selected_ids), 128)
+        self.assertIn("AR", groups)
+        self.assertIn("RT", groups)
+        self.assertIn("OB", groups)
+        self.assertNotIn("DB", groups)
+        self.assertNotIn("MQ", groups)
+
+    def test_configuration_ownership_alone_routes_ar_ob(self):
+        """Issue #365: internal/config alone selects AR, OB without DB or MQ rules."""
+        self.write("backend-go/internal/config/config.go", (
+            "package config\n\n"
+            "type Config struct { Port string }\n"
+            "func Load() *Config { return &Config{Port: \"8080\"} }\n"
+        ))
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        self.write("backend-go/internal/config/config.go", (
+            "package config\n\n"
+            "type Config struct { Port string }\n"
+            "func Load() *Config { println(\"cfg\"); return &Config{Port: \"8080\"} }\n"
+        ))
+        selection = self.select(["backend-go/internal/config/config.go"])
+        selected_ids = set(selection["selected_ids"])
+        groups = {r.split("-")[0] for r in selected_ids}
+
+        self.assertLess(len(selected_ids), 128)
+        self.assertIn("AR", groups)
+        self.assertIn("OB", groups)
+        self.assertNotIn("DB", groups)
+        self.assertNotIn("MQ", groups)
+
+    def test_http_routing_alone_routes_ct_rt_se_ts(self):
+        """Issue #365: internal/api router alone selects CT, RT, SE, TS without DB or MQ."""
+        self.write("backend-go/internal/api/router.go", (
+            "package api\n\nimport \"net/http\"\n\n"
+            "func BuildRouter() http.Handler { return http.NewServeMux() }\n"
+        ))
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        self.write("backend-go/internal/api/router.go", (
+            "package api\n\nimport \"net/http\"\n\n"
+            "func BuildRouter() http.Handler { println(\"r\"); return http.NewServeMux() }\n"
+        ))
+        selection = self.select(["backend-go/internal/api/router.go"])
+        selected_ids = set(selection["selected_ids"])
+        groups = {r.split("-")[0] for r in selected_ids}
+
+        self.assertLess(len(selected_ids), 128)
+        self.assertIn("CT", groups)
+        self.assertIn("RT", groups)
+        self.assertIn("SE", groups)
+        self.assertIn("TS", groups)
+        self.assertNotIn("DB", groups)
+        self.assertNotIn("MQ", groups)
+
+    def test_config_with_actual_sql_query_triggers_db_rules(self):
+        """Issue #365: actual SQL query inside internal/config triggers DB rules."""
+        self.write("backend-go/internal/config/loader.go", (
+            "package config\n\nimport (\n"
+            '    "context"\n'
+            '    "database/sql"\n)\n\n'
+            "func LoadFromDB(ctx context.Context, db *sql.DB) error {\n"
+            '    _, err := db.ExecContext(ctx, "DELETE FROM config_cache")\n'
+            "    return err\n"
+            "}\n"
+        ))
+        selection = self.select(["backend-go/internal/config/loader.go"])
+        selected_ids = set(selection["selected_ids"])
+        groups = {r.split("-")[0] for r in selected_ids}
+        self.assertIn("DB", groups)
+
+    def test_cmd_server_with_actual_mqtt_publish_triggers_mq_rules(self):
+        """Issue #365: actual MQTT publish in cmd/server triggers MQ rules."""
+        self.write("backend-go/cmd/server/notify.go", (
+            "package main\n\n"
+            "type MQTTClient interface {\n"
+            "    Publish(topic string, qos byte, retained bool, payload interface{}) error\n"
+            "}\n"
+            "func Notify(c MQTTClient) error {\n"
+            '    return c.Publish("server/startup", 1, false, []byte("online"))\n'
+            "}\n"
+        ))
+        selection = self.select(["backend-go/cmd/server/notify.go"])
+        selected_ids = set(selection["selected_ids"])
+        groups = {r.split("-")[0] for r in selected_ids}
+        self.assertIn("MQ", groups)
+
+    def test_relocated_composition_stale_selection_fails_closed(self):
+        """Issue #365: verify_selection on relocated composition fails closed if selection is stale."""
+        self.write("backend-go/internal/app/app.go", "package app\nfunc Init() {}\n")
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        self.write("backend-go/internal/app/app.go", "package app\nfunc Init() { println(\"1\") }\n")
+        selection = self.select(["backend-go/internal/app/app.go"])
+        verified = policy.verify_selection(self.root, selection)
+        self.assertEqual(verified["selection_sha256"], selection["selection_sha256"])
+
+        # Stale: mutate file after selection
+        self.write("backend-go/internal/app/app.go", "package app\nfunc Init() { println(\"stale\") }\n")
+        with self.assertRaises(policy.StandardsError) as exc:
+            policy.verify_selection(self.root, selection)
+        self.assertIn("Stale rule selection", str(exc.exception))
+
     def test_entire_standard_selection_is_forbidden_fails_closed(self):
         """Issue #267 AC-3: Genuine attempts to select all groups/rules fail closed."""
         for pkg in ("storage", "mqtt", "scheduler", "telemetry", "alert", "api"):
