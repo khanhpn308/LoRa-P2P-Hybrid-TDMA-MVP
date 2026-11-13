@@ -207,3 +207,80 @@ func TestConfig_StringRedaction(t *testing.T) {
 		t.Errorf("Config.String() leaked JWT secret key: %s", str)
 	}
 }
+
+func TestConfig_StringRedaction_Credentials(t *testing.T) {
+	cfg := config.LoadFromEnv(func(key string) string {
+		switch key {
+		case "DATABASE_URL":
+			return "postgres://dbuser:supersecretdbpass@127.0.0.1:5432/proddb"
+		case "MQTT_HOST":
+			return "mqttuser:supersecretmqttpass@10.0.0.1"
+		case "MQTT_PORT":
+			return "1883"
+		default:
+			return ""
+		}
+	})
+
+	// Before URI resolution
+	strBefore := cfg.String()
+	if strings.Contains(strBefore, "supersecretdbpass") {
+		t.Errorf("Config.String() leaked database password: %s", strBefore)
+	}
+	if strings.Contains(strBefore, "supersecretmqttpass") {
+		t.Errorf("Config.String() leaked MQTT host password: %s", strBefore)
+	}
+
+	// Manually inject a credentialed broker URI to test URI redaction
+	cfg.MQTTBrokerURI = "tcp://brokeruser:secretbrokerpass@10.0.0.1:1883"
+	strAfter := cfg.String()
+	if strings.Contains(strAfter, "secretbrokerpass") {
+		t.Errorf("Config.String() leaked MQTT broker URI password: %s", strAfter)
+	}
+	if !strings.Contains(strAfter, "tcp://brokeruser:xxxxx@10.0.0.1:1883") {
+		t.Errorf("expected redacted URI with xxxxx, got %s", strAfter)
+	}
+}
+
+func TestLoad_MQTTBrokerURI_DoesNotOverrideHostPort(t *testing.T) {
+	env := map[string]string{
+		"MQTT_BROKER_URI": "tcp://unauthorized-override:9999",
+		"MQTT_HOST":       "legitimate-broker",
+		"MQTT_PORT":       "1883",
+	}
+
+	cfg := config.LoadFromEnv(func(key string) string {
+		return env[key]
+	})
+
+	// Initial cached broker URI MUST be empty; LoadFromEnv must NOT read MQTT_BROKER_URI
+	if cfg.MQTTBrokerURI != "" {
+		t.Errorf("expected empty MQTTBrokerURI before resolution, got %s", cfg.MQTTBrokerURI)
+	}
+
+	uri := cfg.ResolveMQTTBrokerURI()
+	if uri != "tcp://legitimate-broker:1883" {
+		t.Errorf("expected broker URI tcp://legitimate-broker:1883 derived from host/port, got %s", uri)
+	}
+	if strings.Contains(uri, "unauthorized-override") || strings.Contains(uri, "9999") {
+		t.Errorf("unauthorized MQTT_BROKER_URI overrode host/port: %s", uri)
+	}
+}
+
+func TestLoad_MQTTBrokerURI_IgnoredWhenHostEmpty(t *testing.T) {
+	env := map[string]string{
+		"MQTT_BROKER_URI": "tcp://unauthorized-override:9999",
+	}
+
+	cfg := config.LoadFromEnv(func(key string) string {
+		return env[key]
+	})
+
+	uri := cfg.ResolveMQTTBrokerURI()
+	if uri != "tcp://127.0.0.1:1883" {
+		t.Errorf("expected default tcp://127.0.0.1:1883, got %s", uri)
+	}
+	if strings.Contains(uri, "unauthorized-override") {
+		t.Errorf("unauthorized MQTT_BROKER_URI leaked into resolution: %s", uri)
+	}
+}

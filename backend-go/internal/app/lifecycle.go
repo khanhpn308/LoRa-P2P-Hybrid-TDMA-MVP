@@ -14,8 +14,9 @@ func (a *App) Run(ctx context.Context) error {
 	defer cancelHub()
 	go a.hub.Run(hubCtx)
 
-	if a.statusSub != nil {
-		if err := a.statusSub.Start(context.Background()); err != nil {
+	sub := a.Subscriber()
+	if sub != nil {
+		if err := sub.Start(context.Background()); err != nil {
 			log.Printf("Warning: failed to start MQTT status subscriber: %v", err)
 		} else {
 			log.Printf("MQTT status subscriber initialized on %s", a.cfg.ResolveMQTTBrokerURI())
@@ -37,8 +38,8 @@ func (a *App) Run(ctx context.Context) error {
 	}
 
 	log.Println("shutting down server gracefully...")
-	if a.statusSub != nil {
-		a.statusSub.Stop()
+	if sub != nil {
+		sub.Stop()
 	}
 
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), a.cfg.ShutdownTimeout)

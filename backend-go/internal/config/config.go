@@ -5,7 +5,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -27,6 +29,7 @@ type Config struct {
 	MQTTHost                 string
 	MQTTPort                 string
 	MQTTBrokerURI            string
+	LookupHost               LookupHostFunc
 	JWTSecretKey             string
 	DeviceProvisionMasterKey [32]byte
 	OfflineThreshold         time.Duration
@@ -36,6 +39,26 @@ type Config struct {
 	ShutdownTimeout          time.Duration
 }
 
+// redactURI removes password credentials from a URI string.
+func redactURI(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "[redacted-uri]"
+	}
+	return u.Redacted()
+}
+
+// sanitizeHost strips potential credentials (user:pass@) if present in a host string.
+func sanitizeHost(host string) string {
+	if idx := strings.Index(host, "@"); idx != -1 {
+		return host[idx+1:]
+	}
+	return host
+}
+
 // String provides a redacted string representation of Config, keeping key material out of logs.
 func (c *Config) String() string {
 	hasMasterKey := c.DeviceProvisionMasterKey != [32]byte{}
@@ -43,9 +66,9 @@ func (c *Config) String() string {
 		"Config{Port:%s, DatabaseURLSet:%t, MQTTHost:%s, MQTTPort:%s, MQTTBrokerURI:%s, JWTSecretKeyLen:%d, MasterKeySet:%t}",
 		c.Port,
 		c.DatabaseURL != "",
-		c.MQTTHost,
+		sanitizeHost(c.MQTTHost),
 		c.MQTTPort,
-		c.MQTTBrokerURI,
+		redactURI(c.MQTTBrokerURI),
 		len(c.JWTSecretKey),
 		hasMasterKey,
 	)
@@ -84,14 +107,18 @@ func ResolveMQTTBrokerURI(host, port string, lookupHost ...LookupHostFunc) strin
 }
 
 // ResolveMQTTBrokerURI resolves the broker URI for this Config instance.
-// If c.MQTTBrokerURI is already explicitly populated, that value is returned.
-// Otherwise, it resolves using c.MQTTHost, c.MQTTPort, and DNS fallback rules,
-// caching the result on c.MQTTBrokerURI.
+// The broker URI is derived exclusively from MQTTHost, MQTTPort, and DNS fallback rules.
+// Internal caching of the resolved URI on c.MQTTBrokerURI preserves existing behavior
+// and avoids repeated DNS lookups.
 func (c *Config) ResolveMQTTBrokerURI(lookupHost ...LookupHostFunc) string {
 	if c.MQTTBrokerURI != "" {
 		return c.MQTTBrokerURI
 	}
-	c.MQTTBrokerURI = ResolveMQTTBrokerURI(c.MQTTHost, c.MQTTPort, lookupHost...)
+	lookup := c.LookupHost
+	if len(lookupHost) > 0 && lookupHost[0] != nil {
+		lookup = lookupHost[0]
+	}
+	c.MQTTBrokerURI = ResolveMQTTBrokerURI(c.MQTTHost, c.MQTTPort, lookup)
 	return c.MQTTBrokerURI
 }
 
@@ -108,6 +135,11 @@ func LoadFromEnv(getEnv func(string) string, lookupHost ...LookupHostFunc) *Conf
 		getEnv = os.Getenv
 	}
 
+	var dns LookupHostFunc
+	if len(lookupHost) > 0 && lookupHost[0] != nil {
+		dns = lookupHost[0]
+	}
+
 	port := getEnv("PORT")
 	if port == "" {
 		port = DefaultPort
@@ -120,8 +152,6 @@ func LoadFromEnv(getEnv func(string) string, lookupHost ...LookupHostFunc) *Conf
 	if mqttPort == "" {
 		mqttPort = DefaultMQTTPort
 	}
-
-	brokerURI := getEnv("MQTT_BROKER_URI")
 
 	jwtSecret := getEnv("JWT_SECRET_KEY")
 	if len(jwtSecret) < 32 {
@@ -148,7 +178,7 @@ func LoadFromEnv(getEnv func(string) string, lookupHost ...LookupHostFunc) *Conf
 		DatabaseURL:              dbURL,
 		MQTTHost:                 mqttHost,
 		MQTTPort:                 mqttPort,
-		MQTTBrokerURI:            brokerURI,
+		LookupHost:               dns,
 		JWTSecretKey:             jwtSecret,
 		DeviceProvisionMasterKey: masterKey,
 		OfflineThreshold:         DefaultOfflineThreshold,

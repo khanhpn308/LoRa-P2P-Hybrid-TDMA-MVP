@@ -16,8 +16,18 @@ import (
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/storage"
 )
 
+// Option configures an App instance during composition.
+type Option func(*App)
+
+// WithSubscriber overrides the subscriber lifecycle instance (e.g. for deterministic testing).
+func WithSubscriber(sub Subscriber) Option {
+	return func(a *App) {
+		a.subscriber = sub
+	}
+}
+
 // New initializes the Composition Root and wires dependencies per application configuration.
-func New(cfg *config.Config) (*App, error) {
+func New(cfg *config.Config, opts ...Option) (*App, error) {
 	if cfg == nil {
 		cfg = config.Load()
 	}
@@ -134,11 +144,25 @@ func New(cfg *config.Config) (*App, error) {
 		IdleTimeout:  cfg.IdleTimeout,
 	}
 
-	return &App{
-		cfg:       cfg,
-		server:    srv,
-		db:        db,
-		hub:       hub,
-		statusSub: statusSub,
-	}, nil
+	var subscriber Subscriber
+	if statusSub != nil {
+		subscriber = statusSub
+	}
+
+	application := &App{
+		cfg:        cfg,
+		server:     srv,
+		db:         db,
+		hub:        hub,
+		statusSub:  statusSub,
+		subscriber: subscriber,
+	}
+
+	for _, opt := range opts {
+		if opt != nil {
+			opt(application)
+		}
+	}
+
+	return application, nil
 }
