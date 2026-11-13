@@ -22,7 +22,7 @@ jobs:
   harness-unit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Compile Python harness
         run: python3 -m compileall -q scripts/agent_harness tests/agent_harness
       - name: Validate AGY JSON Schema

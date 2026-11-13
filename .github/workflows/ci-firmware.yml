@@ -23,7 +23,7 @@ jobs:
     name: gateway-esp32-build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Resolve project-pinned ESP-IDF release
         id: idf
         shell: bash
@@ -45,7 +45,7 @@ jobs:
     name: node-esp32-build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Resolve project-pinned ESP-IDF release
         id: idf
         shell: bash
