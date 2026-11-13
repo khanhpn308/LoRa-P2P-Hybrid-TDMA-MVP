@@ -63,6 +63,41 @@ OPERATIONS = {
            (r"\b(?:goroutine|go[ \t]+\w+|chan|sync|context)\b", ("RT",)),
            (r"(?i)\b(?:json|http|websocket|decode|validate)\w*", ("CT", "SE"))),
 }
+GO_COMPOSITION_AND_CONFIG_PREFIXES = (
+    "backend-go/cmd/server/",
+    "backend-go/internal/app/",
+    "backend-go/internal/config/",
+)
+CONCRETE_DB_OPS = re.compile(
+    r"(?i)(?:"
+    r"\b(?:select\s+.+\s+from|insert\s+into|update\s+.+\s+set|delete\s+from|"
+    r"create\s+table|drop\s+table|alter\s+table|truncate\s+table)\b|"
+    r"\.(?:QueryRow|QueryContext|QueryRowContext|Exec|ExecContext|"
+    r"Prepare|PrepareContext|Begin|BeginTx|Commit|Rollback|Ping|PingContext)\s*\("
+    r"|\.Query\s*\([^)]|"
+    r"\b(?:SetMaxOpenConns|SetMaxIdleConns|SetConnMaxLifetime|SetConnMaxIdleTime)\s*\("
+    r"|"
+    r"\b(?:sql\.Tx|sql\.Stmt|sql\.Rows|sql\.Result|pgx\.Batch|pgxpool\.Pool)\b"
+    r")"
+)
+CONCRETE_MQ_OPS = re.compile(
+    r"(?i)(?:"
+    r"\b(?:puback|mosquitto)\b|"
+    r"\.(?:Publish|Subscribe|Unsubscribe|SubscribeMultiple|UnsubscribeMultiple)\s*\("
+    r"|"
+    r"\b(?:AddBroker|SetClientID|SetCleanSession|SetKeepAlive|SetAutoReconnect|"
+    r"SetConnectRetry|SetConnectRetryInterval|SetMaxReconnectInterval|"
+    r"SetSessionExpiryInterval|SetOrderMatters|SetDefaultPublishHandler|"
+    r"SetConnectionLostHandler|SetOnConnectHandler|SetReconnectingHandler|"
+    r"NewClientOptions)\s*\("
+    r"|"
+    r"\b(?:mqtt\.Message|mqtt\.Client|mqtt\.Token|mqtt\.ClientOptions|"
+    r"paho\.Message|paho\.Client|paho\.Token|paho\.ClientOptions)\b"
+    r")"
+)
+CONCRETE_SC_OPS = re.compile(
+    r"(?i)\b(?:tdma|superframe|slot_id|timeslot|beacon_sync|schedule_version|schedule_id)\b"
+)
 
 
 class StandardsError(ValueError):
@@ -450,33 +485,26 @@ def select_rules(repo: Path, allowed_paths=(), changed_paths=None, requested_ids
                         groups.update(applicable)
                 text = (path + "\n" + code.get(path, b"").decode())
                 text += "\n" + text.replace("_", " ")
-                is_comp_or_config = component == "GO" and (
-                    ("cmd" in parts and "server" in parts)
-                    or ("internal" in parts and "app" in parts)
-                    or ("internal" in parts and "config" in parts)
+                is_comp_or_config = component == "GO" and any(
+                    (path.rstrip("/") + "/").startswith(prefix)
+                    for prefix in GO_COMPOSITION_AND_CONFIG_PREFIXES
                 )
-                for expression, applicable in OPERATIONS[component]:
-                    if is_comp_or_config and any(g in ("DB", "MQ", "SC") for g in applicable):
-                        if "DB" in applicable and not re.search(
-                            r"(?i)(?:\b(?:select\s+.+\s+from|insert\s+into|update\s+.+\s+set|delete\s+from|create\s+table|drop\s+table|alter\s+table)\b|"
-                            r"\.(?:Query|QueryRow|QueryContext|QueryRowContext|Exec|ExecContext|Begin|BeginTx|Commit|Rollback|Prepare|PrepareContext)\s*\()",
-                            text,
-                        ):
+                if is_comp_or_config:
+                    if CONCRETE_DB_OPS.search(text):
+                        groups.add("DB")
+                    if CONCRETE_MQ_OPS.search(text):
+                        groups.update(("MQ", "CT"))
+                    if CONCRETE_SC_OPS.search(text):
+                        groups.add("SC")
+                    for expression, applicable in OPERATIONS[component]:
+                        if any(g in ("DB", "MQ", "SC") for g in applicable):
                             continue
-                        if "MQ" in applicable and not re.search(
-                            r"(?i)(?:\b(?:puback|mosquitto)\b|"
-                            r"\.(?:Publish|Subscribe|Unsubscribe)\s*\(|"
-                            r"\bmqtt\.(?:Message|Client|Token)\b)",
-                            text,
-                        ):
-                            continue
-                        if "SC" in applicable and not re.search(
-                            r"(?i)\b(?:tdma|superframe|slot_id|timeslot|beacon_sync)\b",
-                            text,
-                        ):
-                            continue
-                    if re.search(expression, text):
-                        groups.update(applicable)
+                        if re.search(expression, text):
+                            groups.update(applicable)
+                else:
+                    for expression, applicable in OPERATIONS[component]:
+                        if re.search(expression, text):
+                            groups.update(applicable)
             if component == "GO" and "SC" in groups:
                 selected.update(("MQ-009", "DB-004"))
             if component == "GO" and "MQ" in groups:

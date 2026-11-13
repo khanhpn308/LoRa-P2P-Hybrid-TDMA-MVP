@@ -793,6 +793,127 @@ class RoutingTests(PolicyFixture):
             policy.verify_selection(self.root, selection)
         self.assertIn("Stale rule selection", str(exc.exception))
 
+    def test_query_context_without_generic_db_keywords_triggers_db_rules(self):
+        """Owner review case: conn.QueryContext without generic db keywords triggers DB rules."""
+        self.write("backend-go/internal/app/runner.go", (
+            "package app\n\nimport \"context\"\n\n"
+            "type Conn interface {\n"
+            "    QueryContext(ctx context.Context, stmt string, args ...any) error\n"
+            "}\n"
+            "func Execute(ctx context.Context, conn Conn, statement string) error {\n"
+            "    return conn.QueryContext(ctx, statement)\n"
+            "}\n"
+        ))
+        selection = self.select(["backend-go/internal/app/runner.go"])
+        selected_ids = set(selection["selected_ids"])
+        groups = {r.split("-")[0] for r in selected_ids}
+        self.assertIn("DB", groups)
+
+    def test_publish_without_generic_mqtt_keywords_triggers_mq_rules(self):
+        """Owner review case: publisher.Publish without generic mqtt keywords triggers MQ rules."""
+        self.write("backend-go/internal/app/broadcaster.go", (
+            "package app\n\n"
+            "type Publisher interface {\n"
+            "    Publish(channel string, mode byte, flag bool, data []byte) error\n"
+            "}\n"
+            "func Send(publisher Publisher, topic string, payload []byte) error {\n"
+            "    return publisher.Publish(topic, 1, false, payload)\n"
+            "}\n"
+        ))
+        selection = self.select(["backend-go/internal/app/broadcaster.go"])
+        selected_ids = set(selection["selected_ids"])
+        groups = {r.split("-")[0] for r in selected_ids}
+        self.assertIn("MQ", groups)
+
+    def test_db_pool_configuration_triggers_db_rules(self):
+        """Owner review case: database pool configuration operations trigger DB rules."""
+        methods = [
+            "SetMaxOpenConns(25)",
+            "SetMaxIdleConns(10)",
+            "SetConnMaxLifetime(3600)",
+            "SetConnMaxIdleTime(300)",
+        ]
+        filename = "backend-go/internal/app/pool.go"
+        for call in methods:
+            self.write(filename, (
+                f"package app\n\n"
+                f"type PoolHolder interface {{ {call.split('(')[0]}(n int) }}\n"
+                f"func Configure(p PoolHolder) {{ p.{call} }}\n"
+            ))
+            selection = self.select([filename])
+            selected_ids = set(selection["selected_ids"])
+            groups = {r.split("-")[0] for r in selected_ids}
+            self.assertIn("DB", groups, f"Expected DB group for {call}")
+
+    def test_mqtt_connection_and_session_configuration_triggers_mq_rules(self):
+        """Owner review case: MQTT connection/session/reconnect configuration triggers MQ rules."""
+        options_calls = [
+            "SetCleanSession(false)",
+            "SetAutoReconnect(true)",
+            "SetConnectRetry(true)",
+            "SetConnectRetryInterval(5)",
+            "SetSessionExpiryInterval(3600)",
+            "SetConnectionLostHandler(nil)",
+        ]
+        filename = "backend-go/internal/app/opts.go"
+        for call in options_calls:
+            self.write(filename, (
+                f"package app\n\n"
+                f"type Opts interface {{ {call.split('(')[0]} }}\n"
+                f"func Setup(o Opts) {{ o.{call} }}\n"
+            ))
+            selection = self.select([filename])
+            selected_ids = set(selection["selected_ids"])
+            groups = {r.split("-")[0] for r in selected_ids}
+            self.assertIn("MQ", groups, f"Expected MQ group for {call}")
+
+    def test_aliased_import_with_concrete_db_operation_triggers_db_rules(self):
+        """Owner review case: aliased import with concrete query triggers DB rules."""
+        self.write("backend-go/internal/app/aliased_query.go", (
+            "package app\n\nimport (\n"
+            '    "context"\n'
+            '    dbdriver "database/sql"\n)\n\n'
+            "func Run(ctx context.Context, handle *dbdriver.DB) error {\n"
+            '    row := handle.QueryRowContext(ctx, "statement")\n'
+            "    _ = row\n"
+            "    return nil\n"
+            "}\n"
+        ))
+        selection = self.select(["backend-go/internal/app/aliased_query.go"])
+        selected_ids = set(selection["selected_ids"])
+        groups = {r.split("-")[0] for r in selected_ids}
+        self.assertIn("DB", groups)
+
+    def test_aliased_import_pure_wiring_does_not_trigger_db_rules(self):
+        """Owner review case: aliased import with pure wiring does not trigger DB rules."""
+        self.write("backend-go/internal/app/aliased_wiring.go", (
+            "package app\n\nimport (\n"
+            '    dbdriver "database/sql"\n)\n\n'
+            "type App struct { conn *dbdriver.DB }\n"
+            "func Wire(url string) (*App, error) {\n"
+            '    db, err := dbdriver.Open("postgres", url)\n'
+            "    if err != nil { return nil, err }\n"
+            "    return &App{conn: db}, nil\n"
+            "}\n"
+            "func (a *App) Stop() error { return a.conn.Close() }\n"
+        ))
+        selection = self.select(["backend-go/internal/app/aliased_wiring.go"])
+        selected_ids = set(selection["selected_ids"])
+        groups = {r.split("-")[0] for r in selected_ids}
+        self.assertNotIn("DB", groups)
+
+    def test_repository_relative_boundaries_do_not_exempt_unrelated_paths(self):
+        """Owner review case: non-composition paths are not granted composition exemptions."""
+        # backend-go/internal/service/app.go has 'app' in its filename, but is not in internal/app/
+        self.write("backend-go/internal/service/app.go", (
+            "package service\n\n"
+            "func CheckDatabase() string { return \"database-check\" }\n"
+        ))
+        selection = self.select(["backend-go/internal/service/app.go"])
+        selected_ids = set(selection["selected_ids"])
+        groups = {r.split("-")[0] for r in selected_ids}
+        self.assertIn("DB", groups)
+
     def test_entire_standard_selection_is_forbidden_fails_closed(self):
         """Issue #267 AC-3: Genuine attempts to select all groups/rules fail closed."""
         for pkg in ("storage", "mqtt", "scheduler", "telemetry", "alert", "api"):
