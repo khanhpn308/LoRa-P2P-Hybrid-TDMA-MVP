@@ -1,10 +1,10 @@
-# CCARS v1.3 Graph-First adoption and local acceptance
+# CCARS v1.4 Graph-First adoption and local acceptance
 
-Status: repository integration candidate, Issue [#357](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/357). Human review and live AGY/CodeGraph verification remain required. Reviewed source baseline: `f8f85e07704347ae5c2d7f5a79845c9bd625c1c5`.
+Status: repository integration candidate, Issue [#367](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/367) (superseding v1.3 / Issue #357). Human review and live AGY/CodeGraph verification remain required. Reviewed source baseline: `18d9eedd2b2cdc5a0b8ad2f886e491c587126a3b`.
 
 ## Tracked integration
 
-- [CCARS v1.3](c-clean-code-refactoring-standard.md) organizes accepted C code; no baseline recertification.
+- [CCARS v1.4](c-clean-code-refactoring-standard.md) organizes accepted C code via three-tier ESP-IDF component architecture; no baseline recertification.
 - [Project AGY agent](../../.agents/agents/c-structural-refactor.md) and [Coordinator](../../.agents/agents/harness-coordinator.md): Graph-First entrypoint and delegated Worker handoff.
 - [AGENTS.md](../../AGENTS.md): CodeGraph mandatory for CCARS; ordinary coding remains optional.
 - [Existing quality gates](harness-quality-gates.md): CCARS and this runbook are control-policy paths routed to TOOLING-CHECK and SECURITY-CHECK, with CI path triggers. REF/CG IDs remain structural identifiers, not C/Go selector inputs.
@@ -28,7 +28,7 @@ Status: repository integration candidate, Issue [#357](https://github.com/khanhp
    Chạy CCARS Refactor Issue #N
    ```
 
-   Reuse [Native Fast Lane](harness-fast-lane.md), G0, scoped C V2 selection, existing Host checks and independent Auditor. Verify actual candidate graph before and after each patch. Pilot suggestion: only Node OLED presentation, preserve existing behavior and Kconfig. Issue #357 does not authorize firmware edits.
+   Reuse [Native Fast Lane](harness-fast-lane.md), G0, scoped C V2 selection, existing Host checks and independent Auditor. Verify actual candidate graph before and after each patch. Pilot suggestion: extract Node OLED presentation into application component `firmware/sensor_node/components/node_ui/`, preserve existing behavior and Kconfig. Issue #367 does not authorize firmware edits.
 
 ## AGY executor tool-name collision (v1.5.7 owner report)
 
