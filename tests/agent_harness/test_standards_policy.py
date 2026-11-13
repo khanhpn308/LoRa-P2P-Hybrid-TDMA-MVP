@@ -914,6 +914,31 @@ class RoutingTests(PolicyFixture):
         groups = {r.split("-")[0] for r in selected_ids}
         self.assertIn("DB", groups)
 
+    def test_composition_root_repo_module_import_does_not_trigger_sc_rules(self):
+        """Repository module path and log banner containing repo name must not trigger SC rules."""
+        self.write("backend-go/cmd/server/main.go", (
+            "package main\n\nimport (\n"
+            '    "fmt"\n'
+            '    _ "github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/app"\n)\n\n'
+            'func main() {\n    fmt.Println("LoRa-P2P-Hybrid-TDMA-MVP Gateway starting...")\n}\n'
+        ))
+        selection = self.select(["backend-go/cmd/server/main.go"])
+        selected_ids = set(selection["selected_ids"])
+        groups = {r.split("-")[0] for r in selected_ids}
+        self.assertNotIn("SC", groups)
+
+    def test_composition_root_concrete_tdma_operation_triggers_sc_rules(self):
+        """Concrete scheduler and TDMA operations in composition root trigger SC rules."""
+        self.write("backend-go/cmd/server/main.go", (
+            "package main\n\n"
+            "type Scheduler interface { StartTimeslot(id int) }\n"
+            "func Run(s Scheduler) {\n    s.StartTimeslot(42)\n}\n"
+        ))
+        selection = self.select(["backend-go/cmd/server/main.go"])
+        selected_ids = set(selection["selected_ids"])
+        groups = {r.split("-")[0] for r in selected_ids}
+        self.assertIn("SC", groups)
+
     def test_entire_standard_selection_is_forbidden_fails_closed(self):
         """Issue #267 AC-3: Genuine attempts to select all groups/rules fail closed."""
         for pkg in ("storage", "mqtt", "scheduler", "telemetry", "alert", "api"):

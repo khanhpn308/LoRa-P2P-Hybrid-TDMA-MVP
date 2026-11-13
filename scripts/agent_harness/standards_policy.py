@@ -96,7 +96,7 @@ CONCRETE_MQ_OPS = re.compile(
     r")"
 )
 CONCRETE_SC_OPS = re.compile(
-    r"(?i)\b(?:tdma|superframe|slot_id|timeslot|beacon_sync|schedule_version|schedule_id)\b"
+    r"(?i)(?:\b(?:superframe|slot_id|beacon_sync|scheduler\.\w+)\b|\w*(?:tdma|timeslot)\w*)"
 )
 
 
@@ -494,7 +494,8 @@ def select_rules(repo: Path, allowed_paths=(), changed_paths=None, requested_ids
                         groups.add("DB")
                     if CONCRETE_MQ_OPS.search(text):
                         groups.update(("MQ", "CT"))
-                    if CONCRETE_SC_OPS.search(text):
+                    sc_text = text.replace("LoRa-P2P-Hybrid-TDMA-MVP", "").replace("Hybrid TDMA", "")
+                    if CONCRETE_SC_OPS.search(sc_text):
                         groups.add("SC")
                     for expression, applicable in OPERATIONS[component]:
                         if any(g in ("DB", "MQ", "SC") for g in applicable):
