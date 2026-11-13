@@ -34,3 +34,13 @@ func (a *App) Config() *config.Config {
 func (a *App) Hub() *realtime.Hub {
 	return a.hub
 }
+
+// StatusSub returns the configured GatewayStatusSubscriber instance (or nil if unconfigured).
+func (a *App) StatusSub() *mqtt.GatewayStatusSubscriber {
+	return a.statusSub
+}
+
+// DB returns the active database connection (or nil in in-memory mode).
+func (a *App) DB() *sql.DB {
+	return a.db
+}

@@ -70,12 +70,8 @@ func New(cfg *config.Config) (*App, error) {
 
 	var statusSub *mqtt.GatewayStatusSubscriber
 	if statusStore != nil {
-		statusSub = mqtt.NewGatewayStatusSubscriber(cfg.MQTTBrokerURI, statusStore, hub, eventStorage, joinReqStore, presenceTracker)
-		if err := statusSub.Start(context.Background()); err != nil {
-			log.Printf("Warning: failed to start MQTT status subscriber: %v", err)
-		} else {
-			log.Printf("MQTT status subscriber initialized on %s", cfg.MQTTBrokerURI)
-		}
+		brokerURI := cfg.ResolveMQTTBrokerURI()
+		statusSub = mqtt.NewGatewayStatusSubscriber(brokerURI, statusStore, hub, eventStorage, joinReqStore, presenceTracker)
 	}
 
 	var joinReqHandler *api.JoinRequestHandler

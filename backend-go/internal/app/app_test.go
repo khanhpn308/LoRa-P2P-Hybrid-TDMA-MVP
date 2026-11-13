@@ -40,6 +40,14 @@ func TestApp_New_InMemoryDefaults(t *testing.T) {
 		t.Errorf("expected non-nil Hub")
 	}
 
+	if application.StatusSub() != nil {
+		t.Errorf("expected nil StatusSub in default in-memory mode")
+	}
+
+	if application.DB() != nil {
+		t.Errorf("expected nil DB in default in-memory mode")
+	}
+
 	// Verify health check route is served via the configured server handler
 	srv := application.Server()
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -85,5 +93,38 @@ func TestApp_Run_GracefulShutdown(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("application.Run did not terminate within timeout")
+	}
+}
+
+func TestApp_New_NoPrematureDNSOrSubscriber(t *testing.T) {
+	dnsCalled := false
+	dnsLookup := func(host string) ([]string, error) {
+		dnsCalled = true
+		return []string{"192.168.1.50"}, nil
+	}
+
+	cfg := config.LoadFromEnv(func(key string) string {
+		switch key {
+		case "PORT":
+			return "0"
+		case "MQTT_HOST":
+			return "mqtt-dev"
+		default:
+			return ""
+		}
+	}, dnsLookup)
+
+	// In in-memory mode (empty DATABASE_URL), statusStore is nil.
+	// app.New MUST NOT resolve MQTT host via DNS or instantiate/start statusSub.
+	application, err := app.New(cfg)
+	if err != nil {
+		t.Fatalf("failed to initialize app: %v", err)
+	}
+
+	if dnsCalled {
+		t.Errorf("app.New MUST NOT trigger DNS lookup when statusStore is nil")
+	}
+	if application.StatusSub() != nil {
+		t.Errorf("expected nil statusSub when statusStore is nil, got %v", application.StatusSub())
 	}
 }

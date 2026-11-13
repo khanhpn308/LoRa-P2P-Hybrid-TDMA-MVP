@@ -14,6 +14,14 @@ func (a *App) Run(ctx context.Context) error {
 	defer cancelHub()
 	go a.hub.Run(hubCtx)
 
+	if a.statusSub != nil {
+		if err := a.statusSub.Start(context.Background()); err != nil {
+			log.Printf("Warning: failed to start MQTT status subscriber: %v", err)
+		} else {
+			log.Printf("MQTT status subscriber initialized on %s", a.cfg.ResolveMQTTBrokerURI())
+		}
+	}
+
 	serverErr := make(chan error, 1)
 	go func() {
 		log.Printf("HTTP server listening on %s", a.server.Addr)

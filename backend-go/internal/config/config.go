@@ -54,21 +54,58 @@ func (c *Config) String() string {
 // LookupHostFunc matches the signature of net.LookupHost.
 type LookupHostFunc func(host string) (addrs []string, err error)
 
-// Load reads backend configuration from OS environment variables.
-func Load() *Config {
-	return LoadFromEnv(os.Getenv, net.LookupHost)
-}
-
-// LoadFromEnv loads configuration using custom environment accessor and DNS lookup functions.
-func LoadFromEnv(getEnv func(string) string, lookupHost ...LookupHostFunc) *Config {
-	if getEnv == nil {
-		getEnv = os.Getenv
-	}
+// ResolveMQTTBrokerURI resolves the broker URI for the given host and port with DNS fallback rules.
+// DNS lookup for "mqtt-dev" is performed only when this function is called.
+func ResolveMQTTBrokerURI(host, port string, lookupHost ...LookupHostFunc) string {
 	var dnsLookup LookupHostFunc
 	if len(lookupHost) > 0 && lookupHost[0] != nil {
 		dnsLookup = lookupHost[0]
 	} else {
 		dnsLookup = net.LookupHost
+	}
+
+	if port == "" {
+		port = DefaultMQTTPort
+	}
+
+	resolvedHost := host
+	if resolvedHost == "" || resolvedHost == "localhost" {
+		resolvedHost = "127.0.0.1"
+	} else if resolvedHost == "mqtt-dev" {
+		if _, err := dnsLookup("mqtt-dev"); err != nil {
+			if _, err2 := dnsLookup("deploy-mqtt-dev-1"); err2 == nil {
+				resolvedHost = "deploy-mqtt-dev-1"
+			} else {
+				resolvedHost = "192.168.88.113"
+			}
+		}
+	}
+	return fmt.Sprintf("tcp://%s:%s", resolvedHost, port)
+}
+
+// ResolveMQTTBrokerURI resolves the broker URI for this Config instance.
+// If c.MQTTBrokerURI is already explicitly populated, that value is returned.
+// Otherwise, it resolves using c.MQTTHost, c.MQTTPort, and DNS fallback rules,
+// caching the result on c.MQTTBrokerURI.
+func (c *Config) ResolveMQTTBrokerURI(lookupHost ...LookupHostFunc) string {
+	if c.MQTTBrokerURI != "" {
+		return c.MQTTBrokerURI
+	}
+	c.MQTTBrokerURI = ResolveMQTTBrokerURI(c.MQTTHost, c.MQTTPort, lookupHost...)
+	return c.MQTTBrokerURI
+}
+
+// Load reads backend configuration from OS environment variables.
+func Load() *Config {
+	return LoadFromEnv(os.Getenv)
+}
+
+// LoadFromEnv loads configuration using custom environment accessor.
+// Note: MQTT host resolution and DNS lookups are intentionally NOT performed
+// during LoadFromEnv to preserve conditional resolution and prevent unconditional DNS I/O.
+func LoadFromEnv(getEnv func(string) string, lookupHost ...LookupHostFunc) *Config {
+	if getEnv == nil {
+		getEnv = os.Getenv
 	}
 
 	port := getEnv("PORT")
@@ -84,19 +121,7 @@ func LoadFromEnv(getEnv func(string) string, lookupHost ...LookupHostFunc) *Conf
 		mqttPort = DefaultMQTTPort
 	}
 
-	resolvedHost := mqttHost
-	if resolvedHost == "" || resolvedHost == "localhost" {
-		resolvedHost = "127.0.0.1"
-	} else if resolvedHost == "mqtt-dev" {
-		if _, err := dnsLookup("mqtt-dev"); err != nil {
-			if _, err2 := dnsLookup("deploy-mqtt-dev-1"); err2 == nil {
-				resolvedHost = "deploy-mqtt-dev-1"
-			} else {
-				resolvedHost = "192.168.88.113"
-			}
-		}
-	}
-	brokerURI := fmt.Sprintf("tcp://%s:%s", resolvedHost, mqttPort)
+	brokerURI := getEnv("MQTT_BROKER_URI")
 
 	jwtSecret := getEnv("JWT_SECRET_KEY")
 	if len(jwtSecret) < 32 {

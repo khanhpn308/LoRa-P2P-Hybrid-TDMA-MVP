@@ -26,8 +26,16 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.MQTTPort != config.DefaultMQTTPort {
 		t.Errorf("expected default MQTT port %s, got %s", config.DefaultMQTTPort, cfg.MQTTPort)
 	}
+	// MQTT broker URI is intentionally not resolved prematurely during LoadFromEnv
+	if cfg.MQTTBrokerURI != "" {
+		t.Errorf("expected empty MQTTBrokerURI before resolution, got %s", cfg.MQTTBrokerURI)
+	}
+	resolvedURI := cfg.ResolveMQTTBrokerURI()
+	if resolvedURI != "tcp://127.0.0.1:1883" {
+		t.Errorf("expected resolved broker URI tcp://127.0.0.1:1883, got %s", resolvedURI)
+	}
 	if cfg.MQTTBrokerURI != "tcp://127.0.0.1:1883" {
-		t.Errorf("expected broker URI tcp://127.0.0.1:1883, got %s", cfg.MQTTBrokerURI)
+		t.Errorf("expected cached broker URI tcp://127.0.0.1:1883, got %s", cfg.MQTTBrokerURI)
 	}
 	if cfg.JWTSecretKey != config.DefaultJWTSecret {
 		t.Errorf("expected default JWT secret, got %s", cfg.JWTSecretKey)
@@ -41,6 +49,38 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 	if cfg.ReadTimeout != 15*time.Second || cfg.WriteTimeout != 15*time.Second || cfg.IdleTimeout != 60*time.Second || cfg.ShutdownTimeout != 5*time.Second {
 		t.Errorf("unexpected timeouts: %+v", cfg)
+	}
+}
+
+func TestLoad_NoUnconditionalDNS(t *testing.T) {
+	dnsCalled := false
+	dnsLookup := func(host string) ([]string, error) {
+		dnsCalled = true
+		return []string{"192.168.1.100"}, nil
+	}
+
+	// LoadFromEnv must NOT invoke DNS lookup, even if MQTT_HOST is "mqtt-dev"
+	cfg := config.LoadFromEnv(func(key string) string {
+		if key == "MQTT_HOST" {
+			return "mqtt-dev"
+		}
+		return ""
+	}, dnsLookup)
+
+	if dnsCalled {
+		t.Fatal("dnsLookup MUST NOT be invoked unconditionally during config.LoadFromEnv")
+	}
+	if cfg.MQTTBrokerURI != "" {
+		t.Errorf("expected empty MQTTBrokerURI before resolution, got %s", cfg.MQTTBrokerURI)
+	}
+
+	// DNS lookup is invoked only upon explicit resolution
+	uri := cfg.ResolveMQTTBrokerURI(dnsLookup)
+	if !dnsCalled {
+		t.Fatal("dnsLookup MUST be invoked when ResolveMQTTBrokerURI is called")
+	}
+	if uri != "tcp://192.168.1.100:1883" && uri != "tcp://mqtt-dev:1883" {
+		t.Errorf("unexpected resolved URI: %s", uri)
 	}
 }
 
@@ -64,8 +104,8 @@ func TestLoad_CustomEnv(t *testing.T) {
 	if cfg.DatabaseURL != "postgres://user:pass@localhost:5432/testdb" {
 		t.Errorf("expected custom database URL, got %s", cfg.DatabaseURL)
 	}
-	if cfg.MQTTBrokerURI != "tcp://10.0.0.5:1884" {
-		t.Errorf("expected broker URI tcp://10.0.0.5:1884, got %s", cfg.MQTTBrokerURI)
+	if uri := cfg.ResolveMQTTBrokerURI(); uri != "tcp://10.0.0.5:1884" {
+		t.Errorf("expected broker URI tcp://10.0.0.5:1884, got %s", uri)
 	}
 	if cfg.JWTSecretKey != "my-custom-super-secure-jwt-secret-key-32-bytes!" {
 		t.Errorf("expected custom JWT secret, got %s", cfg.JWTSecretKey)
@@ -133,8 +173,9 @@ func TestLoad_MQTTDevResolution(t *testing.T) {
 			}, lookup)
 
 			expectedURI := "tcp://" + tc.expectedHost + ":1883"
-			if cfg.MQTTBrokerURI != expectedURI {
-				t.Errorf("expected broker URI %s, got %s", expectedURI, cfg.MQTTBrokerURI)
+			resolvedURI := cfg.ResolveMQTTBrokerURI(lookup)
+			if resolvedURI != expectedURI {
+				t.Errorf("expected broker URI %s, got %s", expectedURI, resolvedURI)
 			}
 		})
 	}
@@ -147,8 +188,8 @@ func TestLoad_LocalhostMQTT(t *testing.T) {
 		}
 		return ""
 	})
-	if cfg.MQTTBrokerURI != "tcp://127.0.0.1:1883" {
-		t.Errorf("expected localhost to resolve to 127.0.0.1, got %s", cfg.MQTTBrokerURI)
+	if uri := cfg.ResolveMQTTBrokerURI(); uri != "tcp://127.0.0.1:1883" {
+		t.Errorf("expected localhost to resolve to 127.0.0.1, got %s", uri)
 	}
 }
 
