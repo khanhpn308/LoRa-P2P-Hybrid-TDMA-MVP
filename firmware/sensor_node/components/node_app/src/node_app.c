@@ -21,6 +21,7 @@
 #include "node_ui.h"
 #include "node_smart_backoff.h"
 #include "node_cad_backoff.h"
+#include "node_radio_hal.h"
 #include "node_arq.h"
 #include "sdkconfig.h"
 
@@ -71,62 +72,6 @@ static bool is_all_zeros(const uint8_t *buf, size_t len)
         }
     }
     return true;
-}
-
-/* Production SX1276 & FreeRTOS Radio HAL Callbacks */
-static esp_err_t prod_radio_cad(bool *out_activity_detected)
-{
-    return sx1276_cad(out_activity_detected, pdMS_TO_TICKS(100));
-}
-
-static esp_err_t prod_radio_tx(const uint8_t *payload, uint8_t length, uint32_t timeout_ms)
-{
-    return sx1276_tx(payload, length, pdMS_TO_TICKS(timeout_ms));
-}
-
-static esp_err_t prod_radio_rx_single(uint32_t timeout_ms)
-{
-    (void)timeout_ms;
-    /* Purge any stale frames from the RX queue before opening the reception window */
-    sx1276_rx_frame_t stale;
-    while (sx1276_read_frame(&stale, 0) == ESP_OK) {
-        /* drain */
-    }
-    return sx1276_start_rx_continuous();
-}
-
-static esp_err_t prod_radio_read_frame(uint8_t *out_buf, size_t *out_len, uint32_t wait_ms)
-{
-    if (out_buf == NULL || out_len == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    sx1276_rx_frame_t frame;
-    esp_err_t err = sx1276_read_frame(&frame, pdMS_TO_TICKS(wait_ms));
-    if (err == ESP_OK) {
-        *out_len = frame.length;
-        (void)memcpy(out_buf, frame.payload, frame.length);
-    }
-    return err;
-}
-
-static esp_err_t prod_radio_sleep(void)
-{
-    return sx1276_sleep();
-}
-
-static esp_err_t prod_radio_standby(void)
-{
-    return sx1276_standby();
-}
-
-static uint32_t prod_get_time_ms(void)
-{
-    return (uint32_t)(esp_timer_get_time() / 1000ULL);
-}
-
-static void prod_delay_ms(uint32_t ms)
-{
-    (void)node_smart_backoff(ms);
 }
 
 static esp_err_t node_cad_event_tx_and_ack(const node_mac_config_t *cfg,
@@ -247,10 +192,10 @@ static esp_err_t node_cad_event_tx_and_ack(const node_mac_config_t *cfg,
         ESP_LOGI(TAG, "[EVENT TX] Transmitted UP_EVENT successfully. Listening for DOWN_EVENT_ACK...");
 
         /* 2c. Open RX window to wait for DOWN_EVENT_ACK (timeout: 400 ms) */
-        (void)prod_radio_rx_single(400);
+        (void)node_radio_hal_rx_single(400);
         uint8_t ack_buf[64];
         size_t ack_len = 0U;
-        esp_err_t ack_rx_err = prod_radio_read_frame(ack_buf, &ack_len, 400);
+        esp_err_t ack_rx_err = node_radio_hal_read_frame(ack_buf, &ack_len, 400);
         (void)sx1276_standby();
 
         bool ack_valid = false;
@@ -379,10 +324,10 @@ static void node_listen_downlink_revoke(const node_mac_config_t *cfg, uint32_t w
     if (cfg == NULL) {
         return;
     }
-    (void)prod_radio_rx_single(wait_ms);
+    (void)node_radio_hal_rx_single(wait_ms);
     uint8_t dl_buf[64];
     size_t dl_len = 0U;
-    esp_err_t dl_rx_err = prod_radio_read_frame(dl_buf, &dl_len, wait_ms);
+    esp_err_t dl_rx_err = node_radio_hal_read_frame(dl_buf, &dl_len, wait_ms);
     (void)sx1276_standby();
 
     if (dl_rx_err == ESP_OK && dl_len >= LORA_MAC_V2_LEN_DOWN_REVOKE) {
@@ -438,10 +383,10 @@ static esp_err_t node_listen_and_respond_probe(const node_mac_config_t *cfg, uin
     if (cfg == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-    (void)prod_radio_rx_single(wait_ms);
+    (void)node_radio_hal_rx_single(wait_ms);
     uint8_t rx_buf[64];
     size_t rx_len = 0U;
-    esp_err_t err = prod_radio_read_frame(rx_buf, &rx_len, wait_ms);
+    esp_err_t err = node_radio_hal_read_frame(rx_buf, &rx_len, wait_ms);
     (void)sx1276_standby();
 
     if (err == ESP_OK && rx_len >= 7 && rx_buf[0] == LORA_MAC_V2_TYPE_DOWN_HEARTBEAT_PROBE) {
@@ -601,16 +546,8 @@ void node_app_run(void)
         (void)memcpy(mac_cfg.k_session_down, s_join_ctx.session_keys.k_session_dl, 16);
     }
 
-    node_v2_join_radio_hal_t join_hal = {
-        .radio_cad = prod_radio_cad,
-        .radio_tx = prod_radio_tx,
-        .radio_rx_single = prod_radio_rx_single,
-        .radio_read_frame = prod_radio_read_frame,
-        .radio_sleep = prod_radio_sleep,
-        .radio_standby = prod_radio_standby,
-        .get_time_ms = prod_get_time_ms,
-        .delay_ms = prod_delay_ms,
-    };
+    node_v2_join_radio_hal_t join_hal;
+    (void)node_radio_hal_get_join_hal(&join_hal);
 
     /* 5. Initialize Airtime Policy & Crypto subsystem */
 #ifdef CONFIG_NODE_AIRTIME_PERMILLE
