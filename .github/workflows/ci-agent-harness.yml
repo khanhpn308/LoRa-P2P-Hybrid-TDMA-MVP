@@ -5,10 +5,13 @@ on:
     paths:
       - "AGENTS.md"
       - ".agent-harness/**"
-      - ".agents/agents/**"
+      - ".agents/**"
       - "scripts/agent_harness/**"
       - "tests/agent_harness/**"
       - "docs/development/agent-harness-firmware.md"
+      - "docs/development/c-clean-code-refactoring-standard.md"
+      - "docs/development/ccars-graph-first-adoption.md"
+      - "docs/development/harness-quality-gates.md"
       - ".github/workflows/ci-agent-harness.yml"
   workflow_dispatch:
 

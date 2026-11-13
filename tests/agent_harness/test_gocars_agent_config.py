@@ -32,8 +32,8 @@ class GocarsAgentConfigTests(unittest.TestCase):
         # tools as static registry entries. Changes require runtime smoke evidence
         # with the intended AGY release before extending this list.
         expected = [
-            "run_command", "view_file", "write_file", "edit_file",
-            "manage_task", "invoke_subagent", "send_message",
+            "run_command", "view_file", "write_to_file",
+            "replace_file_content", "invoke_subagent",
         ]
         self.assertEqual(config["tools"], expected)
         self.assertEqual(len(config["tools"]), len(set(config["tools"])))
@@ -43,10 +43,13 @@ class GocarsAgentConfigTests(unittest.TestCase):
         unsupported = {
             "call_mcp_tool", "list_resources", "read_resource",
             "read_file", "codegraph_explore", "define_subagent",
+            "write_file", "edit_file", "manage_task", "send_message",
         }
         self.assertFalse(unsupported.intersection(config["tools"]))
         self.assertIn("view_file", config["tools"])
         self.assertIn("run_command", config["tools"])
+        self.assertIn("write_to_file", config["tools"])
+        self.assertIn("replace_file_content", config["tools"])
 
     def test_runtime_mcp_is_not_startup_dependency(self):
         for token in (
