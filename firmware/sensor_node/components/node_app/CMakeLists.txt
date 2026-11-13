@@ -8,6 +8,7 @@ idf_component_register(
         node_cad_backoff
         node_radio_hal
         node_arq
+        node_event_tx
         sx1276_driver
         button_driver
         airtime_policy
