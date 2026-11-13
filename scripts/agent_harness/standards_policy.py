@@ -449,10 +449,31 @@ def select_rules(repo: Path, allowed_paths=(), changed_paths=None, requested_ids
                         groups.update(applicable)
                 text = (path + "\n" + code.get(path, b"").decode())
                 text += "\n" + text.replace("_", " ")
-                is_comp_root = component == "GO" and ("cmd" in parts and "server" in parts)
+                is_comp_or_config = component == "GO" and (
+                    ("cmd" in parts and "server" in parts)
+                    or ("internal" in parts and "app" in parts)
+                    or ("internal" in parts and "config" in parts)
+                )
                 for expression, applicable in OPERATIONS[component]:
-                    if is_comp_root and any(g in ("DB", "MQ", "SC") for g in applicable):
-                        continue
+                    if is_comp_or_config and any(g in ("DB", "MQ", "SC") for g in applicable):
+                        if "DB" in applicable and not re.search(
+                            r"(?i)(?:\b(?:select\s+.+\s+from|insert\s+into|update\s+.+\s+set|delete\s+from|create\s+table|drop\s+table|alter\s+table)\b|"
+                            r"\.(?:Query|QueryRow|QueryContext|QueryRowContext|Exec|ExecContext|Begin|BeginTx|Commit|Rollback|Prepare|PrepareContext)\s*\()",
+                            text,
+                        ):
+                            continue
+                        if "MQ" in applicable and not re.search(
+                            r"(?i)(?:\b(?:puback|mosquitto)\b|"
+                            r"\.(?:Publish|Subscribe|Unsubscribe)\s*\(|"
+                            r"\bmqtt\.(?:Message|Client|Token)\b)",
+                            text,
+                        ):
+                            continue
+                        if "SC" in applicable and not re.search(
+                            r"(?i)\b(?:tdma|superframe|slot_id|timeslot|beacon_sync)\b",
+                            text,
+                        ):
+                            continue
                     if re.search(expression, text):
                         groups.update(applicable)
             if component == "GO" and "SC" in groups:

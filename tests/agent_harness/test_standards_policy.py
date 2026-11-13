@@ -549,6 +549,125 @@ class RoutingTests(PolicyFixture):
         groups = {r.split("-")[0] for r in selected_ids}
         self.assertNotIn("DB", groups)
 
+    def test_relocated_composition_and_config_wiring_selects_bounded_subset(self):
+        """Issue #365: internal/app and internal/config wiring selects bounded subset (< 128 rules)."""
+        self.write("backend-go/internal/storage/storage.go", "package storage\nfunc QueryDB() {}\n")
+        self.write("backend-go/internal/mqtt/mqtt.go", "package mqtt\nfunc PubMQTT() {}\n")
+        self.write("backend-go/internal/config/config.go", (
+            "package config\n\nimport \"os\"\n\n"
+            "type Config struct { DBURL string; MQTTHost string }\n"
+            "func Load() *Config {\n"
+            '    return &Config{DBURL: os.Getenv("DATABASE_URL"), MQTTHost: os.Getenv("MQTT_HOST")}\n'
+            "}\n"
+        ))
+        self.write("backend-go/internal/app/wiring.go", (
+            "package app\n\nimport (\n"
+            '    "database/sql"\n'
+            '    "example.org/project/internal/config"\n'
+            '    "example.org/project/internal/storage"\n'
+            '    "example.org/project/internal/mqtt"\n)\n\n'
+            "type App struct { db *sql.DB }\n"
+            "func New(cfg *config.Config) (*App, error) {\n"
+            '    db, _ := sql.Open("postgres", cfg.DBURL)\n'
+            "    return &App{db: db}, nil\n"
+            "}\n"
+        ))
+        self.write("backend-go/cmd/server/main.go", (
+            "package main\n\nimport (\n"
+            '    "example.org/project/internal/app"\n'
+            '    "example.org/project/internal/config"\n)\n\n'
+            "func main() {\n"
+            "    cfg := config.Load()\n"
+            "    a, _ := app.New(cfg)\n"
+            "    _ = a\n"
+            "}\n"
+        ))
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        self.write("backend-go/internal/app/wiring.go", (
+            "package app\n\nimport (\n"
+            '    "database/sql"\n'
+            '    "example.org/project/internal/config"\n'
+            '    "example.org/project/internal/storage"\n'
+            '    "example.org/project/internal/mqtt"\n)\n\n'
+            "type App struct { db *sql.DB }\n"
+            "func New(cfg *config.Config) (*App, error) {\n"
+            '    db, _ := sql.Open("postgres", cfg.DBURL)\n'
+            "    println(\"wired relocated app\")\n"
+            "    return &App{db: db}, nil\n"
+            "}\n"
+        ))
+        selection = self.select([
+            "backend-go/cmd/server/main.go",
+            "backend-go/internal/app/wiring.go",
+            "backend-go/internal/config/config.go",
+        ])
+        selected_ids = set(selection["selected_ids"])
+        groups = {r.split("-")[0] for r in selected_ids}
+
+        self.assertLess(len(selected_ids), 128)
+        self.assertNotIn("DB", groups)
+        self.assertNotIn("MQ", groups)
+        self.assertNotIn("SC", groups)
+
+    def test_relocated_composition_with_actual_sql_query_triggers_db_rules(self):
+        """Issue #365: actual SQL query in internal/app triggers DB rule group."""
+        self.write("backend-go/internal/app/query.go", (
+            "package app\n\nimport (\n"
+            '    "context"\n'
+            '    "database/sql"\n)\n\n'
+            "func FetchUsers(ctx context.Context, db *sql.DB) error {\n"
+            '    rows, err := db.QueryContext(ctx, "SELECT id FROM users WHERE active = true")\n'
+            "    if err != nil { return err }\n"
+            "    return rows.Close()\n"
+            "}\n"
+        ))
+        selection = self.select(["backend-go/internal/app/query.go"])
+        selected_ids = set(selection["selected_ids"])
+        groups = {r.split("-")[0] for r in selected_ids}
+        self.assertIn("DB", groups)
+
+    def test_relocated_composition_with_actual_mqtt_publish_triggers_mq_rules(self):
+        """Issue #365: actual MQTT client publish in internal/app triggers MQ rule group."""
+        self.write("backend-go/internal/app/event.go", (
+            "package app\n\n"
+            "type MQTTClient interface {\n"
+            "    Publish(topic string, qos byte, retained bool, payload interface{}) error\n"
+            "}\n"
+            "func Broadcast(c MQTTClient, data []byte) error {\n"
+            '    return c.Publish("gateway/events", 1, false, data)\n'
+            "}\n"
+        ))
+        selection = self.select(["backend-go/internal/app/event.go"])
+        selected_ids = set(selection["selected_ids"])
+        groups = {r.split("-")[0] for r in selected_ids}
+        self.assertIn("MQ", groups)
+
+    def test_storage_package_unconditionally_triggers_db_rules(self):
+        """Issue #365: non-composition packages like internal/storage always trigger DB rules."""
+        self.write("backend-go/internal/storage/repo.go", (
+            "package storage\n\n"
+            "type CustomStorage struct {}\n"
+            "func NewStorage() *CustomStorage { return &CustomStorage{} }\n"
+        ))
+        selection = self.select(["backend-go/internal/storage/repo.go"])
+        selected_ids = set(selection["selected_ids"])
+        groups = {r.split("-")[0] for r in selected_ids}
+        self.assertIn("DB", groups)
+
+    def test_mqtt_package_unconditionally_triggers_mq_rules(self):
+        """Issue #365: non-composition packages like internal/mqtt always trigger MQ rules."""
+        self.write("backend-go/internal/mqtt/client.go", (
+            "package mqtt\n\n"
+            "type ClientWrapper struct {}\n"
+            "func NewClient() *ClientWrapper { return &ClientWrapper{} }\n"
+        ))
+        selection = self.select(["backend-go/internal/mqtt/client.go"])
+        selected_ids = set(selection["selected_ids"])
+        groups = {r.split("-")[0] for r in selected_ids}
+        self.assertIn("MQ", groups)
+
     def test_entire_standard_selection_is_forbidden_fails_closed(self):
         """Issue #267 AC-3: Genuine attempts to select all groups/rules fail closed."""
         for pkg in ("storage", "mqtt", "scheduler", "telemetry", "alert", "api"):
