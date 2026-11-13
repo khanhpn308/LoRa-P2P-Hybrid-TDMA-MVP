@@ -76,15 +76,27 @@ class HarnessCoordinatorConfigTests(unittest.TestCase):
         paths = sorted(self.agent_dir.glob("*.md")) + sorted(self.agent_dir.glob("*/agent.md"))
         self.assertIn(self.coordinator_path, paths)
         self.assertIn(self.agent_dir / "c-structural-refactor.md", paths)
+        self.assertIn(self.agent_dir / "gocars-refactor" / "agent.md", paths)
+        names = set()
         for path in paths:
-            with self.subTest(path=path.name):
+            with self.subTest(path=str(path.relative_to(self.repo_root))):
                 data = load_agent_frontmatter(path.read_text(encoding="utf-8"))
                 validate_tool_allowlist(data)
+                name = data.get("name")
+                self.assertIsInstance(name, str)
+                self.assertTrue(name.strip())
+                self.assertNotIn(name, names, "duplicate agent name")
+                names.add(name)
 
-    def test_both_workflow_agents_preserve_required_capabilities(self):
-        for name in ("harness-coordinator", "c-structural-refactor"):
+    def test_all_workflow_agents_preserve_required_capabilities(self):
+        agents = {
+            "harness-coordinator": self.agent_dir / "harness-coordinator.md",
+            "c-structural-refactor": self.agent_dir / "c-structural-refactor.md",
+            "gocars-refactor": self.agent_dir / "gocars-refactor" / "agent.md",
+        }
+        for name, path in agents.items():
             with self.subTest(agent=name):
-                data = load_agent_frontmatter((self.agent_dir / (name + ".md")).read_text(encoding="utf-8"))
+                data = load_agent_frontmatter(path.read_text(encoding="utf-8"))
                 self.assertEqual(data.get("name"), name)
                 self.assertIs(data.get("mainAgent"), True)
                 self.assertIs(data.get("subagent"), False)
@@ -102,7 +114,9 @@ class HarnessCoordinatorConfigTests(unittest.TestCase):
             validate_tool_allowlist({"tools": ["view_file", "view_file"]})
 
     def test_rejects_unreviewed_or_implicit_tools(self):
-        for tool in ("unreviewed_tool", "send_message", "schedule", "generate_image"):
+        for tool in ("unreviewed_tool", "send_message", "schedule", "generate_image",
+                     "manage_task", "call_mcp_tool", "list_resources",
+                     "read_resource", "codegraph_explore", "define_subagent"):
             with self.subTest(tool=tool):
                 with self.assertRaisesRegex(ValueError, "unsupported or alias"):
                     validate_tool_allowlist({"tools": ["view_file", tool]})
@@ -130,6 +144,15 @@ class HarnessCoordinatorConfigTests(unittest.TestCase):
         for marker in ("--export-auditor-context", "Fresh-Independent-Auditor",
                        "--auditor-report", "--evidence-dir", "invoke_subagent"):
             self.assertIn(marker, content)
+
+    def test_agent_only_changes_trigger_harness_ci(self):
+        workflow = yaml.safe_load(
+            (self.repo_root / ".github/workflows/ci-agent-harness.yml").read_text(encoding="utf-8")
+        )
+        triggers = workflow.get("on", workflow.get(True))
+        self.assertIn(".agents/**", triggers["pull_request"]["paths"])
+        commands = [step.get("run", "") for step in workflow["jobs"]["harness-unit"]["steps"]]
+        self.assertTrue(any("unittest discover -s tests/agent_harness" in cmd for cmd in commands))
 
     def test_ccars_graph_first_policy_preserved(self):
         content = (self.agent_dir / "c-structural-refactor.md").read_text(encoding="utf-8")
