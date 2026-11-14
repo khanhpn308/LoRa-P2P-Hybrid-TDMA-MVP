@@ -167,3 +167,18 @@ esp_err_t sx1276_get_diagnostics(sx1276_diagnostics_t *out_diag)
 {
     return sx1276_owner_get_diagnostics(out_diag);
 }
+
+esp_err_t sx1276_read_channel_rssi(int16_t *out_rssi_dbm, sx1276_channel_sample_context_t *out_context)
+{
+    if (out_rssi_dbm == NULL || out_context == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    sx1276_owner_cmd_t cmd = {
+        .type = SX1276_CMD_READ_CHANNEL_RSSI,
+        .params.read_rssi = {
+            .out_rssi_dbm = out_rssi_dbm,
+            .out_context = out_context,
+        },
+    };
+    return sx1276_owner_send_cmd(&cmd, pdMS_TO_TICKS(100));
+}

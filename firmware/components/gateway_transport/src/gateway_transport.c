@@ -89,6 +89,10 @@ static void transport_task(void *pvParameters)
                 suffix = "uplink/heartbeat";
                 retain = 0;
                 break;
+            case GATEWAY_MSG_TYPE_RF_METRICS:
+                suffix = "uplink/rf-metrics";
+                retain = 0;
+                break;
             default:
                 suffix = "uplink/unknown";
                 break;
@@ -459,6 +463,11 @@ esp_err_t gateway_transport_publish_heartbeat(const uint8_t *payload, size_t len
 esp_err_t gateway_transport_publish_schedule_ack(const uint8_t *payload, size_t len)
 {
     return enqueue_outbound(GATEWAY_MSG_TYPE_SCHEDULE_ACK, payload, len);
+}
+
+esp_err_t gateway_transport_publish_rf_metrics(const uint8_t *payload, size_t len)
+{
+    return enqueue_outbound(GATEWAY_MSG_TYPE_RF_METRICS, payload, len);
 }
 
 gateway_transport_status_t gateway_transport_get_status(void)

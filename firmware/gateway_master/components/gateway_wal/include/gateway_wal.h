@@ -33,6 +33,9 @@ typedef struct {
     uint32_t received_at_ms; /**< Local gateway monotonic reception timestamp (ms) */
     int16_t  rssi_dbm;       /**< Received packet RSSI */
     int8_t   snr_db_quarter; /**< Received packet SNR */
+    uint8_t  channel_idx;    /**< Operating channel index (0..10) */
+    uint64_t rx_monotonic_us;/**< Monotonic microsecond latch at RxDone */
+    uint64_t sample_seq;     /**< Monotonic RF sample sequence (stable across replay) */
 } gateway_wal_event_t;
 
 /**

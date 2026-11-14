@@ -151,3 +151,20 @@ Các bất biến nghiệp vụ bắt buộc:
 6. **JH-06 (QoS 1 Dedup):** Khử trùng lặp tầng mạng thông qua `(gateway_id, event_id)` với `event_id` theo định dạng `<gateway_id>:<gateway_epoch>:<event_seq>`.
 7. **JH-07 (Timing & Metadata):** `radio_rx_monotonic_us` ghi nhận thời gian nhận tương đối tại Gateway trong `gateway_epoch`. `observed_at` chỉ ghi nhận khi có nguồn thời gian UTC tin cậy, nếu `observed_time_source=unknown` thì bắt buộc `observed_at=null`.
 8. **JH-08 (No Data Grant):** Việc xác thực thành công `UP_JOIN_HELLO` chỉ đưa trạng thái giao dịch vào `HELLO_AUTHENTICATED_PENDING_GRANT`. Tuyệt đối không tự động cấp phát khe TDMA DATA hay kích hoạt quyền phát sóng cho Node tại bước này.
+
+## 9. LoRa RF Metrics Contract — Issue #392
+
+Interface: `iot/v1/gw/{gateway_id}/uplink/rf-metrics`, QoS 1, `Retain=false`, schema `rf-metrics.schema.json`.
+
+Các bất biến nghiệp vụ bắt buộc:
+1. **RF-01 (Scope & Separation):** Topic `iot/v1/gw/{gateway_id}/uplink/rf-metrics` là luồng JSON độc lập, không thay thế hoặc làm biến đổi bản tin heartbeat nhị phân kế thừa (`0x01` gateway heartbeat, `0x02` node bitmap trên topic `uplink/heartbeat`).
+2. **RF-02 (Topic & Identity):** `gateway_id` trong topic và payload bắt buộc trùng khớp với danh tính được broker xác thực qua mTLS/credentials. `gateway_epoch` là UUID định danh phiên khởi động Gateway, không thay đổi khi MQTT reconnect.
+3. **RF-03 (Sample Identity & Monotonicity):** Mỗi mẫu đo mang định danh đo lường duy nhất gồm `(gateway_epoch, sample_seq, sample_monotonic_us, channel_idx)`. `sample_seq` là chuỗi thập phân của bộ đếm 64-bit đơn điệu, không gán lại khi gửi lại (replay). `sample_monotonic_us` là chốt thời gian microsecond đơn điệu 64-bit (wrap-safe).
+4. **RF-04 (Provenance & Security):**
+   - Mẫu `NODE_UPLINK` từ `UP_EVENT` sau khi giải mã và xác thực MIC thành công được đánh dấu `validation="VERIFIED"` (hoặc `auth_provenance="MIC_VERIFIED"`).
+   - Mẫu `NODE_UPLINK` từ `UP_HEARTBEAT_ACK` chưa có xác thực mã hóa khóa phiên (chỉ có CRC tầng PHY) phải đánh dấu `validation="UNVERIFIED"` / `auth_provenance="UNVERIFIED_CRC_ONLY"`. Tuyệt đối không coi CRC là xác thực bảo mật hoặc dùng chỉ số RF để thay đổi chính sách cấp quyền.
+5. **RF-05 (HF RSSI & SNR Math):** Tần số HF (> 525 MHz). Nếu SNR $\ge 0$: $\text{RSSI} = -157 + \text{PacketRssi}$. Nếu SNR $< 0$: $\text{RSSI} = -157 + \text{PacketRssi} + \text{round}(\text{snr} / 4.0)$ theo làm tròn số nguyên gần nhất đối xứng. Không suy diễn giá trị khi đọc SPI thất bại. Giá trị SNR = 0 dB là hợp lệ.
+6. **RF-06 (Channel Energy Sampling):** Đọc thanh ghi `RegRssiValue` (0x1B) chỉ thông qua Radio Owner tuần tự hóa khi Gateway ở trạng thái thu hợp lệ (RXCONT/RXSINGLE). Cấm đọc qua SPI trực tiếp từ ngắt ISR hoặc timer callback. Cấm đọc trong khi TX/sleep/standby. `sample_context` phân biệt `RX_IDLE` và `RX_ACTIVE`. Không gọi năng lượng kênh tức thời là noise floor đã hiệu chuẩn.
+7. **RF-07 (Alert Integration & Replay):** Khối `rf` tùy chọn trong payload `uplink/alert` dùng chung định danh đo lường với luồng `rf-metrics`. Bản ghi sự kiện trong WAL lưu giữ đầy đủ siêu dữ liệu RF để bảo toàn tính toàn vẹn khi replay.
+8. **RF-08 (Transport Safety & Truncation):** Kiểm tra nghiêm ngặt kết quả `snprintf` ($\ge \text{buffer\_size}$ bị từ chối, không bao giờ publish JSON bị cắt cụt). Enqueue thất bại được ghi nhận tường minh qua log mức WARN. Không phát lại dữ liệu cache cũ như là mẫu mới.
+

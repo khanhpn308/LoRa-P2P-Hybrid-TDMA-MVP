@@ -90,12 +90,33 @@ static esp_err_t process_rx_packet(void)
     uint8_t current_addr = 0;
     uint8_t snr_raw = 0;
     uint8_t rssi_raw = 0;
+    esp_err_t err = ESP_OK;
 
-    sx1276_hal_read_reg(SX1276_REG_IRQ_FLAGS, &irq_flags);
-    sx1276_hal_read_reg(SX1276_REG_HOP_CHANNEL, &hop_channel);
-    sx1276_hal_read_reg(SX1276_REG_RX_NB_BYTES, &nb_bytes);
-    sx1276_hal_read_reg(SX1276_REG_PKT_SNR_VALUE, &snr_raw);
-    sx1276_hal_read_reg(SX1276_REG_PKT_RSSI_VALUE, &rssi_raw);
+    err = sx1276_hal_read_reg(SX1276_REG_IRQ_FLAGS, &irq_flags);
+    if (err != ESP_OK) {
+        s_diag.spi_failures++;
+        return err;
+    }
+    err = sx1276_hal_read_reg(SX1276_REG_HOP_CHANNEL, &hop_channel);
+    if (err != ESP_OK) {
+        s_diag.spi_failures++;
+        return err;
+    }
+    err = sx1276_hal_read_reg(SX1276_REG_RX_NB_BYTES, &nb_bytes);
+    if (err != ESP_OK) {
+        s_diag.spi_failures++;
+        return err;
+    }
+    err = sx1276_hal_read_reg(SX1276_REG_PKT_SNR_VALUE, &snr_raw);
+    if (err != ESP_OK) {
+        s_diag.spi_failures++;
+        return err;
+    }
+    err = sx1276_hal_read_reg(SX1276_REG_PKT_RSSI_VALUE, &rssi_raw);
+    if (err != ESP_OK) {
+        s_diag.spi_failures++;
+        return err;
+    }
 
     // 1. Mandatory Payload CRC verification (per PHY_PROFILE_MVP_V1)
     if ((hop_channel & SX1276_HOPCHANNEL_CRCONPAYLOAD) == 0) {
@@ -136,7 +157,7 @@ static esp_err_t process_rx_packet(void)
     sx1276_rx_frame_t *frame = &s_frame_pool[s_pool_head];
     s_pool_head = (s_pool_head + 1) % CONFIG_SX1276_RX_BUFFER_POOL_SIZE;
 
-    esp_err_t err = sx1276_hal_burst_read(SX1276_REG_FIFO, frame->payload, nb_bytes);
+    err = sx1276_hal_burst_read(SX1276_REG_FIFO, frame->payload, nb_bytes);
     if (err != ESP_OK) {
         s_diag.spi_failures++;
         sx1276_hal_write_reg(SX1276_REG_IRQ_FLAGS, SX1276_IRQ_RX_TARGETED_CLEAR_MASK);
@@ -144,16 +165,20 @@ static esp_err_t process_rx_packet(void)
     }
     frame->length = nb_bytes;
 
-    // 4. Calculate SNR & RSSI (HF port > 525 MHz)
+    // 4. Calculate SNR & RSSI (HF port > 525 MHz per Semtech SX1276 Rev 7 §5.5.5)
     int8_t snr = (int8_t)snr_raw;
     frame->snr_db_quarter = snr;
     if (snr >= 0) {
         frame->rssi_dbm = -157 + (int16_t)rssi_raw;
     } else {
-        frame->rssi_dbm = -157 + (int16_t)rssi_raw + (snr / 4);
+        /* Raw SNR is signed 2's complement representing 0.25 dB per LSB (snr / 4.0 dB).
+         * For negative SNR: Packet RSSI = -157 + PacketRssi + SNR_dB.
+         * Symmetric nearest-integer rounding for negative division: (snr - 2) / 4 */
+        int16_t snr_correction = (int16_t)((snr - 2) / 4);
+        frame->rssi_dbm = -157 + (int16_t)rssi_raw + snr_correction;
     }
     frame->channel_idx = s_phy_conf.channel_idx;
-    frame->timestamp_us = (uint32_t)esp_timer_get_time();
+    frame->timestamp_us = (uint64_t)esp_timer_get_time();
 
     // 5. Targeted IRQ clear: write-1-to-clear only processed flags (0x70)
     sx1276_hal_write_reg(SX1276_REG_IRQ_FLAGS, SX1276_IRQ_RX_TARGETED_CLEAR_MASK);
@@ -400,6 +425,33 @@ static void sx1276_owner_task(void *pvParameters)
                         s_phy_conf.frequency_hz = freq_hz;
                         sx1276_register_plan_build(&s_phy_conf, &s_reg_plan);
                         res = apply_register_plan(&s_reg_plan);
+                    }
+                    break;
+                }
+                case SX1276_CMD_READ_CHANNEL_RSSI: {
+                    if (s_current_mode != SX1276_MODE_RXCONT && s_current_mode != SX1276_MODE_RXSINGLE) {
+                        res = ESP_ERR_INVALID_STATE;
+                        break;
+                    }
+                    uint8_t modem_stat = 0;
+                    uint8_t rssi_raw = 0;
+                    res = sx1276_hal_read_reg(SX1276_REG_MODEM_STAT, &modem_stat);
+                    if (res != ESP_OK) {
+                        s_diag.spi_failures++;
+                        break;
+                    }
+                    res = sx1276_hal_read_reg(SX1276_REG_RSSI_VALUE, &rssi_raw);
+                    if (res != ESP_OK) {
+                        s_diag.spi_failures++;
+                        break;
+                    }
+                    if (cmd.params.read_rssi.out_rssi_dbm != NULL) {
+                        *cmd.params.read_rssi.out_rssi_dbm = -157 + (int16_t)rssi_raw;
+                    }
+                    if (cmd.params.read_rssi.out_context != NULL) {
+                        *cmd.params.read_rssi.out_context = ((modem_stat & SX1276_MODEMSTAT_RXONGOING) != 0)
+                                                                ? SX1276_CHANNEL_SAMPLE_ACTIVE
+                                                                : SX1276_CHANNEL_SAMPLE_IDLE;
                     }
                     break;
                 }

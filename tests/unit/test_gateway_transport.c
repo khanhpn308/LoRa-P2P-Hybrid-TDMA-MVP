@@ -222,15 +222,16 @@ static void test_transport_publish_and_queuing(void)
     assert(gateway_transport_publish_event(sample_payload, 0) == ESP_ERR_INVALID_ARG);
     assert(gateway_transport_publish_event(sample_payload, GATEWAY_TRANSPORT_MAX_PAYLOAD_LEN + 1) == ESP_ERR_INVALID_ARG);
 
-    /* Test all 5 publish functions with valid payload */
+    /* Test all publish functions with valid payload */
     assert(gateway_transport_publish_event(sample_payload, payload_len) == ESP_OK);
     assert(gateway_transport_publish_session_key_ack(sample_payload, payload_len) == ESP_OK);
     assert(gateway_transport_publish_join_relay(sample_payload, payload_len) == ESP_OK);
     assert(gateway_transport_publish_status(sample_payload, payload_len) == ESP_OK);
     assert(gateway_transport_publish_schedule_ack(sample_payload, payload_len) == ESP_OK);
+    assert(gateway_transport_publish_rf_metrics(sample_payload, payload_len) == ESP_OK);
 
     /* Verify queued count */
-    assert(gateway_transport_get_queued_count() >= 5);
+    assert(gateway_transport_get_queued_count() >= 6);
 
     printf("  [PASS] test_transport_publish_and_queuing\n");
 }

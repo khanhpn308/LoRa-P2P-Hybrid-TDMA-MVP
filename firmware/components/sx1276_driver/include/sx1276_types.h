@@ -66,6 +66,11 @@ typedef enum {
 } sx1276_radio_mode_t;
 
 typedef enum {
+    SX1276_CHANNEL_SAMPLE_IDLE   = 0,
+    SX1276_CHANNEL_SAMPLE_ACTIVE = 1,
+} sx1276_channel_sample_context_t;
+
+typedef enum {
     SX1276_RX_STATUS_PACKET_DONE             = 0,
     SX1276_RX_STATUS_HW_TIMEOUT              = 1,
     SX1276_RX_STATUS_HOST_WATCHDOG_EXPIRED   = 2,
@@ -136,7 +141,7 @@ typedef struct {
     int8_t   snr_db_quarter; // Signed 2's complement from RegPktSnrValue
     int16_t  rssi_dbm;       // Calculated packet RSSI in dBm
     uint8_t  channel_idx;    // Operating channel index (0-10)
-    uint32_t timestamp_us;   // ESP32 monotonic microsecond latch at RxDone
+    uint64_t timestamp_us;   // ESP32 monotonic microsecond latch at RxDone (64-bit wrap-safe)
 } sx1276_rx_frame_t;
 
 typedef struct {
