@@ -3,19 +3,35 @@ import { apiFetch } from "./client.ts";
 
 /**
  * Fetches the operational state of a specific gateway via GET /api/v1/gateways/{gw_id}/status.
+ * Normalizes LoRa channel RF metrics according to #393/#394 contracts.
  */
-export async function getGatewayStatus(gwId: string): Promise<GatewayStatus> {
-  return apiFetch<GatewayStatus>(`/api/v1/gateways/${gwId}/status`, {
+export async function getGatewayStatus(
+  gwId: string,
+  options?: { signal?: AbortSignal }
+): Promise<GatewayStatus> {
+  const status = await apiFetch<GatewayStatus>(`/api/v1/gateways/${gwId}/status`, {
     method: "GET",
+    signal: options?.signal,
   });
+
+  return {
+    ...status,
+    channel_rssi_dbm: status.channel_rssi_dbm !== undefined ? status.channel_rssi_dbm : null,
+    channel_rf_at: status.channel_rf_at ?? null,
+    channel_rf_age_seconds: status.channel_rf_age_seconds ?? null,
+    channel_rf_stale: status.channel_rf_stale ?? null,
+    channel_idx: status.channel_idx ?? null,
+    channel_sample_context: status.channel_sample_context ?? null,
+  };
 }
 
 /**
  * Fetches available VN920_V1 RF channels via GET /api/v1/channels.
  */
-export async function getChannels(): Promise<ChannelInfo[]> {
+export async function getChannels(options?: { signal?: AbortSignal }): Promise<ChannelInfo[]> {
   return apiFetch<ChannelInfo[]>("/api/v1/channels", {
     method: "GET",
+    signal: options?.signal,
   });
 }
 
@@ -23,10 +39,10 @@ export async function getChannels(): Promise<ChannelInfo[]> {
  * Retrieves all registered gateways directly from the database and live status reports via GET /api/v1/gateways.
  * Dynamically resolves names, locations, and channel mappings without hardcoded identifiers.
  */
-export async function getGateways(): Promise<GatewayItem[]> {
+export async function getGateways(options?: { signal?: AbortSignal }): Promise<GatewayItem[]> {
   let channels: ChannelInfo[] = [];
   try {
-    channels = await getChannels();
+    channels = await getChannels(options);
   } catch {
     // Ignore channel fetch error if offline
   }
@@ -34,6 +50,7 @@ export async function getGateways(): Promise<GatewayItem[]> {
   try {
     const rawList = await apiFetch<GatewayItem[] | GatewayItem>("/api/v1/gateways", {
       method: "GET",
+      signal: options?.signal,
     });
     const list = Array.isArray(rawList) ? rawList : (rawList ? [rawList] : []);
 
@@ -50,6 +67,12 @@ export async function getGateways(): Promise<GatewayItem[]> {
         operating: gw.mode === "ACTIVE" || gw.mode === "AUTONOMOUS",
         channel_id: assignedChannel?.channel_id || gw.channel_id || "CH00",
         frequency_hz: assignedChannel?.frequency_hz || gw.frequency_hz || 920250000,
+        channel_rssi_dbm: gw.channel_rssi_dbm !== undefined ? gw.channel_rssi_dbm : null,
+        channel_rf_at: gw.channel_rf_at ?? null,
+        channel_rf_age_seconds: gw.channel_rf_age_seconds ?? null,
+        channel_rf_stale: gw.channel_rf_stale ?? null,
+        channel_idx: gw.channel_idx ?? null,
+        channel_sample_context: gw.channel_sample_context ?? null,
       };
     });
   } catch {
@@ -70,6 +93,12 @@ export async function getGateways(): Promise<GatewayItem[]> {
           operating: false,
           channel_id: ch.channel_id,
           frequency_hz: ch.frequency_hz,
+          channel_rssi_dbm: null,
+          channel_rf_at: null,
+          channel_rf_age_seconds: null,
+          channel_rf_stale: null,
+          channel_idx: null,
+          channel_sample_context: null,
         });
       }
     }
