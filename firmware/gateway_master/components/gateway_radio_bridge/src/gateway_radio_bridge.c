@@ -14,6 +14,7 @@
 #include "gateway_wal.h"
 #include "gateway_session_mgr.h"
 #include "gateway_liveness.h"
+#include "gateway_rf_metrics.h"
 
 static const char *TAG = "gateway_master";
 
@@ -36,14 +37,21 @@ esp_err_t gateway_radio_bridge_init(const gateway_radio_bridge_config_t *cfg)
         strncpy(s_gateway_id, cfg->gateway_id, sizeof(s_gateway_id) - 1);
         s_gateway_id[sizeof(s_gateway_id) - 1] = '\0';
     }
+    (void)gateway_rf_metrics_init(s_gateway_id, cfg->gateway_epoch);
     return ESP_OK;
 }
 
-esp_err_t process_join_packet(const uint8_t *payload, size_t length, int16_t rssi, int8_t snr)
+esp_err_t process_radio_frame(const sx1276_rx_frame_t *frame)
 {
-    if (payload == NULL || length == 0) {
+    if (frame == NULL || frame->length == 0) {
         return ESP_ERR_INVALID_ARG;
     }
+    const uint8_t *payload = frame->payload;
+    size_t length = frame->length;
+    int16_t rssi = frame->rssi_dbm;
+    int8_t snr = frame->snr_db_quarter;
+    uint8_t channel_idx = frame->channel_idx;
+    uint64_t rx_monotonic_us = frame->timestamp_us;
     uint8_t msg_type = payload[0];
     float snr_f = (float)snr / 4.0f;
 
@@ -268,7 +276,20 @@ esp_err_t process_join_packet(const uint8_t *payload, size_t length, int16_t rss
                 /* Update node liveness tracking */
                 gateway_liveness_record_event(hdr.node_id);
 
-                /* Commit to WAL */
+                /* Record and publish RF metrics for validated UP_EVENT (MIC verified) */
+                uint64_t sample_seq = 0;
+                (void)gateway_rf_metrics_record_and_publish_node(
+                    hdr.node_id,
+                    channel_idx,
+                    rssi,
+                    snr,
+                    rx_monotonic_us,
+                    "UP_EVENT",
+                    true,
+                    &sample_seq
+                );
+
+                /* Commit to WAL with RF measurement identity */
                 if (s_wal_ptr != NULL) {
                     gateway_wal_event_t wal_ev = {
                         .node_id = hdr.node_id,
@@ -281,22 +302,45 @@ esp_err_t process_join_packet(const uint8_t *payload, size_t length, int16_t rss
                         .received_at_ms = (uint32_t)(esp_timer_get_time() / 1000ULL),
                         .rssi_dbm = rssi,
                         .snr_db_quarter = snr,
+                        .channel_idx = channel_idx,
+                        .rx_monotonic_us = rx_monotonic_us,
+                        .sample_seq = sample_seq,
                     };
                     (void)gateway_wal_push(s_wal_ptr, &wal_ev);
                 }
 
+                /* Format optional 'rf' block for alert JSON (Issue #392) */
+                char rf_block[160] = "";
+                (void)gateway_rf_metrics_format_alert_block(
+                    rf_block,
+                    sizeof(rf_block),
+                    sample_seq,
+                    rx_monotonic_us,
+                    channel_idx,
+                    rssi,
+                    snr
+                );
+
                 /* Publish Event to Backend over MQTT for UI Charts */
-                char alert_payload[384];
+                char alert_payload[512];
                 int alert_len = snprintf(alert_payload, sizeof(alert_payload),
-                    "{\"schema_version\":\"1.0-draft\",\"event_id\":\"%s:00000000-0000-0000-0000-000000000001:%" PRIu32 "\",\"gateway_id\":\"%s\",\"node_id\":%u,\"event_code\":%u,\"event_value\":%d,\"battery_mv\":3300,\"severity\":\"P3_NORMAL\",\"radio_ack_sent\":true,\"data\":{\"event_ref\":%" PRIu32 ",\"event_code\":%u,\"event_value\":%d}}",
+                    "{\"schema_version\":\"1.0-draft\",\"event_id\":\"%s:00000000-0000-0000-0000-000000000001:%" PRIu32 "\",\"gateway_id\":\"%s\",\"node_id\":%u,\"event_code\":%u,\"event_value\":%d,\"battery_mv\":3300,\"severity\":\"P3_NORMAL\",\"radio_ack_sent\":true,\"data\":{\"event_ref\":%" PRIu32 ",\"event_code\":%u,\"event_value\":%d},%s}",
                     s_gateway_id, (uint32_t)(esp_timer_get_time() / 1000ULL),
                     s_gateway_id,
                     hdr.node_id, up_ev.event_code, up_ev.event_value,
-                    up_ev.event_ref, up_ev.event_code, up_ev.event_value);
-                if (alert_len > 0) {
-                    (void)gateway_transport_publish_event((const uint8_t *)alert_payload, (size_t)alert_len);
-                    ESP_LOGI(TAG, "[EVENT TX] Published event to MQTT: Node #%u, Code=%u, Val=%d",
-                             hdr.node_id, up_ev.event_code, up_ev.event_value);
+                    up_ev.event_ref, up_ev.event_code, up_ev.event_value,
+                    rf_block);
+
+                if (alert_len > 0 && (size_t)alert_len < sizeof(alert_payload)) {
+                    esp_err_t pub_err = gateway_transport_publish_event((const uint8_t *)alert_payload, (size_t)alert_len);
+                    if (pub_err == ESP_OK) {
+                        ESP_LOGI(TAG, "[EVENT TX] Published event to MQTT: Node #%u, Code=%u, Val=%d",
+                                 hdr.node_id, up_ev.event_code, up_ev.event_value);
+                    } else {
+                        ESP_LOGW(TAG, "[EVENT TX] Failed to enqueue event to transport: %s", esp_err_to_name(pub_err));
+                    }
+                } else {
+                    ESP_LOGE(TAG, "[EVENT TX] Alert payload format error or truncation: len=%d", alert_len);
                 }
 
                 /* Small turnaround delay before sending ACK */
@@ -349,6 +393,19 @@ esp_err_t process_join_packet(const uint8_t *payload, size_t length, int16_t rss
                 gateway_liveness_record_node_alive(ack_node_id);
                 ESP_LOGI(TAG, "[HEARTBEAT ACK] Node #%u confirmed ALIVE via LoRa (RSSI=%d dBm)",
                          ack_node_id, rssi);
+
+                /* Record and publish RF metrics for UP_HEARTBEAT_ACK (unverified / CRC only) */
+                uint64_t hb_seq = 0;
+                (void)gateway_rf_metrics_record_and_publish_node(
+                    ack_node_id,
+                    channel_idx,
+                    rssi,
+                    snr,
+                    rx_monotonic_us,
+                    "UP_HEARTBEAT_ACK",
+                    false,
+                    &hb_seq
+                );
 
                 if (ack_node_id > 0 && gateway_session_mgr_is_node_revoked(ack_node_id)) {
                     gateway_revoked_node_info_t *rev_info = gateway_session_mgr_get_revoked_info(ack_node_id);
@@ -409,6 +466,21 @@ esp_err_t process_join_packet(const uint8_t *payload, size_t length, int16_t rss
     return ESP_OK;
 }
 
+esp_err_t process_join_packet(const uint8_t *payload, size_t length, int16_t rssi, int8_t snr)
+{
+    sx1276_rx_frame_t f;
+    memset(&f, 0, sizeof(f));
+    if (payload != NULL && length <= sizeof(f.payload)) {
+        memcpy(f.payload, payload, length);
+        f.length = (uint8_t)length;
+    }
+    f.rssi_dbm = rssi;
+    f.snr_db_quarter = snr;
+    f.channel_idx = 0;
+    f.timestamp_us = (uint64_t)esp_timer_get_time();
+    return process_radio_frame(&f);
+}
+
 void gateway_radio_rx_task(void *pvParameters)
 {
     (void)pvParameters;
@@ -417,6 +489,8 @@ void gateway_radio_rx_task(void *pvParameters)
     /* Start in continuous RX to listen for OTA join handshakes and event uplinks */
     (void)sx1276_start_rx_continuous();
 
+    int64_t last_channel_poll_us = esp_timer_get_time();
+
     while (1) {
         /* Check for incoming LoRa packet with 20ms wait */
         sx1276_rx_frame_t rx_frame;
@@ -424,8 +498,15 @@ void gateway_radio_rx_task(void *pvParameters)
         if (rx_err == ESP_OK && rx_frame.length > 0) {
             ESP_LOGI(TAG, "[RF RX] Frame received: len=%u B, Type=0x%02X, RSSI=%d dBm, SNR=%.1f dB | Freq=920.250 MHz (CH0)",
                      rx_frame.length, rx_frame.payload[0], rx_frame.rssi_dbm, (float)rx_frame.snr_db_quarter / 4.0f);
-            (void)process_join_packet(rx_frame.payload, rx_frame.length, rx_frame.rssi_dbm, rx_frame.snr_db_quarter);
+            (void)process_radio_frame(&rx_frame);
             (void)sx1276_start_rx_continuous();
+        }
+
+        /* Periodic channel RSSI sampling (every 30 seconds, matching heartbeat cadence) */
+        int64_t now_us = esp_timer_get_time();
+        if (now_us - last_channel_poll_us >= 30000000LL) {
+            last_channel_poll_us = now_us;
+            (void)gateway_rf_metrics_sample_and_publish_channel();
         }
     }
 }

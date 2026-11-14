@@ -29,6 +29,7 @@ typedef enum {
     GATEWAY_MSG_TYPE_STATUS,          /* uplink/status */
     GATEWAY_MSG_TYPE_SCHEDULE_ACK,    /* uplink/schedule-ack */
     GATEWAY_MSG_TYPE_HEARTBEAT,       /* uplink/heartbeat (Binary Heartbeat Plane) */
+    GATEWAY_MSG_TYPE_RF_METRICS,      /* uplink/rf-metrics (LoRa RF Metrics Plane) */
 } gateway_msg_type_t;
 
 #define HEARTBEAT_TYPE_GATEWAY        (0x01)
@@ -189,6 +190,15 @@ esp_err_t gateway_transport_publish_heartbeat(const uint8_t *payload, size_t len
  * @return ESP_OK on success, or error code.
  */
 esp_err_t gateway_transport_publish_schedule_ack(const uint8_t *payload, size_t len);
+
+/**
+ * @brief Thread-safe non-blocking publish of RF metrics to iot/v1/gw/{id}/uplink/rf-metrics.
+ *
+ * @param payload Raw JSON or serialized payload buffer.
+ * @param len Payload length in bytes (must be <= GATEWAY_TRANSPORT_MAX_PAYLOAD_LEN).
+ * @return ESP_OK on success, ESP_ERR_NO_MEM if outbound queue full, ESP_ERR_INVALID_ARG on bad params.
+ */
+esp_err_t gateway_transport_publish_rf_metrics(const uint8_t *payload, size_t len);
 
 /**
  * @brief Get current transport connection status.

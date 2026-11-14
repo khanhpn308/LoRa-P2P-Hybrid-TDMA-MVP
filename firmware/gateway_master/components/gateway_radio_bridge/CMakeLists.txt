@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "src/gateway_radio_bridge.c"
+    SRCS "src/gateway_radio_bridge.c" "src/gateway_rf_metrics.c"
     INCLUDE_DIRS "include"
     REQUIRES
         gateway_session_mgr

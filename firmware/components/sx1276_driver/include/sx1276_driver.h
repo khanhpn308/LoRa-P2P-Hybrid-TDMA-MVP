@@ -128,6 +128,18 @@ esp_err_t sx1276_read_frame(sx1276_rx_frame_t *out_frame, TickType_t wait_ticks)
 esp_err_t sx1276_get_diagnostics(sx1276_diagnostics_t *out_diag);
 
 /**
+ * @brief Read instantaneous channel RSSI and active reception context via serialized Radio Owner.
+ *
+ * Permitted only in active receive modes (RXCONT, RXSINGLE). Fails closed (ESP_ERR_INVALID_STATE)
+ * during TX, SLEEP, or STANDBY.
+ *
+ * @param[out] out_rssi_dbm Calculated channel RSSI in dBm (-157 + RegRssiValue).
+ * @param[out] out_context Receive state (SX1276_CHANNEL_SAMPLE_ACTIVE if RxOnGoing, else SX1276_CHANNEL_SAMPLE_IDLE).
+ * @return ESP_OK on success, ESP_ERR_INVALID_STATE if radio is not receiving, ESP_ERR_INVALID_ARG on NULL.
+ */
+esp_err_t sx1276_read_channel_rssi(int16_t *out_rssi_dbm, sx1276_channel_sample_context_t *out_context);
+
+/**
  * @brief Validate typed PHY configuration against silicon and project constraints.
  */
 esp_err_t sx1276_config_validate(const sx1276_phy_config_t *conf);

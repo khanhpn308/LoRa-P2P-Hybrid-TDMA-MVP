@@ -20,6 +20,7 @@ typedef enum {
     SX1276_CMD_STOP_RX,
     SX1276_CMD_CAD,
     SX1276_CMD_SET_CHANNEL,
+    SX1276_CMD_READ_CHANNEL_RSSI,
 } sx1276_owner_cmd_type_t;
 
 typedef struct {
@@ -40,6 +41,10 @@ typedef struct {
         struct {
             uint8_t        channel_idx;
         } set_chan;
+        struct {
+            int16_t                          *out_rssi_dbm;
+            sx1276_channel_sample_context_t  *out_context;
+        } read_rssi;
     } params;
     esp_err_t              *out_result;
     TaskHandle_t            caller_task;
