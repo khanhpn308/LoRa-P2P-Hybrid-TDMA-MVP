@@ -4,6 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -106,7 +109,7 @@ func TestBuildServeMux_RouteRegistration(t *testing.T) {
 	provisionHandler := api.NewProvisionHandler(provisionRepo, keyWrapper, jwtAuth)
 	nodeHandler := api.NewNodeHandler(nil)
 
-	mux := BuildServeMux(nil, 5*time.Minute, nil, authHandler, nil, nil, provisionHandler, nil, nil, nodeHandler, jwtService)
+	mux := api.BuildServeMux(nil, 5*time.Minute, nil, authHandler, nil, nil, provisionHandler, nil, nil, nodeHandler, jwtService)
 
 	validToken, err := jwtService.GenerateToken(&auth.User{
 		ID:       "u-test",
@@ -193,7 +196,7 @@ func TestBuildServeMux_CoexistenceWithMonitoringHandler(t *testing.T) {
 	statusStore := &mockServerStatusStorage{}
 
 	// Both MonitoringHandler and NodeHandler must register without panic or route collision
-	mux := BuildServeMux(statusStore, 5*time.Minute, nil, authHandler, nil, nil, provisionHandler, nil, nil, nodeHandler, jwtService)
+	mux := api.BuildServeMux(statusStore, 5*time.Minute, nil, authHandler, nil, nil, provisionHandler, nil, nil, nodeHandler, jwtService)
 
 	validToken, err := jwtService.GenerateToken(&auth.User{
 		ID:       "u-test",
@@ -269,7 +272,7 @@ func TestBuildServeMux_EnforceBearerAuth_AllReadEndpoints(t *testing.T) {
 	joinReqStore := &mockServerJoinRequestStorage{}
 	joinReqHandler := api.NewJoinRequestHandler(joinReqStore, nil, jwtAuth)
 
-	mux := BuildServeMux(
+	mux := api.BuildServeMux(
 		statusStore,
 		5*time.Minute,
 		nil,
@@ -450,4 +453,53 @@ func TestBuildServeMux_EnforceBearerAuth_AllReadEndpoints(t *testing.T) {
 			t.Errorf("expected access_token in login response, got %+v", loginResp)
 		}
 	})
+}
+
+func TestMainAST_GOBE002(t *testing.T) {
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, "main.go", nil, parser.Mode(0))
+	if err != nil {
+		t.Fatalf("failed to parse main.go: %v", err)
+	}
+
+	if node.Name.Name != "main" {
+		t.Errorf("expected package name 'main', got %q", node.Name.Name)
+	}
+
+	funcDecls := 0
+	for _, decl := range node.Decls {
+		switch d := decl.(type) {
+		case *ast.GenDecl:
+			if d.Tok == token.VAR {
+				t.Errorf("GO-BE-002 violation: package-level var declaration found in main.go")
+			}
+			if d.Tok == token.CONST {
+				t.Errorf("GO-BE-002 violation: package-level const declaration found in main.go")
+			}
+			if d.Tok == token.TYPE {
+				t.Errorf("GO-BE-002 violation: package-level type declaration found in main.go")
+			}
+		case *ast.FuncDecl:
+			funcDecls++
+			if d.Name.Name != "main" {
+				t.Errorf("GO-BE-002 violation: additional function %q found in main.go", d.Name.Name)
+			}
+			if d.Recv != nil {
+				t.Errorf("GO-BE-002 violation: main function has receiver")
+			}
+			if d.Type.Params != nil && len(d.Type.Params.List) > 0 {
+				t.Errorf("GO-BE-002 violation: main function has parameters")
+			}
+			if d.Type.Results != nil && len(d.Type.Results.List) > 0 {
+				t.Errorf("GO-BE-002 violation: main function has results")
+			}
+			if d.Body == nil {
+				t.Errorf("GO-BE-002 violation: main function has no body")
+			}
+		}
+	}
+
+	if funcDecls != 1 {
+		t.Errorf("GO-BE-002 violation: expected exactly 1 function declaration in main.go, got %d", funcDecls)
+	}
 }
