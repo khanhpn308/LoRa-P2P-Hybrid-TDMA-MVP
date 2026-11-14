@@ -37,10 +37,45 @@ class ApiContractTest(unittest.TestCase):
                 if path not in ("/healthz", "/api/v1/auth/login"):
                     self.assertTrue(op["x-roles"], (path, method))
                     self.assertTrue({"401", "403"}.issubset(op["responses"]), (path, method))
-        self.assertEqual(len(operations), 18)
+        expected_operation_ids = {
+            "alerts_acknowledge",
+            "alerts_list",
+            "audit_list",
+            "auth_login",
+            "channels_get_assignment",
+            "channels_list",
+            "channels_release",
+            "channels_request",
+            "devices_provision",
+            "gateways_status",
+            "health_liveness",
+            "nodes_command",
+            "nodes_command_get",
+            "nodes_list",
+            "nodes_telemetry",
+        }
+        self.assertEqual(set(operations.keys()), expected_operation_ids)
+        self.assertEqual(len(operations), 15)
+
+        # Removed TDMA schedule endpoints must remain absent per ADR-0004
+        removed_schedule_endpoints = (
+            "/api/v1/gateways/{gw_id}/schedules/generate",
+            "/api/v1/gateways/{gw_id}/schedules/{schedule_id}",
+            "/api/v1/gateways/{gw_id}/schedules/{schedule_id}/review",
+            "/api/v1/gateways/{gw_id}/schedules/{schedule_id}/activation-requests",
+        )
+        for endpoint in removed_schedule_endpoints:
+            self.assertNotIn(
+                endpoint,
+                self.openapi["paths"],
+                f"Superseded TDMA endpoint must remain absent: {endpoint}",
+            )
+        self.assertNotIn("schedules_review", operations)
+        self.assertNotIn("schedules_request_activation", operations)
+        self.assertNotIn("schedules_generate", operations)
+        self.assertNotIn("schedules_get", operations)
+
         expected = {
-            "schedules_review": "post",
-            "schedules_request_activation": "post",
             "nodes_command_get": "get",
             "channels_list": "get",
             "channels_request": "post",
@@ -49,8 +84,6 @@ class ApiContractTest(unittest.TestCase):
         }
         for name in expected:
             self.assertIn(name, operations)
-        self.assertEqual(operations["schedules_review"]["x-roles"], ["ADMIN"])
-        self.assertEqual(operations["schedules_request_activation"]["x-roles"], ["ADMIN"])
         self.assertEqual(operations["nodes_command_get"]["x-roles"], ["ADMIN", "OPERATOR", "VIEWER"])
         self.assertEqual(operations["channels_list"]["x-roles"], ["ADMIN", "OPERATOR", "VIEWER"])
         self.assertEqual(operations["channels_request"]["x-roles"], ["ADMIN", "OPERATOR"])
@@ -64,12 +97,16 @@ class ApiContractTest(unittest.TestCase):
         paths = self.openapi["paths"]
         for endpoint in (
             "/api/v1/nodes/{node_id}/commands",
-            "/api/v1/gateways/{gw_id}/schedules/{schedule_id}/activation-requests",
         ):
             op = paths[endpoint]["post"]
             self.assertIn("202", op["responses"])
             refs = [p.get("$ref") for p in op.get("parameters", [])]
             self.assertIn("#/components/parameters/IdempotencyKey", refs)
+        self.assertNotIn(
+            "/api/v1/gateways/{gw_id}/schedules/{schedule_id}/activation-requests",
+            paths,
+            "Superseded TDMA schedule activation endpoint must remain absent per ADR-0004",
+        )
         # Channel request requires IdempotencyKey and returns 201
         channel_op = paths["/api/v1/gateways/{gw_id}/channels/request"]["post"]
         self.assertIn("201", channel_op["responses"])
