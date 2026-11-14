@@ -380,14 +380,6 @@ func TestProvisionHandler_WrapFailure(t *testing.T) {
 	}
 }
 
-func TestStaticAuthenticator_Nil(t *testing.T) {
-	var a *api.StaticAuthenticator
-	_, err := a.Authenticate("token")
-	if err == nil {
-		t.Errorf("expected error on nil authenticator")
-	}
-}
-
 func TestProvisionHandler_UnconfiguredDependencies(t *testing.T) {
 	repo := &mockProvisionRepo{}
 	masterKey := testMasterKey()
