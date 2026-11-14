@@ -32,14 +32,17 @@ typedef struct {
  * @param[in] cfg Pointer to node MAC configuration (non-NULL).
  * @param[in,out] fifo Pointer to persistent node event FIFO (non-NULL).
  * @param[in,out] inout_uplink_counter Pointer to uplink frame counter (non-NULL, incremented on TX).
- * @return ESP_OK on valid ACK received and event dequeued,
+ * @param[out] out_event_acked Pointer to boolean set to true ONLY if a matching DOWN_EVENT_ACK
+ *                            was cryptographically verified and successfully dequeued from FIFO (non-NULL).
+ * @return ESP_OK on valid ACK received and event dequeued, or when no pending event,
  *         ESP_ERR_INVALID_STATE if node was revoked via DOWN_REVOKE,
  *         ESP_ERR_TIMEOUT if CAD or ARQ retries exhausted without ACK,
  *         or error code on failure.
  */
 esp_err_t node_cad_event_tx_and_ack(const node_mac_config_t *cfg,
                                     node_event_fifo_t *fifo,
-                                    uint32_t *inout_uplink_counter);
+                                    uint32_t *inout_uplink_counter,
+                                    bool *out_event_acked);
 
 /**
  * @brief Transmit UP_HEARTBEAT_ACK packet to Gateway.

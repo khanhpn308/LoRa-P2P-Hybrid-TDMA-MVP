@@ -1,0 +1,2 @@
+#pragma once
+#define CONFIG_SX1276_HOST_RX_BUFFER_SIZE 128

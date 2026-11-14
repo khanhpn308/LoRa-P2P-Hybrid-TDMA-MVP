@@ -18,11 +18,14 @@ static const char *TAG = "node_event_tx";
 
 esp_err_t node_cad_event_tx_and_ack(const node_mac_config_t *cfg,
                                     node_event_fifo_t *fifo,
-                                    uint32_t *inout_uplink_counter)
+                                    uint32_t *inout_uplink_counter,
+                                    bool *out_event_acked)
 {
-    if (cfg == NULL || fifo == NULL || inout_uplink_counter == NULL) {
+    if (cfg == NULL || fifo == NULL || inout_uplink_counter == NULL || out_event_acked == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
+
+    *out_event_acked = false;
 
     node_event_fifo_item_t event_item;
     esp_err_t peek_err = node_event_fifo_peek_pending(fifo, &event_item);
@@ -101,6 +104,7 @@ esp_err_t node_cad_event_tx_and_ack(const node_mac_config_t *cfg,
             }
 
             uint32_t cw_k = node_get_cad_contention_window_ms(attempt);
+            (void)cw_k;
             uint32_t backoff_ms = node_calculate_cad_backoff_ms(attempt);
             ESP_LOGW(TAG, "[CAD] Channel BUSY on attempt #%u/%u (CW_k=%" PRIu32 " ms), backing off %" PRIu32 " ms...",
                      attempt, NODE_CAD_MAX_RETRIES, cw_k, backoff_ms);
@@ -203,7 +207,14 @@ esp_err_t node_cad_event_tx_and_ack(const node_mac_config_t *cfg,
 
         /* 2d. Evaluate ACK */
         if (ack_valid) {
-            (void)node_event_fifo_ack(fifo, event_item.event_ref);
+            esp_err_t fifo_ack_err = node_event_fifo_ack(fifo, event_item.event_ref);
+            if (fifo_ack_err != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to dequeue ACKed event Ref #%" PRIu32 " from FIFO: %s",
+                         event_item.event_ref, esp_err_to_name(fifo_ack_err));
+                *out_event_acked = false;
+                return fifo_ack_err;
+            }
+            *out_event_acked = true;
             tx_retries = 0U;
             ESP_LOGI(TAG, "Event Ref #%" PRIu32 " ACKed and removed from FIFO. Remaining pending: %zu",
                      event_item.event_ref, node_event_fifo_get_pending_count(fifo));
