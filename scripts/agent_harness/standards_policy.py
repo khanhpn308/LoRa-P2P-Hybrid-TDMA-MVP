@@ -30,6 +30,11 @@ MAX_STANDARD_BYTES = 120_000
 MAX_PROMPT_BYTES = 48_000
 MAX_RULES = 128
 MAX_CODE_BYTES = 2_000_000
+MAX_PARTITION_RULES = 128
+MAX_PARTITION_PROMPT_BYTES = 48_000
+MAX_PARTITIONS = 4
+MAX_AGGREGATE_RULES = 256
+MAX_AGGREGATE_BYTES = 192_000
 RULE_ID = re.compile(r"[A-Z]+-[0-9]{3}")
 BASELINE = {
     "C": {*(f"GOV-{n:03}" for n in range(1, 11)), "C-001",
@@ -397,13 +402,145 @@ def _impact(repo, paths):
     return sorted(affected), code
 
 
+def forbidden(name: str) -> bool:
+    p = PurePosixPath(name)
+    return (p.name.startswith(".env") and p.name != ".env.example") or (
+        p.suffix.lower() in {".key", ".p12", ".pfx", ".jks", ".keystore"}
+        or "secrets" in p.parts or p.name == "mosquitto.passwd")
+
+
+def compute_candidate_sha256(repo: Path, base: str = "HEAD") -> str:
+    repo = Path(repo).resolve()
+    head = _git(repo, "rev-parse", "--verify", "HEAD^{commit}").decode().strip()
+    base_sha = _git(repo, "rev-parse", "--verify", base + "^{commit}").decode().strip()
+    staged = _git(repo, "ls-files", "--stage", "-z")
+    flags = _git(repo, "ls-files", "-v", "-z").decode().split("\0")
+    if any(entry and (entry[0].islower() or entry[0] == "S") for entry in flags):
+        raise StandardsError("Hidden index flags can conceal changed-file routing")
+    names = set(filter(None, _git(repo, "ls-files", "-z").decode().split("\0")))
+    extra = set(filter(None, _git(repo, "ls-files", "--others", "--exclude-standard", "-z").decode().split("\0")))
+    paths = sorted(set(filter(None, _git(repo, "diff", "--no-ext-diff", "--no-textconv",
+                                       "--no-renames", "--name-only", "-z", base_sha).decode().split("\0"))) | extra)
+    hashes = {}
+    for name in sorted(names | extra):
+        if forbidden(name):
+            hashes[name] = "FORBIDDEN"
+            continue
+        p = repo / name
+        if not p.exists() and not p.is_symlink():
+            hashes[name] = None
+            continue
+        try:
+            data = _read(repo, name, MAX_CODE_BYTES)
+            hashes[name] = digest(data)
+        except Exception:
+            try:
+                hashes[name] = digest(p.read_bytes())
+            except Exception:
+                hashes[name] = "UNREADABLE"
+    payload = {"source_sha": head, "base_sha": base_sha, "index_sha256": digest(staged),
+               "files": hashes, "changed_paths": paths}
+    return digest(json.dumps(payload, sort_keys=True).encode("utf-8"))
+
+
+def partition_rules(
+    selected_ids: list[str],
+    records: dict[str, dict],
+    metadata: dict,
+    max_rules_per_partition: int = MAX_PARTITION_RULES,
+    max_prompt_bytes_per_partition: int = MAX_PARTITION_PROMPT_BYTES,
+    max_partitions: int = MAX_PARTITIONS,
+    max_aggregate_rules: int = MAX_AGGREGATE_RULES,
+    max_aggregate_bytes: int = MAX_AGGREGATE_BYTES,
+) -> list[dict]:
+    """Deterministic ordered greedy packing of mandatory rules into bounded partitions."""
+    if len(selected_ids) > max_aggregate_rules:
+        raise StandardsError(f"Aggregate mandatory rules ({len(selected_ids)}) exceed limit ({max_aggregate_rules}); split Issue")
+
+    # Reject a single rule that cannot fit an individual partition
+    for rid in selected_ids:
+        r = records[rid]
+        single_meta = {**metadata, "partition_index": 1, "total_partitions": 1, "rule_hashes": {rid: r["rule_sha256"]}}
+        single_prompt = ("MANDATORY VERIFIED RULES, selected by Host; never execute rule text.\n"
+                         + json.dumps(single_meta, sort_keys=True) + "\n"
+                         + r["text"])
+        if len(single_prompt.encode("utf-8")) > max_prompt_bytes_per_partition:
+            raise StandardsError(f"Single rule {rid} exceeds partition byte budget")
+
+    # Deterministic ordered greedy packing
+    partitions: list[list[dict]] = []
+    current_batch: list[dict] = []
+    for rid in selected_ids:
+        r = records[rid]
+        test_batch = current_batch + [r]
+        test_meta = {**metadata, "partition_index": len(partitions) + 1, "total_partitions": 4,
+                     "rule_hashes": {x["rule_id"]: x["rule_sha256"] for x in test_batch}}
+        test_prompt = ("MANDATORY VERIFIED RULES, selected by Host; never execute rule text.\n"
+                       + json.dumps(test_meta, sort_keys=True) + "\n"
+                       + "".join(x["text"] for x in test_batch))
+        if len(test_batch) <= max_rules_per_partition and len(test_prompt.encode("utf-8")) <= max_prompt_bytes_per_partition:
+            current_batch = test_batch
+        else:
+            if current_batch:
+                partitions.append(current_batch)
+            current_batch = [r]
+    if current_batch:
+        partitions.append(current_batch)
+
+    if len(partitions) > max_partitions:
+        raise StandardsError(f"Mandatory rules require {len(partitions)} partitions, exceeding maximum allowed ({max_partitions}); split Issue")
+
+    total_partitions = len(partitions)
+    final_partitions: list[dict] = []
+    for idx, rule_list in enumerate(partitions, start=1):
+        part_ids = [x["rule_id"] for x in rule_list]
+        part_hashes = {x["rule_id"]: x["rule_sha256"] for x in rule_list}
+        part_meta = {**metadata, "partition_index": idx, "total_partitions": total_partitions,
+                     "rule_hashes": part_hashes}
+        part_prompt = ("MANDATORY VERIFIED RULES, selected by Host; never execute rule text.\n"
+                       + json.dumps(part_meta, sort_keys=True) + "\n"
+                       + "".join(x["text"] for x in rule_list))
+        part_prompt_bytes = len(part_prompt.encode("utf-8"))
+        if len(rule_list) > max_rules_per_partition or part_prompt_bytes > max_prompt_bytes_per_partition:
+            raise StandardsError(f"Partition {idx} exceeds partition budget")
+        part_dict = {
+            "partition_index": idx,
+            "total_partitions": total_partitions,
+            "selected_ids": part_ids,
+            "rules": rule_list,
+            "rule_hashes": part_hashes,
+            "agent_input": part_prompt,
+            "agent_input_sha256": digest(part_prompt.encode("utf-8")),
+            "prompt_bytes": part_prompt_bytes,
+        }
+        part_dict["partition_hash"] = digest(json.dumps({k: val for k, val in part_dict.items() if k != "partition_hash"},
+                                                        sort_keys=True, separators=(",", ":")).encode("utf-8"))
+        final_partitions.append(part_dict)
+
+    # Invariants verification
+    total_bytes = sum(p["prompt_bytes"] for p in final_partitions)
+    if total_bytes > max_aggregate_bytes:
+        raise StandardsError(f"Total serialized partition bytes ({total_bytes}) exceed aggregate limit ({max_aggregate_bytes}); split Issue")
+    all_partition_ids = [rid for p in final_partitions for rid in p["selected_ids"]]
+    if all_partition_ids != selected_ids:
+        raise StandardsError("Partitions do not match complete mandatory union")
+    if len(all_partition_ids) != len(set(all_partition_ids)):
+        raise StandardsError("Partitions have overlapping rule IDs")
+    for p in final_partitions:
+        for r in p["rules"]:
+            if digest(r["text"].encode("utf-8")) != r["rule_sha256"]:
+                raise StandardsError(f"Rule {r['rule_id']} text hash mismatch")
+
+    return final_partitions
+
+
 def _payload_hash(selection):
     return digest(json.dumps({k: v for k, v in selection.items() if k != "selection_sha256"},
-                             sort_keys=True, separators=(",", ":")).encode())
+                             sort_keys=True, separators=(",", ":")).encode("utf-8"))
 
 
 def select_rules(repo: Path, allowed_paths=(), changed_paths=None, requested_ids=(),
-                 base="HEAD", expected_source_sha=None) -> dict:
+                 base="HEAD", expected_source_sha=None, version=None, candidate_sha256=None) -> dict:
     """Union Host baseline, dependency/path/operation rules and valid Coordinator IDs."""
     try:
         repo = Path(repo).resolve(strict=True)
@@ -423,7 +560,7 @@ def select_rules(repo: Path, allowed_paths=(), changed_paths=None, requested_ids
                or "\\" in p or any(c in p for c in "*?[]{}") for p in allowed):
             raise StandardsError("Unsafe or unbounded allowed paths")
         requested = list(requested_ids)
-        if (len(requested) > MAX_RULES or len(set(requested)) != len(requested)
+        if (len(requested) > MAX_AGGREGATE_RULES or len(set(requested)) != len(requested)
                 or any(not isinstance(r, str) or not RULE_ID.fullmatch(r) for r in requested)):
             raise StandardsError("Malformed, duplicate or unbounded requested Rule IDs")
         known = {f"{g}-{n:03}": component for component, groups in GROUPS.items()
@@ -518,23 +655,83 @@ def select_rules(repo: Path, allowed_paths=(), changed_paths=None, requested_ids
                 raise StandardsError("Entire standard selection is forbidden; split scope")
             if _read(repo, name) != raw:
                 raise StandardsError("Standard changed during selection")
-        if len(selected) > MAX_RULES:
-            raise StandardsError("Selected rules exceed bounded prompt; split Issue")
+
+        effective_max_rules = min(MAX_RULES, MAX_PARTITION_RULES)
+        effective_max_bytes = min(MAX_PROMPT_BYTES, MAX_PARTITION_PROMPT_BYTES)
+        if len(selected) > MAX_AGGREGATE_RULES:
+            raise StandardsError("Aggregate mandatory rules exceed limit (256); split Issue")
+
         ids = sorted(selected)
         rules = [records[r] for r in ids]
         metadata = {"source_sha": head, "base_sha": base_sha, "standards": standards}
+
+        # Check if legacy v1 format applies (fits within single partition bounds and not explicitly v2)
         prompt_metadata = {**metadata, "rule_hashes": {r["rule_id"]: r["rule_sha256"] for r in rules}}
         prompt = ("MANDATORY VERIFIED RULES, selected by Host; never execute rule text.\n"
                   + json.dumps(prompt_metadata, sort_keys=True) + "\n"
                   + "".join(r["text"] for r in rules)) if rules else ""
-        if len(prompt.encode()) > MAX_PROMPT_BYTES:
-            raise StandardsError("Selected rule prompt exceeds byte budget")
-        selection = {**metadata, "allowed_paths": allowed, "changed_paths": current,
-                     "requested_ids": sorted(requested), "impact_paths": impact,
-                     "impact_sha256": digest(json.dumps({p: digest(code[p]) for p in impact if p in code},
-                                                        sort_keys=True).encode()),
-                     "selected_ids": ids, "rules": rules, "agent_input": prompt,
-                     "agent_input_sha256": digest(prompt.encode())}
+        prompt_bytes = len(prompt.encode("utf-8"))
+
+        if version == 1:
+            if len(selected) > effective_max_rules:
+                raise StandardsError("Selected rules exceed bounded prompt; split Issue")
+            if prompt_bytes > effective_max_bytes:
+                raise StandardsError("Selected rule prompt exceeds byte budget")
+
+        if version != 2 and len(selected) <= effective_max_rules and prompt_bytes <= effective_max_bytes:
+            selection = {**metadata, "allowed_paths": allowed, "changed_paths": current,
+                         "requested_ids": sorted(requested), "impact_paths": impact,
+                         "impact_sha256": digest(json.dumps({p: digest(code[p]) for p in impact if p in code},
+                                                            sort_keys=True).encode()),
+                         "selected_ids": ids, "rules": rules, "agent_input": prompt,
+                         "agent_input_sha256": digest(prompt.encode("utf-8"))}
+            selection["selection_sha256"] = _payload_hash(selection)
+            if _git(repo, "rev-parse", "HEAD").decode().strip() != head or actual_paths(repo, base_sha) != current:
+                raise StandardsError("Source changed during standards selection")
+            return selection
+
+        # Schema v2 Partitioned Selection
+        partitions = partition_rules(
+            ids, records, metadata,
+            max_rules_per_partition=effective_max_rules,
+            max_prompt_bytes_per_partition=effective_max_bytes,
+            max_partitions=MAX_PARTITIONS,
+            max_aggregate_rules=MAX_AGGREGATE_RULES,
+            max_aggregate_bytes=MAX_AGGREGATE_BYTES,
+        )
+        combined_prompt = "\n".join(p["agent_input"] for p in partitions) if partitions else ""
+        diff_bytes = _git(repo, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", base_sha)
+        diff_sha256 = digest(diff_bytes)
+        if candidate_sha256 is None:
+            candidate_sha256 = compute_candidate_sha256(repo, base_sha)
+        aggregate_union_hash = digest(json.dumps({
+            "selected_ids": ids,
+            "rule_hashes": {r["rule_id"]: r["rule_sha256"] for r in rules},
+        }, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+
+        selection = {
+            "schema_version": 2,
+            "base_sha": base_sha,
+            "source_sha": head,
+            "candidate_sha256": candidate_sha256,
+            "diff_sha256": diff_sha256,
+            "allowed_paths": allowed,
+            "changed_paths": current,
+            "impact_paths": impact,
+            "impact_sha256": digest(json.dumps({p: digest(code[p]) for p in impact if p in code},
+                                               sort_keys=True).encode()),
+            "requested_ids": sorted(requested),
+            "standards": standards,
+            "selected_ids": ids,
+            "rules": rules,
+            "rule_count": len(ids),
+            "partition_count": len(partitions),
+            "total_partition_bytes": sum(p["prompt_bytes"] for p in partitions),
+            "partitions": partitions,
+            "aggregate_union_hash": aggregate_union_hash,
+            "agent_input": combined_prompt,
+            "agent_input_sha256": digest(combined_prompt.encode("utf-8")),
+        }
         selection["selection_sha256"] = _payload_hash(selection)
         if _git(repo, "rev-parse", "HEAD").decode().strip() != head or actual_paths(repo, base_sha) != current:
             raise StandardsError("Source changed during standards selection")
@@ -548,8 +745,54 @@ def select_rules(repo: Path, allowed_paths=(), changed_paths=None, requested_ids
 def verify_selection(repo, selection):
     if not isinstance(selection, dict) or _payload_hash(selection) != selection.get("selection_sha256"):
         raise StandardsError("Selection text/hash was changed")
+    v = selection.get("schema_version", 1)
+    if v not in (1, 2):
+        raise StandardsError(f"Unsupported selection schema version: {v}")
+    if v == 2:
+        required_v2_keys = {
+            "schema_version", "base_sha", "source_sha", "candidate_sha256", "diff_sha256",
+            "allowed_paths", "changed_paths", "impact_paths", "impact_sha256", "requested_ids",
+            "standards", "selected_ids", "rules", "rule_count", "partition_count",
+            "total_partition_bytes", "partitions", "aggregate_union_hash",
+            "agent_input", "agent_input_sha256", "selection_sha256"
+        }
+        if set(selection) != required_v2_keys:
+            raise StandardsError("Malformed v2 selection schema")
+        parts = selection["partitions"]
+        if not isinstance(parts, list) or len(parts) != selection["partition_count"] or len(parts) > MAX_PARTITIONS:
+            raise StandardsError("Invalid partition manifest")
+        all_ids = []
+        for idx, p in enumerate(parts, 1):
+            if not isinstance(p, dict):
+                raise StandardsError("Invalid partition record")
+            expected_p_keys = {
+                "partition_index", "total_partitions", "selected_ids", "rules",
+                "rule_hashes", "agent_input", "agent_input_sha256", "prompt_bytes", "partition_hash"
+            }
+            if set(p) != expected_p_keys:
+                raise StandardsError("Malformed partition manifest record")
+            if p["partition_index"] != idx or p["total_partitions"] != len(parts):
+                raise StandardsError("Partition ordering or count mismatch")
+            if len(p["selected_ids"]) > MAX_PARTITION_RULES or p["prompt_bytes"] > MAX_PARTITION_PROMPT_BYTES:
+                raise StandardsError("Partition exceeds bounded resource limits")
+            p_hash = digest(json.dumps({k: val for k, val in p.items() if k != "partition_hash"},
+                                       sort_keys=True, separators=(",", ":")).encode("utf-8"))
+            if p["partition_hash"] != p_hash:
+                raise StandardsError("Partition hash tampered")
+            all_ids.extend(p["selected_ids"])
+        if all_ids != selection["selected_ids"] or len(all_ids) != len(set(all_ids)):
+            raise StandardsError("Partitions do not match complete mandatory union")
+        current = select_rules(
+            repo, selection["allowed_paths"], requested_ids=selection["requested_ids"],
+            base=selection["base_sha"], expected_source_sha=selection["source_sha"],
+            version=2, candidate_sha256=selection["candidate_sha256"],
+        )
+        if current != selection:
+            raise StandardsError("Stale rule selection; recompute and reinject before edit/review")
+        return current
     current = select_rules(repo, selection["allowed_paths"], requested_ids=selection["requested_ids"],
-                           base=selection["base_sha"], expected_source_sha=selection["source_sha"])
+                           base=selection["base_sha"], expected_source_sha=selection["source_sha"],
+                           version=1)
     if current != selection:
         raise StandardsError("Stale rule selection; recompute and reinject before edit/review")
     return current

@@ -393,6 +393,180 @@ class PRReviewPolicyUnitTests(unittest.TestCase):
         )
         self.assertEqual(res["status"], policy.GateStatus.PASS.value)
 
+    def test_pr03_v2_partitioned_selection_pass(self):
+        """PR-03 accepts valid v2 partitioned rule selection."""
+        p1_rules = [{"rule_id": f"GO-{i:03d}", "rule_sha256": "a" * 64} for i in range(1, 101)]
+        p2_rules = [{"rule_id": f"GO-{i:03d}", "rule_sha256": "b" * 64} for i in range(101, 141)]
+        p1_hash = hashlib.sha256(b"p1").hexdigest()
+        p2_hash = hashlib.sha256(b"p2").hexdigest()
+        rule_selection = {
+            "schema_version": 2,
+            "standards": ["GO"],
+            "rules": p1_rules + p2_rules,
+            "partition_count": 2,
+            "total_prompt_bytes": 50000,
+            "partitions": [
+                {
+                    "partition_index": 1,
+                    "partition_count": 2,
+                    "partition_hash": p1_hash,
+                    "selected_ids": [r["rule_id"] for r in p1_rules],
+                    "prompt_bytes": 35000,
+                    "rules": p1_rules,
+                },
+                {
+                    "partition_index": 2,
+                    "partition_count": 2,
+                    "partition_hash": p2_hash,
+                    "selected_ids": [r["rule_id"] for r in p2_rules],
+                    "prompt_bytes": 15000,
+                    "rules": p2_rules,
+                },
+            ],
+            "source": "verified_host",
+            "selection_sha256": "c" * 64,
+        }
+        res = policy.eval_pr03_rule_id(rule_selection, ["backend-go/cmd/server/main.go"])
+        self.assertEqual(res["status"], policy.GateStatus.PASS.value)
+
+    def test_pr03_v2_aggregate_rules_overflow_blocks(self):
+        """PR-03 rejects v2 selection with aggregate rules > 256."""
+        rules = [{"rule_id": f"GO-{i:03d}", "rule_sha256": "a" * 64} for i in range(1, 258)]
+        rule_selection = {
+            "schema_version": 2,
+            "standards": ["GO"],
+            "rules": rules,
+            "partition_count": 3,
+            "total_prompt_bytes": 50000,
+            "partitions": [
+                {"partition_index": 1, "partition_hash": "a" * 64, "selected_ids": [r["rule_id"] for r in rules[:100]], "prompt_bytes": 20000, "rules": rules[:100]},
+                {"partition_index": 2, "partition_hash": "b" * 64, "selected_ids": [r["rule_id"] for r in rules[100:200]], "prompt_bytes": 20000, "rules": rules[100:200]},
+                {"partition_index": 3, "partition_hash": "c" * 64, "selected_ids": [r["rule_id"] for r in rules[200:]], "prompt_bytes": 10000, "rules": rules[200:]},
+            ],
+            "source": "verified_host",
+            "selection_sha256": "c" * 64,
+        }
+        res = policy.eval_pr03_rule_id(rule_selection, ["backend-go/cmd/server/main.go"])
+        self.assertEqual(res["status"], policy.GateStatus.BLOCKED.value)
+        self.assertIn("exceeds bounded budget", res["summary"])
+
+    def test_pr03_v2_aggregate_bytes_overflow_blocks(self):
+        """PR-03 rejects v2 selection with total_prompt_bytes > 192000."""
+        p1_rules = [{"rule_id": "GO-001", "rule_sha256": "a" * 64}]
+        rule_selection = {
+            "schema_version": 2,
+            "standards": ["GO"],
+            "rules": p1_rules,
+            "partition_count": 1,
+            "total_prompt_bytes": 192001,
+            "partitions": [
+                {"partition_index": 1, "partition_hash": "a" * 64, "selected_ids": ["GO-001"], "prompt_bytes": 192001, "rules": p1_rules},
+            ],
+            "source": "verified_host",
+            "selection_sha256": "c" * 64,
+        }
+        res = policy.eval_pr03_rule_id(rule_selection, ["backend-go/cmd/server/main.go"])
+        self.assertEqual(res["status"], policy.GateStatus.BLOCKED.value)
+        self.assertIn("exceeds aggregate budget", res["summary"])
+
+    def test_pr03_v2_partitions_count_overflow_blocks(self):
+        """PR-03 rejects v2 selection with partition_count > 4."""
+        p_rules = [{"rule_id": f"GO-{i:03d}", "rule_sha256": "a" * 64} for i in range(1, 6)]
+        rule_selection = {
+            "schema_version": 2,
+            "standards": ["GO"],
+            "rules": p_rules,
+            "partition_count": 5,
+            "total_prompt_bytes": 5000,
+            "partitions": [
+                {"partition_index": i + 1, "partition_hash": hashlib.sha256(f"p{i}".encode()).hexdigest(),
+                 "selected_ids": [p_rules[i]["rule_id"]], "prompt_bytes": 1000, "rules": [p_rules[i]]}
+                for i in range(5)
+            ],
+            "source": "verified_host",
+            "selection_sha256": "c" * 64,
+        }
+        res = policy.eval_pr03_rule_id(rule_selection, ["backend-go/cmd/server/main.go"])
+        self.assertEqual(res["status"], policy.GateStatus.BLOCKED.value)
+        self.assertIn("exceeds maximum allowed", res["summary"])
+
+    def test_pr03_v2_partition_rules_overflow_blocks(self):
+        """PR-03 rejects v2 selection where a partition has > 128 rules."""
+        rules = [{"rule_id": f"GO-{i:03d}", "rule_sha256": "a" * 64} for i in range(1, 130)]
+        rule_selection = {
+            "schema_version": 2,
+            "standards": ["GO"],
+            "rules": rules,
+            "partition_count": 1,
+            "total_prompt_bytes": 20000,
+            "partitions": [
+                {"partition_index": 1, "partition_hash": "a" * 64, "selected_ids": [r["rule_id"] for r in rules], "prompt_bytes": 20000, "rules": rules},
+            ],
+            "source": "verified_host",
+            "selection_sha256": "c" * 64,
+        }
+        res = policy.eval_pr03_rule_id(rule_selection, ["backend-go/cmd/server/main.go"])
+        self.assertEqual(res["status"], policy.GateStatus.BLOCKED.value)
+        self.assertIn("exceeds partition budget", res["summary"])
+
+    def test_pr03_v2_partition_prompt_bytes_overflow_blocks(self):
+        """PR-03 rejects v2 selection where a partition has prompt_bytes > 48000."""
+        rules = [{"rule_id": "GO-001", "rule_sha256": "a" * 64}]
+        rule_selection = {
+            "schema_version": 2,
+            "standards": ["GO"],
+            "rules": rules,
+            "partition_count": 1,
+            "total_prompt_bytes": 48001,
+            "partitions": [
+                {"partition_index": 1, "partition_hash": "a" * 64, "selected_ids": ["GO-001"], "prompt_bytes": 48001, "rules": rules},
+            ],
+            "source": "verified_host",
+            "selection_sha256": "c" * 64,
+        }
+        res = policy.eval_pr03_rule_id(rule_selection, ["backend-go/cmd/server/main.go"])
+        self.assertEqual(res["status"], policy.GateStatus.BLOCKED.value)
+        self.assertIn("exceeds partition budget", res["summary"])
+
+    def test_pr03_v2_partition_hash_tampering_blocks(self):
+        """PR-03 rejects v2 selection with invalid partition hash."""
+        rules = [{"rule_id": "GO-001", "rule_sha256": "a" * 64}]
+        rule_selection = {
+            "schema_version": 2,
+            "standards": ["GO"],
+            "rules": rules,
+            "partition_count": 1,
+            "total_prompt_bytes": 1000,
+            "partitions": [
+                {"partition_index": 1, "partition_hash": "not-a-valid-sha", "selected_ids": ["GO-001"], "prompt_bytes": 1000, "rules": rules},
+            ],
+            "source": "verified_host",
+            "selection_sha256": "c" * 64,
+        }
+        res = policy.eval_pr03_rule_id(rule_selection, ["backend-go/cmd/server/main.go"])
+        self.assertEqual(res["status"], policy.GateStatus.BLOCKED.value)
+        self.assertIn("malformed partition_hash receipt", res["summary"])
+
+    def test_pr03_v2_non_disjoint_partitions_blocks(self):
+        """PR-03 rejects v2 selection where partitions share rule IDs."""
+        r1 = {"rule_id": "GO-001", "rule_sha256": "a" * 64}
+        rule_selection = {
+            "schema_version": 2,
+            "standards": ["GO"],
+            "rules": [r1],
+            "partition_count": 2,
+            "total_prompt_bytes": 2000,
+            "partitions": [
+                {"partition_index": 1, "partition_hash": "a" * 64, "selected_ids": ["GO-001"], "prompt_bytes": 1000, "rules": [r1]},
+                {"partition_index": 2, "partition_hash": "b" * 64, "selected_ids": ["GO-001"], "prompt_bytes": 1000, "rules": [r1]},
+            ],
+            "source": "verified_host",
+            "selection_sha256": "c" * 64,
+        }
+        res = policy.eval_pr03_rule_id(rule_selection, ["backend-go/cmd/server/main.go"])
+        self.assertEqual(res["status"], policy.GateStatus.BLOCKED.value)
+        self.assertIn("disjoint complete mandatory union", res["summary"])
+
     # --- Issue #144 R-02: Independent Auditor and Per-ID Evidence Tests ---
 
     def test_auditor_report_none_results_in_not_verified(self):
@@ -1846,6 +2020,107 @@ class AuditorRuleBatchingAndScalabilityTests(unittest.TestCase):
         self.assertEqual(eval_res["dimensions"]["AI_REVIEW_PASS"], "NOT_VERIFIED")
         self.assertEqual(eval_res["verdict"], "BLOCKED")
         self.assertTrue(any("Independent Auditor report inconclusive" in b for b in eval_res["blockers"]))
+
+    def test_partition_rule_batches_with_v2_partitions(self):
+        """v2 partitions are subdivided into bounded sub-batches with parent partition identity."""
+        p1_rules = [{"rule_id": f"GO-{i:03d}", "rule_sha256": "a" * 64} for i in range(1, 31)]
+        p2_rules = [{"rule_id": f"GO-{i:03d}", "rule_sha256": "b" * 64} for i in range(31, 41)]
+        p1_hash = "1" * 64
+        p2_hash = "2" * 64
+        selection = {
+            "schema_version": 2,
+            "selection_sha256": self.sel_sha,
+            "partitions": [
+                {"partition_index": 1, "partition_hash": p1_hash, "rules": p1_rules, "selected_ids": [r["rule_id"] for r in p1_rules]},
+                {"partition_index": 2, "partition_hash": p2_hash, "rules": p2_rules, "selected_ids": [r["rule_id"] for r in p2_rules]},
+            ]
+        }
+        batches = pr_review.partition_rule_batches(rule_selection=selection, max_rules_per_batch=25)
+        # Partition 1 (30 rules) -> 2 sub-batches (25 and 5)
+        # Partition 2 (10 rules) -> 1 sub-batch (10)
+        # Total = 3 batches
+        self.assertEqual(len(batches), 3)
+        self.assertEqual(batches[0]["parent_partition_index"], 1)
+        self.assertEqual(batches[0]["parent_partition_hash"], p1_hash)
+        self.assertEqual(batches[0]["batch_rule_count"], 25)
+        self.assertEqual(batches[1]["parent_partition_index"], 1)
+        self.assertEqual(batches[1]["parent_partition_hash"], p1_hash)
+        self.assertEqual(batches[1]["batch_rule_count"], 5)
+        self.assertEqual(batches[2]["parent_partition_index"], 2)
+        self.assertEqual(batches[2]["parent_partition_hash"], p2_hash)
+        self.assertEqual(batches[2]["batch_rule_count"], 10)
+
+    def test_aggregate_batch_reports_expected_jobs_verification(self):
+        """Aggregate batch reports verifies expected_jobs and fails closed on tampering or missing jobs."""
+        paths = ["firmware/tdma_common.c"]
+        r1 = {"rule_id": "TEST-001", "rule_sha256": "a" * 64}
+        job_hash = "j" * 64
+        expected_jobs = [
+            {
+                "job_id": "diff_01_part_01_batch_01",
+                "job_execution_hash": job_hash,
+                "parent_partition_index": 1,
+                "parent_partition_hash": "p" * 64,
+                "rule_ids": ["TEST-001"],
+            }
+        ]
+        rep = {
+            "job_id": "diff_01_part_01_batch_01",
+            "job_execution_hash": job_hash,
+            "status": "PASS",
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": paths,
+            "base_sha": self.base_sha,
+            "head_sha": self.head_sha,
+            "diff_sha256": self.receipt_sha,
+            "selection_sha256": self.sel_sha,
+            "rule_results": [{
+                "rule_id": "TEST-001",
+                "rule_sha256": "a" * 64,
+                "status": "PASS",
+                "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": self.receipt_sha}],
+                "reason": "OK",
+            }],
+        }
+        # Matching job passes
+        res = pr_review.aggregate_batch_reports(
+            batch_reports=[rep],
+            required_paths=set(paths),
+            expected_base_sha=self.base_sha,
+            expected_head_sha=self.head_sha,
+            expected_diff_sha256=self.receipt_sha,
+            rule_selection={"rules": [r1]},
+            expected_jobs=expected_jobs,
+        )
+        self.assertEqual(res["status"], "PASS")
+
+        # Tampered job_execution_hash fails closed
+        tampered_rep = dict(rep, job_execution_hash="tampered" + "0" * 56)
+        res_tampered = pr_review.aggregate_batch_reports(
+            batch_reports=[tampered_rep],
+            required_paths=set(paths),
+            expected_base_sha=self.base_sha,
+            expected_head_sha=self.head_sha,
+            expected_diff_sha256=self.receipt_sha,
+            rule_selection={"rules": [r1]},
+            expected_jobs=expected_jobs,
+        )
+        self.assertEqual(res_tampered["status"], "FAIL")
+        self.assertTrue(any("TAMPERED_JOB_EXECUTION_HASH" in f["explanation"] for f in res_tampered["findings"]))
+
+        # Missing expected job fails closed
+        res_missing = pr_review.aggregate_batch_reports(
+            batch_reports=[],
+            required_paths=set(paths),
+            expected_base_sha=self.base_sha,
+            expected_head_sha=self.head_sha,
+            expected_diff_sha256=self.receipt_sha,
+            rule_selection={"rules": [r1]},
+            expected_jobs=expected_jobs,
+        )
+        self.assertEqual(res_missing["status"], "FAIL")
+        self.assertTrue(any("MISSING_AUDIT_JOB_REPORT" in f["explanation"] for f in res_missing["findings"]))
 
 
 

@@ -126,6 +126,25 @@ class AdapterTests(unittest.TestCase):
             self.assertIn("never", args)
             self.assertEqual(mocked.call_args.kwargs["input"], "write C")
 
+    def test_codex_read_only_mode(self):
+        with tempfile.TemporaryDirectory() as directory, patch(
+                "adapters.codex.subprocess.run",
+                return_value=subprocess.CompletedProcess([], 0, "read only", "")) as mocked:
+            codex.invoke("read C", pathlib.Path(directory), 120, read_only=True)
+            args = mocked.call_args.args[0]
+            self.assertEqual(args[:4], ["codex", "--ask-for-approval", "never", "exec"])
+            self.assertIn("read-only", args)
+            self.assertNotIn("workspace-write", args)
+            self.assertEqual(mocked.call_args.kwargs["input"], "read C")
+
+    def test_adapter_rejects_more_than_128_rules(self):
+        rules_129 = [{"rule_id": f"R-{n:03}", "rule_sha256": "a" * 64} for n in range(129)]
+        with self.assertRaises(antigravity.AuditError):
+            antigravity.scoped_schema(rules_129, "b" * 64)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(codex.WorkerError):
+                codex.invoke("check", pathlib.Path(directory), 120, required_rules=rules_129, selection_sha256="b" * 64)
+
     def test_codex_nonzero_rejected(self):
         with tempfile.TemporaryDirectory() as directory, patch(
                 "adapters.codex.subprocess.run",

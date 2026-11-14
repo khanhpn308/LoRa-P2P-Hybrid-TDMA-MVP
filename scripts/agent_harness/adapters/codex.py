@@ -14,10 +14,11 @@ class WorkerError(RuntimeError):
 
 
 def invoke(prompt: str, worktree: Path, timeout: int, required_rules=None,
-           selection_sha256=None, evidence_inventory=None) -> dict:
+           selection_sha256=None, evidence_inventory=None, read_only: bool = False) -> dict:
     if required_rules is None and (selection_sha256 is not None or evidence_inventory is not None):
         raise WorkerError("Partial Host scope cannot use the legacy Worker")
-    args = ["codex", "--ask-for-approval", "never", "exec", "--sandbox", "workspace-write"]
+    sandbox = "read-only" if read_only else "workspace-write"
+    args = ["codex", "--ask-for-approval", "never", "exec", "--sandbox", sandbox]
     try:
         with tempfile.TemporaryDirectory(prefix="harness-worker-report-") as directory:
             root = Path(directory)
