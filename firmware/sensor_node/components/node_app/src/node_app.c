@@ -482,6 +482,7 @@ void node_app_run(void)
              pending_events, node_event_fifo_get_dropped_count(&s_event_fifo));
 
     /* 9. Execute CAD + Random Backoff Event Transmission if joined and pending events exist */
+    bool event_acked = false;
     if (pending_events > 0U) {
         if (!radio_initialized) {
             ESP_LOGI(TAG, "Initializing SX1276 radio for Event transmission");
@@ -494,9 +495,10 @@ void node_app_run(void)
         }
 
         if (radio_initialized) {
-            esp_err_t cycle_err = node_cad_event_tx_and_ack(&mac_cfg, &s_event_fifo, &s_uplink_frame_counter);
-            ESP_LOGI(TAG, "CAD Event cycle finished (status: %s, remaining pending: %zu)",
+            esp_err_t cycle_err = node_cad_event_tx_and_ack(&mac_cfg, &s_event_fifo, &s_uplink_frame_counter, &event_acked);
+            ESP_LOGI(TAG, "CAD Event cycle finished (status: %s, acked: %s, remaining pending: %zu)",
                      esp_err_to_name(cycle_err),
+                     event_acked ? "true" : "false",
                      node_event_fifo_get_pending_count(&s_event_fifo));
             if (cycle_err == ESP_ERR_INVALID_STATE) {
                 node_handle_revoke_and_sleep(&s_btn_driver);
@@ -518,6 +520,15 @@ void node_app_run(void)
     /* 10. Ensure radio is sleeping before entering Deep-Sleep */
     if (radio_initialized) {
         (void)sx1276_sleep();
+    }
+
+    /* 10b. Local UI Delivery Feedback: Pulse LED once if event was confirmed by Gateway */
+    if (event_acked) {
+        esp_err_t ui_err = node_ui_blink_event_ack();
+        if (ui_err != ESP_OK) {
+            ESP_LOGW(TAG, "Event delivery feedback LED failed: %s (non-fatal, continuing to sleep)",
+                     esp_err_to_name(ui_err));
+        }
     }
 
     /* 11. Enter Deep-Sleep */
