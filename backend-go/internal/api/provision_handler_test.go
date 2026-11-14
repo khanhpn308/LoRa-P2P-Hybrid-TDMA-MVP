@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/api"
+	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/security"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/storage"
 )
 
@@ -43,7 +44,7 @@ func testMasterKey() [32]byte {
 
 func TestProvisionHandler_Table(t *testing.T) {
 	masterKey := testMasterKey()
-	keyWrapper := api.NewAESGCMKeyWrapper(masterKey)
+	keyWrapper := security.NewAESGCMKeyWrapper(masterKey)
 
 	authenticator := api.NewStaticAuthenticator(map[string]api.Role{
 		"admin-token":    api.RoleAdmin,
@@ -312,48 +313,6 @@ func TestProvisionHandler_Table(t *testing.T) {
 	}
 }
 
-func TestAESGCMKeyWrapper_RoundTrip(t *testing.T) {
-	masterKey := testMasterKey()
-	wrapper := api.NewAESGCMKeyWrapper(masterKey)
-
-	rawKey := make([]byte, 32)
-	for i := range rawKey {
-		rawKey[i] = byte(i * 3)
-	}
-
-	wrapped, err := wrapper.Wrap(rawKey)
-	if err != nil {
-		t.Fatalf("Wrap failed: %v", err)
-	}
-
-	// 12-byte nonce + 32-byte ciphertext + 16-byte tag = 60 bytes
-	if len(wrapped) != 60 {
-		t.Fatalf("expected wrapped length 60, got %d", len(wrapped))
-	}
-
-	unwrapped, err := wrapper.Unwrap(wrapped)
-	if err != nil {
-		t.Fatalf("Unwrap failed: %v", err)
-	}
-
-	if !bytes.Equal(unwrapped, rawKey) {
-		t.Fatalf("unwrapped bytes do not match original plaintext")
-	}
-
-	// Tampered ciphertext should fail auth tag verification
-	wrapped[len(wrapped)-1] ^= 0xFF
-	_, err = wrapper.Unwrap(wrapped)
-	if err == nil {
-		t.Fatalf("expected authentication failure on tampered wrapped key")
-	}
-
-	// Payload too short
-	_, err = wrapper.Unwrap([]byte("short"))
-	if err == nil {
-		t.Fatalf("expected error on short payload in Unwrap")
-	}
-}
-
 type errKeyWrapper struct{}
 
 func (e *errKeyWrapper) Wrap(plaintext []byte) ([]byte, error) {
@@ -383,7 +342,7 @@ func TestProvisionHandler_WrapFailure(t *testing.T) {
 func TestProvisionHandler_UnconfiguredDependencies(t *testing.T) {
 	repo := &mockProvisionRepo{}
 	masterKey := testMasterKey()
-	wrapper := api.NewAESGCMKeyWrapper(masterKey)
+	wrapper := security.NewAESGCMKeyWrapper(masterKey)
 
 	// Nil authenticator
 	h1 := api.NewProvisionHandler(repo, wrapper, nil)
