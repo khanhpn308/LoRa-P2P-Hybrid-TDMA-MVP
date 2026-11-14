@@ -1231,5 +1231,362 @@ class SupervisedEntrypointTests(PolicyFixture):
                 harness.bounded_prompt(all_ids)
 
 
+class GoImpactRefinementTests(PolicyFixture):
+    def test_reg01_baseline_c_dependency_invariance(self):
+        """REG-01: Baseline C dependency and include analysis remains invariant."""
+        self.write("firmware/components/shared/alpha.h", "int alpha(void);\n")
+        self.write("firmware/components/shared/alpha.c", '#include "alpha.h"\nint alpha(void){return 1;}\n')
+        self.write("firmware/components/sx1276_driver/radio.c", '#include "alpha.h"\nint radio(void){return alpha();}\n')
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        selection = self.select(["firmware/components/shared/alpha.c"])
+        self.assertIn("firmware/components/sx1276_driver/radio.c", selection["impact_paths"])
+        self.assertTrue({"RAD-001", "RTOS-003"} <= set(selection["selected_ids"]))
+
+    def test_reg02_conservative_default_for_modified_existing_go_files(self):
+        """REG-02: Modified existing Go files retain conservative package-level graph closure."""
+        self.write("backend-go/internal/security/join_crypto.go", (
+            "package security\n\nconst KeySize = 32\nfunc Derive() {}\n"
+        ))
+        self.write("backend-go/internal/domain/join_hello.go", (
+            'package domain\n\nimport "example.org/project/internal/security"\n'
+            'func Hello() int { return security.KeySize }\n'
+        ))
+        self.write("backend-go/internal/mqtt/key_unwrapper.go", (
+            'package mqtt\n\nimport "example.org/project/internal/security"\n'
+            'func Unwrap() int { return security.KeySize }\n'
+        ))
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        self.write("backend-go/internal/security/join_crypto.go", (
+            "package security\n\nconst KeySize = 32\nfunc Derive() { println(1) }\n"
+        ))
+        selection = self.select(["backend-go/internal/security/join_crypto.go"])
+        impact = set(selection["impact_paths"])
+        self.assertIn("backend-go/internal/domain/join_hello.go", impact)
+        self.assertIn("backend-go/internal/mqtt/key_unwrapper.go", impact)
+        groups = {r.split("-")[0] for r in selection["selected_ids"]}
+        self.assertIn("MQ", groups)
+
+    def test_reg03_proven_independent_additive_production_file(self):
+        """REG-03: Proven independent additive production file prunes unrelated edges."""
+        self.write("backend-go/internal/security/join_crypto.go", (
+            "package security\n\nconst KeySize = 32\nfunc Derive() {}\n"
+        ))
+        self.write("backend-go/internal/domain/join_hello.go", (
+            'package domain\n\nimport "example.org/project/internal/security"\n'
+            'func Hello() int { return security.KeySize }\n'
+        ))
+        self.write("backend-go/internal/mqtt/key_unwrapper.go", (
+            'package mqtt\n\nimport "example.org/project/internal/security"\n'
+            'func Unwrap() int { return security.KeySize }\n'
+        ))
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        self.write("backend-go/internal/security/key_wrapper.go", (
+            "package security\n\n"
+            "type AESGCMKeyWrapper struct { key [32]byte }\n"
+            "func NewAESGCMKeyWrapper(k [32]byte) *AESGCMKeyWrapper { return &AESGCMKeyWrapper{key: k} }\n"
+            "func (w *AESGCMKeyWrapper) Wrap(b []byte) ([]byte, error) { return b, nil }\n"
+        ))
+        selection = self.select(["backend-go/internal/security/key_wrapper.go"])
+        impact = set(selection["impact_paths"])
+        self.assertIn("backend-go/internal/security/key_wrapper.go", impact)
+        self.assertNotIn("backend-go/internal/domain/join_hello.go", impact)
+        self.assertNotIn("backend-go/internal/mqtt/key_unwrapper.go", impact)
+        groups = {r.split("-")[0] for r in selection["selected_ids"]}
+        self.assertNotIn("MQ", groups)
+
+    def test_reg04_genuine_direct_consumer_retains_edge(self):
+        """REG-04: Consumer explicitly referencing symbol from new file retains edge."""
+        self.write("backend-go/internal/security/join_crypto.go", "package security\nconst KeySize = 32\n")
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        self.write("backend-go/internal/security/key_wrapper.go", (
+            "package security\n\n"
+            "type AESGCMKeyWrapper struct {}\n"
+            "func NewAESGCMKeyWrapper() *AESGCMKeyWrapper { return &AESGCMKeyWrapper{} }\n"
+        ))
+        self.write("backend-go/internal/app/wiring.go", (
+            'package app\n\nimport "example.org/project/internal/security"\n'
+            'func Wire() { _ = security.NewAESGCMKeyWrapper() }\n'
+        ))
+        selection = self.select([
+            "backend-go/internal/security/key_wrapper.go",
+            "backend-go/internal/app/wiring.go"
+        ])
+        impact = set(selection["impact_paths"])
+        self.assertIn("backend-go/internal/app/wiring.go", impact)
+
+    def test_reg05_positive_dependency_preserves_mq_rules(self):
+        """REG-05: Modifying existing symbol in join_crypto.go retains mqtt consumers and selects MQ."""
+        self.write("backend-go/internal/security/join_crypto.go", "package security\nconst KeySize = 32\n")
+        self.write("backend-go/internal/mqtt/key_unwrapper.go", (
+            'package mqtt\n\nimport "example.org/project/internal/security"\n'
+            'func Unwrap() int { return security.KeySize }\n'
+        ))
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        self.write("backend-go/internal/security/join_crypto.go", "package security\nconst KeySize = 64\n")
+        selection = self.select(["backend-go/internal/security/join_crypto.go"])
+        self.assertIn("backend-go/internal/mqtt/key_unwrapper.go", selection["impact_paths"])
+        groups = {r.split("-")[0] for r in selection["selected_ids"]}
+        self.assertIn("MQ", groups)
+
+    def test_reg06_method_set_change_on_existing_receiver_retains_edge(self):
+        """REG-06: Method added to existing receiver type in sibling file cannot be pruned."""
+        self.write("backend-go/internal/security/existing.go", "package security\ntype MasterKey struct{}\n")
+        self.write("backend-go/internal/mqtt/consumer.go", (
+            'package mqtt\n\nimport "example.org/project/internal/security"\n'
+            'func Use() security.MasterKey { return security.MasterKey{} }\n'
+        ))
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        self.write("backend-go/internal/security/methods.go", (
+            "package security\n\nfunc (m *MasterKey) Decrypt() {}\n"
+        ))
+        selection = self.select(["backend-go/internal/security/methods.go"])
+        self.assertIn("backend-go/internal/mqtt/consumer.go", selection["impact_paths"])
+
+    def test_reg07_package_level_init_func_prevents_pruning(self):
+        """REG-07: Package init() side-effects unconditionally retain conservative edges."""
+        self.write("backend-go/internal/security/join_crypto.go", "package security\n")
+        self.write("backend-go/internal/mqtt/consumer.go", (
+            'package mqtt\n\nimport "example.org/project/internal/security"\n'
+        ))
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        self.write("backend-go/internal/security/initializer.go", (
+            "package security\n\nfunc init() { println(\"init\") }\n"
+        ))
+        selection = self.select(["backend-go/internal/security/initializer.go"])
+        self.assertIn("backend-go/internal/mqtt/consumer.go", selection["impact_paths"])
+
+    def test_reg08_package_level_var_prevents_pruning(self):
+        """REG-08: Package-level vars prevent pruning due to potential initialization order dependency."""
+        self.write("backend-go/internal/security/join_crypto.go", "package security\n")
+        self.write("backend-go/internal/mqtt/consumer.go", (
+            'package mqtt\n\nimport "example.org/project/internal/security"\n'
+        ))
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        self.write("backend-go/internal/security/global_var.go", (
+            "package security\n\nvar GlobalKey = 100\n"
+        ))
+        selection = self.select(["backend-go/internal/security/global_var.go"])
+        self.assertIn("backend-go/internal/mqtt/consumer.go", selection["impact_paths"])
+
+    def test_reg09_blank_import_retains_edge(self):
+        """REG-09: Blank import retains edge regardless of symbol usage."""
+        self.write("backend-go/internal/security/join_crypto.go", "package security\n")
+        self.write("backend-go/internal/mqtt/driver.go", (
+            'package mqtt\n\nimport _ "example.org/project/internal/security"\n'
+        ))
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        self.write("backend-go/internal/security/key_wrapper.go", (
+            "package security\n\ntype Wrapper struct{}\n"
+        ))
+        selection = self.select(["backend-go/internal/security/key_wrapper.go"])
+        self.assertIn("backend-go/internal/mqtt/driver.go", selection["impact_paths"])
+
+    def test_reg10_dot_import_retains_edge(self):
+        """REG-10: Dot import retains edge due to identifier ambiguity."""
+        self.write("backend-go/internal/security/join_crypto.go", "package security\n")
+        self.write("backend-go/internal/mqtt/driver.go", (
+            'package mqtt\n\nimport . "example.org/project/internal/security"\n'
+        ))
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        self.write("backend-go/internal/security/key_wrapper.go", (
+            "package security\n\ntype Wrapper struct{}\n"
+        ))
+        selection = self.select(["backend-go/internal/security/key_wrapper.go"])
+        self.assertIn("backend-go/internal/mqtt/driver.go", selection["impact_paths"])
+
+    def test_reg11_same_package_dependencies_retain_edge(self):
+        """REG-11: New file referencing existing sibling symbol retains dependency."""
+        self.write("backend-go/internal/security/join_crypto.go", "package security\nconst RootSecret = 42\n")
+        self.write("backend-go/internal/mqtt/driver.go", (
+            'package mqtt\n\nimport "example.org/project/internal/security"\n'
+            'func ReadSecret() int { return security.RootSecret }\n'
+        ))
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        self.write("backend-go/internal/security/key_wrapper.go", (
+            "package security\n\nfunc SecretWrapper() int { return RootSecret }\n"
+        ))
+        selection = self.select(["backend-go/internal/security/key_wrapper.go"])
+        self.assertIn("backend-go/internal/mqtt/driver.go", selection["impact_paths"])
+
+    def test_reg12_production_vs_test_package_identity(self):
+        """REG-12: External test package (package security_test) is correctly partitioned from production."""
+        self.write("backend-go/internal/security/join_crypto.go", "package security\nconst KeySize = 32\n")
+        self.write("backend-go/internal/domain/join_hello.go", (
+            'package domain\n\nimport "example.org/project/internal/security"\n'
+            'func Hello() int { return security.KeySize }\n'
+        ))
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        self.write("backend-go/internal/security/key_wrapper.go", (
+            "package security\ntype Wrapper struct{}\nfunc NewWrapper() *Wrapper { return &Wrapper{} }\n"
+        ))
+        self.write("backend-go/internal/security/key_wrapper_test.go", (
+            'package security_test\n\nimport (\n\t"testing"\n\t"example.org/project/internal/security"\n)\n\n'
+            'func TestWrapper(t *testing.T) { _ = security.NewWrapper() }\n'
+        ))
+        selection = self.select([
+            "backend-go/internal/security/key_wrapper.go",
+            "backend-go/internal/security/key_wrapper_test.go"
+        ])
+        impact = set(selection["impact_paths"])
+        self.assertIn("backend-go/internal/security/key_wrapper.go", impact)
+        self.assertIn("backend-go/internal/security/key_wrapper_test.go", impact)
+        self.assertNotIn("backend-go/internal/domain/join_hello.go", impact)
+
+    def test_reg13_syntax_error_triggers_conservative_fallback(self):
+        """REG-13: Syntax error in candidate Go file triggers conservative fallback without crash."""
+        self.write("backend-go/internal/security/join_crypto.go", "package security\n")
+        self.write("backend-go/internal/mqtt/consumer.go", (
+            'package mqtt\n\nimport "example.org/project/internal/security"\n'
+        ))
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        self.write("backend-go/internal/security/broken.go", "package security\nfunc Broken( {\n")
+        selection = self.select(["backend-go/internal/security/broken.go"])
+        self.assertIn("backend-go/internal/mqtt/consumer.go", selection["impact_paths"])
+
+    def test_reg14_tampered_analyzer_source_fails_closed(self):
+        """REG-14: Tampered or symlinked analyzer source fails closed with StandardsError."""
+        analyzer_src = Path(policy.__file__).resolve().parent / "go_impact_analyzer.go"
+        with tempfile.TemporaryDirectory() as td:
+            sym = Path(td) / "go_impact_analyzer.go"
+            sym.symlink_to(analyzer_src)
+            with self.assertRaises(policy.StandardsError):
+                policy._get_trusted_analyzer_bin(sym)
+
+            ww = Path(td) / "world_writable.go"
+            ww.write_text("package main\n")
+            ww.chmod(0o777)
+            with self.assertRaises(policy.StandardsError):
+                policy._get_trusted_analyzer_bin(ww)
+
+    def test_reg15_helper_timeout_triggers_conservative_fallback(self):
+        """REG-15: Timeout during analyzer execution triggers conservative fallback."""
+        self.write("backend-go/internal/security/join_crypto.go", "package security\n")
+        self.write("backend-go/internal/mqtt/consumer.go", (
+            'package mqtt\n\nimport "example.org/project/internal/security"\n'
+        ))
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        self.write("backend-go/internal/security/key_wrapper.go", "package security\ntype W struct{}\n")
+        with patch.object(policy, "_run_go_impact_analyzer", side_effect=policy.StandardsError("Analyzer timed out")):
+            selection = self.select(["backend-go/internal/security/key_wrapper.go"])
+            self.assertIn("backend-go/internal/mqtt/consumer.go", selection["impact_paths"])
+
+    def test_reg16_helper_output_limit_triggers_conservative_fallback(self):
+        """REG-16: Helper output exceeding 4 MB bound triggers conservative fallback."""
+        self.write("backend-go/internal/security/join_crypto.go", "package security\n")
+        self.write("backend-go/internal/mqtt/consumer.go", (
+            'package mqtt\n\nimport "example.org/project/internal/security"\n'
+        ))
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        self.write("backend-go/internal/security/key_wrapper.go", "package security\ntype W struct{}\n")
+        with patch.object(policy, "_run_go_impact_analyzer", side_effect=policy.StandardsError("Analyzer output exceeded 4 MB limit")):
+            selection = self.select(["backend-go/internal/security/key_wrapper.go"])
+            self.assertIn("backend-go/internal/mqtt/consumer.go", selection["impact_paths"])
+
+    def test_reg17_malformed_helper_metadata_triggers_conservative_fallback(self):
+        """REG-17: Malformed JSON or invalid schema version triggers conservative fallback."""
+        self.write("backend-go/internal/security/join_crypto.go", "package security\n")
+        self.write("backend-go/internal/mqtt/consumer.go", (
+            'package mqtt\n\nimport "example.org/project/internal/security"\n'
+        ))
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        self.write("backend-go/internal/security/key_wrapper.go", "package security\ntype W struct{}\n")
+        with patch.object(policy, "_run_go_impact_analyzer", side_effect=policy.StandardsError("Malformed JSON from analyzer")):
+            selection = self.select(["backend-go/internal/security/key_wrapper.go"])
+            self.assertIn("backend-go/internal/mqtt/consumer.go", selection["impact_paths"])
+
+    def test_reg18_new_import_induced_initialization_prevents_pruning(self):
+        """REG-18: New file importing local module or third-party package cannot be pruned."""
+        self.write("backend-go/internal/security/join_crypto.go", "package security\n")
+        self.write("backend-go/internal/domain/join_hello.go", (
+            'package domain\n\nimport "example.org/project/internal/security"\n'
+        ))
+        self.write("backend-go/internal/storage/storage.go", "package storage\n")
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+
+        self.write("backend-go/internal/security/key_wrapper.go", (
+            'package security\n\nimport "example.org/project/internal/storage"\n'
+            'type W struct{}\n'
+        ))
+        selection = self.select(["backend-go/internal/security/key_wrapper.go"])
+        self.assertIn("backend-go/internal/domain/join_hello.go", selection["impact_paths"])
+
+    def test_reg19_genuine_rule_count_overflow(self):
+        """REG-19: Genuine rule count overflow beyond MAX_RULES=128 raises StandardsError."""
+        over_requested = [f"GB-{n:03}" for n in range(1, 11)] * 14
+        with self.assertRaises(policy.StandardsError):
+            policy.select_rules(self.root, requested_ids=over_requested)
+
+    def test_reg20_genuine_prompt_byte_overflow(self):
+        """REG-20: Prompt bytes exceeding MAX_PROMPT_BYTES raises StandardsError."""
+        with patch.object(policy, "MAX_PROMPT_BYTES", 100):
+            with self.assertRaises(policy.StandardsError):
+                self.select(["backend-go/internal/security/join_crypto.go"])
+
+    def test_reg21_exact_snapshot_and_hash_determinism(self):
+        """REG-21: Exact selection and impact hash determinism across repeated executions."""
+        self.write("backend-go/internal/security/key_wrapper.go", (
+            "package security\n\ntype Wrapper struct{}\n"
+        ))
+        sel1 = self.select(["backend-go/internal/security/key_wrapper.go"])
+        sel2 = self.select(["backend-go/internal/security/key_wrapper.go"])
+        self.assertEqual(sel1["selection_sha256"], sel2["selection_sha256"])
+        self.assertEqual(sel1["impact_sha256"], sel2["impact_sha256"])
+        self.assertEqual(sel1["selected_ids"], sel2["selected_ids"])
+
+    def test_reg22_actual_cgp4_candidate_reproduction(self):
+        """REG-22: Exact verification of PR #385 against candidate worktree if available."""
+        cand_path = Path("/home/khanh/projects/iot/LoRa-P2P-issue-384")
+        if not cand_path.exists():
+            self.skipTest("Worktree /home/khanh/projects/iot/LoRa-P2P-issue-384 not found")
+        allowed = [
+            "backend-go/internal/api/provision_handler.go",
+            "backend-go/internal/security/key_wrapper.go",
+            "backend-go/internal/security/key_wrapper_test.go",
+            "backend-go/internal/api/provision_handler_test.go",
+            "backend-go/internal/app/wiring.go",
+            "backend-go/cmd/server/server_test.go",
+        ]
+        base_sha = "cab72b040703277ca91e9f0fefee301141ef261f"
+        selection = policy.select_rules(cand_path, allowed_paths=allowed, base=base_sha)
+        self.assertEqual(len(selection["selected_ids"]), 128)
+        self.assertEqual(len(selection["agent_input"].encode("utf-8")), 47311)
+        self.assertEqual(len(selection["impact_paths"]), 7)
+        groups = {r.split("-")[0] for r in selection["selected_ids"]}
+        self.assertNotIn("MQ", groups)
+
+
 if __name__ == "__main__":
     unittest.main()

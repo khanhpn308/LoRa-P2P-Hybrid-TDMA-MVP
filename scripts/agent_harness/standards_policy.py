@@ -7,8 +7,10 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import shlex
+import shutil
 import stat
 import subprocess
+import tempfile
 
 try:
     from .scope import violations
@@ -327,7 +329,230 @@ def _component(path):
     return None
 
 
-def _impact(repo, paths):
+SAFE_STD_IMPORT_PREFIXES = (
+    "crypto/", "encoding/", "errors", "fmt", "io", "bytes", "context",
+    "math", "strings", "strconv", "time", "sync", "unicode", "path",
+    "sort", "bufio", "log", "regexp", "slices", "cmp"
+)
+
+
+def _get_trusted_analyzer_bin(src_path: Path | None = None) -> Path:
+    """Verify analyzer source and return path to trusted compiled executable."""
+    analyzer_src = src_path if src_path is not None else (Path(__file__).resolve().parent / "go_impact_analyzer.go")
+    if not analyzer_src.exists() or not analyzer_src.is_file() or analyzer_src.is_symlink():
+        raise StandardsError("Untrusted analyzer source: missing, not regular file, or symlink")
+    st = analyzer_src.stat()
+    if hasattr(os, "getuid") and st.st_uid not in (os.getuid(), 0):
+        raise StandardsError("Invalid analyzer source ownership")
+    if st.st_mode & 0o002:
+        raise StandardsError("Analyzer source is world-writable")
+
+    src_bytes = analyzer_src.read_bytes()
+    src_hash = hashlib.sha256(src_bytes).hexdigest()
+
+    cache_dir = Path("/tmp") / f"harness_go_analyzer_{src_hash[:16]}"
+    target_bin = cache_dir / "go_impact_analyzer"
+
+    if target_bin.exists():
+        if target_bin.is_symlink() or not target_bin.is_file():
+            try:
+                shutil.rmtree(cache_dir)
+            except Exception:
+                pass
+        else:
+            bin_st = target_bin.stat()
+            if (not hasattr(os, "getuid") or bin_st.st_uid in (os.getuid(), 0)) and not (bin_st.st_mode & 0o002):
+                return target_bin
+
+    with tempfile.TemporaryDirectory() as tmp_build:
+        tmp_build_path = Path(tmp_build)
+        tmp_bin = tmp_build_path / "analyzer"
+        tmp_cache = tmp_build_path / "gocache"
+        tmp_cache.mkdir(mode=0o700, exist_ok=True)
+        env = {
+            "PATH": os.environ.get("PATH", "/usr/local/go/bin:/usr/bin:/bin"),
+            "GOTOOLCHAIN": "local",
+            "GOENV": "off",
+            "GOWORK": "off",
+            "GOFLAGS": "",
+            "GOPROXY": "off",
+            "GOSUMDB": "off",
+            "CGO_ENABLED": "0",
+            "HOME": str(tmp_build_path),
+            "TMPDIR": str(tmp_build_path),
+            "GOCACHE": str(tmp_cache),
+        }
+        res = subprocess.run(
+            ["go", "build", "-trimpath", "-o", str(tmp_bin), str(analyzer_src)],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10.0,
+        )
+        if res.returncode != 0:
+            raise StandardsError(f"Analyzer build failed: {res.stderr.decode()}")
+        cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        shutil.copy2(tmp_bin, target_bin)
+        os.chmod(target_bin, 0o700)
+        return target_bin
+
+
+def _run_go_impact_analyzer(module: str, go_files: dict[str, bytes]) -> dict:
+    """Execute trusted Go AST analyzer with bounded stdin/stdout and timeouts."""
+    target_bin = _get_trusted_analyzer_bin()
+
+    payload = {
+        "schema_version": 1,
+        "module": module,
+        "files": {path: raw.decode("utf-8", errors="replace") for path, raw in go_files.items()}
+    }
+    input_bytes = json.dumps(payload).encode("utf-8")
+    if len(input_bytes) > 10 * 1024 * 1024:
+        raise StandardsError("Payload exceeds analyzer input limit")
+
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/local/go/bin:/usr/bin:/bin"),
+        "GOTOOLCHAIN": "local",
+        "CGO_ENABLED": "0",
+    }
+
+    proc = subprocess.Popen(
+        [str(target_bin)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+    )
+
+    max_output = 4 * 1024 * 1024
+    try:
+        stdout_data, stderr_data = proc.communicate(input=input_bytes, timeout=10.0)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        raise StandardsError("Analyzer timed out")
+
+    if len(stdout_data) > max_output:
+        raise StandardsError("Analyzer output exceeded 4 MB limit")
+    if proc.returncode != 0:
+        raise StandardsError(f"Analyzer failed with exit code {proc.returncode}: {stderr_data.decode()}")
+
+    try:
+        data = json.loads(stdout_data.decode("utf-8"))
+    except Exception as err:
+        raise StandardsError(f"Malformed JSON from analyzer: {err}")
+
+    if data.get("schema_version") != 1:
+        raise StandardsError("Invalid schema version from analyzer")
+    files_meta = data.get("files", {})
+    if set(files_meta.keys()) != set(go_files.keys()):
+        raise StandardsError("Analyzer output file inventory mismatch")
+    return files_meta
+
+
+def _can_prune_go_edge(dep: str, name: str, dep_meta: dict, name_meta: dict,
+                       base_files: set, packages: dict, module: str,
+                       all_go_meta: dict) -> bool:
+    """Verify all 12 conservative-first conditions before pruning edge dep -> name."""
+    # Condition 1: Source file is new relative to trusted BASE and is a production file
+    if base_files is None or dep in base_files or dep.endswith("_test.go"):
+        return False
+    if not dep_meta or dep_meta.get("parse_error"):
+        return False
+    if not name_meta or name_meta.get("parse_error"):
+        return False
+
+    dep_symbols = {s["name"]: s for s in dep_meta.get("declared_symbols", [])}
+
+    # Condition 2: All declarations are independent additions relative to BASE sibling files
+    dep_pkg_dir = str(PurePosixPath(dep).parent)
+    sibling_files = packages.get(dep_pkg_dir, set())
+    for sib in sibling_files:
+        if sib != dep and sib in base_files:
+            sib_meta = all_go_meta.get(sib)
+            if not sib_meta or sib_meta.get("parse_error"):
+                return False
+            sib_symbols = {s["name"] for s in sib_meta.get("declared_symbols", [])}
+            if set(dep_symbols.keys()) & sib_symbols:
+                return False
+
+    # Condition 3: No package-level initialization effects in dep
+    if dep_meta.get("has_init_func"):
+        return False
+    if dep_meta.get("has_package_level_vars"):
+        return False
+
+    # Condition 4: No method-set changes on existing receiver types
+    for m in dep_meta.get("declared_methods", []):
+        recv = m.get("receiver_type")
+        if not recv or recv not in dep_symbols or dep_symbols[recv].get("kind") != "type":
+            return False
+
+    # Condition 5 & 6: No name collisions or unresolved same-package dependencies
+    dep_idents = set(dep_meta.get("ident_refs", []))
+    for sib in sibling_files:
+        if sib != dep and not sib.endswith("_test.go"):
+            sib_meta = all_go_meta.get(sib)
+            if sib_meta:
+                sib_symbols = {s["name"] for s in sib_meta.get("declared_symbols", [])}
+                if dep_idents & sib_symbols:
+                    return False
+                sib_idents = set(sib_meta.get("ident_refs", []))
+                if sib_idents & set(dep_symbols.keys()):
+                    return False
+
+    # Condition 7: No direct or indirect relevant consumer relationship
+    dep_pkg_name = dep_meta.get("package_name")
+    if dep_pkg_dir.startswith("backend-go/"):
+        dep_imp_path = module + "/" + dep_pkg_dir[len("backend-go/"):]
+    else:
+        dep_imp_path = module + "/" + dep_pkg_dir
+
+    matched_import = False
+    for imp in name_meta.get("imports", []):
+        if imp.get("path") == dep_imp_path:
+            matched_import = True
+            alias = imp.get("alias", "")
+            if alias in ("_", "."):
+                return False
+            effective_alias = alias if alias else dep_pkg_name
+            for sref in name_meta.get("selector_refs", []):
+                if sref.get("package_alias") == effective_alias:
+                    if sref.get("name") in dep_symbols:
+                        return False
+    if not matched_import:
+        return False
+
+    # Condition 8: No new unresolved import-induced initialization dependencies
+    for imp in dep_meta.get("imports", []):
+        ipath = imp.get("path", "")
+        if ipath.startswith(module) or "." in ipath.split("/")[0]:
+            return False
+        if not any(ipath == p or ipath.startswith(p) for p in SAFE_STD_IMPORT_PREFIXES):
+            return False
+
+    # Condition 9: Clean parse, no build ambiguity
+    # (Validated by absence of parse_error in dep_meta and name_meta)
+
+    # Condition 10: No unresolved interface, alias, embedding, generic or reflection relationship
+    top_types = dep_meta.get("top_level_type_details", {})
+    for tname, detail in top_types.items():
+        if detail.get("has_embedded_fields") or detail.get("is_alias") or detail.get("has_generics"):
+            return False
+    if dep_meta.get("has_unsafe_or_cgo"):
+        return False
+    if any(imp.get("path") == "reflect" for imp in dep_meta.get("imports", [])):
+        return False
+
+    # Condition 11: Correct package identity
+    if dep_meta.get("is_test") or not dep_pkg_name:
+        return False
+
+    # Condition 12: Complete BASE and candidate dependency evidence
+    return True
+
+
+def _impact(repo, paths, base_sha=None):
     """Conservative transitive C include and local Go import caller/consumer closure."""
     names = _git(repo, "ls-files", "-z").decode().split("\0")
     names += _git(repo, "ls-files", "--others", "--exclude-standard", "-z").decode().split("\0")
@@ -357,7 +582,7 @@ def _impact(repo, paths):
         module = match[1].decode()
     packages = {}
     for name in code:
-        if name.endswith(".go"):
+        if name.endswith(".go") and not name.endswith("_test.go"):
             packages.setdefault(str(PurePosixPath(name).parent), set()).add(name)
     for name, raw in code.items():
         text = raw.decode()
@@ -386,6 +611,41 @@ def _impact(repo, paths):
                     if package != str(PurePosixPath(name).parent):
                         for dep in packages[package]:
                             edges[dep].add(name)
+
+    # Conservative-first Go edge refinement if AST analysis is available
+    base_files = None
+    if base_sha:
+        try:
+            base_files = set(_git(repo, "ls-tree", "-r", "--name-only", base_sha).decode().splitlines())
+        except Exception:
+            base_files = None
+
+    go_files = {k: v for k, v in code.items() if k.endswith(".go")}
+    if go_files and base_files is not None and module:
+        go_meta = None
+        try:
+            go_meta = _run_go_impact_analyzer(module, go_files)
+        except StandardsError as err:
+            if "Untrusted analyzer" in str(err) or "Invalid analyzer" in str(err) or "world-writable" in str(err):
+                raise
+            go_meta = None
+        except Exception:
+            go_meta = None
+
+        if go_meta:
+            edges_to_prune = []
+            for dep, consumers in edges.items():
+                if dep.endswith(".go") and dep not in base_files and not dep.endswith("_test.go"):
+                    dep_meta = go_meta.get(dep)
+                    for consumer in consumers:
+                        if consumer.endswith(".go") and PurePosixPath(dep).parent != PurePosixPath(consumer).parent:
+                            consumer_meta = go_meta.get(consumer)
+                            if _can_prune_go_edge(dep, consumer, dep_meta, consumer_meta,
+                                                  base_files, packages, module, go_meta):
+                                edges_to_prune.append((dep, consumer))
+            for dep, consumer in edges_to_prune:
+                edges[dep].discard(consumer)
+
     affected = set(paths)
     affected.update(name for name in code if any(name.startswith(p) for p in paths if p.endswith("/")))
     pending = list(affected)
@@ -434,7 +694,7 @@ def select_rules(repo: Path, allowed_paths=(), changed_paths=None, requested_ids
         components = {c for p in paths if (c := _component(p))}
         components.update(known[r] for r in requested)
         impact_seeds = current if current else allowed
-        impact, code = _impact(repo, impact_seeds) if components else (paths, {})
+        impact, code = _impact(repo, impact_seeds, base_sha=base_sha) if components else (paths, {})
         components.update(c for p in impact if (c := _component(p)))
         selected = set(requested)
         standards = {}
