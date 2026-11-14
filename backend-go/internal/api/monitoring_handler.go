@@ -30,6 +30,7 @@ type MonitoringHandler struct {
 	store               storage.StatusStorage
 	offlineThreshold    time.Duration
 	presenceTracker     *presence.Tracker
+	rfTracker           *presence.RFTracker
 	authenticator       Authenticator
 	revocationPublisher NodeRevocationPublisher
 	db                  *sql.DB
@@ -46,15 +47,33 @@ func NewMonitoringHandler(store storage.StatusStorage, offlineThreshold time.Dur
 	if offlineThreshold <= 0 {
 		offlineThreshold = 5 * time.Minute
 	}
+	var rfTracker *presence.RFTracker
+	if presenceTracker != nil {
+		rfTracker = presenceTracker.RF()
+	}
+	if rfTracker == nil {
+		rfTracker = presence.NewRFTracker()
+	}
 	h := &MonitoringHandler{
 		store:            store,
 		offlineThreshold: offlineThreshold,
 		presenceTracker:  presenceTracker,
+		rfTracker:        rfTracker,
 	}
 	if len(auth) > 0 {
 		h.authenticator = auth[0]
 	}
 	return h
+}
+
+// RFTracker returns the active in-memory RF tracker.
+func (h *MonitoringHandler) RFTracker() *presence.RFTracker {
+	return h.rfTracker
+}
+
+// SetRFTracker sets or overrides the active RFTracker.
+func (h *MonitoringHandler) SetRFTracker(tracker *presence.RFTracker) {
+	h.rfTracker = tracker
 }
 
 // SetRevocationPublisher sets the publisher for downlink node revocation commands.
@@ -94,6 +113,23 @@ func (h *MonitoringHandler) handleListGateways(w http.ResponseWriter, r *http.Re
 			t, parseErr := time.Parse(time.RFC3339, *gw.LastSeenAt)
 			if parseErr == nil && now.Sub(t) > h.offlineThreshold {
 				gw.Mode = "OFFLINE"
+			}
+		}
+
+		if h.rfTracker != nil {
+			if chView := h.rfTracker.GetChannelRFView(gw.GatewayID, -1); chView != nil {
+				rssi := chView.ChannelRssiDbm
+				gw.ChannelRssiDbm = &rssi
+				rfAt := chView.ChannelRfAt
+				gw.ChannelRfAt = &rfAt
+				ageSec := chView.ChannelRfAgeSeconds
+				gw.ChannelRfAgeSeconds = &ageSec
+				stale := chView.ChannelRfStale
+				gw.ChannelRfStale = &stale
+				chIdx := chView.ChannelIdx
+				gw.ChannelIdx = &chIdx
+				ctxStr := chView.SampleContext
+				gw.ChannelSampleContext = &ctxStr
 			}
 		}
 	}
@@ -192,6 +228,23 @@ func (h *MonitoringHandler) handleGetGatewayStatus(w http.ResponseWriter, r *htt
 		NodeCount:             rec.NodeCount,
 	}
 
+	if h.rfTracker != nil {
+		if chView := h.rfTracker.GetChannelRFView(gwID, -1); chView != nil {
+			rssi := chView.ChannelRssiDbm
+			dto.ChannelRssiDbm = &rssi
+			rfAt := chView.ChannelRfAt
+			dto.ChannelRfAt = &rfAt
+			ageSec := chView.ChannelRfAgeSeconds
+			dto.ChannelRfAgeSeconds = &ageSec
+			stale := chView.ChannelRfStale
+			dto.ChannelRfStale = &stale
+			chIdx := chView.ChannelIdx
+			dto.ChannelIdx = &chIdx
+			ctxStr := chView.SampleContext
+			dto.ChannelSampleContext = &ctxStr
+		}
+	}
+
 	writeJSON(w, http.StatusOK, dto)
 }
 
@@ -273,6 +326,35 @@ func (h *MonitoringHandler) handleListNodes(w http.ResponseWriter, r *http.Reque
 		page.Items = filtered
 	}
 
+	if h.rfTracker != nil {
+		for i := range page.Items {
+			var rfView *presence.NodeRFView
+			if gwID != "" {
+				rfView = h.rfTracker.GetNodeRFView(gwID, page.Items[i].NodeID)
+			} else if page.Items[i].GatewayID != "" {
+				rfView = h.rfTracker.GetNodeRFView(page.Items[i].GatewayID, page.Items[i].NodeID)
+			}
+			if rfView == nil {
+				rfView = h.rfTracker.GetLatestNodeRFView(page.Items[i].NodeID)
+			}
+			if rfView != nil {
+				rssi := rfView.RssiDbm
+				page.Items[i].LastRssiDbm = &rssi
+				snr := rfView.SnrDb
+				page.Items[i].LastSnrDb = &snr
+				rfAt := rfView.LastRfAt
+				page.Items[i].LastRfAt = &rfAt
+				ageSec := rfView.RfAgeSeconds
+				page.Items[i].RfAgeSeconds = &ageSec
+				src := rfView.Source
+				page.Items[i].RfSource = &src
+				stale := rfView.RfStale
+				page.Items[i].RfStale = &stale
+				page.Items[i].ChannelIdx = rfView.ChannelIdx
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, page)
 }
 
@@ -328,7 +410,16 @@ type GatewayLifecycleStorage interface {
 
 func (h *MonitoringHandler) deleteGateway(ctx context.Context, gwID string) error {
 	if lifecycle, ok := h.store.(GatewayLifecycleStorage); ok && h.db == nil {
-		return lifecycle.DeleteGateway(ctx, gwID)
+		if err := lifecycle.DeleteGateway(ctx, gwID); err != nil {
+			return err
+		}
+		if h.presenceTracker != nil {
+			h.presenceTracker.SetGatewayStatus(gwID, false)
+		}
+		if h.rfTracker != nil {
+			h.rfTracker.RemoveGateway(gwID)
+		}
+		return nil
 	}
 
 	var db *sql.DB
@@ -391,7 +482,18 @@ func (h *MonitoringHandler) deleteGateway(ctx context.Context, gwID string) erro
 		return fmt.Errorf("failed to delete device_join_requests for gateway: %w", err)
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	if h.presenceTracker != nil {
+		h.presenceTracker.SetGatewayStatus(gwID, false)
+	}
+	if h.rfTracker != nil {
+		h.rfTracker.RemoveGateway(gwID)
+	}
+
+	return nil
 }
 
 func (h *MonitoringHandler) deleteNode(ctx context.Context, nodeID string) error {
@@ -564,6 +666,9 @@ func (h *MonitoringHandler) deleteNodeWithGateway(ctx context.Context, nodeID st
 
 	if h.presenceTracker != nil && targetNodeID > 0 {
 		h.presenceTracker.SetNodeStatus(targetNodeID, false)
+	}
+	if h.rfTracker != nil && targetNodeID > 0 {
+		h.rfTracker.RemoveNode(targetNodeID)
 	}
 
 	if h.revocationPublisher != nil && targetNodeID > 0 {

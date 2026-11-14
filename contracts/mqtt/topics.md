@@ -13,6 +13,7 @@ Root `iot/v1/gw/{gateway_id}`. **MQTT 5.0 bắt buộc** cho Gateway và Backend
 | `uplink/schedule-ack` | Gateway → Backend | 1 | false | [schedule-ack](schemas/schedule-ack.schema.json) | **SUPERSEDED_DEPRECATED** (Bãi bỏ theo DEC-273-01 / ADR-0004) |
 | `uplink/command-ack` (bổ sung đề xuất) | Gateway → Backend | 1 | false | [command-ack](schemas/command-ack.schema.json) | **ACTIVE** (Kết quả thi hành lệnh Node, phân biệt NODE_ACKED) |
 | `uplink/join-hello` (NEW · V2) | Gateway → Backend | 1 | **false** | [join-hello](schemas/join-hello.schema.json) (V2 `UP_JOIN_HELLO` 0x45, 68B) | **ACTIVE_V2_JOIN_PLANE** (Relay bản tin Hello gia nhập mạng V2) |
+| `uplink/rf-metrics` (NEW · V2) | Gateway → Backend | 1 | false | [rf-metrics](schemas/rf-metrics.schema.json) | **ACTIVE_V2_RF_PLANE** (Chất lượng tín hiệu RSSI/SNR node & năng lượng kênh) |
 | `uplink/session-key-ack` (NEW · DRAFT) | Gateway → Backend | 1 | **false** | [session-key-ack](schemas/session-key-ack.schema.json) | **DRAFT** (Xác nhận cài đặt khóa phiên bền vững vào NVS) |
 | `downlink/schedule` | Backend → Gateway | 1 | **false** | [schedule](schemas/schedule.schema.json) | **SUPERSEDED_DEPRECATED** (Bãi bỏ theo DEC-273-01 / ADR-0004) |
 | `downlink/command` | Backend → Gateway | 1 | false | [command](schemas/command.schema.json) | **ACTIVE** (Lệnh điều khiển Node; cấm SET_PERIODIC_MODE) |

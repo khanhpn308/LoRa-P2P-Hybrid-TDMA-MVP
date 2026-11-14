@@ -822,6 +822,186 @@
         "rssi": -85,
         "snr": 7.5
       }
+    },
+    {
+      "id": "RF-METRICS-NODE-UPLINK-VALID",
+      "schema": "rf-metrics",
+      "valid": true,
+      "message": {
+        "schema_version": "1.0-draft",
+        "gateway_id": "gw01",
+        "gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+        "sample_seq": "1001",
+        "sample_monotonic_us": "1234567890",
+        "age_ms": 15,
+        "kind": "NODE_UPLINK",
+        "channel_idx": 4,
+        "node_id": 12,
+        "rssi_dbm": -88,
+        "snr_db": -7.75,
+        "source": "UP_EVENT",
+        "validation": "VERIFIED"
+      }
+    },
+    {
+      "id": "RF-METRICS-CHANNEL-VALID",
+      "schema": "rf-metrics",
+      "valid": true,
+      "message": {
+        "schema_version": "1.0-draft",
+        "gateway_id": "gw01",
+        "gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+        "sample_seq": "1002",
+        "sample_monotonic_us": "1234570000",
+        "age_ms": 20,
+        "kind": "CHANNEL",
+        "channel_idx": 0,
+        "channel_rssi_dbm": -108,
+        "sample_context": "RX_IDLE"
+      }
+    },
+    {
+      "id": "RF-METRICS-BATCH-VALID",
+      "schema": "rf-metrics",
+      "valid": true,
+      "message": {
+        "schema_version": "1.0-draft",
+        "gateway_id": "gw01",
+        "gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+        "samples": [
+          {
+            "sample_seq": "1003",
+            "sample_monotonic_us": "1234571000",
+            "age_ms": 10,
+            "kind": "NODE_UPLINK",
+            "channel_idx": 1,
+            "node_id": 5,
+            "rssi_dbm": -72,
+            "snr_db": 0.0,
+            "source": "UP_HEARTBEAT_ACK",
+            "validation": "VERIFIED"
+          },
+          {
+            "sample_seq": "1004",
+            "sample_monotonic_us": "1234572000",
+            "age_ms": 5,
+            "kind": "CHANNEL",
+            "channel_idx": 1,
+            "channel_rssi_dbm": -102,
+            "sample_context": "RX_ACTIVE"
+          }
+        ]
+      }
+    },
+    {
+      "id": "RF-METRICS-INVALID-CHANNEL-IDX",
+      "schema": "rf-metrics",
+      "valid": false,
+      "message": {
+        "schema_version": "1.0-draft",
+        "gateway_id": "gw01",
+        "gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+        "sample_seq": "1005",
+        "sample_monotonic_us": "1234573000",
+        "age_ms": 10,
+        "kind": "NODE_UPLINK",
+        "channel_idx": 15,
+        "node_id": 5,
+        "rssi_dbm": -72,
+        "snr_db": 5.0,
+        "source": "UP_EVENT"
+      }
+    },
+    {
+      "id": "RF-METRICS-INVALID-RSSI",
+      "schema": "rf-metrics",
+      "valid": false,
+      "message": {
+        "schema_version": "1.0-draft",
+        "gateway_id": "gw01",
+        "gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+        "sample_seq": "1006",
+        "sample_monotonic_us": "1234574000",
+        "age_ms": 10,
+        "kind": "NODE_UPLINK",
+        "channel_idx": 2,
+        "node_id": 5,
+        "rssi_dbm": 10,
+        "snr_db": 5.0,
+        "source": "UP_EVENT"
+      }
+    },
+    {
+      "id": "ALERT-WITH-RF-VALID",
+      "schema": "alert",
+      "valid": true,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:43",
+        "gateway_id": "gw01",
+        "gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+        "event_seq": "43",
+        "observed_at": "2026-11-14T08:00:00Z",
+        "observed_time_source": "gateway_utc",
+        "radio_rx_monotonic_us": "123456789",
+        "buffered": false,
+        "node_id": 1,
+        "superframe_seq": 101,
+        "seq_num": 52,
+        "schedule_version": 5,
+        "severity": "P1_HIGH",
+        "data": {
+          "event_ref": 1001,
+          "event_code": 1,
+          "event_value": 1,
+          "observed_at": "2026-11-14T08:00:00Z"
+        },
+        "radio_ack_sent": true,
+        "rf": {
+          "rssi_dbm": -82,
+          "snr_db": -7.75,
+          "channel_idx": 3,
+          "rx_monotonic_us": "123456789",
+          "gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+          "sample_seq": "1007"
+        }
+      }
+    },
+    {
+      "id": "ALERT-WITH-RF-INVALID-SNR",
+      "schema": "alert",
+      "valid": false,
+      "message": {
+        "schema_version": "1.0-draft",
+        "event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:44",
+        "gateway_id": "gw01",
+        "gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+        "event_seq": "44",
+        "observed_at": "2026-11-14T08:00:00Z",
+        "observed_time_source": "gateway_utc",
+        "radio_rx_monotonic_us": "123456789",
+        "buffered": false,
+        "node_id": 1,
+        "superframe_seq": 101,
+        "seq_num": 52,
+        "schedule_version": 5,
+        "severity": "P1_HIGH",
+        "data": {
+          "event_ref": 1001,
+          "event_code": 1,
+          "event_value": 1,
+          "observed_at": "2026-11-14T08:00:00Z"
+        },
+        "radio_ack_sent": true,
+        "rf": {
+          "rssi_dbm": -82,
+          "snr_db": "not-a-number",
+          "channel_idx": 3,
+          "rx_monotonic_us": "123456789",
+          "gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+          "sample_seq": "1008"
+        }
+      }
     }
   ]
 }
