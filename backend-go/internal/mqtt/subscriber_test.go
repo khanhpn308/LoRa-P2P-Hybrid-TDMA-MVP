@@ -8,12 +8,15 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	paho "github.com/eclipse/paho.mqtt.golang"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/domain"
+	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/presence"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/realtime"
+	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/storage"
 )
 
 type mockMessage struct {
@@ -651,5 +654,354 @@ func TestHandleJoinMessage_ApprovedInvalidNodeID_DoesNotPublishWaitOrGrant(t *te
 	}
 	if len(mHub.envelopes) != 0 {
 		t.Fatalf("expected 0 WebSocket broadcasts, got %d", len(mHub.envelopes))
+	}
+}
+
+func TestHandleRFMetricsMessage_NodeUplink_NegativeAndZeroSNR(t *testing.T) {
+	tracker := presence.NewRFTracker()
+	subscriber := NewGatewayStatusSubscriber("tcp://localhost:1883", nil, nil, nil, nil, nil)
+	subscriber.SetRFTracker(tracker)
+
+	// 1. Ingest sample with negative SNR (-7.75 dB)
+	payload1 := `{
+		"schema_version": "1.0-draft",
+		"gateway_id": "gw01",
+		"gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+		"sample_seq": "1001",
+		"sample_monotonic_us": "1234567890",
+		"age_ms": 15,
+		"kind": "NODE_UPLINK",
+		"channel_idx": 4,
+		"node_id": 12,
+		"rssi_dbm": -88,
+		"snr_db": -7.75,
+		"source": "UP_EVENT",
+		"validation": "VERIFIED"
+	}`
+	msg1 := &mockMessage{
+		topic:   "iot/v1/gw/gw01/uplink/rf-metrics",
+		payload: []byte(payload1),
+	}
+	subscriber.handleRFMetricsMessage(nil, msg1)
+
+	view1 := tracker.GetNodeRFView("gw01", 12)
+	if view1 == nil {
+		t.Fatalf("expected node RF view for node 12, got nil")
+	}
+	if view1.RssiDbm != -88 {
+		t.Errorf("expected rssi -88, got %d", view1.RssiDbm)
+	}
+	if view1.SnrDb != -7.75 {
+		t.Errorf("expected snr -7.75, got %v", view1.SnrDb)
+	}
+	if view1.ChannelIdx == nil || *view1.ChannelIdx != 4 {
+		t.Errorf("expected channel_idx 4, got %v", view1.ChannelIdx)
+	}
+	if view1.Source != "UP_EVENT" || view1.Validation != "VERIFIED" {
+		t.Errorf("unexpected source/validation: %s/%s", view1.Source, view1.Validation)
+	}
+
+	// 2. Ingest next sample with exact 0.0 SNR
+	payload2 := `{
+		"schema_version": "1.0-draft",
+		"gateway_id": "gw01",
+		"gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+		"sample_seq": "1002",
+		"sample_monotonic_us": "1234570000",
+		"age_ms": 10,
+		"kind": "NODE_UPLINK",
+		"channel_idx": 4,
+		"node_id": 12,
+		"rssi_dbm": -79,
+		"snr_db": 0.0,
+		"source": "UP_HEARTBEAT_ACK",
+		"validation": "VERIFIED"
+	}`
+	msg2 := &mockMessage{
+		topic:   "iot/v1/gw/gw01/uplink/rf-metrics",
+		payload: []byte(payload2),
+	}
+	subscriber.handleRFMetricsMessage(nil, msg2)
+
+	view2 := tracker.GetNodeRFView("gw01", 12)
+	if view2 == nil {
+		t.Fatalf("expected node RF view for node 12, got nil")
+	}
+	if view2.RssiDbm != -79 {
+		t.Errorf("expected rssi -79, got %d", view2.RssiDbm)
+	}
+	if view2.SnrDb != 0.0 {
+		t.Errorf("expected snr 0.0, got %v", view2.SnrDb)
+	}
+}
+
+func TestHandleRFMetricsMessage_TopicPayloadGatewayMismatch(t *testing.T) {
+	tracker := presence.NewRFTracker()
+	subscriber := NewGatewayStatusSubscriber("tcp://localhost:1883", nil, nil, nil, nil, nil)
+	subscriber.SetRFTracker(tracker)
+
+	payload := `{
+		"schema_version": "1.0-draft",
+		"gateway_id": "gw-mismatch",
+		"gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+		"sample_seq": "1001",
+		"sample_monotonic_us": "1234567890",
+		"kind": "NODE_UPLINK",
+		"node_id": 12,
+		"rssi_dbm": -88,
+		"snr_db": 5.0
+	}`
+	msg := &mockMessage{
+		topic:   "iot/v1/gw/gw01/uplink/rf-metrics",
+		payload: []byte(payload),
+	}
+	subscriber.handleRFMetricsMessage(nil, msg)
+
+	if view := tracker.GetNodeRFView("gw01", 12); view != nil {
+		t.Fatalf("expected nil view due to gateway mismatch, got %+v", view)
+	}
+}
+
+func TestHandleRFMetricsMessage_ChannelEnergy(t *testing.T) {
+	tracker := presence.NewRFTracker()
+	subscriber := NewGatewayStatusSubscriber("tcp://localhost:1883", nil, nil, nil, nil, nil)
+	subscriber.SetRFTracker(tracker)
+
+	payload := `{
+		"schema_version": "1.0-draft",
+		"gateway_id": "gw01",
+		"gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+		"sample_seq": "1002",
+		"sample_monotonic_us": "1234570000",
+		"age_ms": 20,
+		"kind": "CHANNEL",
+		"channel_idx": 0,
+		"channel_rssi_dbm": -108,
+		"sample_context": "RX_IDLE"
+	}`
+	msg := &mockMessage{
+		topic:   "iot/v1/gw/gw01/uplink/rf-metrics",
+		payload: []byte(payload),
+	}
+	subscriber.handleRFMetricsMessage(nil, msg)
+
+	chView := tracker.GetChannelRFView("gw01", 0)
+	if chView == nil {
+		t.Fatalf("expected channel RF view for gw01 ch0, got nil")
+	}
+	if chView.ChannelRssiDbm != -108 {
+		t.Errorf("expected channel rssi -108, got %d", chView.ChannelRssiDbm)
+	}
+	if chView.SampleContext != "RX_IDLE" {
+		t.Errorf("expected RX_IDLE, got %s", chView.SampleContext)
+	}
+}
+
+func TestHandleRFMetricsMessage_BatchedSamples(t *testing.T) {
+	tracker := presence.NewRFTracker()
+	subscriber := NewGatewayStatusSubscriber("tcp://localhost:1883", nil, nil, nil, nil, nil)
+	subscriber.SetRFTracker(tracker)
+
+	payload := `{
+		"schema_version": "1.0-draft",
+		"gateway_id": "gw01",
+		"gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+		"samples": [
+			{
+				"sample_seq": "2001",
+				"sample_monotonic_us": "1234571000",
+				"age_ms": 10,
+				"kind": "NODE_UPLINK",
+				"channel_idx": 1,
+				"node_id": 5,
+				"rssi_dbm": -72,
+				"snr_db": 0.0,
+				"source": "UP_HEARTBEAT_ACK",
+				"validation": "VERIFIED"
+			},
+			{
+				"sample_seq": "2002",
+				"sample_monotonic_us": "1234572000",
+				"age_ms": 5,
+				"kind": "CHANNEL",
+				"channel_idx": 1,
+				"channel_rssi_dbm": -102,
+				"sample_context": "RX_ACTIVE"
+			}
+		]
+	}`
+	msg := &mockMessage{
+		topic:   "iot/v1/gw/gw01/uplink/rf-metrics",
+		payload: []byte(payload),
+	}
+	subscriber.handleRFMetricsMessage(nil, msg)
+
+	nodeView := tracker.GetNodeRFView("gw01", 5)
+	if nodeView == nil {
+		t.Fatalf("expected node RF view for node 5, got nil")
+	}
+	if nodeView.RssiDbm != -72 || nodeView.SnrDb != 0.0 {
+		t.Errorf("unexpected node RF view: %+v", nodeView)
+	}
+
+	chView := tracker.GetChannelRFView("gw01", 1)
+	if chView == nil {
+		t.Fatalf("expected channel RF view for gw01 ch1, got nil")
+	}
+	if chView.ChannelRssiDbm != -102 || chView.SampleContext != "RX_ACTIVE" {
+		t.Errorf("unexpected channel RF view: %+v", chView)
+	}
+}
+
+type mockEventStore struct {
+	mu       sync.Mutex
+	recorded *domain.Event
+}
+
+func (m *mockEventStore) RecordEvent(ctx context.Context, event *domain.Event) (*storage.EventRecordResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recorded = event
+	return &storage.EventRecordResult{EventID: 1, IsDuplicate: false, Status: "INSERTED"}, nil
+}
+
+func (m *mockEventStore) GetEvent(ctx context.Context, gatewayID, eventID string) (*domain.Event, error) {
+	return nil, nil
+}
+
+func (m *mockEventStore) QuarantineEvent(ctx context.Context, q *storage.QuarantineRecord) error {
+	return nil
+}
+
+func (m *mockEventStore) RecordHealthUpdate(ctx context.Context, h *domain.NodeHealth) error {
+	return nil
+}
+
+func (m *mockEventStore) GetNodeHealth(ctx context.Context, gatewayID string, nodeID uint8) (*domain.NodeHealth, error) {
+	return nil, nil
+}
+
+func TestHandleAlertMessage_WithValidRF(t *testing.T) {
+	tracker := presence.NewRFTracker()
+	mockEvtStore := &mockEventStore{}
+	subscriber := NewGatewayStatusSubscriber("tcp://localhost:1883", nil, nil, mockEvtStore, nil, nil)
+	subscriber.SetRFTracker(tracker)
+
+	payload := `{
+		"schema_version": "1.0-draft",
+		"event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:43",
+		"gateway_id": "gw01",
+		"gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+		"event_seq": "43",
+		"observed_at": "2026-11-14T08:00:00Z",
+		"observed_time_source": "gateway_utc",
+		"radio_rx_monotonic_us": "123456789",
+		"buffered": false,
+		"node_id": 7,
+		"superframe_seq": 101,
+		"seq_num": 52,
+		"schedule_version": 5,
+		"severity": "P1_HIGH",
+		"data": {
+			"event_ref": 1001,
+			"event_code": 1,
+			"event_value": 1,
+			"observed_at": "2026-11-14T08:00:00Z"
+		},
+		"radio_ack_sent": true,
+		"rf": {
+			"rssi_dbm": -82,
+			"snr_db": -7.75,
+			"channel_idx": 3,
+			"rx_monotonic_us": "123456789",
+			"gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+			"sample_seq": "1007"
+		}
+	}`
+	msg := &mockMessage{
+		topic:   "iot/v1/gw/gw01/uplink/alert",
+		payload: []byte(payload),
+	}
+	subscriber.handleAlertMessage(nil, msg)
+
+	mockEvtStore.mu.Lock()
+	recorded := mockEvtStore.recorded
+	mockEvtStore.mu.Unlock()
+
+	if recorded == nil {
+		t.Fatalf("expected alert event to be recorded in DB")
+	}
+	if recorded.NodeID != 7 {
+		t.Errorf("expected recorded node_id 7, got %d", recorded.NodeID)
+	}
+
+	view := tracker.GetNodeRFView("gw01", 7)
+	if view == nil {
+		t.Fatalf("expected node RF view for node 7, got nil")
+	}
+	if view.RssiDbm != -82 || view.SnrDb != -7.75 {
+		t.Errorf("unexpected RF values: rssi=%d, snr=%v", view.RssiDbm, view.SnrDb)
+	}
+}
+
+func TestHandleAlertMessage_WithMalformedRF_PreservesBusinessEvent(t *testing.T) {
+	tracker := presence.NewRFTracker()
+	mockEvtStore := &mockEventStore{}
+	subscriber := NewGatewayStatusSubscriber("tcp://localhost:1883", nil, nil, mockEvtStore, nil, nil)
+	subscriber.SetRFTracker(tracker)
+
+	// Malformed snr_db (string instead of number)
+	payload := `{
+		"schema_version": "1.0-draft",
+		"event_id": "gw01:550e8400-e29b-41d4-a716-446655440000:44",
+		"gateway_id": "gw01",
+		"gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+		"event_seq": "44",
+		"observed_at": "2026-11-14T08:00:00Z",
+		"observed_time_source": "gateway_utc",
+		"radio_rx_monotonic_us": "123456789",
+		"buffered": false,
+		"node_id": 8,
+		"superframe_seq": 101,
+		"seq_num": 52,
+		"schedule_version": 5,
+		"severity": "P1_HIGH",
+		"data": {
+			"event_ref": 1001,
+			"event_code": 1,
+			"event_value": 1,
+			"observed_at": "2026-11-14T08:00:00Z"
+		},
+		"radio_ack_sent": true,
+		"rf": {
+			"rssi_dbm": -82,
+			"snr_db": "not-a-number",
+			"channel_idx": 3,
+			"rx_monotonic_us": "123456789",
+			"gateway_epoch": "550e8400-e29b-41d4-a716-446655440000",
+			"sample_seq": "1008"
+		}
+	}`
+	msg := &mockMessage{
+		topic:   "iot/v1/gw/gw01/uplink/alert",
+		payload: []byte(payload),
+	}
+	subscriber.handleAlertMessage(nil, msg)
+
+	mockEvtStore.mu.Lock()
+	recorded := mockEvtStore.recorded
+	mockEvtStore.mu.Unlock()
+
+	// Business event MUST still be recorded!
+	if recorded == nil {
+		t.Fatalf("expected alert event to still be recorded even when RF block is malformed")
+	}
+	if recorded.NodeID != 8 {
+		t.Errorf("expected node_id 8, got %d", recorded.NodeID)
+	}
+
+	// RF record should NOT have been created due to malformed snr_db
+	if view := tracker.GetNodeRFView("gw01", 8); view != nil {
+		t.Errorf("expected nil RF view for node 8 with malformed SNR, got %+v", view)
 	}
 }

@@ -160,6 +160,53 @@
     },
     "radio_ack_sent": {
       "type": "boolean"
+    },
+    "rf": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rssi_dbm",
+        "snr_db",
+        "channel_idx",
+        "rx_monotonic_us",
+        "gateway_epoch",
+        "sample_seq"
+      ],
+      "properties": {
+        "rssi_dbm": {
+          "type": "integer",
+          "minimum": -200,
+          "maximum": 0,
+          "description": "Packet RSSI in dBm"
+        },
+        "snr_db": {
+          "type": "number",
+          "minimum": -50.0,
+          "maximum": 50.0,
+          "description": "Packet SNR in dB"
+        },
+        "channel_idx": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10,
+          "description": "VN920 channel index (CH00..CH10)"
+        },
+        "rx_monotonic_us": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "description": "Gateway-local monotonic microseconds"
+        },
+        "gateway_epoch": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Unique boot epoch"
+        },
+        "sample_seq": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "description": "Monotonic RF sample sequence scoped to gateway_epoch"
+        }
+      }
     }
   },
   "required": [

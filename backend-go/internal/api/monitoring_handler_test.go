@@ -80,7 +80,18 @@ func (m *mockMonitoringStorage) ListNodes(ctx context.Context, filter domain.Nod
 }
 
 func (m *mockMonitoringStorage) ListGateways(ctx context.Context) ([]*domain.GatewayItem, error) {
-	return nil, nil
+	if m.gwErr != nil {
+		return nil, m.gwErr
+	}
+	var res []*domain.GatewayItem
+	for _, gw := range m.gateways {
+		res = append(res, &domain.GatewayItem{
+			GatewayID: gw.GatewayID,
+			Mode:      string(gw.Mode),
+			NodeCount: gw.NodeCount,
+		})
+	}
+	return res, nil
 }
 
 func (m *mockMonitoringStorage) CreateGateway(ctx context.Context, gatewayID, name, location, ipAddress string) error {
@@ -1029,5 +1040,227 @@ func TestMonitoringHandler_DeleteNode_PurgesEventsAndFormats(t *testing.T) {
 				t.Fatalf("expected DELETE FROM device_join_requests to be executed, but not found in execs: %+v", execs)
 			}
 		})
+	}
+}
+
+func TestMonitoringHandler_RFMetrics_NodeListOverlay(t *testing.T) {
+	store := newMockMonitoringStorage()
+	store.nodes = []domain.NodeSummary{
+		{
+			NodeID:    12,
+			GatewayID: "gw01",
+			Status:    "ONLINE",
+		},
+		{
+			NodeID:    13,
+			GatewayID: "gw01",
+			Status:    "ONLINE",
+		},
+	}
+
+	tracker := presence.NewTracker()
+	rfTracker := tracker.RF()
+	chIdx := 4
+	rfTracker.UpdateNodeRF("gw01", 12, -88, -7.75, &chIdx, "UP_EVENT", "VERIFIED", "550e8400-e29b-41d4-a716-446655440000", 1001, 123456, 15)
+
+	handler := api.NewMonitoringHandler(store, 5*time.Minute, tracker)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/nodes", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var page domain.NodePage
+	if err := json.NewDecoder(rec.Body).Decode(&page); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(page.Items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(page.Items))
+	}
+
+	var node12, node13 *domain.NodeSummary
+	for i := range page.Items {
+		if page.Items[i].NodeID == 12 {
+			node12 = &page.Items[i]
+		}
+		if page.Items[i].NodeID == 13 {
+			node13 = &page.Items[i]
+		}
+	}
+
+	if node12 == nil || node13 == nil {
+		t.Fatalf("missing expected nodes in response")
+	}
+
+	// Verify node 12 overlay
+	if node12.LastRssiDbm == nil || *node12.LastRssiDbm != -88 {
+		t.Errorf("expected node 12 last_rssi_dbm -88, got %v", node12.LastRssiDbm)
+	}
+	if node12.LastSnrDb == nil || *node12.LastSnrDb != -7.75 {
+		t.Errorf("expected node 12 last_snr_db -7.75, got %v", node12.LastSnrDb)
+	}
+	if node12.ChannelIdx == nil || *node12.ChannelIdx != 4 {
+		t.Errorf("expected node 12 channel_idx 4, got %v", node12.ChannelIdx)
+	}
+	if node12.RfSource == nil || *node12.RfSource != "UP_EVENT" {
+		t.Errorf("expected node 12 rf_source UP_EVENT, got %v", node12.RfSource)
+	}
+	if node12.RfStale == nil || *node12.RfStale != false {
+		t.Errorf("expected node 12 rf_stale false, got %v", node12.RfStale)
+	}
+	if node12.LastRfAt == nil || *node12.LastRfAt == "" {
+		t.Errorf("expected node 12 last_rf_at non-empty")
+	}
+	if node12.RfAgeSeconds == nil || *node12.RfAgeSeconds < 0 {
+		t.Errorf("expected node 12 rf_age_seconds non-negative")
+	}
+
+	// Verify node 13 without RF remains nil (never substituted with zero!)
+	if node13.LastRssiDbm != nil {
+		t.Errorf("expected node 13 last_rssi_dbm nil, got %v", node13.LastRssiDbm)
+	}
+	if node13.LastSnrDb != nil {
+		t.Errorf("expected node 13 last_snr_db nil, got %v", node13.LastSnrDb)
+	}
+	if node13.LastRfAt != nil {
+		t.Errorf("expected node 13 last_rf_at nil, got %v", node13.LastRfAt)
+	}
+	if node13.RfAgeSeconds != nil {
+		t.Errorf("expected node 13 rf_age_seconds nil, got %v", node13.RfAgeSeconds)
+	}
+	if node13.RfSource != nil {
+		t.Errorf("expected node 13 rf_source nil, got %v", node13.RfSource)
+	}
+	if node13.RfStale != nil {
+		t.Errorf("expected node 13 rf_stale nil, got %v", node13.RfStale)
+	}
+	if node13.ChannelIdx != nil {
+		t.Errorf("expected node 13 channel_idx nil, got %v", node13.ChannelIdx)
+	}
+}
+
+func TestMonitoringHandler_RFMetrics_GatewayStatusOverlay(t *testing.T) {
+	store := newMockMonitoringStorage()
+	store.gateways["gw01"] = &domain.GatewayStatusRecord{
+		GatewayID: "gw01",
+		Mode:      domain.GatewayModeActive,
+		NodeCount: 5,
+	}
+
+	tracker := presence.NewTracker()
+	rfTracker := tracker.RF()
+	rfTracker.UpdateChannelRF("gw01", 0, -108, "RX_IDLE", "550e8400-e29b-41d4-a716-446655440000", 1002, 123457, 20)
+
+	handler := api.NewMonitoringHandler(store, 5*time.Minute, tracker)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// 1. Test GET /api/v1/gateways/gw01/status
+	reqStatus := httptest.NewRequest(http.MethodGet, "/api/v1/gateways/gw01/status", nil)
+	recStatus := httptest.NewRecorder()
+	mux.ServeHTTP(recStatus, reqStatus)
+
+	if recStatus.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", recStatus.Code, recStatus.Body.String())
+	}
+
+	var statusView domain.GatewayStatusView
+	if err := json.NewDecoder(recStatus.Body).Decode(&statusView); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if statusView.ChannelRssiDbm == nil || *statusView.ChannelRssiDbm != -108 {
+		t.Errorf("expected channel_rssi_dbm -108, got %v", statusView.ChannelRssiDbm)
+	}
+	if statusView.ChannelSampleContext == nil || *statusView.ChannelSampleContext != "RX_IDLE" {
+		t.Errorf("expected channel_sample_context RX_IDLE, got %v", statusView.ChannelSampleContext)
+	}
+	if statusView.ChannelIdx == nil || *statusView.ChannelIdx != 0 {
+		t.Errorf("expected channel_idx 0, got %v", statusView.ChannelIdx)
+	}
+	if statusView.ChannelRfStale == nil || *statusView.ChannelRfStale != false {
+		t.Errorf("expected channel_rf_stale false, got %v", statusView.ChannelRfStale)
+	}
+	if statusView.ChannelRfAt == nil || *statusView.ChannelRfAt == "" {
+		t.Errorf("expected channel_rf_at non-empty")
+	}
+
+	// 2. Test GET /api/v1/gateways list overlay
+	reqList := httptest.NewRequest(http.MethodGet, "/api/v1/gateways", nil)
+	recList := httptest.NewRecorder()
+	mux.ServeHTTP(recList, reqList)
+
+	if recList.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", recList.Code, recList.Body.String())
+	}
+
+	var gwList []*domain.GatewayItem
+	if err := json.NewDecoder(recList.Body).Decode(&gwList); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(gwList) != 1 {
+		t.Fatalf("expected 1 gateway item, got %d", len(gwList))
+	}
+	if gwList[0].ChannelRssiDbm == nil || *gwList[0].ChannelRssiDbm != -108 {
+		t.Errorf("expected list gateway channel_rssi_dbm -108, got %v", gwList[0].ChannelRssiDbm)
+	}
+	if gwList[0].ChannelSampleContext == nil || *gwList[0].ChannelSampleContext != "RX_IDLE" {
+		t.Errorf("expected list gateway channel_sample_context RX_IDLE, got %v", gwList[0].ChannelSampleContext)
+	}
+}
+
+func TestMonitoringHandler_RFMetrics_CleanupOnDelete(t *testing.T) {
+	authMap := map[string]api.Role{
+		"token-admin": api.RoleAdmin,
+	}
+	staticAuth := api.NewStaticAuthenticator(authMap)
+
+	store := newMockMonitoringStorage()
+	store.gateways["gw01"] = &domain.GatewayStatusRecord{GatewayID: "gw01"}
+	store.nodes = []domain.NodeSummary{
+		{NodeID: 12, GatewayID: "gw01"},
+	}
+
+	tracker := presence.NewTracker()
+	rfTracker := tracker.RF()
+	chIdx := 2
+	rfTracker.UpdateNodeRF("gw01", 12, -75, 4.5, &chIdx, "UP_EVENT", "VERIFIED", "550e8400-e29b-41d4-a716-446655440000", 10, 100, 0)
+	rfTracker.UpdateChannelRF("gw01", 0, -105, "RX_IDLE", "550e8400-e29b-41d4-a716-446655440000", 11, 101, 0)
+
+	handler := api.NewMonitoringHandler(store, 5*time.Minute, tracker, staticAuth)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// 1. Delete Node 12
+	reqNodeDel := httptest.NewRequest(http.MethodDelete, "/api/v1/nodes/12", nil)
+	reqNodeDel.Header.Set("Authorization", "Bearer token-admin")
+	recNodeDel := httptest.NewRecorder()
+	mux.ServeHTTP(recNodeDel, reqNodeDel)
+
+	if recNodeDel.Code != http.StatusOK {
+		t.Fatalf("expected node delete 200 OK, got %d: %s", recNodeDel.Code, recNodeDel.Body.String())
+	}
+	if view := rfTracker.GetNodeRFView("gw01", 12); view != nil {
+		t.Fatalf("expected node 12 RF view to be purged after delete, got %+v", view)
+	}
+
+	// 2. Delete Gateway gw01
+	reqGwDel := httptest.NewRequest(http.MethodDelete, "/api/v1/gateways/gw01", nil)
+	reqGwDel.Header.Set("Authorization", "Bearer token-admin")
+	recGwDel := httptest.NewRecorder()
+	mux.ServeHTTP(recGwDel, reqGwDel)
+
+	if recGwDel.Code != http.StatusOK {
+		t.Fatalf("expected gateway delete 200 OK, got %d: %s", recGwDel.Code, recGwDel.Body.String())
+	}
+	if chView := rfTracker.GetChannelRFView("gw01", 0); chView != nil {
+		t.Fatalf("expected gateway gw01 channel RF view to be purged after delete, got %+v", chView)
 	}
 }

@@ -6,6 +6,7 @@ topic write iot/v1/gw/gw-a/uplink/alert
 topic write iot/v1/gw/gw-a/uplink/status
 topic write iot/v1/gw/gw-a/uplink/schedule-ack
 topic write iot/v1/gw/gw-a/uplink/command-ack
+topic write iot/v1/gw/gw-a/uplink/rf-metrics
 topic read iot/v1/gw/gw-a/downlink/schedule
 topic read iot/v1/gw/gw-a/downlink/command
 # Session Key Install & ACK
@@ -18,6 +19,7 @@ topic write iot/v1/gw/gw-b/uplink/alert
 topic write iot/v1/gw/gw-b/uplink/status
 topic write iot/v1/gw/gw-b/uplink/schedule-ack
 topic write iot/v1/gw/gw-b/uplink/command-ack
+topic write iot/v1/gw/gw-b/uplink/rf-metrics
 topic read iot/v1/gw/gw-b/downlink/schedule
 topic read iot/v1/gw/gw-b/downlink/command
 # Session Key Install & ACK
@@ -30,6 +32,7 @@ topic read iot/v1/gw/+/uplink/alert
 topic read iot/v1/gw/+/uplink/status
 topic read iot/v1/gw/+/uplink/schedule-ack
 topic read iot/v1/gw/+/uplink/command-ack
+topic read iot/v1/gw/+/uplink/rf-metrics
 topic write iot/v1/gw/+/downlink/schedule
 topic write iot/v1/gw/+/downlink/command
 # Session Key Install & ACK

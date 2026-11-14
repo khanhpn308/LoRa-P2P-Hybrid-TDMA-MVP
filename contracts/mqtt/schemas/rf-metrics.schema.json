@@ -1,0 +1,276 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:loratdma:mqtt:rf-metrics:v1-draft",
+  "title": "LoRa RF metrics (active V2 contract)",
+  "description": "Active V2 contract for Gateway publishing packet RSSI/SNR and channel energy metrics over topic iot/v1/gw/{gateway_id}/uplink/rf-metrics. QoS 1, non-retained.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0-draft",
+      "type": "string"
+    },
+    "gateway_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,32}$"
+    },
+    "gateway_epoch": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "sample_seq": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$"
+    },
+    "sample_monotonic_us": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$"
+    },
+    "age_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 86400000
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "NODE_UPLINK",
+        "CHANNEL"
+      ]
+    },
+    "channel_idx": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10
+    },
+    "node_id": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 254
+    },
+    "rssi_dbm": {
+      "type": "integer",
+      "minimum": -200,
+      "maximum": 0
+    },
+    "snr_db": {
+      "type": "number",
+      "minimum": -50.0,
+      "maximum": 50.0
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "UP_EVENT",
+        "UP_HEARTBEAT_ACK"
+      ]
+    },
+    "validation": {
+      "type": "string",
+      "enum": [
+        "VERIFIED",
+        "UNVERIFIED"
+      ]
+    },
+    "channel_rssi_dbm": {
+      "type": "integer",
+      "minimum": -200,
+      "maximum": 0
+    },
+    "sample_context": {
+      "type": "string",
+      "enum": [
+        "RX_IDLE",
+        "RX_ACTIVE"
+      ]
+    },
+    "samples": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "sample_seq": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]{0,19})$"
+          },
+          "sample_monotonic_us": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]{0,19})$"
+          },
+          "age_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 86400000
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "NODE_UPLINK",
+              "CHANNEL"
+            ]
+          },
+          "channel_idx": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10
+          },
+          "node_id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 254
+          },
+          "rssi_dbm": {
+            "type": "integer",
+            "minimum": -200,
+            "maximum": 0
+          },
+          "snr_db": {
+            "type": "number",
+            "minimum": -50.0,
+            "maximum": 50.0
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "UP_EVENT",
+              "UP_HEARTBEAT_ACK"
+            ]
+          },
+          "validation": {
+            "type": "string",
+            "enum": [
+              "VERIFIED",
+              "UNVERIFIED"
+            ]
+          },
+          "channel_rssi_dbm": {
+            "type": "integer",
+            "minimum": -200,
+            "maximum": 0
+          },
+          "sample_context": {
+            "type": "string",
+            "enum": [
+              "RX_IDLE",
+              "RX_ACTIVE"
+            ]
+          }
+        },
+        "required": [
+          "sample_seq",
+          "sample_monotonic_us",
+          "age_ms",
+          "kind",
+          "channel_idx"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "NODE_UPLINK"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "node_id",
+                "rssi_dbm",
+                "snr_db",
+                "source"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "CHANNEL"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "channel_rssi_dbm",
+                "sample_context"
+              ]
+            }
+          }
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "gateway_id",
+    "gateway_epoch"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "NODE_UPLINK"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "sample_seq",
+          "sample_monotonic_us",
+          "age_ms",
+          "channel_idx",
+          "node_id",
+          "rssi_dbm",
+          "snr_db",
+          "source"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "CHANNEL"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "sample_seq",
+          "sample_monotonic_us",
+          "age_ms",
+          "channel_idx",
+          "channel_rssi_dbm",
+          "sample_context"
+        ]
+      }
+    },
+    {
+      "if": {
+        "not": {
+          "required": [
+            "samples"
+          ]
+        }
+      },
+      "then": {
+        "required": [
+          "kind",
+          "sample_seq",
+          "sample_monotonic_us",
+          "age_ms",
+          "channel_idx"
+        ]
+      }
+    }
+  ]
+}
