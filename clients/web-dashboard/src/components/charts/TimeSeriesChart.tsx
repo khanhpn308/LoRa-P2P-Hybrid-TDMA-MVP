@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
-import { Activity, AlertTriangle, Calendar, TrendingUp } from "lucide-react";
+import { Activity, TrendingUp } from "lucide-react";
 
 export interface TimeSeriesPoint {
   id: string | number;
@@ -144,9 +144,9 @@ export function TimeSeriesChart({
   };
 
   return (
-    <section className="bg-chrome rounded-lg border border-border overflow-hidden">
+    <section className="bg-chrome rounded-lg border border-border">
       {/* Header & KPI Summary */}
-      <div className="p-5 pb-3 border-b border-border flex flex-col md:flex-row md:items-center justify-between gap-3">
+      <div className="p-5 pb-3 border-b border-border flex flex-col md:flex-row md:items-center justify-between gap-3 rounded-t-lg">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded bg-interactive/10 text-interactive flex items-center justify-center shrink-0">
             <TrendingUp className="w-4 h-4" />
@@ -278,6 +278,14 @@ export function TimeSeriesChart({
                       setTooltipPos(null);
                     }}
                   >
+                    {/* Expanded invisible hit target for easier hover */}
+                    <circle
+                      cx={pt.x}
+                      cy={pt.y}
+                      r="14"
+                      fill="transparent"
+                      className="cursor-pointer"
+                    />
                     {/* Hover Pulse Ring */}
                     {isHovered && (
                       <circle
@@ -341,49 +349,73 @@ export function TimeSeriesChart({
             </svg>
 
             {/* Floating Tooltip */}
-            {hoveredPoint && tooltipPos && (
-              <div
-                className="absolute pointer-events-none z-20 bg-slate-900 text-white rounded-lg p-2.5 text-xs shadow-xl border border-slate-700 min-w-[170px]"
-                style={{
-                  left: `${(tooltipPos.x / svgWidth) * 100}%`,
-                  top: `${tooltipPos.y}px`,
-                  transform: "translate(-50%, -125%)",
-                }}
-              >
-                <div className="font-semibold text-slate-100 flex items-center justify-between gap-2 border-b border-slate-800 pb-1 mb-1.5">
-                  <span>{hoveredPoint.name || `Sự kiện #${hoveredPoint.id}`}</span>
-                  <span
-                    className="px-1.5 py-0.2 rounded text-[10px] font-semibold"
-                    style={{
-                      backgroundColor: `${getSeverityColor(hoveredPoint.severity)}22`,
-                      color: getSeverityColor(hoveredPoint.severity),
-                    }}
-                  >
-                    {hoveredPoint.severity || "NORMAL"}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center text-slate-300 py-0.5">
-                  <span className="text-slate-400">Giá trị đo:</span>
-                  <span className="font-mono font-bold text-white">
-                    {hoveredPoint.value} {unit}
-                  </span>
-                </div>
-                {hoveredPoint.code !== undefined && (
-                  <div className="flex justify-between items-center text-slate-300 py-0.5">
-                    <span className="text-slate-400">Mã vi phạm:</span>
-                    <span className="font-mono text-slate-200">
-                      0x{hoveredPoint.code.toString(16).padStart(2, "0").toUpperCase()}
+            {hoveredPoint && tooltipPos && (() => {
+              const xRatio = tooltipPos.x / svgWidth;
+              const yRatio = tooltipPos.y / svgHeight;
+              const isUpper = yRatio < 0.45;
+
+              // Horizontal alignment:
+              // If near left edge (x < 15%), align tooltip from anchor to the right
+              // If near right edge (x > 85%), align tooltip from anchor to the left
+              // Otherwise center it horizontally
+              let xTranslate = "-50%";
+              if (xRatio < 0.15) {
+                xTranslate = "0%";
+              } else if (xRatio > 0.85) {
+                xTranslate = "-100%";
+              }
+
+              // Vertical alignment:
+              // When in upper 45% (points with high values near top edge), display tooltip BELOW the point (+14px)
+              // When in lower 55%, display tooltip ABOVE the point (-100% - 14px)
+              // This guarantees the tooltip stays completely within the visible chart area and is NEVER clipped by any container/header
+              const yTranslate = isUpper ? "14px" : "calc(-100% - 14px)";
+              const displayUnit = (hoveredPoint.unit || unit || "").trim();
+
+              return (
+                <div
+                  className="absolute pointer-events-none z-50 bg-slate-900/95 backdrop-blur-sm text-white rounded-lg p-2.5 text-xs shadow-2xl border border-slate-700 min-w-[170px]"
+                  style={{
+                    left: `${xRatio * 100}%`,
+                    top: `${yRatio * 100}%`,
+                    transform: `translate(${xTranslate}, ${yTranslate})`,
+                  }}
+                >
+                  <div className="font-semibold text-slate-100 flex items-center justify-between gap-2 border-b border-slate-800 pb-1 mb-1.5">
+                    <span>{hoveredPoint.name || `Sự kiện #${hoveredPoint.id}`}</span>
+                    <span
+                      className="px-1.5 py-0.5 rounded text-[10px] font-semibold"
+                      style={{
+                        backgroundColor: `${getSeverityColor(hoveredPoint.severity)}22`,
+                        color: getSeverityColor(hoveredPoint.severity),
+                      }}
+                    >
+                      {hoveredPoint.severity || "NORMAL"}
                     </span>
                   </div>
-                )}
-                <div className="flex justify-between items-center text-slate-400 text-[10px] pt-1 mt-1 border-t border-slate-800/80">
-                  <span>Thời gian:</span>
-                  <span className="font-mono">
-                    {new Date(hoveredPoint.timestamp).toLocaleString("vi-VN")}
-                  </span>
+                  <div className="flex justify-between items-center text-slate-300 py-0.5">
+                    <span className="text-slate-400">Giá trị đo:</span>
+                    <span className="font-mono font-bold text-white text-sm">
+                      {hoveredPoint.value} {displayUnit}
+                    </span>
+                  </div>
+                  {hoveredPoint.code !== undefined && (
+                    <div className="flex justify-between items-center text-slate-300 py-0.5">
+                      <span className="text-slate-400">Mã vi phạm:</span>
+                      <span className="font-mono text-slate-200">
+                        0x{hoveredPoint.code.toString(16).padStart(2, "0").toUpperCase()}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex justify-between items-center text-slate-400 text-[10px] pt-1 mt-1 border-t border-slate-800/80">
+                    <span>Thời gian:</span>
+                    <span className="font-mono">
+                      {new Date(hoveredPoint.timestamp).toLocaleString("vi-VN")}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
         )}
       </div>

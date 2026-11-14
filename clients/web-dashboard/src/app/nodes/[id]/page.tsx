@@ -12,6 +12,8 @@ import { TimeSeriesChart, TimeSeriesPoint } from "@/components/charts/TimeSeries
 import {
   ArrowLeft,
   ChevronRight,
+  ChevronDown,
+  Calendar,
   Cpu,
   Radio,
   Battery,
@@ -65,6 +67,7 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
 
   const [node, setNode] = useState<NodeDetailView>(initialNode);
   const [events, setEvents] = useState<Alert[]>([]);
+  const [selectedTimeRange, setSelectedTimeRange] = useState<string>("all");
 
   useEffect(() => {
     async function loadRealNode() {
@@ -139,8 +142,55 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
     };
   }, [rawId, subscribe]);
 
+  const filteredEvents = useMemo(() => {
+    if (selectedTimeRange === "all") return events;
+    const nowMs = Date.now();
+    let cutoffMs: number | null = null;
+    switch (selectedTimeRange) {
+      case "1h":
+        cutoffMs = nowMs - 1 * 60 * 60 * 1000;
+        break;
+      case "4h":
+        cutoffMs = nowMs - 4 * 60 * 60 * 1000;
+        break;
+      case "8h":
+        cutoffMs = nowMs - 8 * 60 * 60 * 1000;
+        break;
+      case "12h":
+        cutoffMs = nowMs - 12 * 60 * 60 * 1000;
+        break;
+      case "24h":
+        cutoffMs = nowMs - 24 * 60 * 60 * 1000;
+        break;
+      case "today": {
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        cutoffMs = todayStart.getTime();
+        break;
+      }
+      case "7d":
+        cutoffMs = nowMs - 7 * 24 * 60 * 60 * 1000;
+        break;
+      case "30d":
+        cutoffMs = nowMs - 30 * 24 * 60 * 60 * 1000;
+        break;
+      default:
+        cutoffMs = null;
+        break;
+    }
+
+    if (cutoffMs === null) return events;
+
+    return events.filter((ev) => {
+      const timeStr = ev.triggered_at || ev.received_at;
+      if (!timeStr) return false;
+      const t = new Date(timeStr).getTime();
+      return !isNaN(t) && t >= cutoffMs;
+    });
+  }, [events, selectedTimeRange]);
+
   const chartData: TimeSeriesPoint[] = useMemo(() => {
-    return events.map((ev) => ({
+    return filteredEvents.map((ev) => ({
       id: ev.alert_id,
       timestamp: ev.triggered_at || ev.received_at,
       value: ev.event_value,
@@ -148,7 +198,7 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
       name: ev.event_code === 1 ? "Báo động nút nhấn (0x01)" : `Sự kiện 0x${ev.event_code.toString(16).padStart(2, "0").toUpperCase()}`,
       severity: ev.severity,
     }));
-  }, [events]);
+  }, [filteredEvents]);
 
   const getSeverityBadge = (severity: AlertSeverity) => {
     switch (severity) {
@@ -347,12 +397,61 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
         </div>
       </div>
 
+      {/* Filter Toolbar for Node Events */}
+      <section
+        aria-label="Bộ lọc thời gian sự kiện"
+        className="bg-surface border border-border rounded-lg p-3 shadow-none w-full mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+      >
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded bg-interactive/10 text-interactive flex items-center justify-center shrink-0">
+            <Calendar className="w-4 h-4" />
+          </div>
+          <div>
+            <span className="text-sm font-semibold text-text-primary">Lọc thời gian</span>
+            <span className="text-xs text-text-secondary ml-2">
+              Khoanh vùng chuỗi sự kiện và nhật ký cảnh báo của node
+            </span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <div className="relative flex items-center w-full sm:w-64">
+            <div className="absolute left-3 text-text-secondary pointer-events-none">
+              <Calendar className="w-4 h-4" />
+            </div>
+            <select
+              id="node-filter-time"
+              aria-label="Khoảng thời gian"
+              value={selectedTimeRange}
+              onChange={(e) => setSelectedTimeRange(e.target.value)}
+              className="w-full h-10 appearance-none bg-surface border border-border rounded-md pl-9 pr-8 text-sm text-text-primary font-medium focus:outline-none focus:border-interactive focus:ring-1 focus:ring-interactive cursor-pointer tabular-nums"
+            >
+              <option value="all">Tất cả thời gian</option>
+              <option value="1h">1 giờ qua</option>
+              <option value="4h">4 giờ qua</option>
+              <option value="8h">8 giờ qua</option>
+              <option value="12h">12 giờ qua</option>
+              <option value="24h">24 giờ qua</option>
+              <option value="today">Hôm nay</option>
+              <option value="7d">7 ngày qua</option>
+              <option value="30d">30 ngày qua</option>
+            </select>
+            <ChevronDown className="w-4 h-4 text-text-secondary absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+        </div>
+      </section>
+
       {/* Visual Time Series Event Chart */}
       <div className="mb-6">
         <TimeSeriesChart
           title="Biểu đồ sự kiện đo cảm biến theo thời gian"
           description={`Chuỗi dữ liệu thu nhận qua LoRa P2P từ Node #${node.node_id}`}
           data={chartData}
+          emptyMessage={
+            events.length === 0
+              ? "Chưa có dữ liệu sự kiện nào được ghi nhận cho thiết bị này."
+              : "Không có dữ liệu sự kiện nào trong khoảng thời gian đã chọn."
+          }
         />
       </div>
 
@@ -371,7 +470,7 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
             </div>
           </div>
           <span className="text-xs font-mono px-2 py-0.5 rounded bg-canvas border border-border text-text-secondary">
-            {events.length} sự kiện ghi nhận
+            {filteredEvents.length} sự kiện ghi nhận
           </span>
         </div>
 
@@ -400,14 +499,16 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-border text-sm">
-              {events.length === 0 ? (
+              {filteredEvents.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="h-28 text-center text-text-secondary text-sm">
-                    Không có sự kiện cảnh báo bất thường nào được ghi nhận cho thiết bị này.
+                    {events.length === 0
+                      ? "Không có sự kiện cảnh báo bất thường nào được ghi nhận cho thiết bị này."
+                      : "Không có sự kiện cảnh báo nào trong khoảng thời gian đã chọn."}
                   </td>
                 </tr>
               ) : (
-                events.map((ev) => (
+                filteredEvents.map((ev) => (
                   <tr key={ev.alert_id} className="h-12 hover:bg-canvas/50 transition-colors">
                     <td className="pl-6 pr-3 py-2 font-mono tabular-nums text-text-primary font-medium">
                       #{ev.alert_id}
@@ -467,7 +568,7 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
                 <AlertTriangle className="w-3.5 h-3.5" /> Cảnh báo rủi ro thiết bị:
               </div>
               <div>
-                Hành động này sẽ ngắt kết nối, gỡ toàn bộ cấu hình node và thu hồi slot TDMA khỏi hệ thống.
+                Hành động này sẽ ngắt kết nối, gỡ toàn bộ cấu hình node và thu hồi định danh thiết bị khỏi hệ thống.
               </div>
             </div>
 

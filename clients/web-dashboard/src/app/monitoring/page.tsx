@@ -54,7 +54,7 @@ function MonitoringContent() {
   const [selectedFaultType, setSelectedFaultType] = useState<string>(
     initialType === "temp" ? "Nhiệt độ" : initialType === "speed" ? "Tốc độ" : "all"
   );
-  const [selectedTimeRange, setSelectedTimeRange] = useState<string>("today");
+  const [selectedTimeRange, setSelectedTimeRange] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [sortAscending, setSortAscending] = useState<boolean>(false);
   const [rowsPerPage, setRowsPerPage] = useState<number>(10);
@@ -191,7 +191,48 @@ function MonitoringContent() {
 
   // Filtered & Sorted events
   const filteredEvents = useMemo(() => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    let cutoffSec: number | null = null;
+
+    switch (selectedTimeRange) {
+      case "1h":
+        cutoffSec = nowSec - 1 * 3600;
+        break;
+      case "4h":
+        cutoffSec = nowSec - 4 * 3600;
+        break;
+      case "8h":
+        cutoffSec = nowSec - 8 * 3600;
+        break;
+      case "12h":
+        cutoffSec = nowSec - 12 * 3600;
+        break;
+      case "24h":
+        cutoffSec = nowSec - 24 * 3600;
+        break;
+      case "today": {
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        cutoffSec = Math.floor(todayStart.getTime() / 1000);
+        break;
+      }
+      case "7d":
+        cutoffSec = nowSec - 7 * 86400;
+        break;
+      case "30d":
+        cutoffSec = nowSec - 30 * 86400;
+        break;
+      case "all":
+      default:
+        cutoffSec = null;
+        break;
+    }
+
     return events.filter((ev) => {
+      // Time filter
+      if (cutoffSec !== null && ev.rawTimestamp < cutoffSec) {
+        return false;
+      }
       // Area filter
       if (selectedArea !== "all" && !ev.area.includes(selectedArea)) {
         return false;
@@ -215,7 +256,7 @@ function MonitoringContent() {
         ? a.rawTimestamp - b.rawTimestamp
         : b.rawTimestamp - a.rawTimestamp;
     });
-  }, [events, selectedArea, selectedFaultType, searchQuery, sortAscending]);
+  }, [events, selectedTimeRange, selectedArea, selectedFaultType, searchQuery, sortAscending]);
 
   // Pagination calculation
   const totalCount = filteredEvents.length;
@@ -238,6 +279,7 @@ function MonitoringContent() {
         value: num,
         name: `${ev.node} (${ev.faultType})`,
         severity: ev.severity,
+        unit: ev.faultType === "Nhiệt độ" ? "°C" : "rpm",
       };
     });
   }, [filteredEvents]);
@@ -342,12 +384,21 @@ function MonitoringContent() {
                 </div>
                 <select
                   id="filter-time"
+                  aria-label="Khoảng thời gian"
                   value={selectedTimeRange}
-                  onChange={(e) => setSelectedTimeRange(e.target.value)}
+                  onChange={(e) => {
+                    setSelectedTimeRange(e.target.value);
+                    setCurrentPage(1);
+                  }}
                   className="w-full h-10 appearance-none bg-surface border border-border rounded-md pl-9 pr-8 text-sm text-text-primary font-medium focus:outline-none focus:border-interactive focus:ring-1 focus:ring-interactive cursor-pointer tabular-nums"
                 >
-                  <option value="today">Hôm nay (06/11/2026)</option>
+                  <option value="all">Tất cả thời gian</option>
+                  <option value="1h">1 giờ qua</option>
+                  <option value="4h">4 giờ qua</option>
+                  <option value="8h">8 giờ qua</option>
+                  <option value="12h">12 giờ qua</option>
                   <option value="24h">24 giờ qua</option>
+                  <option value="today">Hôm nay</option>
                   <option value="7d">7 ngày qua</option>
                   <option value="30d">30 ngày qua</option>
                 </select>
@@ -388,6 +439,12 @@ function MonitoringContent() {
           title="Biểu đồ biến thiên chuỗi sự kiện cảnh báo hệ thống"
           description="Phân bố và giá trị các sự kiện đo thu nhận qua LoRa P2P từ các nút cảm biến hiện trường"
           data={monitoringChartData}
+          unit={selectedFaultType === "Tốc độ" ? "rpm" : selectedFaultType === "Nhiệt độ" ? "°C" : ""}
+          emptyMessage={
+            events.length === 0
+              ? "Chưa có dữ liệu chuỗi sự kiện được ghi nhận."
+              : "Không có dữ liệu sự kiện nào trong khoảng thời gian đã chọn."
+          }
         />
 
         {/* Main Data Table Container (DESIGN.md §7: Required columns in order) */}
@@ -486,7 +543,9 @@ function MonitoringContent() {
                       colSpan={8}
                       className="h-32 text-center text-text-secondary text-sm"
                     >
-                      Không tìm thấy sự kiện lỗi nào phù hợp với bộ lọc.
+                      {events.length === 0
+                        ? "Không tìm thấy sự kiện lỗi nào trong hệ thống."
+                        : "Không tìm thấy sự kiện lỗi nào phù hợp với bộ lọc đã chọn."}
                     </td>
                   </tr>
                 ) : (
