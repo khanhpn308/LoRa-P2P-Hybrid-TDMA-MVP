@@ -16,6 +16,7 @@ import (
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/api"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/auth"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/domain"
+	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/security"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/storage"
 )
 
@@ -105,7 +106,7 @@ func TestBuildServeMux_RouteRegistration(t *testing.T) {
 	jwtAuth := api.NewJWTAuthenticator(jwtService)
 	provisionRepo := storage.NewMemoryProvisionStorage()
 	masterKey := sha256.Sum256([]byte(jwtSecret + ":provision:master:key"))
-	keyWrapper := api.NewAESGCMKeyWrapper(masterKey)
+	keyWrapper := security.NewAESGCMKeyWrapper(masterKey)
 	provisionHandler := api.NewProvisionHandler(provisionRepo, keyWrapper, jwtAuth)
 	nodeHandler := api.NewNodeHandler(nil)
 
@@ -190,7 +191,7 @@ func TestBuildServeMux_CoexistenceWithMonitoringHandler(t *testing.T) {
 	jwtAuth := api.NewJWTAuthenticator(jwtService)
 	provisionRepo := storage.NewMemoryProvisionStorage()
 	masterKey := sha256.Sum256([]byte(jwtSecret + ":provision:master:key"))
-	keyWrapper := api.NewAESGCMKeyWrapper(masterKey)
+	keyWrapper := security.NewAESGCMKeyWrapper(masterKey)
 	provisionHandler := api.NewProvisionHandler(provisionRepo, keyWrapper, jwtAuth)
 	nodeHandler := api.NewNodeHandler(nil)
 	statusStore := &mockServerStatusStorage{}
@@ -261,7 +262,7 @@ func TestBuildServeMux_EnforceBearerAuth_AllReadEndpoints(t *testing.T) {
 	jwtAuth := api.NewJWTAuthenticator(jwtService)
 	provisionRepo := storage.NewMemoryProvisionStorage()
 	masterKey := sha256.Sum256([]byte(jwtSecret + ":provision:master:key"))
-	keyWrapper := api.NewAESGCMKeyWrapper(masterKey)
+	keyWrapper := security.NewAESGCMKeyWrapper(masterKey)
 	provisionHandler := api.NewProvisionHandler(provisionRepo, keyWrapper, jwtAuth)
 	nodeHandler := api.NewNodeHandler(nil)
 	statusStore := &mockServerStatusStorage{}

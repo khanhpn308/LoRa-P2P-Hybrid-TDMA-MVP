@@ -13,6 +13,7 @@ import (
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/mqtt"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/presence"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/realtime"
+	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/security"
 	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/storage"
 )
 
@@ -117,7 +118,7 @@ func New(cfg *config.Config, opts ...Option) (*App, error) {
 
 	var provisionHandler *api.ProvisionHandler
 	if provisionRepo != nil {
-		keyWrapper := api.NewAESGCMKeyWrapper(cfg.DeviceProvisionMasterKey)
+		keyWrapper := security.NewAESGCMKeyWrapper(cfg.DeviceProvisionMasterKey)
 		provisionHandler = api.NewProvisionHandler(provisionRepo, keyWrapper, jwtAuth)
 	}
 
