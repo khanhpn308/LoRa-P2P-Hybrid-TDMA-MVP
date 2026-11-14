@@ -64,6 +64,13 @@ export interface GatewayStatus {
   last_seen_at: string | null;
   rf_duty_permille: number; // 0..1000
   node_count: number; // 0..254
+  // Dynamic LoRa Channel RF metrics (#392, #393, #394)
+  channel_rssi_dbm?: number | null;
+  channel_rf_at?: string | null;
+  channel_rf_age_seconds?: number | null;
+  channel_rf_stale?: boolean | null;
+  channel_idx?: number | null;
+  channel_sample_context?: "RX_IDLE" | "RX_ACTIVE" | string | null;
 }
 
 export interface GatewayItem extends GatewayStatus {
@@ -89,6 +96,11 @@ export interface NodeSummary {
   last_seen_at: string | null;
   last_rssi_dbm: number | null;
   last_snr_db: number | null;
+  // Extended LoRa RF metrics (#392, #393, #394)
+  last_rf_at?: string | null;
+  rf_age_seconds?: number | null;
+  rf_source?: "UP_EVENT" | "UP_HEARTBEAT_ACK" | string | null;
+  rf_stale?: boolean | null;
   battery_mv: number | null;
   status: NodeStatus;
 }

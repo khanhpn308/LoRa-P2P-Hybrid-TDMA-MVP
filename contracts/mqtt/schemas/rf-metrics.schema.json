@@ -37,7 +37,8 @@
     "age_ms": {
       "type": "integer",
       "minimum": 0,
-      "description": "Age of sample in milliseconds at publish time."
+      "description": "Age of sample in milliseconds at publish time.",
+      "maximum": 86400000
     },
     "kind": {
       "type": "string",
@@ -66,8 +67,8 @@
     },
     "snr_db": {
       "type": "number",
-      "minimum": -50.0,
-      "maximum": 50.0,
+      "minimum": -50,
+      "maximum": 50,
       "description": "Raw signed RegPktSnrValue / 4.0, preserving 0.25 dB resolution."
     },
     "source": {
@@ -82,8 +83,7 @@
       "type": "string",
       "enum": [
         "VERIFIED",
-        "UNVERIFIED",
-        "UNVERIFIED_CRC_ONLY"
+        "UNVERIFIED"
       ],
       "description": "Cryptographic authentication / integrity provenance."
     },
@@ -142,7 +142,8 @@
         },
         "age_ms": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 86400000
         },
         "kind": {
           "type": "string",
@@ -168,8 +169,8 @@
         },
         "snr_db": {
           "type": "number",
-          "minimum": -50.0,
-          "maximum": 50.0
+          "minimum": -50,
+          "maximum": 50
         },
         "source": {
           "type": "string",
@@ -182,8 +183,7 @@
           "type": "string",
           "enum": [
             "VERIFIED",
-            "UNVERIFIED",
-            "UNVERIFIED_CRC_ONLY"
+            "UNVERIFIED"
           ]
         },
         "auth_provenance": {

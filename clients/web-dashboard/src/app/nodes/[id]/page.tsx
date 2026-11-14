@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, use, useMemo, Suspense } from "react";
+import React, { useState, useEffect, use, useMemo, useRef, useCallback, Suspense } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
@@ -8,6 +8,7 @@ import { getNode, deleteNode } from "@/lib/api/nodes";
 import { getAlerts } from "@/lib/api/alerts";
 import { useAuth } from "@/lib/auth/AuthContext";
 import { useRealtime } from "@/lib/realtime/RealtimeContext";
+import { NodeRfQualityCard } from "@/components/rf/NodeRfQualityCard";
 import { TimeSeriesChart, TimeSeriesPoint } from "@/components/charts/TimeSeriesChart";
 import {
   ArrowLeft,
@@ -42,7 +43,7 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
   const rawId = decodeURIComponent(unwrappedParams.id || "N-012");
   const router = useRouter();
   const { role } = useAuth();
-  const { subscribe } = useRealtime();
+  const { subscribe, connectionState } = useRealtime();
 
   const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
@@ -60,6 +61,10 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
     last_seen_at: null,
     last_rssi_dbm: null,
     last_snr_db: null,
+    last_rf_at: null,
+    rf_age_seconds: null,
+    rf_source: null,
+    rf_stale: null,
     battery_mv: 3300,
     status: "OFFLINE",
     firmware_version: "ESP-IDF v6.1 · P2P CSMA/CAD",
@@ -69,47 +74,140 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
   const [events, setEvents] = useState<Alert[]>([]);
   const [selectedTimeRange, setSelectedTimeRange] = useState<string>("all");
 
+  const nodeRef = useRef<NodeDetailView>(initialNode);
   useEffect(() => {
-    async function loadRealNode() {
-      const realNode = await getNode(rawId);
-      let gwId = "";
+    nodeRef.current = node;
+  }, [node]);
+
+  const inFlightRef = useRef<boolean>(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const isMountedRef = useRef<boolean>(true);
+
+  const loadRealNode = useCallback(async (silent = false) => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+
+    abortControllerRef.current?.abort();
+    const ac = new AbortController();
+    abortControllerRef.current = ac;
+
+    const currentGwId = nodeRef.current.gateway_id;
+    const effectiveGwId = currentGwId && currentGwId !== "--" ? currentGwId.trim() : undefined;
+    const numId = parseInt(rawId.replace(/\D/g, "") || "1", 10);
+
+    try {
+      const realNode = await getNode(rawId, {
+        gatewayId: effectiveGwId,
+        signal: ac.signal,
+      });
+
+      if (!isMountedRef.current) return;
+
+      let resolvedGwId = effectiveGwId || "";
       if (realNode) {
-        gwId = realNode.gateway_id;
+        resolvedGwId = realNode.gateway_id || resolvedGwId;
         setNode((prev) => ({
           ...prev,
           node_id: realNode.node_id,
           gateway_id: realNode.gateway_id,
           name: realNode.name || prev.name,
           last_seen_at: realNode.last_seen_at,
+          last_rssi_dbm: realNode.last_rssi_dbm !== undefined ? realNode.last_rssi_dbm : prev.last_rssi_dbm,
+          last_snr_db: realNode.last_snr_db !== undefined ? realNode.last_snr_db : prev.last_snr_db,
+          last_rf_at: realNode.last_rf_at !== undefined ? realNode.last_rf_at : prev.last_rf_at,
+          rf_age_seconds: realNode.rf_age_seconds !== undefined ? realNode.rf_age_seconds : prev.rf_age_seconds,
+          rf_source: realNode.rf_source !== undefined ? realNode.rf_source : prev.rf_source,
+          rf_stale: realNode.rf_stale !== undefined ? realNode.rf_stale : prev.rf_stale,
           status: realNode.status,
           connected: realNode.status === "ONLINE",
           operating: realNode.status === "ONLINE",
           state: realNode.status === "ONLINE" ? "NORMAL" : "OFFLINE",
         }));
       }
-      try {
-        const numId = parseInt(rawId.replace(/\D/g, "") || "1", 10);
-        const alertsParams: { node_id: number; gateway_id?: string } = { node_id: numId };
-        if (gwId && gwId !== "--" && gwId.trim() !== "") {
-          alertsParams.gateway_id = gwId.trim();
-        }
-        const alertsResp = await getAlerts(alertsParams);
-        if (alertsResp && alertsResp.items) {
-          setEvents(alertsResp.items);
-        } else {
-          setEvents([]);
-        }
-      } catch {
-        setEvents([]);
-      }
-    }
-    loadRealNode();
 
+      if (!silent) {
+        try {
+          const alertsParams: { node_id: number; gateway_id?: string } = { node_id: numId };
+          if (resolvedGwId && resolvedGwId !== "--" && resolvedGwId.trim() !== "") {
+            alertsParams.gateway_id = resolvedGwId.trim();
+          }
+          const alertsResp = await getAlerts(alertsParams);
+          if (isMountedRef.current) {
+            if (alertsResp && alertsResp.items) {
+              setEvents(alertsResp.items);
+            } else {
+              setEvents([]);
+            }
+          }
+        } catch {
+          if (isMountedRef.current) {
+            setEvents([]);
+          }
+        }
+      }
+    } catch {
+      // On network/API failure, preserve last known values as stale; do not mark online
+      if (isMountedRef.current) {
+        setNode((prev) => ({
+          ...prev,
+          rf_stale: true,
+        }));
+      }
+    } finally {
+      inFlightRef.current = false;
+    }
+  }, [rawId]);
+
+  // Initial load and bounded 30s polling when page is visible
+  useEffect(() => {
+    isMountedRef.current = true;
+    loadRealNode(false);
+
+    const timer = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        loadRealNode(true);
+      }
+    }, 30_000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        loadRealNode(true);
+      }
+    };
+
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+    }
+
+    return () => {
+      isMountedRef.current = false;
+      clearInterval(timer);
+      abortControllerRef.current?.abort();
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
+      }
+    };
+  }, [loadRealNode]);
+
+  // Reconnect reconciliation: when WebSocket reconnects, refresh node metrics
+  const prevConnStateRef = useRef<string>(connectionState);
+  useEffect(() => {
+    if (prevConnStateRef.current !== "CONNECTED" && connectionState === "CONNECTED") {
+      loadRealNode(true);
+    }
+    prevConnStateRef.current = connectionState;
+  }, [connectionState, loadRealNode]);
+
+  // Realtime subscription: strict identity match (node_id + gateway_id), trigger REST refresh
+  useEffect(() => {
     const unsubscribe = subscribe((envelope) => {
       if (envelope.type === "ALERT_TRIGGERED") {
         const payload = envelope.payload as AlertTriggeredPayload;
         const currentNumId = parseInt(rawId.replace(/\D/g, "") || "1", 10);
-        if (payload.node_id === currentNumId) {
+        const currentGwId = nodeRef.current.gateway_id;
+        const matchesGateway = !currentGwId || currentGwId === "--" || currentGwId === payload.gateway_id;
+
+        if (payload.node_id === currentNumId && matchesGateway) {
           // Prepend new realtime alert
           const newAlert: Alert = {
             alert_id: payload.alert_id,
@@ -133,6 +231,8 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
             last_seen_at: null,
             last_event_type: `Mã ${payload.event_code} (Giá trị: ${payload.event_value})`,
           }));
+          // Trigger bounded REST refresh for latest RF quality without deriving presence from RF
+          loadRealNode(true);
         }
       }
     });
@@ -140,7 +240,7 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
     return () => {
       unsubscribe();
     };
-  }, [rawId, subscribe]);
+  }, [rawId, subscribe, loadRealNode]);
 
   const filteredEvents = useMemo(() => {
     if (selectedTimeRange === "all") return events;
@@ -364,21 +464,15 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
         </div>
 
         {/* Card 3: Chất lượng RF */}
-        <div className="bg-chrome rounded-lg p-5 border border-border flex flex-col justify-between">
-          <div className="flex items-center justify-between text-text-secondary">
-            <span className="text-xs font-medium">Chất lượng RF</span>
-            <Radio className="w-4 h-4 text-interactive" />
-          </div>
-          <div className="my-2">
-            <span className="text-3xl font-semibold font-mono tabular-nums text-text-primary tracking-tight">
-              {node.last_rssi_dbm !== null ? `${node.last_rssi_dbm}` : "N/A"}
-            </span>
-            <span className="text-sm font-medium text-text-secondary ml-1.5">dBm</span>
-          </div>
-          <div className="text-xs text-text-secondary font-mono">
-            SNR: {node.last_snr_db !== null ? `${node.last_snr_db} dB` : "N/A"}
-          </div>
-        </div>
+        <NodeRfQualityCard
+          lastRssiDbm={node.last_rssi_dbm}
+          lastSnrDb={node.last_snr_db}
+          rfSource={node.rf_source}
+          rfAgeSeconds={node.rf_age_seconds}
+          lastRfAt={node.last_rf_at}
+          rfStale={node.rf_stale}
+          status={node.status}
+        />
 
         {/* Card 4: Tổng sự kiện thu nhận */}
         <div className="bg-chrome rounded-lg p-5 border border-border flex flex-col justify-between">

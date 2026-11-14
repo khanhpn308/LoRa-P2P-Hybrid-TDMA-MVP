@@ -24,6 +24,7 @@ type Tracker struct {
 	gwLastSeen   map[string]time.Time
 	nodeLastSeen map[int]time.Time
 	gwTelemetry  map[string]*GatewayTelemetry
+	rfTracker    *RFTracker
 }
 
 // NewTracker creates an initialized thread-safe Presence Tracker.
@@ -34,7 +35,28 @@ func NewTracker() *Tracker {
 		gwLastSeen:   make(map[string]time.Time),
 		nodeLastSeen: make(map[int]time.Time),
 		gwTelemetry:  make(map[string]*GatewayTelemetry),
+		rfTracker:    NewRFTracker(),
 	}
+}
+
+// RF returns the associated RFTracker instance.
+func (t *Tracker) RF() *RFTracker {
+	if t == nil {
+		return nil
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.rfTracker
+}
+
+// SetRF sets a custom RFTracker instance.
+func (t *Tracker) SetRF(rf *RFTracker) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.rfTracker = rf
 }
 
 // SetGatewayStatus explicitly sets the in-memory presence of a gateway.

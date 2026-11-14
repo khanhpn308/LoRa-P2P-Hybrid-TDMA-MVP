@@ -26,7 +26,44 @@ var (
 	alertTopicPattern     = regexp.MustCompile(`^iot/v1/gw/([A-Za-z0-9_-]{1,32})/uplink/alert$`)
 	joinTopicPattern      = regexp.MustCompile(`^iot/v1/gw/([A-Za-z0-9_-]{1,32})/uplink/join-(hello|request)$`)
 	heartbeatTopicPattern = regexp.MustCompile(`^iot/v1/gw/([A-Za-z0-9_-]{1,32})/uplink/heartbeat$`)
+	rfMetricsTopicPattern = regexp.MustCompile(`^iot/v1/gw/([A-Za-z0-9_-]{1,32})/uplink/rf-metrics$`)
 )
+
+// RFMetricsPayload parses both single-sample and batched RF metrics envelopes from Gateways.
+type RFMetricsPayload struct {
+	SchemaVersion     string            `json:"schema_version"`
+	GatewayID         string            `json:"gateway_id"`
+	GatewayEpoch      string            `json:"gateway_epoch"`
+	SampleSeq         string            `json:"sample_seq"`
+	SampleMonotonicUS string            `json:"sample_monotonic_us"`
+	AgeMs             *uint32           `json:"age_ms"`
+	Kind              string            `json:"kind"`
+	ChannelIdx        *int              `json:"channel_idx"`
+	NodeID            *int              `json:"node_id"`
+	RssiDbm           *int              `json:"rssi_dbm"`
+	SnrDb             *float64          `json:"snr_db"`
+	Source            string            `json:"source"`
+	Validation        string            `json:"validation"`
+	ChannelRssiDbm    *int              `json:"channel_rssi_dbm"`
+	SampleContext     string            `json:"sample_context"`
+	Samples           []RFMetricsSample `json:"samples"`
+}
+
+// RFMetricsSample represents a single RF observation within a batched payload.
+type RFMetricsSample struct {
+	SampleSeq         string   `json:"sample_seq"`
+	SampleMonotonicUS string   `json:"sample_monotonic_us"`
+	AgeMs             *uint32  `json:"age_ms"`
+	Kind              string   `json:"kind"`
+	ChannelIdx        *int     `json:"channel_idx"`
+	NodeID            *int     `json:"node_id"`
+	RssiDbm           *int     `json:"rssi_dbm"`
+	SnrDb             *float64 `json:"snr_db"`
+	Source            string   `json:"source"`
+	Validation        string   `json:"validation"`
+	ChannelRssiDbm    *int     `json:"channel_rssi_dbm"`
+	SampleContext     string   `json:"sample_context"`
+}
 
 // LiveStatusPayload parses both lightweight birth/LWT messages and detailed status snapshots.
 type LiveStatusPayload struct {
@@ -63,6 +100,7 @@ type GatewayStatusSubscriber struct {
 	eventStore      storage.EventRepository
 	joinReqStore    storage.JoinRequestStorage
 	presenceTracker *presence.Tracker
+	rfTracker       *presence.RFTracker
 	hub             RealtimeBroadcaster
 	brokerURI       string
 	mu              sync.Mutex
@@ -81,15 +119,38 @@ func NewGatewayStatusSubscriber(
 	if presenceTracker == nil {
 		presenceTracker = presence.NewTracker()
 	}
+	rfTracker := presenceTracker.RF()
+	if rfTracker == nil {
+		rfTracker = presence.NewRFTracker()
+	}
+	var broadcaster RealtimeBroadcaster
+	if hub != nil {
+		broadcaster = hub
+	}
 	return &GatewayStatusSubscriber{
 		brokerURI:       brokerURI,
 		store:           store,
 		eventStore:      eventStore,
 		joinReqStore:    joinReqStore,
 		presenceTracker: presenceTracker,
-		hub:             hub,
+		rfTracker:       rfTracker,
+		hub:             broadcaster,
 		stopTicker:      make(chan struct{}),
 	}
+}
+
+// RFTracker returns the active RFTracker instance.
+func (s *GatewayStatusSubscriber) RFTracker() *presence.RFTracker {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rfTracker
+}
+
+// SetRFTracker overrides or sets the RFTracker instance.
+func (s *GatewayStatusSubscriber) SetRFTracker(tracker *presence.RFTracker) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rfTracker = tracker
 }
 
 // Start begins listening to MQTT publications asynchronously with an automatic background retry loop.
@@ -111,6 +172,8 @@ func (s *GatewayStatusSubscriber) Start(ctx context.Context) error {
 		c.Subscribe("iot/v1/gw/+/uplink/join-request", 1, s.handleJoinMessage)
 		// 4. Binary Heartbeat & Node Liveness Bitmap
 		c.Subscribe("iot/v1/gw/+/uplink/heartbeat", 1, s.handleHeartbeatMessage)
+		// 5. LoRa RF Metrics (Issue #392 / #393)
+		c.Subscribe("iot/v1/gw/+/uplink/rf-metrics", 1, s.handleRFMetricsMessage)
 	})
 
 	opts.SetConnectionLostHandler(func(c paho.Client, err error) {
@@ -296,7 +359,13 @@ func (s *GatewayStatusSubscriber) handleAlertMessage(client paho.Client, msg pah
 
 	now := time.Now().UTC()
 	seqStr := fmt.Sprintf("%d", now.UnixNano())
+	if es, ok := wire["event_seq"].(string); ok && es != "" {
+		seqStr = es
+	}
 	epochStr := "00000000-0000-0000-0000-000000000001"
+	if ep, ok := wire["gateway_epoch"].(string); ok && ep != "" {
+		epochStr = ep
+	}
 	eventID := fmt.Sprintf("%s:%s:%s", gwID, epochStr, seqStr)
 
 	eventCode := uint8(1)
@@ -367,6 +436,11 @@ func (s *GatewayStatusSubscriber) handleAlertMessage(client paho.Client, msg pah
 	// Update ephemeral node presence in RAM (0 disk writes)
 	if s.presenceTracker != nil {
 		s.presenceTracker.SetNodeStatus(nodeID, true)
+	}
+
+	// Ingest optional RF metrics from alert envelope (Issue #392 / #393)
+	if rfRaw, ok := wire["rf"].(map[string]interface{}); ok && rfRaw != nil {
+		s.ingestAlertRF(gwID, nodeID, rfRaw, epochStr, seqStr)
 	}
 
 	if s.eventStore != nil {
@@ -637,5 +711,193 @@ func (s *GatewayStatusSubscriber) Stop() {
 	}
 	if s.client != nil && s.client.IsConnected() {
 		s.client.Disconnect(250)
+	}
+}
+
+// ingestAlertRF safely ingests physical-layer LoRa RF metrics embedded within an alert envelope.
+// Any malformed or invalid field is safely ignored without impacting the alert business event.
+func (s *GatewayStatusSubscriber) ingestAlertRF(gwID string, nodeID int, rfMap map[string]interface{}, defaultEpoch string, defaultSeq string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[MQTT Subscriber] Recovered from panic ingesting alert RF: %v", r)
+		}
+	}()
+
+	s.mu.Lock()
+	tracker := s.rfTracker
+	s.mu.Unlock()
+	if tracker == nil {
+		return
+	}
+
+	rssiVal, ok := rfMap["rssi_dbm"]
+	if !ok {
+		return
+	}
+	rssiFloat, ok := rssiVal.(float64)
+	if !ok {
+		return
+	}
+	rssiDbm := int(rssiFloat)
+
+	snrVal, ok := rfMap["snr_db"]
+	if !ok {
+		return
+	}
+	snrDb, ok := snrVal.(float64)
+	if !ok {
+		return
+	}
+
+	var chIdx *int
+	if chVal, ok := rfMap["channel_idx"]; ok && chVal != nil {
+		if chFloat, ok := chVal.(float64); ok {
+			c := int(chFloat)
+			chIdx = &c
+		}
+	}
+
+	epoch := defaultEpoch
+	if ep, ok := rfMap["gateway_epoch"].(string); ok && ep != "" {
+		epoch = ep
+	}
+
+	seqStr := defaultSeq
+	if sq, ok := rfMap["sample_seq"].(string); ok && sq != "" {
+		seqStr = sq
+	}
+	sampleSeq, err := strconv.ParseUint(seqStr, 10, 64)
+	if err != nil {
+		return
+	}
+
+	monoUS := uint64(0)
+	if mu, ok := rfMap["rx_monotonic_us"].(string); ok && mu != "" {
+		monoUS, _ = strconv.ParseUint(mu, 10, 64)
+	} else if mu, ok := rfMap["sample_monotonic_us"].(string); ok && mu != "" {
+		monoUS, _ = strconv.ParseUint(mu, 10, 64)
+	}
+
+	source := "UP_EVENT"
+	if src, ok := rfMap["source"].(string); ok && src != "" {
+		source = src
+	}
+
+	validation := "VERIFIED"
+	if val, ok := rfMap["validation"].(string); ok && val != "" {
+		validation = val
+	}
+
+	tracker.UpdateNodeRF(gwID, nodeID, rssiDbm, snrDb, chIdx, source, validation, epoch, sampleSeq, monoUS, 0)
+}
+
+// handleRFMetricsMessage processes dedicated LoRa RF metrics publications.
+// Topic: iot/v1/gw/{gateway_id}/uplink/rf-metrics
+func (s *GatewayStatusSubscriber) handleRFMetricsMessage(client paho.Client, msg paho.Message) {
+	topic := msg.Topic()
+	payload := msg.Payload()
+
+	match := rfMetricsTopicPattern.FindStringSubmatch(topic)
+	if len(match) < 2 {
+		log.Printf("[MQTT Subscriber] Invalid rf-metrics topic: %s", topic)
+		return
+	}
+	topicGwID := match[1]
+
+	var p RFMetricsPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		log.Printf("[MQTT Subscriber] Failed to unmarshal rf-metrics payload on %s: %v", topic, err)
+		return
+	}
+
+	if p.GatewayID != "" && p.GatewayID != topicGwID {
+		log.Printf("[MQTT Subscriber] rf-metrics gateway_id mismatch: topic=%s payload=%s", topicGwID, p.GatewayID)
+		return
+	}
+
+	gwID := topicGwID
+	if p.GatewayID != "" {
+		gwID = p.GatewayID
+	}
+
+	if p.GatewayEpoch == "" {
+		log.Printf("[MQTT Subscriber] rf-metrics missing gateway_epoch on %s", topic)
+		return
+	}
+
+	s.mu.Lock()
+	tracker := s.rfTracker
+	s.mu.Unlock()
+	if tracker == nil {
+		return
+	}
+
+	if len(p.Samples) > 0 {
+		for _, smp := range p.Samples {
+			s.processRFMetricSample(tracker, gwID, p.GatewayEpoch, smp)
+		}
+	} else {
+		// Single sample envelope
+		smp := RFMetricsSample{
+			SampleSeq:         p.SampleSeq,
+			SampleMonotonicUS: p.SampleMonotonicUS,
+			AgeMs:             p.AgeMs,
+			Kind:              p.Kind,
+			ChannelIdx:        p.ChannelIdx,
+			NodeID:            p.NodeID,
+			RssiDbm:           p.RssiDbm,
+			SnrDb:             p.SnrDb,
+			Source:            p.Source,
+			Validation:        p.Validation,
+			ChannelRssiDbm:    p.ChannelRssiDbm,
+			SampleContext:     p.SampleContext,
+		}
+		s.processRFMetricSample(tracker, gwID, p.GatewayEpoch, smp)
+	}
+}
+
+func (s *GatewayStatusSubscriber) processRFMetricSample(tracker *presence.RFTracker, gwID, epoch string, smp RFMetricsSample) {
+	seq, err := strconv.ParseUint(smp.SampleSeq, 10, 64)
+	if err != nil {
+		return
+	}
+	monoUS, _ := strconv.ParseUint(smp.SampleMonotonicUS, 10, 64)
+	ageMs := uint32(0)
+	if smp.AgeMs != nil {
+		ageMs = *smp.AgeMs
+	}
+
+	switch smp.Kind {
+	case "NODE_UPLINK":
+		if smp.NodeID == nil || smp.RssiDbm == nil || smp.SnrDb == nil {
+			return
+		}
+		tracker.UpdateNodeRF(
+			gwID,
+			*smp.NodeID,
+			*smp.RssiDbm,
+			*smp.SnrDb,
+			smp.ChannelIdx,
+			smp.Source,
+			smp.Validation,
+			epoch,
+			seq,
+			monoUS,
+			ageMs,
+		)
+	case "CHANNEL":
+		if smp.ChannelIdx == nil || smp.ChannelRssiDbm == nil {
+			return
+		}
+		tracker.UpdateChannelRF(
+			gwID,
+			*smp.ChannelIdx,
+			*smp.ChannelRssiDbm,
+			smp.SampleContext,
+			epoch,
+			seq,
+			monoUS,
+			ageMs,
+		)
 	}
 }

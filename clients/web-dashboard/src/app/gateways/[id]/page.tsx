@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, use, Suspense } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback, use, Suspense } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
@@ -8,6 +8,7 @@ import { getGatewayStatus, getGateways, deleteGateway } from "@/lib/api/gateways
 import { getAlerts } from "@/lib/api/alerts";
 import { useAuth } from "@/lib/auth/AuthContext";
 import { useRealtime } from "@/lib/realtime/RealtimeContext";
+import { GatewayChannelRfCard } from "@/components/rf/GatewayChannelRfCard";
 import {
   Alert,
   AlertTriggeredPayload,
@@ -47,6 +48,13 @@ interface GatewayInfo {
   ipAddress: string;
   macAddress: string;
   firmwareVersion: string;
+  // Dynamic LoRa Channel RF metrics (#392, #393, #394)
+  channelRssiDbm: number | null;
+  channelRfAt: string | null;
+  channelRfAgeSeconds: number | null;
+  channelRfStale: boolean | null;
+  channelIdx: number | null;
+  channelSampleContext: string | null;
 }
 
 interface CoveredAreaItem {
@@ -63,7 +71,7 @@ function GatewayDetailContent({ params }: { params: Promise<{ id: string }> }) {
   const rawId = decodeURIComponent(unwrappedParams.id || "GW-01");
   const router = useRouter();
   const { role } = useAuth();
-  const { subscribe } = useRealtime();
+  const { subscribe, connectionState } = useRealtime();
 
   const [timeRange, setTimeRange] = useState<"24h" | "7d" | "30d">("24h");
   const [alerts, setAlerts] = useState<Alert[]>([]);
@@ -91,62 +99,134 @@ function GatewayDetailContent({ params }: { params: Promise<{ id: string }> }) {
     ipAddress: "--",
     macAddress: "--",
     firmwareVersion: "ESP-IDF v6.1 · Hybrid-TDMA",
+    channelRssiDbm: null,
+    channelRfAt: null,
+    channelRfAgeSeconds: null,
+    channelRfStale: null,
+    channelIdx: null,
+    channelSampleContext: null,
   };
 
   const [gw, setGw] = useState<GatewayInfo>(initialGw);
 
-  useEffect(() => {
-    async function loadRealGateway() {
-      try {
-        const [realStatusResult, allGwsResult, alertsResult] = await Promise.allSettled([
-          getGatewayStatus(rawId),
-          getGateways(),
-          getAlerts({ gateway_id: rawId, limit: 100 }),
-        ]);
+  const inFlightRef = useRef<boolean>(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const isMountedRef = useRef<boolean>(true);
 
-        if (allGwsResult.status === "fulfilled" && Array.isArray(allGwsResult.value)) {
-          const matchedGw = allGwsResult.value.find((g) => g.gateway_id === rawId);
-          if (matchedGw) {
-            setGw((prev) => ({
-              ...prev,
-              name: matchedGw.name || prev.name,
-              primaryArea: matchedGw.location || prev.primaryArea,
-              ipAddress: matchedGw.ip_address || prev.ipAddress,
-              channel: matchedGw.channel_id || prev.channel,
-              frequency: matchedGw.frequency_hz
-                ? `${(matchedGw.frequency_hz / 1e6).toFixed(3)} MHz`
-                : prev.frequency,
-            }));
-          }
-        }
+  const loadRealGateway = useCallback(async (silent = false) => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
 
-        if (realStatusResult.status === "fulfilled" && realStatusResult.value) {
-          const realStatus = realStatusResult.value;
+    abortControllerRef.current?.abort();
+    const ac = new AbortController();
+    abortControllerRef.current = ac;
+
+    try {
+      const [realStatusResult, allGwsResult, alertsResult] = await Promise.allSettled([
+        getGatewayStatus(rawId, { signal: ac.signal }),
+        getGateways({ signal: ac.signal }),
+        silent ? Promise.resolve(null) : getAlerts({ gateway_id: rawId, limit: 100 }),
+      ]);
+
+      if (!isMountedRef.current) return;
+
+      if (allGwsResult.status === "fulfilled" && Array.isArray(allGwsResult.value)) {
+        const matchedGw = allGwsResult.value.find((g) => g.gateway_id === rawId);
+        if (matchedGw) {
           setGw((prev) => ({
             ...prev,
-            mode: realStatus.mode,
-            activeScheduleVersion: realStatus.active_schedule_version,
-            lastSeenAt: realStatus.last_seen_at,
-            rfDutyPermille: realStatus.rf_duty_permille,
-            nodeCount: realStatus.node_count,
-            connected: realStatus.mode !== "OFFLINE",
-            operating: realStatus.mode === "ACTIVE" || realStatus.mode === "AUTONOMOUS",
+            name: matchedGw.name || prev.name,
+            primaryArea: matchedGw.location || prev.primaryArea,
+            ipAddress: matchedGw.ip_address || prev.ipAddress,
+            channel: matchedGw.channel_id || prev.channel,
+            frequency: matchedGw.frequency_hz
+              ? `${(matchedGw.frequency_hz / 1e6).toFixed(3)} MHz`
+              : prev.frequency,
           }));
         }
-
-        if (
-          alertsResult.status === "fulfilled" &&
-          alertsResult.value &&
-          Array.isArray(alertsResult.value.items)
-        ) {
-          setAlerts(alertsResult.value.items);
-        }
-      } catch {
-        // preserve baseline
       }
+
+      if (realStatusResult.status === "fulfilled" && realStatusResult.value) {
+        const realStatus = realStatusResult.value;
+        setGw((prev) => ({
+          ...prev,
+          mode: realStatus.mode,
+          activeScheduleVersion: realStatus.active_schedule_version,
+          lastSeenAt: realStatus.last_seen_at,
+          rfDutyPermille: realStatus.rf_duty_permille,
+          nodeCount: realStatus.node_count,
+          channelRssiDbm: realStatus.channel_rssi_dbm !== undefined ? realStatus.channel_rssi_dbm : prev.channelRssiDbm,
+          channelRfAt: realStatus.channel_rf_at !== undefined ? realStatus.channel_rf_at : prev.channelRfAt,
+          channelRfAgeSeconds: realStatus.channel_rf_age_seconds !== undefined ? realStatus.channel_rf_age_seconds : prev.channelRfAgeSeconds,
+          channelRfStale: realStatus.channel_rf_stale !== undefined ? realStatus.channel_rf_stale : prev.channelRfStale,
+          channelIdx: realStatus.channel_idx !== undefined ? realStatus.channel_idx : prev.channelIdx,
+          channelSampleContext: realStatus.channel_sample_context !== undefined ? realStatus.channel_sample_context : prev.channelSampleContext,
+          connected: realStatus.mode !== "OFFLINE",
+          operating: realStatus.mode === "ACTIVE" || realStatus.mode === "AUTONOMOUS",
+        }));
+      } else if (realStatusResult.status === "rejected") {
+        setGw((prev) => ({
+          ...prev,
+          channelRfStale: true,
+        }));
+      }
+
+      if (
+        !silent &&
+        alertsResult.status === "fulfilled" &&
+        alertsResult.value &&
+        Array.isArray(alertsResult.value.items)
+      ) {
+        setAlerts(alertsResult.value.items);
+      }
+    } catch {
+      if (isMountedRef.current) {
+        setGw((prev) => ({ ...prev, channelRfStale: true }));
+      }
+    } finally {
+      inFlightRef.current = false;
     }
-    loadRealGateway();
   }, [rawId]);
+
+  // Initial load and bounded 30s polling while page is visible
+  useEffect(() => {
+    isMountedRef.current = true;
+    loadRealGateway(false);
+
+    const timer = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        loadRealGateway(true);
+      }
+    }, 30_000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        loadRealGateway(true);
+      }
+    };
+
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+    }
+
+    return () => {
+      isMountedRef.current = false;
+      clearInterval(timer);
+      abortControllerRef.current?.abort();
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
+      }
+    };
+  }, [loadRealGateway]);
+
+  // Reconnect reconciliation: when WebSocket reconnects, refresh gateway status
+  const prevConnStateRef = useRef<string>(connectionState);
+  useEffect(() => {
+    if (prevConnStateRef.current !== "CONNECTED" && connectionState === "CONNECTED") {
+      loadRealGateway(true);
+    }
+    prevConnStateRef.current = connectionState;
+  }, [connectionState, loadRealGateway]);
 
   useEffect(() => {
     const unsubscribe = subscribe((envelope) => {
@@ -167,6 +247,8 @@ function GatewayDetailContent({ params }: { params: Promise<{ id: string }> }) {
             acked_at: null,
           };
           setAlerts((prev) => [newAlert, ...prev.filter((a) => a.alert_id !== newAlert.alert_id)]);
+          // Refresh gateway metrics on matching alert
+          loadRealGateway(true);
         }
       } else if (envelope.type === "GATEWAY_STATUS_CHANGED") {
         const payload = envelope.payload as GatewayStatusChangedPayload;
@@ -178,6 +260,7 @@ function GatewayDetailContent({ params }: { params: Promise<{ id: string }> }) {
             operating: payload.mode === "ACTIVE" || payload.mode === "AUTONOMOUS",
             lastSeenAt: payload.last_seen_at,
           }));
+          loadRealGateway(true);
         }
       }
     });
@@ -185,7 +268,7 @@ function GatewayDetailContent({ params }: { params: Promise<{ id: string }> }) {
     return () => {
       unsubscribe();
     };
-  }, [rawId, subscribe]);
+  }, [rawId, subscribe, loadRealGateway]);
 
   // Compute alerts filtered by selected time range (24h / 7d / 30d)
   const filteredAlerts = useMemo(() => {
@@ -402,6 +485,19 @@ function GatewayDetailContent({ params }: { params: Promise<{ id: string }> }) {
               <span className="text-[10px] text-text-secondary mt-0.5">Sửa lỗi FEC 4/5</span>
             </div>
           </div>
+
+          {/* LoRa Channel RSSI Live Metric Card (#392, #394) */}
+          <GatewayChannelRfCard
+            channelRssiDbm={gw.channelRssiDbm}
+            channelRfAt={gw.channelRfAt}
+            channelRfAgeSeconds={gw.channelRfAgeSeconds}
+            channelRfStale={gw.channelRfStale}
+            channelIdx={gw.channelIdx}
+            channelSampleContext={gw.channelSampleContext}
+            channel={gw.channel}
+            frequency={gw.frequency}
+            mode={gw.mode}
+          />
         </section>
 
         {/* SECTION 2: List of backend-provided covered areas with fault-event count (DESIGN.md §7) */}

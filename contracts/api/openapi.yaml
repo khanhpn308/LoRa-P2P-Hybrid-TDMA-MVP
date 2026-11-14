@@ -654,6 +654,33 @@ components:
           type: "integer"
           minimum: 0
           maximum: 254
+        channel_rssi_dbm:
+          type: "integer"
+          minimum: -200
+          maximum: 0
+          nullable: true
+        channel_rf_at:
+          type: "string"
+          format: "date-time"
+          nullable: true
+        channel_rf_age_seconds:
+          type: "integer"
+          minimum: 0
+          nullable: true
+        channel_rf_stale:
+          type: "boolean"
+          nullable: true
+        channel_idx:
+          type: "integer"
+          minimum: 0
+          maximum: 10
+          nullable: true
+        channel_sample_context:
+          type: "string"
+          enum:
+            - "RX_IDLE"
+            - "RX_ACTIVE"
+          nullable: true
     NodeSummary:
       type: "object"
       additionalProperties: false
@@ -691,6 +718,28 @@ components:
           nullable: true
         last_snr_db:
           type: "number"
+          nullable: true
+        last_rf_at:
+          type: "string"
+          format: "date-time"
+          nullable: true
+        rf_age_seconds:
+          type: "integer"
+          minimum: 0
+          nullable: true
+        rf_source:
+          type: "string"
+          enum:
+            - "UP_EVENT"
+            - "UP_HEARTBEAT_ACK"
+          nullable: true
+        rf_stale:
+          type: "boolean"
+          nullable: true
+        channel_idx:
+          type: "integer"
+          minimum: 0
+          maximum: 10
           nullable: true
         battery_mv:
           type: "integer"

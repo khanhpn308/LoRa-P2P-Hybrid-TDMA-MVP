@@ -87,6 +87,12 @@ type GatewayStatusView struct {
 	LastSeenAt            *string `json:"last_seen_at"`
 	RFDutyPermille        int     `json:"rf_duty_permille"`
 	NodeCount             int     `json:"node_count"`
+	ChannelRssiDbm        *int    `json:"channel_rssi_dbm,omitempty"`
+	ChannelRfAt           *string `json:"channel_rf_at,omitempty"`
+	ChannelRfAgeSeconds   *int    `json:"channel_rf_age_seconds,omitempty"`
+	ChannelRfStale        *bool   `json:"channel_rf_stale,omitempty"`
+	ChannelIdx            *int    `json:"channel_idx,omitempty"`
+	ChannelSampleContext  *string `json:"channel_sample_context,omitempty"`
 }
 
 // GatewayItem represents a gateway entity aggregating registry metadata and operational status.
@@ -102,6 +108,12 @@ type GatewayItem struct {
 	NodeCount             int     `json:"node_count"`
 	ChannelID             string  `json:"channel_id"`
 	FrequencyHz           uint64  `json:"frequency_hz"`
+	ChannelRssiDbm        *int    `json:"channel_rssi_dbm,omitempty"`
+	ChannelRfAt           *string `json:"channel_rf_at,omitempty"`
+	ChannelRfAgeSeconds   *int    `json:"channel_rf_age_seconds,omitempty"`
+	ChannelRfStale        *bool   `json:"channel_rf_stale,omitempty"`
+	ChannelIdx            *int    `json:"channel_idx,omitempty"`
+	ChannelSampleContext  *string `json:"channel_sample_context,omitempty"`
 }
 
 // NodeFilter defines query filtering and cursor pagination options for node listings.
@@ -141,6 +153,11 @@ type NodeSummary struct {
 	LastSnrDb      *float64 `json:"last_snr_db,omitempty"`
 	BatteryMv      *int     `json:"battery_mv,omitempty"`
 	Status         string   `json:"status"`
+	LastRfAt       *string  `json:"last_rf_at,omitempty"`
+	RfAgeSeconds   *int     `json:"rf_age_seconds,omitempty"`
+	RfSource       *string  `json:"rf_source,omitempty"`
+	RfStale        *bool    `json:"rf_stale,omitempty"`
+	ChannelIdx     *int     `json:"channel_idx,omitempty"`
 }
 
 // NodePage represents cursor-paginated nodes matching components.schemas.NodePage in openapi.yaml.
