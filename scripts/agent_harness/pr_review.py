@@ -507,23 +507,33 @@ MAX_BATCH_RULES = 25
 
 
 def partition_rule_batches(
-    rules: list[dict[str, Any]],
+    rules: list[dict[str, Any]] | None = None,
     selection_sha256: str | None = None,
     max_rules_per_batch: int = MAX_BATCH_RULES,
+    rule_selection: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Partition Host-selected Rule IDs into bounded batches preserving complete coverage.
 
+    Subdivides Host partitions into bounded Auditor rule batches of at most MAX_BATCH_RULES (25).
     Each batch contains:
-    - batch_index: int (1-based)
+    - parent_partition_index: int (Host partition index)
+    - parent_partition_hash: str (Host partition hash)
+    - batch_index: int (1-based global batch index)
     - total_batches: int
     - batch_rules: list[dict[str, Any]] (rules slice)
     - batch_rule_ids: list[str] (rule IDs in this batch)
     - batch_rule_count: int
     - total_rule_count: int
-    - selection_sha256: str (overall selection SHA256)
+    - selection_sha256: str (parent partition or overall selection SHA256)
+    - aggregate_selection_sha256: str (overall selection SHA256)
     """
-    if not rules:
+    if rules is None:
+        rules = (rule_selection.get("rules", []) if rule_selection else [])
+
+    if not rules and not (rule_selection and rule_selection.get("partitions")):
         return [{
+            "parent_partition_index": 1,
+            "parent_partition_hash": selection_sha256 or "NONE",
             "batch_index": 1,
             "total_batches": 1,
             "batch_rules": [],
@@ -531,10 +541,44 @@ def partition_rule_batches(
             "batch_rule_count": 0,
             "total_rule_count": 0,
             "selection_sha256": selection_sha256 or "NONE",
+            "aggregate_selection_sha256": selection_sha256 or "NONE",
         }]
 
     if max_rules_per_batch < 1:
         max_rules_per_batch = MAX_BATCH_RULES
+
+    # If rule_selection has partitions, subdivide each Host partition
+    if rule_selection and rule_selection.get("partitions"):
+        raw_batches = []
+        host_partitions = rule_selection["partitions"]
+        for p in host_partitions:
+            p_rules = p.get("rules", [])
+            p_idx = p.get("partition_index", 1)
+            p_hash = p.get("partition_hash", selection_sha256 or "NONE")
+            for i in range(0, len(p_rules), max_rules_per_batch):
+                chunk = p_rules[i : i + max_rules_per_batch]
+                raw_batches.append((p_idx, p_hash, chunk))
+        tot = len(raw_batches)
+        batches = []
+        for idx, (p_idx, p_hash, chunk) in enumerate(raw_batches, start=1):
+            chunk_ids = [
+                r.get("rule_id", "") if isinstance(r, dict) else str(r)
+                for r in chunk
+            ]
+            tot_count = len(rules) if rules else sum(len(p.get("rules", [])) for p in host_partitions)
+            batches.append({
+                "parent_partition_index": p_idx,
+                "parent_partition_hash": p_hash,
+                "batch_index": idx,
+                "total_batches": tot,
+                "batch_rules": chunk,
+                "batch_rule_ids": chunk_ids,
+                "batch_rule_count": len(chunk),
+                "total_rule_count": tot_count,
+                "selection_sha256": p_hash,
+                "aggregate_selection_sha256": selection_sha256 or "NONE",
+            })
+        return batches
 
     rule_chunks = [
         rules[i : i + max_rules_per_batch]
@@ -548,6 +592,8 @@ def partition_rule_batches(
             for r in chunk
         ]
         batches.append({
+            "parent_partition_index": 1,
+            "parent_partition_hash": selection_sha256 or "NONE",
             "batch_index": idx,
             "total_batches": tot,
             "batch_rules": chunk,
@@ -555,6 +601,7 @@ def partition_rule_batches(
             "batch_rule_count": len(chunk),
             "total_rule_count": len(rules),
             "selection_sha256": selection_sha256 or "NONE",
+            "aggregate_selection_sha256": selection_sha256 or "NONE",
         })
     return batches
 
@@ -692,9 +739,13 @@ def aggregate_batch_reports(
     rule_selection: dict[str, Any] | None = None,
     expected_batches_count: int | None = None,
     expected_hunks: list[str] | None = None,
+    expected_jobs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Aggregate multiple batch audit reports with mandatory coverage, snapshot binding, and hunk verification."""
     if not batch_reports:
+        err_msg = "No batch reports provided for aggregation."
+        if expected_jobs:
+            err_msg += f" Missing {len(expected_jobs)} expected jobs (MISSING_AUDIT_JOB_REPORT)."
         return {
             "status": "FAIL",
             "findings": [
@@ -703,11 +754,11 @@ def aggregate_batch_reports(
                     "file": "audit",
                     "line": 1,
                     "rule": "AUDIT-NO-REPORTS",
-                    "explanation": "No batch reports provided for aggregation.",
+                    "explanation": err_msg,
                     "fix": "Run Auditor across all batches.",
                 }
             ],
-            "limitations": ["No batch reports to aggregate"],
+            "limitations": [err_msg],
             "reviewed_scope": [],
             "base_sha": expected_base_sha,
             "head_sha": expected_head_sha,
@@ -744,9 +795,52 @@ def aggregate_batch_reports(
     all_limitations: list[str] = []
     all_reported_hunks: set[str] = set()
     seen_finding_keys: set[tuple[str, str, int, str, str]] = set()
+    seen_batch_ids: set[str] = set()
+    expected_job_map = {j["job_id"]: j for j in expected_jobs} if expected_jobs is not None else {}
     rule_results_map: dict[str, dict[str, Any]] = {}
 
     for idx, rep in enumerate(batch_reports, start=1):
+        # Validate job binding if expected_jobs provided
+        if expected_jobs is not None:
+            b_id = rep.get("job_id") or rep.get("batch_id")
+            if not b_id or b_id not in expected_job_map:
+                err_msg = f"Unexpected or missing job_id in report {idx}: {b_id}"
+                return {
+                    "status": "FAIL",
+                    "findings": [{"severity": "CRITICAL", "file": "audit", "line": 1, "rule": "AUDIT-JOB-MISMATCH", "explanation": err_msg, "fix": "Ensure reports correspond to assigned jobs."}],
+                    "limitations": [err_msg],
+                    "reviewed_scope": sorted(all_reviewed),
+                    "base_sha": expected_base_sha,
+                    "head_sha": expected_head_sha,
+                    "diff_sha256": expected_diff_sha256,
+                }
+            if b_id in seen_batch_ids:
+                err_msg = f"Duplicate batch report for job '{b_id}'"
+                return {
+                    "status": "FAIL",
+                    "findings": [{"severity": "CRITICAL", "file": "audit", "line": 1, "rule": "AUDIT-DUPLICATE-JOB", "explanation": err_msg, "fix": "Remove duplicate reports."}],
+                    "limitations": [err_msg],
+                    "reviewed_scope": sorted(all_reviewed),
+                    "base_sha": expected_base_sha,
+                    "head_sha": expected_head_sha,
+                    "diff_sha256": expected_diff_sha256,
+                }
+            seen_batch_ids.add(b_id)
+            exp_job = expected_job_map[b_id]
+            exp_hash = exp_job.get("job_execution_hash")
+            rep_hash = rep.get("job_execution_hash")
+            if exp_hash and rep_hash and rep_hash != exp_hash:
+                err_msg = f"Job execution hash mismatch for job '{b_id}': expected {exp_hash[:8]}, got {rep_hash[:8]} (TAMPERED_JOB_EXECUTION_HASH)"
+                return {
+                    "status": "FAIL",
+                    "findings": [{"severity": "CRITICAL", "file": "audit", "line": 1, "rule": "AUDIT-JOB-HASH-MISMATCH", "explanation": err_msg, "fix": "Re-run Auditor with exact job bindings."}],
+                    "limitations": [err_msg],
+                    "reviewed_scope": sorted(all_reviewed),
+                    "base_sha": expected_base_sha,
+                    "head_sha": expected_head_sha,
+                    "diff_sha256": expected_diff_sha256,
+                }
+
         # Validate snapshot binding per batch report
         b_base = rep.get("base_sha")
         b_head = rep.get("head_sha")
@@ -808,6 +902,21 @@ def aggregate_batch_reports(
                     if ev_key not in ev_seen:
                         ev_seen.add(ev_key)
                         existing["evidence"].append(ev)
+
+    # 1.5 Expected jobs complete coverage verification
+    if expected_jobs is not None:
+        missing_job_ids = set(expected_job_map.keys()) - seen_batch_ids
+        if missing_job_ids:
+            err_msg = f"Missing audit job reports for expected jobs: {sorted(missing_job_ids)} (MISSING_AUDIT_JOB_REPORT)"
+            return {
+                "status": "FAIL",
+                "findings": [{"severity": "CRITICAL", "file": "audit", "line": 1, "rule": "AUDIT-JOB-MISSING", "explanation": err_msg, "fix": "Complete all assigned audit jobs."}],
+                "limitations": [err_msg],
+                "reviewed_scope": sorted(all_reviewed),
+                "base_sha": expected_base_sha,
+                "head_sha": expected_head_sha,
+                "diff_sha256": expected_diff_sha256,
+            }
 
     # 2. Hunk coverage validation if expected hunks are specified
     if expected_hunks is not None:
@@ -1017,6 +1126,7 @@ def run_auto_audit(
         all_rules,
         selection_sha256=sel_sha,
         max_rules_per_batch=max_batch_rules,
+        rule_selection=rule_selection,
     )
 
     # 3. Build execution job grid (diff x rule)
@@ -1059,6 +1169,8 @@ def run_auto_audit(
         b_rules = r_batch["batch_rules"]
         b_rule_ids = r_batch["batch_rule_ids"]
         b_diff_sha = d_batch["batch_diff_sha256"]
+        b_parent_idx = r_batch.get("parent_partition_index", 1)
+        b_parent_hash = r_batch.get("parent_partition_hash", sel_sha)
 
         # Check total run budget
         remaining_budget = deadline - time.monotonic()
@@ -1068,23 +1180,33 @@ def run_auto_audit(
             )
         job_timeout = min(timeout, int(remaining_budget))
 
-        # Write Host-generated batch manifest
-        manifest_file = evidence_dir / f"auditor_batch_manifest_{job_id}.json"
-        manifest_data = {
-            "batch_id": job_id,
+        assigned_hashes = {
+            (r.get("rule_id", "") if isinstance(r, dict) else str(r)):
+            (r.get("rule_sha256", "") if isinstance(r, dict) else "")
+            for r in b_rules
+        }
+        job_binding = {
+            "job_id": job_id,
             "base_sha": pr_data.get("base_sha"),
             "head_sha": pr_data.get("head_sha"),
             "diff_sha256": b_diff_sha,
             "overall_diff_sha256": diff_hash,
             "selection_sha256": sel_sha,
+            "parent_partition_index": b_parent_idx,
+            "parent_partition_hash": b_parent_hash,
             "scoped_files": sorted(b_files),
             "assigned_rule_ids": b_rule_ids,
-            "assigned_rule_hashes": {
-                (r.get("rule_id", "") if isinstance(r, dict) else str(r)):
-                (r.get("rule_sha256", "") if isinstance(r, dict) else "")
-                for r in b_rules
-            },
+            "assigned_rule_hashes": assigned_hashes,
             "evidence_inventory_hashes": dict(evidence_inventory),
+        }
+        job_execution_hash = hashlib.sha256(json.dumps(job_binding, sort_keys=True).encode("utf-8")).hexdigest()
+        job["job_execution_hash"] = job_execution_hash
+
+        # Write Host-generated batch manifest
+        manifest_file = evidence_dir / f"auditor_batch_manifest_{job_id}.json"
+        manifest_data = {
+            **job_binding,
+            "job_execution_hash": job_execution_hash,
         }
         manifest_file.write_text(json.dumps(manifest_data, indent=2, sort_keys=True), encoding="utf-8")
 
@@ -1104,6 +1226,7 @@ def run_auto_audit(
                     and receipt.get("selection_sha256") == sel_sha
                     and receipt.get("rule_ids") == b_rule_ids
                     and set(receipt.get("files", [])) == b_files
+                    and (not receipt.get("job_execution_hash") or receipt.get("job_execution_hash") == job_execution_hash)
                 ):
                     # Validate existing report via antigravity.check_report
                     clean_report = {
@@ -1114,7 +1237,7 @@ def run_auto_audit(
                         clean_report,
                         required_paths=b_files,
                         required_rules=b_rules if has_rules else None,
-                        selection_sha256=sel_sha if has_rules else None,
+                        selection_sha256=b_parent_hash if has_rules else None,
                         evidence_inventory=target_inventory,
                     )
                     batch_reports.append(existing_report)
@@ -1149,13 +1272,12 @@ def run_auto_audit(
                     timeout=job_timeout,
                     required_paths=b_files,
                     required_rules=b_rules if has_rules else None,
-                    selection_sha256=sel_sha if has_rules else None,
+                    selection_sha256=b_parent_hash if has_rules else None,
                     evidence_inventory=target_inventory,
                 )
                 break
             except Exception as exc:
                 if is_transient_error(exc) and attempt <= max_retries:
-                    # Save failure artifact
                     fail_file = evidence_dir / f"auditor_failure_{job_id}_attempt_{attempt}.json"
                     fail_file.write_text(
                         json.dumps({
@@ -1177,6 +1299,10 @@ def run_auto_audit(
         batch_report["base_sha"] = pr_data.get("base_sha")
         batch_report["head_sha"] = pr_data.get("head_sha")
         batch_report["diff_sha256"] = b_diff_sha
+        batch_report["parent_partition_index"] = b_parent_idx
+        batch_report["parent_partition_hash"] = b_parent_hash
+        batch_report["job_execution_hash"] = job_execution_hash
+        batch_report["batch_id"] = job_id
         report_file.write_text(json.dumps(batch_report, indent=2, sort_keys=True), encoding="utf-8")
 
         # Save batch receipt
@@ -1186,6 +1312,9 @@ def run_auto_audit(
             "head_sha": pr_data.get("head_sha"),
             "diff_sha256": b_diff_sha,
             "selection_sha256": sel_sha,
+            "parent_partition_index": b_parent_idx,
+            "parent_partition_hash": b_parent_hash,
+            "job_execution_hash": job_execution_hash,
             "rule_ids": b_rule_ids,
             "files": sorted(b_files),
             "status": batch_report.get("status"),
@@ -1203,6 +1332,7 @@ def run_auto_audit(
         expected_diff_sha256=diff_hash,
         rule_selection=rule_selection,
         expected_batches_count=len(jobs),
+        expected_jobs=jobs,
     )
 
     final_report_file = evidence_dir / "auditor_report.json"
@@ -1756,12 +1886,19 @@ def run_pr_review(args: argparse.Namespace) -> int:
             cumulative_diff=cumulative_diff,
             max_batch_bytes=MAX_BATCH_DIFF_BYTES,
         )
+        rule_batches = partition_rule_batches(
+            rule_selection.get("rules", []) if rule_selection else [],
+            selection_sha256=rule_selection.get("selection_sha256") if rule_selection else None,
+            max_rules_per_batch=MAX_BATCH_RULES,
+            rule_selection=rule_selection,
+        )
         auditor_prompt = build_auditor_prompt(
             pr_data,
             rule_selection,
             evidence_inventory,
             batches[0]["batch_diff"],
             batch_info=batches[0] if len(batches) > 1 else None,
+            rule_batch_info=rule_batches[0] if len(rule_batches) > 1 else None,
             max_unbatched_bytes=MAX_BATCH_DIFF_BYTES,
         )
         context_payload = {
@@ -1779,6 +1916,7 @@ def run_pr_review(args: argparse.Namespace) -> int:
             "evidence_inventory": evidence_inventory,
             "cumulative_diff": cumulative_diff,
             "batches": batches,
+            "rule_batches": rule_batches,
             "auditor_prompt": auditor_prompt,
         }
         export_path.write_text(json.dumps(context_payload, indent=2, sort_keys=True), encoding="utf-8")

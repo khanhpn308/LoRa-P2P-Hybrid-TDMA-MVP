@@ -88,5 +88,27 @@ class AgentContextTests(unittest.TestCase):
         self.assertEqual(json.loads(rejected.stdout)["status"], "BLOCKED")
 
 
+    def test_cli_with_partitioned_selection_preserves_all_partitions_in_agent_input(self):
+        # Create standards directory in temp root
+        std_path = self.root / "docs/development/firmware/C_CODING_STANDARD_V2.md"
+        std_path.parent.mkdir(parents=True, exist_ok=True)
+        # Copy standard from actual repo
+        actual_std = Path(__file__).resolve().parents[2] / "docs/development/firmware/C_CODING_STANDARD_V2.md"
+        std_path.write_bytes(actual_std.read_bytes())
+        git(self.root, "add", "docs/")
+        git(self.root, "-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "test: add standard")
+
+        command = [sys.executable, str(Path(__file__).resolve().parents[2] /
+                   "scripts/agent_harness/agent_context.py"), "--repo", str(self.root),
+                   "--allowed-path", "firmware/components/sx1276_driver/radio.c"]
+        done = subprocess.run(command, capture_output=True, text=True, timeout=15)
+        self.assertEqual(done.returncode, 0, done.stdout)
+        data = json.loads(done.stdout)
+        self.assertIn("standards", data)
+        self.assertIn("agent_input", data)
+        self.assertIn("AGENTS_SHA256=", data["agent_input"])
+        self.assertIn("MANDATORY VERIFIED RULES", data["agent_input"])
+
+
 if __name__ == "__main__":
     unittest.main()

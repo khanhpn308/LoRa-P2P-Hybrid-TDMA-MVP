@@ -404,10 +404,36 @@ def eval_pr03_rule_id(
         if not isinstance(sel_sha, str) or not HASH_REGEX.match(sel_sha):
             blockers.append("Rule selection has malformed selection_sha256 receipt.")
 
-    # 4. Check rule count budget
+    # 4. Check rule count and partition budget
+    is_v2 = rule_selection.get("schema_version") == 2 or "partitions" in rule_selection
     rule_count = rule_selection.get("rule_count", len(selected_ids))
-    if rule_count > 128:
-        blockers.append(f"Selected rule count ({rule_count}) exceeds bounded budget (128).")
+    if is_v2:
+        if rule_count > 256:
+            blockers.append(f"Selected aggregate rule count ({rule_count}) exceeds bounded budget (256).")
+        partitions = rule_selection.get("partitions", [])
+        if not partitions or len(partitions) > 4:
+            blockers.append(f"Partition count ({len(partitions)}) invalid or exceeds maximum allowed (4).")
+        total_bytes = rule_selection.get("total_partition_bytes", sum(p.get("prompt_bytes", 0) for p in partitions))
+        if total_bytes > 192_000:
+            blockers.append(f"Total partition bytes ({total_bytes}) exceeds aggregate budget (192000).")
+        part_ids_all = []
+        for p in partitions:
+            p_idx = p.get("partition_index", 0)
+            p_rules = p.get("selected_ids", [])
+            p_bytes = p.get("prompt_bytes", 0)
+            if len(p_rules) > 128:
+                blockers.append(f"Partition {p_idx} rule count ({len(p_rules)}) exceeds partition budget (128).")
+            if p_bytes > 48_000:
+                blockers.append(f"Partition {p_idx} prompt bytes ({p_bytes}) exceeds partition budget (48000).")
+            p_hash = p.get("partition_hash")
+            if not p_hash or not HASH_REGEX.match(p_hash):
+                blockers.append(f"Partition {p_idx} missing or malformed partition_hash receipt.")
+            part_ids_all.extend(p_rules)
+        if set(part_ids_all) != set(selected_ids) or len(part_ids_all) != len(selected_ids):
+            blockers.append("Partition manifests do not match disjoint complete mandatory union.")
+    else:
+        if rule_count > 128:
+            blockers.append(f"Selected rule count ({rule_count}) exceeds bounded budget (128).")
 
     # 5. Check standards loaded and required rules applicability
     standards = rule_selection.get("standards", {})

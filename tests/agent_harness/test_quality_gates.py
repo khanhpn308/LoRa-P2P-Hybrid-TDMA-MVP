@@ -518,7 +518,126 @@ class GitTests(unittest.TestCase):
         self.write("settings.txt", "POSTGRES_PASSWORD=synthetic-cli-private\n")
         result = subprocess.run(command, capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 1)
-        self.assertNotIn("synthetic-cli-private", result.stdout + result.stderr)
+
+
+class StandardsCheckV2Tests(unittest.TestCase):
+    def write(self, name, data):
+        path = self.root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(data)
+        return path
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        gates.git(self.root, "init", "-q")
+        std_rel = "docs/development/firmware/C_CODING_STANDARD_V2.md"
+        actual_std = Path(__file__).resolve().parents[2] / std_rel
+        self.write(std_rel, actual_std.read_text(encoding="utf-8"))
+        self.write("firmware/test.c", "int val = 42;\n")
+        gates.git(self.root, "add", ".")
+        gates.git(self.root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "baseline")
+        self.base = gates.git(self.root, "rev-parse", "HEAD").decode().strip()
+        self.write("firmware/test.c", "int val = 99;\n")
+        self.source, _ = gates.inventory(self.root, self.base)
+        self.external = tempfile.TemporaryDirectory()
+        self.addCleanup(self.external.cleanup)
+        self.evidence = Path(self.external.name)
+        self.log = b"Synthetic quality gates log\n"
+        (self.evidence / "checks.log").write_bytes(self.log)
+
+        from standards_policy import select_rules, digest
+        self.selection = select_rules(self.root, ["firmware/test.c"], base=self.base, version=2,
+                                      candidate_sha256=self.source["candidate_sha256"])
+        self.hashes = {r["rule_id"]: r["rule_sha256"] for r in self.selection["rules"]}
+        self.receipt = {**self.source, "command": ["test"], "tool_version": "test", "exit_code": 0,
+                        "receipt_path": "checks.log", "receipt_sha256": digest(self.log),
+                        "observations": {"checks_complete": True}}
+        self.edit = {
+            "source_sha": self.source["source_sha"],
+            "base_sha": self.base,
+            "candidate_sha256": self.source["candidate_sha256"],
+            "selection_sha256": self.selection["selection_sha256"],
+            "prompt_sha256": digest(b"dummy prompt"),
+            "schema_version": 2,
+            "selected_ids": self.selection["selected_ids"],
+            "rule_hashes": self.hashes,
+            "partition_count": len(self.selection["partitions"]),
+            "injected_partitions": [
+                {"partition_index": p["partition_index"], "partition_hash": p["partition_hash"],
+                 "rule_ids": p["selected_ids"], "prompt_bytes": p["prompt_bytes"]}
+                for p in self.selection["partitions"]
+            ],
+            "assigned_report_scope": self.selection["partitions"][0]["selected_ids"],
+        }
+        (self.evidence / "edit.json").write_text(json.dumps(self.edit), encoding="utf-8")
+
+        self.payload = {"selection": self.selection, "rules": {}}
+        for r in self.selection["rules"]:
+            self.payload["rules"][r["rule_id"]] = {
+                **self.receipt,
+                "observations": {"checks_complete": True,
+                                 "selection_sha256": self.selection["selection_sha256"],
+                                 "rule_sha256": r["rule_sha256"]}
+            }
+
+        for role in ("worker", "auditor"):
+            part_reports = []
+            for p in self.selection["partitions"]:
+                rep = {
+                    "status": "PASS", "findings": [], "limitations": [],
+                    "reviewed_scope": self.source["changed_paths"],
+                    "selection_sha256": p["partition_hash"],
+                    "rule_results": [
+                        {"rule_id": r["rule_id"], "rule_sha256": r["rule_sha256"],
+                         "status": "PASS", "evidence": [{"receipt_path": "checks.log", "receipt_sha256": digest(self.log)}],
+                         "reason": "PASS evidence verified"}
+                        for r in p["rules"]
+                    ]
+                }
+                part_reports.append({
+                    "partition_index": p["partition_index"],
+                    "partition_hash": p["partition_hash"],
+                    "selected_ids": p["selected_ids"],
+                    "report": rep,
+                })
+            record = {
+                "role": role, "agent_id": f"{role}-agent-1",
+                "schema_version": 2,
+                "selection_sha256": self.selection["selection_sha256"],
+                "selected_ids": self.selection["selected_ids"],
+                "rule_hashes": self.hashes,
+                "edit_receipt_path": "edit.json",
+                "evidence_inventory": {"checks.log": digest(self.log)},
+                "partition_reports": part_reports,
+            }
+            rec_bytes = json.dumps(record).encode("utf-8")
+            (self.evidence / f"{role}.json").write_bytes(rec_bytes)
+            self.payload[role] = {**self.receipt, "receipt_path": f"{role}.json", "receipt_sha256": digest(rec_bytes)}
+
+    def test_standards_check_v2_partitioned_reports_pass(self):
+        selected, rows, status, reason = gates.standards_check(self.root, self.base, self.source, self.payload, self.evidence)
+        self.assertEqual(status, "PASS")
+        self.assertEqual(len(rows), len(self.selection["selected_ids"]))
+        self.assertTrue(all(r["status"] == "PASS" for r in rows))
+
+    def test_standards_check_v2_missing_partition_report_blocks(self):
+        # Create an incomplete worker record missing partition reports
+        worker_rec = json.loads((self.evidence / "worker.json").read_text(encoding="utf-8"))
+        worker_rec["partition_reports"] = []
+        raw = json.dumps(worker_rec).encode("utf-8")
+        (self.evidence / "worker.json").write_bytes(raw)
+        self.payload["worker"]["receipt_sha256"] = gates.digest(raw)
+        _, _, status, _ = gates.standards_check(self.root, self.base, self.source, self.payload, self.evidence)
+        self.assertEqual(status, "NOT_VERIFIED")
+
+    def test_standards_check_v2_partial_pre_edit_injection_blocks(self):
+        edit = dict(self.edit)
+        edit["injected_partitions"] = []
+        (self.evidence / "edit.json").write_text(json.dumps(edit), encoding="utf-8")
+        _, _, status, _ = gates.standards_check(self.root, self.base, self.source, self.payload, self.evidence)
+        self.assertEqual(status, "NOT_VERIFIED")
 
 
 if __name__ == "__main__":

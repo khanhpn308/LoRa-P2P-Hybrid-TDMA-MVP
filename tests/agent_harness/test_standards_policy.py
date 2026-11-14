@@ -1231,5 +1231,119 @@ class SupervisedEntrypointTests(PolicyFixture):
                 harness.bounded_prompt(all_ids)
 
 
+class PartitioningAndSelectionV2Tests(PolicyFixture):
+    def test_legacy_v1_schema_and_hash_stability(self):
+        selection = self.select(["firmware/components/sx1276_driver/radio.c"])
+        self.assertNotIn("schema_version", selection)
+        self.assertNotIn("partitions", selection)
+        self.assertIn("selection_sha256", selection)
+        self.assertEqual(policy._payload_hash(selection), selection["selection_sha256"])
+        self.assertEqual(policy.verify_selection(self.root, selection), selection)
+
+    def test_v2_partitioned_selection_and_hash_stability(self):
+        selection = self.select(["firmware/components/sx1276_driver/radio.c"], version=2)
+        self.assertEqual(selection["schema_version"], 2)
+        self.assertIn("partitions", selection)
+        self.assertIn("candidate_sha256", selection)
+        self.assertIn("diff_sha256", selection)
+        self.assertIn("aggregate_union_hash", selection)
+        self.assertEqual(policy._payload_hash(selection), selection["selection_sha256"])
+        self.assertEqual(policy.verify_selection(self.root, selection), selection)
+
+    def test_exact_serialized_utf8_boundaries_and_metadata_overhead(self):
+        selection = self.select(["firmware/components/sx1276_driver/radio.c"], version=2)
+        for p in selection["partitions"]:
+            self.assertLessEqual(p["prompt_bytes"], policy.MAX_PARTITION_PROMPT_BYTES)
+            self.assertLessEqual(len(p["selected_ids"]), policy.MAX_PARTITION_RULES)
+            self.assertEqual(p["prompt_bytes"], len(p["agent_input"].encode("utf-8")))
+            self.assertEqual(policy.digest(p["agent_input"].encode("utf-8")), p["agent_input_sha256"])
+
+    def test_single_oversized_rule_rejected(self):
+        raw = (self.root / policy.STANDARDS["C"]).read_bytes()
+        rows = policy.parse_standard(raw, "C")
+        records = dict(rows)
+        # Create an oversized rule record
+        records["C-001"] = dict(records["C-001"], text="| C-001 | scope | directive | " + ("x" * 50000) + " | FAIL | source |\n")
+        metadata = {"source_sha": "a" * 40, "base_sha": "b" * 40, "standards": {}}
+        with self.assertRaises(policy.StandardsError) as ctx:
+            policy.partition_rules(["C-001"], records, metadata)
+        self.assertIn("exceeds partition byte budget", str(ctx.exception))
+
+    def test_aggregate_rule_count_and_byte_and_partition_overflow_rejected(self):
+        raw = (self.root / policy.STANDARDS["C"]).read_bytes()
+        rows = policy.parse_standard(raw, "C")
+        metadata = {"source_sha": "a" * 40, "base_sha": "b" * 40, "standards": {}}
+        # 1. Aggregate rule count > 256
+        fake_ids = [f"R-{n:03}" for n in range(1, 260)]
+        fake_records = {r: {"rule_id": r, "rule_sha256": "a" * 64, "text": f"| {r} | s | d | v | f | src |\n"} for r in fake_ids}
+        with self.assertRaises(policy.StandardsError) as ctx:
+            policy.partition_rules(fake_ids, fake_records, metadata)
+        self.assertIn("exceed limit (256)", str(ctx.exception))
+
+        # 2. Partitions overflow > 4
+        ids_50 = sorted(rows.keys())[:50]
+        with patch.object(policy, "MAX_PARTITION_RULES", 5):
+            with self.assertRaises(policy.StandardsError) as ctx:
+                policy.partition_rules(ids_50, rows, metadata, max_rules_per_partition=5, max_partitions=4)
+            self.assertIn("exceeding maximum allowed (4)", str(ctx.exception))
+
+        # 3. Aggregate bytes overflow
+        with self.assertRaises(policy.StandardsError) as ctx:
+            policy.partition_rules(ids_50, rows, metadata, max_aggregate_bytes=100)
+        self.assertIn("exceed aggregate limit", str(ctx.exception))
+
+    def test_whole_catalog_prohibition_preserved_per_component(self):
+        raw_c = (self.root / policy.STANDARDS["C"]).read_bytes()
+        rows_c = policy.parse_standard(raw_c, "C")
+        self.assertEqual(len(rows_c), 104)
+        # Selecting all 104 rules of C fails whole-catalog prohibition
+        self.write("firmware/test.c", "int val;\n")
+        # Attempting to select all rules triggers "Entire standard selection is forbidden"
+        with patch.object(policy, "BASELINE", {"C": set(rows_c.keys()), "GO": set()}):
+            with self.assertRaises(policy.StandardsError) as ctx:
+                self.select(["firmware/test.c"])
+            self.assertIn("Entire standard selection is forbidden", str(ctx.exception))
+
+    def test_complete_union_equality_and_disjointness(self):
+        selection = self.select(["firmware/components/sx1276_driver/radio.c"], version=2)
+        all_ids = []
+        for p in selection["partitions"]:
+            all_ids.extend(p["selected_ids"])
+        self.assertEqual(all_ids, selection["selected_ids"])
+        self.assertEqual(len(all_ids), len(set(all_ids)))
+
+    def test_verify_selection_tampered_partition_or_rule_rejected(self):
+        selection = self.select(["firmware/components/sx1276_driver/radio.c"], version=2)
+        # Tamper partition hash
+        tampered = copy.deepcopy(selection)
+        tampered["partitions"][0]["partition_hash"] = "0" * 64
+        with self.assertRaises(policy.StandardsError):
+            policy.verify_selection(self.root, tampered)
+
+        # Tamper partition rule order
+        if len(tampered["partitions"][0]["selected_ids"]) > 1:
+            tampered2 = copy.deepcopy(selection)
+            tampered2["partitions"][0]["selected_ids"].reverse()
+            with self.assertRaises(policy.StandardsError):
+                policy.verify_selection(self.root, tampered2)
+
+        # Tamper aggregate selection_sha256
+        tampered3 = copy.deepcopy(selection)
+        tampered3["selection_sha256"] = "f" * 64
+        with self.assertRaises(policy.StandardsError):
+            policy.verify_selection(self.root, tampered3)
+
+    def test_no_dependency_pruning_or_mandatory_rule_suppression(self):
+        self.write("backend-go/internal/api/handler.go", 'package api\nimport "example.org/project/internal/mqtt"\n')
+        self.write("backend-go/internal/mqtt/client.go", 'package mqtt\n// mosquitto puback client\n')
+        self.commit()
+        self.base = git(self.root, "rev-parse", "HEAD")
+        self.write("backend-go/internal/api/handler.go", 'package api\nimport "example.org/project/internal/mqtt"\nfunc Handler() {}\n')
+        selection = self.select(["backend-go/internal/api/handler.go"])
+        # Retains MQTT and CT rules via transitive import without pruning
+        self.assertTrue(any(r.startswith("MQ-") for r in selection["selected_ids"]))
+        self.assertTrue(any(r.startswith("CT-") for r in selection["selected_ids"]))
+
+
 if __name__ == "__main__":
     unittest.main()

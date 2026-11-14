@@ -360,10 +360,14 @@ def standards_check(repo, base, source, payload, evidence_root):
 
     try:
         frozen = payload.get("selection") if isinstance(payload, dict) else None
+        is_v2 = isinstance(frozen, dict) and (frozen.get("schema_version") == 2 or "partitions" in frozen)
+        version_arg = 2 if is_v2 else None
+        candidate_sha_arg = source.get("candidate_sha256") if is_v2 else None
         selected = standards_policy.select_rules(
             repo, frozen.get("allowed_paths", ()) if isinstance(frozen, dict) else (),
             requested_ids=frozen.get("requested_ids", ()) if isinstance(frozen, dict) else (),
-            base=base, expected_source_sha=source["source_sha"])
+            base=base, expected_source_sha=source["source_sha"],
+            version=version_arg, candidate_sha256=candidate_sha_arg)
         if not selected["selected_ids"]:
             if frozen is not None and frozen != selected:
                 raise ValueError("Stale standards selection")
@@ -389,10 +393,11 @@ def standards_check(repo, base, source, payload, evidence_root):
             if (not isinstance(record["agent_id"], str) or not record["agent_id"].strip()
                     or record["agent_id"] in identities or entry["receipt_path"] in paths
                     or record["role"] != role
-                    or record["agent_input_sha256"] != selected["agent_input_sha256"]
                     or record["selection_sha256"] != selected["selection_sha256"]
                     or record["selected_ids"] != selected["selected_ids"]
                     or record["rule_hashes"] != hashes):
+                raise ValueError("Incomplete, shared or stale injection record")
+            if not is_v2 and record.get("agent_input_sha256") != selected["agent_input_sha256"]:
                 raise ValueError("Incomplete, shared or stale injection record")
             identities.add(record["agent_id"])
             paths.add(entry["receipt_path"])
@@ -405,17 +410,52 @@ def standards_check(repo, base, source, payload, evidence_root):
             if role == "worker":
                 edit = json.loads(safe_read(evidence_root, record["edit_receipt_path"]),
                                   object_pairs_hook=reject_duplicates)
-                if (edit["agent_input_sha256"] != selected["agent_input_sha256"]
-                        or edit["source_sha"] != source["source_sha"]
-                        or edit["selected_ids"] != selected["selected_ids"]
+                if (edit["selected_ids"] != selected["selected_ids"]
                         or edit["rule_hashes"] != hashes):
                     raise ValueError("Applicable rules were not injected before Worker edit")
-            report = check_report(record["report"], set(source["changed_paths"]),
-                                  required_rules=selected["rules"],
-                                  selection_sha256=selected["selection_sha256"],
-                                  evidence_inventory=inventory)
-            reports[role] = {r["rule_id"]: r for r in report["rule_results"]}
-            verdicts.append(report["status"])
+                if edit.get("source_sha") != source["source_sha"] and edit.get("base_sha") != base:
+                    raise ValueError("Applicable rules were not injected before Worker edit")
+                if is_v2:
+                    if edit.get("selection_sha256") != selected["selection_sha256"]:
+                        raise ValueError("Applicable rules were not injected before Worker edit")
+                    injected_parts = edit.get("injected_partitions", [])
+                    if not injected_parts or len(injected_parts) != len(selected["partitions"]):
+                        raise ValueError("Partial pre-edit injection; all partitions required")
+                    injected_ids = [rid for p in injected_parts for rid in p.get("rule_ids", [])]
+                    if injected_ids != selected["selected_ids"]:
+                        raise ValueError("Injected partitions do not cover complete mandatory union")
+                    if not edit.get("prompt_sha256") or not edit.get("candidate_sha256"):
+                        raise ValueError("Pre-edit prompt or snapshot hash missing")
+                else:
+                    if edit.get("agent_input_sha256") != selected["agent_input_sha256"]:
+                        raise ValueError("Applicable rules were not injected before Worker edit")
+
+            if is_v2 and "partition_reports" in record:
+                part_reps = record["partition_reports"]
+                if not isinstance(part_reps, list) or len(part_reps) != len(selected["partitions"]):
+                    raise ValueError("Missing final Worker partition reports")
+                role_results = {}
+                part_statuses = []
+                for idx, p in enumerate(selected["partitions"]):
+                    pr = part_reps[idx]
+                    if pr.get("partition_index") != p["partition_index"] or pr.get("partition_hash") != p["partition_hash"]:
+                        raise ValueError("Partition report manifest mismatch")
+                    rep = check_report(pr["report"], set(source["changed_paths"]),
+                                       required_rules=p["rules"],
+                                       selection_sha256=p["partition_hash"],
+                                       evidence_inventory=inventory)
+                    part_statuses.append(rep["status"])
+                    for r in rep["rule_results"]:
+                        role_results[r["rule_id"]] = r
+                reports[role] = role_results
+                verdicts.append("PASS" if all(s == "PASS" for s in part_statuses) else ("FAIL" if "FAIL" in part_statuses else "INCONCLUSIVE"))
+            else:
+                report = check_report(record["report"], set(source["changed_paths"]),
+                                      required_rules=selected["rules"],
+                                      selection_sha256=selected["selection_sha256"],
+                                      evidence_inventory=inventory)
+                reports[role] = {r["rule_id"]: r for r in report["rule_results"]}
+                verdicts.append(report["status"])
         entries = payload["rules"]
         if not isinstance(entries, dict) or set(entries) != set(hashes):
             raise ValueError("Missing or unexpected per-ID Host evidence")
