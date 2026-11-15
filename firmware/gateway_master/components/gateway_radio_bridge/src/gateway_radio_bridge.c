@@ -332,7 +332,7 @@ esp_err_t process_radio_frame(const sx1276_rx_frame_t *frame)
 
                 /* Publish Event to Backend over MQTT for UI Charts */
                 const char *gw_epoch = gateway_rf_metrics_get_epoch();
-                char alert_payload[512];
+                char alert_payload[GATEWAY_TRANSPORT_MAX_PAYLOAD_LEN];
                 int alert_len;
                 if (rf_block[0] != '\0') {
                     alert_len = snprintf(alert_payload, sizeof(alert_payload),
