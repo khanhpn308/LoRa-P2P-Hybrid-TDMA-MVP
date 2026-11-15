@@ -148,6 +148,12 @@ extern "C" {
 #define SX1276_DETECT_OPTIMIZE_SF7_12       0x03U
 #define SX1276_DETECTION_THRESHOLD_SF7_12   0x0AU
 
+/* =========================================================================
+ * RegPaDac (0x4D)
+ * ========================================================================= */
+#define SX1276_PADAC_DEFAULT               0x84U
+#define SX1276_PADAC_20DBM_ON              0x87U
+
 #ifdef __cplusplus
 }
 #endif
