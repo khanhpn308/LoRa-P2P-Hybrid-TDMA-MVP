@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -1003,5 +1004,252 @@ func TestHandleAlertMessage_WithMalformedRF_PreservesBusinessEvent(t *testing.T)
 	// RF record should NOT have been created due to malformed snr_db
 	if view := tracker.GetNodeRFView("gw01", 8); view != nil {
 		t.Errorf("expected nil RF view for node 8 with malformed SNR, got %+v", view)
+	}
+}
+
+type orderCheckingEventStore struct {
+	mockEventStore
+	rfViewAtRecord *presence.NodeRFView
+	tracker        *presence.RFTracker
+}
+
+func (m *orderCheckingEventStore) RecordEvent(ctx context.Context, event *domain.Event) (*storage.EventRecordResult, error) {
+	res, err := m.mockEventStore.RecordEvent(ctx, event)
+	m.mu.Lock()
+	if m.tracker != nil {
+		m.rfViewAtRecord = m.tracker.GetNodeRFView(event.GatewayID, int(event.NodeID))
+	}
+	m.mu.Unlock()
+	return res, err
+}
+
+type orderCheckingHub struct {
+	mockHub
+	mu                sync.Mutex
+	rfViewAtBroadcast *presence.NodeRFView
+	broadcastCount    int
+	tracker           *presence.RFTracker
+}
+
+func (m *orderCheckingHub) BroadcastAlert(ctx context.Context, payload realtime.AlertTriggeredPayload) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.broadcastCount++
+	if m.tracker != nil {
+		m.rfViewAtBroadcast = m.tracker.GetNodeRFView(payload.GatewayID, int(payload.NodeID))
+	}
+	return nil
+}
+
+func TestHandleAlertMessage_Ordering_RFMetricsIngestedBeforeBroadcastAndRecordEvent(t *testing.T) {
+	tracker := presence.NewRFTracker()
+	evtStore := &orderCheckingEventStore{tracker: tracker}
+	hub := &orderCheckingHub{tracker: tracker}
+
+	subscriber := NewGatewayStatusSubscriber("tcp://localhost:1883", nil, nil, evtStore, nil, nil)
+	subscriber.SetRFTracker(tracker)
+	subscriber.hub = hub
+
+	epoch := "550e8400-e29b-41d4-a716-446655440050"
+	payload := fmt.Sprintf(`{
+		"schema_version": "1.0-draft",
+		"event_id": "gw-a:%s:10",
+		"gateway_id": "gw-a",
+		"gateway_epoch": "%s",
+		"event_seq": "10",
+		"observed_at": "2026-11-15T00:00:00Z",
+		"observed_time_source": "gateway_utc",
+		"radio_rx_monotonic_us": "123456789",
+		"buffered": false,
+		"node_id": 3,
+		"superframe_seq": 1,
+		"seq_num": 1,
+		"schedule_version": 1,
+		"severity": "P3_NORMAL",
+		"data": {"event_ref": 10, "event_code": 1, "event_value": 42},
+		"radio_ack_sent": true,
+		"rf": {
+			"rssi_dbm": -68,
+			"snr_db": 9.5,
+			"channel_idx": 2,
+			"rx_monotonic_us": "123456789",
+			"gateway_epoch": "%s",
+			"sample_seq": "10"
+		}
+	}`, epoch, epoch, epoch)
+
+	msg := &mockMessage{
+		topic:   "iot/v1/gw/gw-a/uplink/alert",
+		payload: []byte(payload),
+	}
+	subscriber.handleAlertMessage(nil, msg)
+
+	// Verify RecordEvent executed AFTER RFTracker was updated
+	evtStore.mu.Lock()
+	rfAtRecord := evtStore.rfViewAtRecord
+	evtStore.mu.Unlock()
+
+	if rfAtRecord == nil {
+		t.Fatalf("expected RFTracker to already contain RF data when RecordEvent was invoked")
+	}
+	if rfAtRecord.RssiDbm != -68 || rfAtRecord.SnrDb != 9.5 {
+		t.Errorf("unexpected RF snapshot at RecordEvent: %+v", rfAtRecord)
+	}
+
+	// Verify BroadcastAlert executed AFTER RFTracker was updated
+	hub.mu.Lock()
+	rfAtBroadcast := hub.rfViewAtBroadcast
+	count := hub.broadcastCount
+	hub.mu.Unlock()
+
+	if count != 1 {
+		t.Errorf("expected 1 BroadcastAlert, got %d", count)
+	}
+	if rfAtBroadcast == nil {
+		t.Fatalf("expected RFTracker to already contain RF data when BroadcastAlert was invoked")
+	}
+	if rfAtBroadcast.RssiDbm != -68 || rfAtBroadcast.SnrDb != 9.5 {
+		t.Errorf("unexpected RF snapshot at BroadcastAlert: %+v", rfAtBroadcast)
+	}
+}
+
+func TestHandleAlertMessage_RebootEpochTransitionAndConvergenceWithDedicatedTopic(t *testing.T) {
+	tracker := presence.NewRFTracker()
+	mockEvtStore := &mockEventStore{}
+	subscriber := NewGatewayStatusSubscriber("tcp://localhost:1883", nil, nil, mockEvtStore, nil, nil)
+	subscriber.SetRFTracker(tracker)
+
+	gw := "gw-a"
+	nodeID := 3
+	epoch1 := "550e8400-e29b-41d4-a716-446655440001"
+	epoch2 := "550e8400-e29b-41d4-a716-446655440002"
+
+	// 1. Alert in boot epoch 1 with high sequence 62 (pre-reboot state)
+	alert1 := fmt.Sprintf(`{
+		"schema_version": "1.0-draft",
+		"event_id": "%s:%s:62",
+		"gateway_id": "%s",
+		"gateway_epoch": "%s",
+		"event_seq": "62",
+		"observed_at": "2026-11-14T16:38:51Z",
+		"observed_time_source": "gateway_utc",
+		"radio_rx_monotonic_us": "1000000",
+		"buffered": false,
+		"node_id": %d,
+		"superframe_seq": 1,
+		"seq_num": 1,
+		"schedule_version": 1,
+		"severity": "P3_NORMAL",
+		"data": {"event_ref": 62, "event_code": 1, "event_value": 20},
+		"radio_ack_sent": true,
+		"rf": {
+			"rssi_dbm": -20,
+			"snr_db": 6.5,
+			"channel_idx": 2,
+			"rx_monotonic_us": "1000000",
+			"gateway_epoch": "%s",
+			"sample_seq": "62"
+		}
+	}`, gw, epoch1, gw, epoch1, nodeID, epoch1)
+
+	subscriber.handleAlertMessage(nil, &mockMessage{topic: "iot/v1/gw/gw-a/uplink/alert", payload: []byte(alert1)})
+
+	view1 := tracker.GetNodeRFView(gw, nodeID)
+	if view1 == nil || view1.RssiDbm != -20 || view1.SnrDb != 6.5 {
+		t.Fatalf("unexpected view1: %+v", view1)
+	}
+
+	// 2. Gateway reboots! New epoch2 arrives with reset sequence = 1, fresh RSSI/SNR
+	alert2 := fmt.Sprintf(`{
+		"schema_version": "1.0-draft",
+		"event_id": "%s:%s:1",
+		"gateway_id": "%s",
+		"gateway_epoch": "%s",
+		"event_seq": "1",
+		"observed_at": "2026-11-15T00:00:00Z",
+		"observed_time_source": "gateway_utc",
+		"radio_rx_monotonic_us": "2000000",
+		"buffered": false,
+		"node_id": %d,
+		"superframe_seq": 1,
+		"seq_num": 1,
+		"schedule_version": 1,
+		"severity": "P3_NORMAL",
+		"data": {"event_ref": 63, "event_code": 1, "event_value": 21},
+		"radio_ack_sent": true,
+		"rf": {
+			"rssi_dbm": -75,
+			"snr_db": 8.25,
+			"channel_idx": 2,
+			"rx_monotonic_us": "2000000",
+			"gateway_epoch": "%s",
+			"sample_seq": "1"
+		}
+	}`, gw, epoch2, gw, epoch2, nodeID, epoch2)
+
+	subscriber.handleAlertMessage(nil, &mockMessage{topic: "iot/v1/gw/gw-a/uplink/alert", payload: []byte(alert2)})
+
+	view2 := tracker.GetNodeRFView(gw, nodeID)
+	if view2 == nil || view2.RssiDbm != -75 || view2.SnrDb != 8.25 {
+		t.Fatalf("snapshot failed to update after reboot: %+v", view2)
+	}
+
+	// 3. Dedicated rf-metrics topic delivers same sample (epoch2, seq 1):
+	// Must deduplicate cleanly and NOT corrupt or overwrite snapshot
+	rfMetricsDup := fmt.Sprintf(`{
+		"schema_version": "1.0-draft",
+		"gateway_id": "%s",
+		"gateway_epoch": "%s",
+		"sample_seq": "1",
+		"sample_monotonic_us": "2000000",
+		"kind": "NODE_UPLINK",
+		"node_id": %d,
+		"rssi_dbm": -75,
+		"snr_db": 8.25,
+		"channel_idx": 2,
+		"source": "UP_EVENT",
+		"validation": "VERIFIED"
+	}`, gw, epoch2, nodeID)
+
+	subscriber.handleRFMetricsMessage(nil, &mockMessage{topic: "iot/v1/gw/gw-a/uplink/rf-metrics", payload: []byte(rfMetricsDup)})
+
+	viewAfterDup := tracker.GetNodeRFView(gw, nodeID)
+	if viewAfterDup.RssiDbm != -75 || viewAfterDup.SnrDb != 8.25 {
+		t.Fatalf("duplicate sample corrupted snapshot: %+v", viewAfterDup)
+	}
+
+	// 4. Late alert from retired epoch1 (seq 63): MUST BE REJECTED!
+	alertLate := fmt.Sprintf(`{
+		"schema_version": "1.0-draft",
+		"event_id": "%s:%s:63",
+		"gateway_id": "%s",
+		"gateway_epoch": "%s",
+		"event_seq": "63",
+		"observed_at": "2026-11-14T16:39:00Z",
+		"observed_time_source": "gateway_utc",
+		"radio_rx_monotonic_us": "1050000",
+		"buffered": false,
+		"node_id": %d,
+		"superframe_seq": 1,
+		"seq_num": 1,
+		"schedule_version": 1,
+		"severity": "P3_NORMAL",
+		"data": {"event_ref": 63, "event_code": 1, "event_value": 20},
+		"radio_ack_sent": true,
+		"rf": {
+			"rssi_dbm": -20,
+			"snr_db": 6.5,
+			"channel_idx": 2,
+			"rx_monotonic_us": "1050000",
+			"gateway_epoch": "%s",
+			"sample_seq": "63"
+		}
+	}`, gw, epoch1, gw, epoch1, nodeID, epoch1)
+
+	subscriber.handleAlertMessage(nil, &mockMessage{topic: "iot/v1/gw/gw-a/uplink/alert", payload: []byte(alertLate)})
+
+	viewFinal := tracker.GetNodeRFView(gw, nodeID)
+	if viewFinal.RssiDbm != -75 || viewFinal.SnrDb != 8.25 {
+		t.Fatalf("snapshot was corrupted by late sample from retired epoch1: %+v", viewFinal)
 	}
 }

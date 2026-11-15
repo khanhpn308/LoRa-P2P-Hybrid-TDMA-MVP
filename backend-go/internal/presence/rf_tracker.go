@@ -12,6 +12,8 @@ const (
 	DefaultChannelRFFreshness = 60 * time.Second
 	// MaxGatewaysTracked limits memory to prevent unbounded map growth.
 	MaxGatewaysTracked = 500
+	// MaxRetiredEpochsPerGateway limits the history of retired boot epochs retained per gateway.
+	MaxRetiredEpochsPerGateway = 16
 )
 
 type nodeRFKey struct {
@@ -87,6 +89,8 @@ type RFTracker struct {
 	nodeSnapshots             map[nodeRFKey]*NodeRFRecord
 	channelSnapshots          map[channelRFKey]*ChannelRFRecord
 	gatewaysSeen              map[string]time.Time
+	currentGatewayEpoch       map[string]string   // active boot epoch per gateway
+	retiredGatewayEpochs      map[string][]string // bounded history of retired boot epochs per gateway
 	nodeFreshnessThreshold    time.Duration
 	channelFreshnessThreshold time.Duration
 }
@@ -97,6 +101,8 @@ func NewRFTracker() *RFTracker {
 		nodeSnapshots:             make(map[nodeRFKey]*NodeRFRecord),
 		channelSnapshots:          make(map[channelRFKey]*ChannelRFRecord),
 		gatewaysSeen:              make(map[string]time.Time),
+		currentGatewayEpoch:       make(map[string]string),
+		retiredGatewayEpochs:      make(map[string][]string),
 		nodeFreshnessThreshold:    DefaultNodeRFFreshness,
 		channelFreshnessThreshold: DefaultChannelRFFreshness,
 	}
@@ -114,9 +120,59 @@ func (t *RFTracker) SetFreshnessThresholds(nodeThresh, chThresh time.Duration) {
 	}
 }
 
-// UpdateNodeRF ingests an RF sample for a node.
-// Returns true if accepted, false if ignored as duplicate/out-of-order or invalid bounds.
-func (t *RFTracker) UpdateNodeRF(
+// isEpochRetiredLocked checks whether an epoch has already been retired for this gateway.
+func (t *RFTracker) isEpochRetiredLocked(gatewayID, epoch string) bool {
+	retired, ok := t.retiredGatewayEpochs[gatewayID]
+	if !ok {
+		return false
+	}
+	for _, ep := range retired {
+		if ep == epoch {
+			return true
+		}
+	}
+	return false
+}
+
+// recordEpochTransitionLocked records a new active boot epoch and retires the previous one.
+//
+// Authority & Invariants:
+// - RFC 4122 v4 UUIDs are random bitstrings and MUST NOT be assumed to provide chronological ordering.
+// - Chronological ordering across gateway reboots is established strictly by the order in which new epochs
+//   are observed by the backend.
+// - Once a boot epoch is retired by observing a subsequent epoch for that gateway, samples from the retired
+//   epoch are rejected to prevent late QoS1 replays or out-of-order deliveries from rolling back the snapshot.
+// - Bounded FIFO retention (MaxRetiredEpochsPerGateway) prevents unbounded memory growth.
+func (t *RFTracker) recordEpochTransitionLocked(gatewayID, newEpoch string) {
+	current, exists := t.currentGatewayEpoch[gatewayID]
+	if !exists {
+		t.currentGatewayEpoch[gatewayID] = newEpoch
+		return
+	}
+	if current == newEpoch {
+		return
+	}
+
+	retired := t.retiredGatewayEpochs[gatewayID]
+	alreadyRetired := false
+	for _, ep := range retired {
+		if ep == current {
+			alreadyRetired = true
+			break
+		}
+	}
+	if !alreadyRetired {
+		if len(retired) >= MaxRetiredEpochsPerGateway {
+			retired = retired[1:] // FIFO eviction of oldest retired epoch
+		}
+		retired = append(retired, current)
+		t.retiredGatewayEpochs[gatewayID] = retired
+	}
+	t.currentGatewayEpoch[gatewayID] = newEpoch
+}
+
+// UpdateNodeRFWithReason ingests an RF sample for a node, returning accept/reject status and diagnostic reason.
+func (t *RFTracker) UpdateNodeRFWithReason(
 	gatewayID string,
 	nodeID int,
 	rssiDbm int,
@@ -128,12 +184,12 @@ func (t *RFTracker) UpdateNodeRF(
 	sampleSeq uint64,
 	sampleMonotonicUS uint64,
 	ageMs uint32,
-) bool {
+) (bool, string) {
 	if gatewayID == "" || gatewayEpoch == "" || nodeID < 1 || nodeID > 254 {
-		return false
+		return false, "INVALID_ARGS"
 	}
 	if channelIdx != nil && (*channelIdx < 0 || *channelIdx > 10) {
-		return false
+		return false, "INVALID_CHANNEL"
 	}
 
 	t.mu.Lock()
@@ -142,22 +198,36 @@ func (t *RFTracker) UpdateNodeRF(
 	// Enforce gateway limit if new gateway
 	if _, ok := t.gatewaysSeen[gatewayID]; !ok {
 		if len(t.gatewaysSeen) >= MaxGatewaysTracked {
-			return false
+			return false, "GATEWAY_LIMIT_EXCEEDED"
 		}
 		t.gatewaysSeen[gatewayID] = time.Now().UTC()
 	}
 
+	// 1. If this epoch was previously observed and retired, reject immediately
+	if t.isEpochRetiredLocked(gatewayID, gatewayEpoch) {
+		return false, "RETIRED_EPOCH"
+	}
+
 	key := nodeRFKey{gatewayID: gatewayID, nodeID: nodeID}
 	existing, exists := t.nodeSnapshots[key]
+	var reason string
+
 	if exists {
 		if existing.GatewayEpoch == gatewayEpoch {
 			// In the same boot epoch, sequence MUST be strictly monotonic.
-			// Duplicate QoS1, WAL replays, and out-of-order samples are ignored.
+			// Duplicate QoS1, WAL replays, and out-of-order samples are ignored without resetting freshness.
 			if sampleSeq <= existing.SampleSeq {
-				return false
+				return false, "STALE_OR_DUPLICATE_SEQUENCE"
 			}
+			reason = "ACCEPTED_MONOTONIC"
+		} else {
+			// Gateway rebooted with new epoch: accepts reset/lower sequence numbers
+			t.recordEpochTransitionLocked(gatewayID, gatewayEpoch)
+			reason = "ACCEPTED_NEW_EPOCH"
 		}
-		// If gatewayEpoch changed, gateway rebooted -> accept new epoch
+	} else {
+		t.recordEpochTransitionLocked(gatewayID, gatewayEpoch)
+		reason = "ACCEPTED_FIRST_SAMPLE"
 	}
 
 	now := time.Now().UTC()
@@ -185,12 +255,33 @@ func (t *RFTracker) UpdateNodeRF(
 		MeasuredAt:        measuredAt,
 	}
 
-	return true
+	return true, reason
 }
 
-// UpdateChannelRF ingests a channel energy sample for a gateway channel.
+// UpdateNodeRF ingests an RF sample for a node.
 // Returns true if accepted, false if ignored as duplicate/out-of-order or invalid bounds.
-func (t *RFTracker) UpdateChannelRF(
+func (t *RFTracker) UpdateNodeRF(
+	gatewayID string,
+	nodeID int,
+	rssiDbm int,
+	snrDb float64,
+	channelIdx *int,
+	source string,
+	validation string,
+	gatewayEpoch string,
+	sampleSeq uint64,
+	sampleMonotonicUS uint64,
+	ageMs uint32,
+) bool {
+	ok, _ := t.UpdateNodeRFWithReason(
+		gatewayID, nodeID, rssiDbm, snrDb, channelIdx,
+		source, validation, gatewayEpoch, sampleSeq, sampleMonotonicUS, ageMs,
+	)
+	return ok
+}
+
+// UpdateChannelRFWithReason ingests a channel energy sample with diagnostic reason.
+func (t *RFTracker) UpdateChannelRFWithReason(
 	gatewayID string,
 	channelIdx int,
 	channelRssiDbm int,
@@ -199,9 +290,9 @@ func (t *RFTracker) UpdateChannelRF(
 	sampleSeq uint64,
 	sampleMonotonicUS uint64,
 	ageMs uint32,
-) bool {
+) (bool, string) {
 	if gatewayID == "" || gatewayEpoch == "" || channelIdx < 0 || channelIdx > 10 {
-		return false
+		return false, "INVALID_ARGS"
 	}
 
 	t.mu.Lock()
@@ -209,19 +300,32 @@ func (t *RFTracker) UpdateChannelRF(
 
 	if _, ok := t.gatewaysSeen[gatewayID]; !ok {
 		if len(t.gatewaysSeen) >= MaxGatewaysTracked {
-			return false
+			return false, "GATEWAY_LIMIT_EXCEEDED"
 		}
 		t.gatewaysSeen[gatewayID] = time.Now().UTC()
 	}
 
+	if t.isEpochRetiredLocked(gatewayID, gatewayEpoch) {
+		return false, "RETIRED_EPOCH"
+	}
+
 	key := channelRFKey{gatewayID: gatewayID, channelIdx: channelIdx}
 	existing, exists := t.channelSnapshots[key]
+	var reason string
+
 	if exists {
 		if existing.GatewayEpoch == gatewayEpoch {
 			if sampleSeq <= existing.SampleSeq {
-				return false
+				return false, "STALE_OR_DUPLICATE_SEQUENCE"
 			}
+			reason = "ACCEPTED_MONOTONIC"
+		} else {
+			t.recordEpochTransitionLocked(gatewayID, gatewayEpoch)
+			reason = "ACCEPTED_NEW_EPOCH"
 		}
+	} else {
+		t.recordEpochTransitionLocked(gatewayID, gatewayEpoch)
+		reason = "ACCEPTED_FIRST_SAMPLE"
 	}
 
 	now := time.Now().UTC()
@@ -240,7 +344,26 @@ func (t *RFTracker) UpdateChannelRF(
 		MeasuredAt:        measuredAt,
 	}
 
-	return true
+	return true, reason
+}
+
+// UpdateChannelRF ingests a channel energy sample for a gateway channel.
+// Returns true if accepted, false if ignored as duplicate/out-of-order or invalid bounds.
+func (t *RFTracker) UpdateChannelRF(
+	gatewayID string,
+	channelIdx int,
+	channelRssiDbm int,
+	sampleContext string,
+	gatewayEpoch string,
+	sampleSeq uint64,
+	sampleMonotonicUS uint64,
+	ageMs uint32,
+) bool {
+	ok, _ := t.UpdateChannelRFWithReason(
+		gatewayID, channelIdx, channelRssiDbm, sampleContext,
+		gatewayEpoch, sampleSeq, sampleMonotonicUS, ageMs,
+	)
+	return ok
 }
 
 // GetNodeRFView returns the latest RF view for a node under a specific gateway.
@@ -395,6 +518,8 @@ func (t *RFTracker) RemoveGateway(gatewayID string) {
 		}
 	}
 	delete(t.gatewaysSeen, gatewayID)
+	delete(t.currentGatewayEpoch, gatewayID)
+	delete(t.retiredGatewayEpochs, gatewayID)
 }
 
 // Clear resets all stored RF state.
@@ -404,4 +529,26 @@ func (t *RFTracker) Clear() {
 	t.nodeSnapshots = make(map[nodeRFKey]*NodeRFRecord)
 	t.channelSnapshots = make(map[channelRFKey]*ChannelRFRecord)
 	t.gatewaysSeen = make(map[string]time.Time)
+	t.currentGatewayEpoch = make(map[string]string)
+	t.retiredGatewayEpochs = make(map[string][]string)
+}
+
+// GetCurrentEpoch returns the active boot epoch for a gateway.
+func (t *RFTracker) GetCurrentEpoch(gatewayID string) string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.currentGatewayEpoch[gatewayID]
+}
+
+// GetRetiredEpochs returns a copy of retired boot epochs for a gateway.
+func (t *RFTracker) GetRetiredEpochs(gatewayID string) []string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	retired := t.retiredGatewayEpochs[gatewayID]
+	if retired == nil {
+		return nil
+	}
+	res := make([]string, len(retired))
+	copy(res, retired)
+	return res
 }

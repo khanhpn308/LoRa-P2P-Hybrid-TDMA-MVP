@@ -80,11 +80,15 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
   }, [node]);
 
   const inFlightRef = useRef<boolean>(false);
+  const trailingRefreshRequestedRef = useRef<boolean>(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const isMountedRef = useRef<boolean>(true);
 
   const loadRealNode = useCallback(async (silent = false) => {
-    if (inFlightRef.current) return;
+    if (inFlightRef.current) {
+      trailingRefreshRequestedRef.current = true;
+      return;
+    }
     inFlightRef.current = true;
 
     abortControllerRef.current?.abort();
@@ -101,7 +105,7 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
         signal: ac.signal,
       });
 
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || ac.signal.aborted) return;
 
       let resolvedGwId = effectiveGwId || "";
       if (realNode) {
@@ -123,6 +127,12 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
           operating: realNode.status === "ONLINE",
           state: realNode.status === "ONLINE" ? "NORMAL" : "OFFLINE",
         }));
+      } else {
+        // Backend returned null or failed fetch; mark stale if mounted and not aborted
+        setNode((prev) => ({
+          ...prev,
+          rf_stale: true,
+        }));
       }
 
       if (!silent) {
@@ -132,7 +142,7 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
             alertsParams.gateway_id = resolvedGwId.trim();
           }
           const alertsResp = await getAlerts(alertsParams);
-          if (isMountedRef.current) {
+          if (isMountedRef.current && !ac.signal.aborted) {
             if (alertsResp && alertsResp.items) {
               setEvents(alertsResp.items);
             } else {
@@ -140,14 +150,14 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
             }
           }
         } catch {
-          if (isMountedRef.current) {
+          if (isMountedRef.current && !ac.signal.aborted) {
             setEvents([]);
           }
         }
       }
     } catch {
       // On network/API failure, preserve last known values as stale; do not mark online
-      if (isMountedRef.current) {
+      if (isMountedRef.current && !ac.signal.aborted) {
         setNode((prev) => ({
           ...prev,
           rf_stale: true,
@@ -155,6 +165,10 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
       }
     } finally {
       inFlightRef.current = false;
+      if (trailingRefreshRequestedRef.current && isMountedRef.current) {
+        trailingRefreshRequestedRef.current = false;
+        loadRealNode(true);
+      }
     }
   }, [rawId]);
 
@@ -181,6 +195,7 @@ function NodeDetailContent({ params }: { params: Promise<{ id: string }> }) {
 
     return () => {
       isMountedRef.current = false;
+      trailingRefreshRequestedRef.current = false;
       clearInterval(timer);
       abortControllerRef.current?.abort();
       if (typeof document !== "undefined") {

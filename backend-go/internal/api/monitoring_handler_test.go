@@ -1264,3 +1264,88 @@ func TestMonitoringHandler_RFMetrics_CleanupOnDelete(t *testing.T) {
 		t.Fatalf("expected gateway gw01 channel RF view to be purged after delete, got %+v", chView)
 	}
 }
+
+func TestMonitoringHandler_RFMetrics_GatewayRebootAndRESTOverlay(t *testing.T) {
+	authMap := map[string]api.Role{
+		"token-viewer": api.RoleViewer,
+	}
+	staticAuth := api.NewStaticAuthenticator(authMap)
+
+	store := newMockMonitoringStorage()
+	store.gateways["gw-a"] = &domain.GatewayStatusRecord{GatewayID: "gw-a"}
+	store.nodes = []domain.NodeSummary{
+		{NodeID: 3, GatewayID: "gw-a", Status: "ACTIVE"},
+	}
+
+	tracker := presence.NewTracker()
+	rfTracker := tracker.RF()
+	handler := api.NewMonitoringHandler(store, 5*time.Minute, tracker, staticAuth)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	epoch1 := "550e8400-e29b-41d4-a716-446655440001"
+	epoch2 := "550e8400-e29b-41d4-a716-446655440002"
+	chIdx := 2
+
+	// Pre-reboot: sample from epoch1 with seq 62
+	rfTracker.UpdateNodeRF("gw-a", 3, -20, 6.5, &chIdx, "UP_EVENT", "VERIFIED", epoch1, 62, 62000, 0)
+
+	// Query REST GET /api/v1/nodes?gateway_id=gw-a
+	req1 := httptest.NewRequest(http.MethodGet, "/api/v1/nodes?gateway_id=gw-a", nil)
+	req1.Header.Set("Authorization", "Bearer token-viewer")
+	rec1 := httptest.NewRecorder()
+	mux.ServeHTTP(rec1, req1)
+
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", rec1.Code, rec1.Body.String())
+	}
+	var page1 domain.NodePage
+	if err := json.Unmarshal(rec1.Body.Bytes(), &page1); err != nil {
+		t.Fatalf("failed to decode JSON: %v", err)
+	}
+	if len(page1.Items) != 1 || *page1.Items[0].LastRssiDbm != -20 || *page1.Items[0].LastSnrDb != 6.5 {
+		t.Fatalf("unexpected pre-reboot REST values: %+v", page1.Items)
+	}
+
+	// Reboot: Gateway restarts, epoch2 arrives with reset seq = 1 and fresh metrics (-72 dBm, 9.25 dB)
+	rfTracker.UpdateNodeRF("gw-a", 3, -72, 9.25, &chIdx, "UP_EVENT", "VERIFIED", epoch2, 1, 1000, 0)
+
+	// Query REST GET /api/v1/nodes?gateway_id=gw-a
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/nodes?gateway_id=gw-a", nil)
+	req2.Header.Set("Authorization", "Bearer token-viewer")
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	var page2 domain.NodePage
+	if err := json.Unmarshal(rec2.Body.Bytes(), &page2); err != nil {
+		t.Fatalf("failed to decode JSON: %v", err)
+	}
+	if len(page2.Items) != 1 || *page2.Items[0].LastRssiDbm != -72 || *page2.Items[0].LastSnrDb != 9.25 {
+		t.Fatalf("REST overlay did not reflect post-reboot epoch2 metrics: %+v", page2.Items)
+	}
+	if *page2.Items[0].RfStale != false {
+		t.Fatalf("expected rf_stale=false for fresh packet, got true")
+	}
+
+	// Late packet from retired epoch1: rejected
+	ok := rfTracker.UpdateNodeRF("gw-a", 3, -20, 6.5, &chIdx, "UP_EVENT", "VERIFIED", epoch1, 63, 63000, 0)
+	if ok {
+		t.Fatalf("expected late packet from retired epoch1 to be rejected")
+	}
+
+	// REST still returns epoch2 metrics
+	req3 := httptest.NewRequest(http.MethodGet, "/api/v1/nodes?gateway_id=gw-a", nil)
+	req3.Header.Set("Authorization", "Bearer token-viewer")
+	rec3 := httptest.NewRecorder()
+	mux.ServeHTTP(rec3, req3)
+	var page3 domain.NodePage
+	if err := json.Unmarshal(rec3.Body.Bytes(), &page3); err != nil {
+		t.Fatalf("failed to decode JSON: %v", err)
+	}
+	if len(page3.Items) != 1 || *page3.Items[0].LastRssiDbm != -72 || *page3.Items[0].LastSnrDb != 9.25 {
+		t.Fatalf("REST overlay was corrupted by retired epoch1: %+v", page3.Items)
+	}
+}

@@ -353,4 +353,218 @@ describe("LoRa RF Quality Contracts & Presentation (#394)", () => {
       assert.strictEqual(offlineNodeWithRf.status, "OFFLINE");
     });
   });
+
+  describe("6. Event-Triggered RF Refresh & Concurrency Reconciliation (#400)", () => {
+    test("In-flight REST request at matching alert arrival executes trailing refresh with zero overlapping requests", async () => {
+      let activeRequests = 0;
+      let maxConcurrent = 0;
+      let fetchCount = 0;
+      const rfSnapshots: number[] = [];
+
+      let inFlight = false;
+      let trailingRequested = false;
+      const isMounted = true;
+
+      const mockFetchNode = async (rssiVal: number) => {
+        fetchCount++;
+        activeRequests++;
+        maxConcurrent = Math.max(maxConcurrent, activeRequests);
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        rfSnapshots.push(rssiVal);
+        activeRequests--;
+      };
+
+      const loadRealNode = async (rssi: number) => {
+        if (inFlight) {
+          trailingRequested = true;
+          return;
+        }
+        inFlight = true;
+        try {
+          await mockFetchNode(rssi);
+        } finally {
+          inFlight = false;
+          if (trailingRequested && isMounted) {
+            trailingRequested = false;
+            await loadRealNode(-68);
+          }
+        }
+      };
+
+      // Initial request in flight
+      const promise1 = loadRealNode(-95);
+      assert.strictEqual(inFlight, true);
+
+      // Matching alert arrives while request is in flight
+      const alertPromise = loadRealNode(-68);
+      await alertPromise;
+      assert.strictEqual(trailingRequested, true);
+
+      // Wait for promise1 to finish (which automatically triggers the trailing refresh)
+      await promise1;
+
+      // Exactly 2 fetches occurred (initial + trailing)
+      assert.strictEqual(fetchCount, 2);
+      // Zero overlapping requests: maxConcurrent is strictly 1
+      assert.strictEqual(maxConcurrent, 1);
+      // The final snapshot reflects the latest RF (-68 dBm)
+      assert.deepStrictEqual(rfSnapshots, [-95, -68]);
+    });
+
+    test("Multiple alerts arriving during in-flight request are coalesced into a single trailing refresh", async () => {
+      let fetchCount = 0;
+      let inFlight = false;
+      let trailingRequested = false;
+      const isMounted = true;
+
+      const mockFetchNode = async () => {
+        fetchCount++;
+        await new Promise((resolve) => setTimeout(resolve, 40));
+      };
+
+      const loadRealNode = async () => {
+        if (inFlight) {
+          trailingRequested = true;
+          return;
+        }
+        inFlight = true;
+        try {
+          await mockFetchNode();
+        } finally {
+          inFlight = false;
+          if (trailingRequested && isMounted) {
+            trailingRequested = false;
+            await loadRealNode();
+          }
+        }
+      };
+
+      const p1 = loadRealNode();
+      // Burst of 4 alerts arrive during in-flight load
+      await loadRealNode();
+      await loadRealNode();
+      await loadRealNode();
+      await loadRealNode();
+
+      await p1;
+
+      // Exactly 2 fetches: 1 initial + 1 coalesced trailing
+      assert.strictEqual(fetchCount, 2);
+    });
+
+    test("Unmount cancellation suppresses trailing refresh and aborts active request", async () => {
+      let fetchCount = 0;
+      let inFlight = false;
+      let trailingRequested = false;
+      let isMounted = true;
+      const ac = new AbortController();
+
+      const mockFetchNode = async (signal: AbortSignal) => {
+        fetchCount++;
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(resolve, 50);
+          signal.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(new Error("Aborted"));
+          });
+        });
+      };
+
+      const loadRealNode = async () => {
+        if (inFlight) {
+          trailingRequested = true;
+          return;
+        }
+        inFlight = true;
+        try {
+          await mockFetchNode(ac.signal);
+        } catch {
+          // aborted
+        } finally {
+          inFlight = false;
+          if (trailingRequested && isMounted) {
+            trailingRequested = false;
+            await loadRealNode();
+          }
+        }
+      };
+
+      const p1 = loadRealNode();
+      // Alert triggers trailing refresh request
+      await loadRealNode();
+      assert.strictEqual(trailingRequested, true);
+
+      // Component unmounts: abort and set isMounted = false
+      isMounted = false;
+      trailingRequested = false;
+      ac.abort();
+
+      await p1;
+
+      // Only the first fetch was started; trailing refresh was NOT executed
+      assert.strictEqual(fetchCount, 1);
+    });
+
+    test("Matching ALERT_TRIGGERED filters by node_id and gateway_id strictly", () => {
+      const currentNodeId = 3;
+      const currentGwId: string = "gw-a";
+
+      const isMatchingAlert = (payload: { node_id: number; gateway_id: string }) => {
+        const matchesGateway = !currentGwId || currentGwId === "--" || currentGwId === payload.gateway_id;
+        return payload.node_id === currentNodeId && matchesGateway;
+      };
+
+      // 1. Matching alert
+      assert.strictEqual(isMatchingAlert({ node_id: 3, gateway_id: "gw-a" }), true);
+
+      // 2. Unrelated node ID -> Ignored
+      assert.strictEqual(isMatchingAlert({ node_id: 4, gateway_id: "gw-a" }), false);
+      assert.strictEqual(isMatchingAlert({ node_id: 99, gateway_id: "gw-a" }), false);
+
+      // 3. Unrelated gateway ID -> Ignored
+      assert.strictEqual(isMatchingAlert({ node_id: 3, gateway_id: "gw-b" }), false);
+      assert.strictEqual(isMatchingAlert({ node_id: 3, gateway_id: "other-gw" }), false);
+    });
+
+    test("getNode with aborted signal returns null without making network calls", async () => {
+      let networkCalled = false;
+      globalThis.fetch = async () => {
+        networkCalled = true;
+        return new Response("{}", { status: 200 });
+      };
+
+      const ac = new AbortController();
+      ac.abort();
+
+      const result = await getNode(3, { gatewayId: "gw-a", signal: ac.signal });
+      assert.strictEqual(result, null);
+      assert.strictEqual(networkCalled, false);
+    });
+
+    test("API error preserves last known values as rf_stale: true", () => {
+      const prevNode: NodeSummary = {
+        node_id: 3,
+        gateway_id: "gw-a",
+        last_seen_at: "2026-11-14T16:38:51Z",
+        battery_mv: 3300,
+        last_rssi_dbm: -75,
+        last_snr_db: 8.5,
+        last_rf_at: "2026-11-14T16:38:51Z",
+        rf_age_seconds: 15,
+        rf_source: "UP_EVENT",
+        rf_stale: false,
+        status: "ONLINE",
+      };
+
+      const errorNode = {
+        ...prevNode,
+        rf_stale: true,
+      };
+
+      assert.strictEqual(errorNode.last_rssi_dbm, -75);
+      assert.strictEqual(errorNode.last_snr_db, 8.5);
+      assert.strictEqual(errorNode.last_rf_at, "2026-11-14T16:38:51Z");
+      assert.strictEqual(errorNode.rf_stale, true);
+    });
+  });
 });

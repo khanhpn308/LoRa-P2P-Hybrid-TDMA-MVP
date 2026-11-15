@@ -12,7 +12,7 @@
 static const char *TAG = "gateway_rf_metrics";
 
 static char s_gateway_id[32] = "gw-a";
-static char s_gateway_epoch[37] = "550e8400-e29b-41d4-a716-446655440000";
+static char s_gateway_epoch[37] = {0};
 static uint64_t s_sample_seq_counter = 0;
 
 static gateway_rf_node_cache_entry_t s_node_cache[GATEWAY_RF_METRICS_MAX_NODES + 1][GATEWAY_RF_METRICS_MAX_CHANNELS];
@@ -22,6 +22,31 @@ static gateway_rf_channel_cache_entry_t s_channel_cache[GATEWAY_RF_METRICS_MAX_C
 static SemaphoreHandle_t s_rf_mutex = NULL;
 static StaticSemaphore_t s_rf_mutex_buffer;
 #endif
+
+static bool is_valid_uuid(const char *uuid)
+{
+    if (uuid == NULL) {
+        return false;
+    }
+    if (strlen(uuid) != 36) {
+        return false;
+    }
+    for (size_t i = 0; i < 36; i++) {
+        if (i == 8 || i == 13 || i == 18 || i == 23) {
+            if (uuid[i] != '-') {
+                return false;
+            }
+        } else {
+            char c = uuid[i];
+            if (!((c >= '0' && c <= '9') ||
+                  (c >= 'a' && c <= 'f') ||
+                  (c >= 'A' && c <= 'F'))) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
 
 static void lock_rf(void)
 {
@@ -43,6 +68,16 @@ static void unlock_rf(void)
 
 esp_err_t gateway_rf_metrics_init(const char *gateway_id, const char *gateway_epoch)
 {
+    if (gateway_id == NULL || strlen(gateway_id) == 0) {
+        ESP_LOGE(TAG, "RF Metrics init failed: gateway_id is NULL or empty");
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!is_valid_uuid(gateway_epoch)) {
+        ESP_LOGE(TAG, "RF Metrics init failed: invalid or missing gateway_epoch UUID: %s",
+                 gateway_epoch ? gateway_epoch : "NULL");
+        return ESP_ERR_INVALID_ARG;
+    }
+
 #ifdef ESP_PLATFORM
     if (s_rf_mutex == NULL) {
         s_rf_mutex = xSemaphoreCreateMutexStatic(&s_rf_mutex_buffer);
@@ -50,14 +85,12 @@ esp_err_t gateway_rf_metrics_init(const char *gateway_id, const char *gateway_ep
 #endif
 
     lock_rf();
-    if (gateway_id != NULL && strlen(gateway_id) > 0) {
-        strncpy(s_gateway_id, gateway_id, sizeof(s_gateway_id) - 1);
-        s_gateway_id[sizeof(s_gateway_id) - 1] = '\0';
-    }
-    if (gateway_epoch != NULL && strlen(gateway_epoch) > 0) {
-        strncpy(s_gateway_epoch, gateway_epoch, sizeof(s_gateway_epoch) - 1);
-        s_gateway_epoch[sizeof(s_gateway_epoch) - 1] = '\0';
-    }
+    strncpy(s_gateway_id, gateway_id, sizeof(s_gateway_id) - 1);
+    s_gateway_id[sizeof(s_gateway_id) - 1] = '\0';
+
+    strncpy(s_gateway_epoch, gateway_epoch, sizeof(s_gateway_epoch) - 1);
+    s_gateway_epoch[sizeof(s_gateway_epoch) - 1] = '\0';
+
     memset(s_node_cache, 0, sizeof(s_node_cache));
     memset(s_channel_cache, 0, sizeof(s_channel_cache));
     s_sample_seq_counter = 0;
@@ -92,6 +125,10 @@ esp_err_t gateway_rf_metrics_record_and_publish_node(uint8_t node_id,
 {
     if (source == NULL || channel_idx >= GATEWAY_RF_METRICS_MAX_CHANNELS) {
         return ESP_ERR_INVALID_ARG;
+    }
+    if (s_gateway_epoch[0] == '\0') {
+        ESP_LOGE(TAG, "RF Metrics not initialized with valid epoch");
+        return ESP_ERR_INVALID_STATE;
     }
 
     uint64_t seq = gateway_rf_metrics_next_seq();
@@ -187,6 +224,9 @@ esp_err_t gateway_rf_metrics_format_alert_block(char *buf,
     if (buf == NULL || buf_size == 0) {
         return ESP_ERR_INVALID_ARG;
     }
+    if (s_gateway_epoch[0] == '\0') {
+        return ESP_ERR_INVALID_STATE;
+    }
 
     float snr_db = (float)snr_db_quarter / 4.0f;
     int len = snprintf(buf, buf_size,
@@ -201,6 +241,10 @@ esp_err_t gateway_rf_metrics_format_alert_block(char *buf,
 
 esp_err_t gateway_rf_metrics_sample_and_publish_channel(void)
 {
+    if (s_gateway_epoch[0] == '\0') {
+        return ESP_ERR_INVALID_STATE;
+    }
+
     int16_t channel_rssi = 0;
     sx1276_channel_sample_context_t ctx = SX1276_CHANNEL_SAMPLE_IDLE;
 
