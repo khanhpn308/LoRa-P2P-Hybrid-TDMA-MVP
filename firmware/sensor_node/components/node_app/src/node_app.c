@@ -45,6 +45,14 @@ RTC_DATA_ATTR static bool s_join_initialized = false;
 #define CONFIG_NODE_STRICT_PROVISIONING 1
 #endif
 
+#ifndef CONFIG_NODE_AUTO_EVENT_ENABLE
+#define CONFIG_NODE_AUTO_EVENT_ENABLE 0
+#endif
+
+#ifndef CONFIG_NODE_AUTO_EVENT_INTERVAL_SEC
+#define CONFIG_NODE_AUTO_EVENT_INTERVAL_SEC 30
+#endif
+
 static button_driver_t s_btn_driver;
 
 /**
@@ -92,6 +100,36 @@ static void node_handle_revoke_and_sleep(button_driver_t *btn_driver)
              CONFIG_NODE_BUTTON_GPIO);
     esp_deep_sleep_start();
     vTaskSuspend(NULL);
+}
+
+/**
+ * @brief Generates a simulated sensor event and enqueues it into the persistent FIFO.
+ *
+ * @param[in] trigger_source String describing trigger origin (e.g. "BUTTON", "AUTO", "BOOT_AUTO").
+ * @return ESP_OK if enqueued successfully, error code otherwise.
+ */
+static esp_err_t node_generate_and_enqueue_event(const char *trigger_source)
+{
+    s_button_events++;
+    uint32_t event_ref = 0;
+    uint32_t now_sec = (uint32_t)(esp_timer_get_time() / 1000000ULL);
+    int16_t rand_val = (int16_t)(80 + (esp_random() % 21));
+
+    /* Event Code 0x01 = Event Trigger, Value = rand_val (80..100) */
+    esp_err_t push_err = node_event_fifo_push(&s_event_fifo, now_sec, 0x01, rand_val, &event_ref);
+    if (push_err == ESP_OK) {
+        ESP_LOGI(TAG, ">>> %s EVENT ENQUEUED <<< Ref: %" PRIu32 ", Value: %d, Total events: %" PRIu32,
+                 trigger_source != NULL ? trigger_source : "UNKNOWN",
+                 event_ref, (int)rand_val, s_button_events);
+    } else {
+        ESP_LOGW(TAG, "Failed to enqueue %s event: %s (FIFO dropped count: %" PRIu32 ")",
+                 trigger_source != NULL ? trigger_source : "UNKNOWN",
+                 esp_err_to_name(push_err), node_event_fifo_get_dropped_count(&s_event_fifo));
+    }
+
+    /* Local OLED display update for confirmed event */
+    (void)node_ui_show_event(rand_val, now_sec, s_button_events);
+    return push_err;
 }
 
 void node_app_run(void)
@@ -364,7 +402,10 @@ void node_app_run(void)
                 if (s_btn_driver.is_initialized) {
                     (void)button_driver_arm_sleep(&s_btn_driver);
                 }
-#if CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC > 0
+#if CONFIG_NODE_AUTO_EVENT_ENABLE
+                ESP_LOGI(TAG, "Node is JOINED. Enabling Auto Event Timer Wakeup in %d seconds", CONFIG_NODE_AUTO_EVENT_INTERVAL_SEC);
+                (void)esp_sleep_enable_timer_wakeup((uint64_t)CONFIG_NODE_AUTO_EVENT_INTERVAL_SEC * 1000000ULL);
+#elif CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC > 0
                 (void)esp_sleep_enable_timer_wakeup((uint64_t)CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC * 1000000ULL);
 #endif
                 ESP_LOGI(TAG, "Node is JOINED. Entering Deep-Sleep mode. Press button on GPIO %d to wake up...", CONFIG_NODE_BUTTON_GPIO);
@@ -416,29 +457,17 @@ void node_app_run(void)
             bool qualified = false;
             esp_err_t q_err = button_driver_qualify_press(&s_btn_driver, &qualified);
             if (q_err == ESP_OK && qualified) {
-                s_button_events++;
-                uint32_t event_ref = 0;
-                uint32_t now_sec = (uint32_t)(esp_timer_get_time() / 1000000ULL);
-                int16_t rand_val = (int16_t)(80 + (esp_random() % 21));
-
-                /* Event Code 0x01 = Manual Button Trigger, Value = rand_val (80..100) */
-                esp_err_t push_err = node_event_fifo_push(&s_event_fifo, now_sec, 0x01, rand_val, &event_ref);
-                if (push_err == ESP_OK) {
-                    ESP_LOGI(TAG, ">>> EVENT ENQUEUED <<< Ref: %" PRIu32 ", Value: %d, Total button events: %" PRIu32,
-                             event_ref, (int)rand_val, s_button_events);
-                } else {
-                    ESP_LOGW(TAG, "Failed to enqueue event: %s (FIFO dropped count: %" PRIu32 ")",
-                             esp_err_to_name(push_err), node_event_fifo_get_dropped_count(&s_event_fifo));
-                }
-
-                /* Local OLED display update for confirmed button event */
-                (void)node_ui_show_event(rand_val, now_sec, s_button_events);
+                (void)node_generate_and_enqueue_event("BUTTON");
             } else {
                 ESP_LOGW(TAG, "Transient wake without qualified button press (bounce/noise filtered)");
             }
             break;
         }
         case BUTTON_CAUSE_TIMER:
+#if CONFIG_NODE_AUTO_EVENT_ENABLE
+            ESP_LOGI(TAG, "[WAKE CAUSE] Periodic Timer Wakeup (Auto Event Interval: %d s)", CONFIG_NODE_AUTO_EVENT_INTERVAL_SEC);
+            (void)node_generate_and_enqueue_event("AUTO");
+#else
             ESP_LOGI(TAG, "[WAKE CAUSE] Periodic Timer Wakeup (5-10 min Node Liveness Heartbeat)");
             if (!radio_initialized) {
                 esp_err_t sx_err = sx1276_init(NULL, NULL);
@@ -461,6 +490,7 @@ void node_app_run(void)
                     node_handle_revoke_and_sleep(&s_btn_driver);
                 }
             }
+#endif
             break;
         default:
             ESP_LOGI(TAG, "[WAKE CAUSE] Power-On Reset or Software Restart with active session");
@@ -474,6 +504,10 @@ void node_app_run(void)
                     ESP_LOGW(TAG, "SX1276 init returned: %s (safe sleep default)", esp_err_to_name(sx_err));
                 }
             }
+#if CONFIG_NODE_AUTO_EVENT_ENABLE
+            /* On cold boot / reset with active session and auto-event enabled, enqueue initial event */
+            (void)node_generate_and_enqueue_event("BOOT_AUTO");
+#endif
             break;
     }
 
@@ -536,7 +570,14 @@ void node_app_run(void)
         (void)button_driver_arm_sleep(&s_btn_driver);
     }
 
-#if CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC > 0
+#if CONFIG_NODE_AUTO_EVENT_ENABLE
+    if (s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
+        ESP_LOGI(TAG, "Enabling Timer Wakeup in %d seconds (Auto Event Transmission)", CONFIG_NODE_AUTO_EVENT_INTERVAL_SEC);
+        (void)esp_sleep_enable_timer_wakeup((uint64_t)CONFIG_NODE_AUTO_EVENT_INTERVAL_SEC * 1000000ULL);
+    } else {
+        (void)esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+    }
+#elif CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC > 0
     if (s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
         ESP_LOGI(TAG, "Enabling Timer Wakeup in %d seconds", CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC);
         (void)esp_sleep_enable_timer_wakeup((uint64_t)CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC * 1000000ULL);

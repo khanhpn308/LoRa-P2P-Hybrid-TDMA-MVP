@@ -69,6 +69,27 @@ menu "Sensor Node Configuration"
                 Default 300 (5 minutes) matches the node liveness heartbeat reporting cycle.
     endmenu
 
+    menu "Periodic / Auto Event Transmission"
+        config NODE_AUTO_EVENT_ENABLE
+            bool "Enable Periodic Auto Event Transmission"
+            default n
+            help
+                When enabled, the sensor node will automatically generate and transmit UP_EVENT packets
+                periodically at a configured time interval, without requiring a physical button press.
+                The physical button press (EXT0) remains concurrently active as an immediate manual trigger.
+
+        config NODE_AUTO_EVENT_INTERVAL_SEC
+            int "Auto Event Transmission Interval in seconds"
+            default 30
+            range 1 86400
+            depends on NODE_AUTO_EVENT_ENABLE
+            help
+                Interval in seconds between periodic automatic event transmissions.
+                The node wakes up from Deep-Sleep every interval seconds,
+                generates an event, enqueues it to the persistent FIFO, and executes
+                CAD + CSMA/CA transmission to the Gateway.
+    endmenu
+
     menu "CAD / CSMA Timing & Airtime"
         config NODE_AIRTIME_PERMILLE
             int "Regulatory Duty Cycle Permille Limit (10 = 1.0%)"
