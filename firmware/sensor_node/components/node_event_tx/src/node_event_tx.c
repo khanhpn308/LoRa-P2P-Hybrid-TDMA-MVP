@@ -123,7 +123,7 @@ esp_err_t node_cad_event_tx_and_ack(const node_mac_config_t *cfg,
         /* 2b. Transmit UP_EVENT */
         ESP_LOGI(TAG, "[EVENT TX] Transmitting UP_EVENT (26B, Node #%u, Ctr=%" PRIu32 ", Attempt #%u/%u) on 920.250 MHz...",
                  hdr.node_id, uplink_counter, (unsigned int)(tx_retries + 1U), (unsigned int)tx_max);
-        esp_err_t tx_err = sx1276_tx(wire_tx, sizeof(wire_tx), pdMS_TO_TICKS(150));
+        esp_err_t tx_err = sx1276_tx(wire_tx, sizeof(wire_tx), pdMS_TO_TICKS(600));
         if (tx_err != ESP_OK) {
             ESP_LOGE(TAG, "[EVENT TX] Transmission failed: %s", esp_err_to_name(tx_err));
             tx_retries++;
@@ -138,11 +138,11 @@ esp_err_t node_cad_event_tx_and_ack(const node_mac_config_t *cfg,
         }
         ESP_LOGI(TAG, "[EVENT TX] Transmitted UP_EVENT successfully. Listening for DOWN_EVENT_ACK...");
 
-        /* 2c. Open RX window to wait for DOWN_EVENT_ACK (timeout: 400 ms) */
-        (void)node_radio_hal_rx_single(400);
+        /* 2c. Open RX window to wait for DOWN_EVENT_ACK (timeout: 800 ms) */
+        (void)node_radio_hal_rx_single(800);
         uint8_t ack_buf[64];
         size_t ack_len = 0U;
-        esp_err_t ack_rx_err = node_radio_hal_read_frame(ack_buf, &ack_len, 400);
+        esp_err_t ack_rx_err = node_radio_hal_read_frame(ack_buf, &ack_len, 800);
         (void)sx1276_standby();
 
         bool ack_valid = false;
