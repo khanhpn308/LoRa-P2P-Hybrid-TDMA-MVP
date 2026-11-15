@@ -397,7 +397,7 @@ esp_err_t process_radio_frame(const sx1276_rx_frame_t *frame)
                 if (enc_err == ESP_OK) {
                     ESP_LOGI(TAG, "[EVENT ACK TX] Sending DOWN_EVENT_ACK (19B) for Ref=%" PRIu32 " to Node #%u...",
                              up_ev.event_ref, hdr.node_id);
-                    esp_err_t tx_ack_err = sx1276_tx(ack_packet, 19U, pdMS_TO_TICKS(100));
+                    esp_err_t tx_ack_err = sx1276_tx(ack_packet, 19U, pdMS_TO_TICKS(600));
                     if (tx_ack_err == ESP_OK) {
                         ESP_LOGI(TAG, "[EVENT ACK TX] DOWN_EVENT_ACK transmitted successfully");
                     } else {
