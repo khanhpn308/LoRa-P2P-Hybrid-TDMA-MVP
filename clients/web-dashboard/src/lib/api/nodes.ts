@@ -69,10 +69,17 @@ export async function getNode(
     signal = optionsOrGatewayId.signal;
   }
 
+  if (signal?.aborted) {
+    return null;
+  }
+
   try {
     let cursor: string | undefined = undefined;
     const maxPages = 10;
     for (let pageNum = 0; pageNum < maxPages; pageNum++) {
+      if (signal?.aborted) {
+        return null;
+      }
       const page = await getNodes(
         {
           limit: 100,

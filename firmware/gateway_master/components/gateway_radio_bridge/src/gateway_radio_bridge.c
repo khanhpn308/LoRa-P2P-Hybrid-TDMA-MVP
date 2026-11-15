@@ -37,7 +37,11 @@ esp_err_t gateway_radio_bridge_init(const gateway_radio_bridge_config_t *cfg)
         strncpy(s_gateway_id, cfg->gateway_id, sizeof(s_gateway_id) - 1);
         s_gateway_id[sizeof(s_gateway_id) - 1] = '\0';
     }
-    (void)gateway_rf_metrics_init(s_gateway_id, cfg->gateway_epoch);
+    esp_err_t rf_init_err = gateway_rf_metrics_init(s_gateway_id, cfg->gateway_epoch);
+    if (rf_init_err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize gateway RF metrics: %s", esp_err_to_name(rf_init_err));
+        return rf_init_err;
+    }
     return ESP_OK;
 }
 
@@ -309,9 +313,9 @@ esp_err_t process_radio_frame(const sx1276_rx_frame_t *frame)
                     (void)gateway_wal_push(s_wal_ptr, &wal_ev);
                 }
 
-                /* Format optional 'rf' block for alert JSON (Issue #392) */
+                /* Format optional 'rf' block for alert JSON (Issue #392 / #400) */
                 char rf_block[160] = "";
-                (void)gateway_rf_metrics_format_alert_block(
+                esp_err_t rf_fmt_err = gateway_rf_metrics_format_alert_block(
                     rf_block,
                     sizeof(rf_block),
                     sample_seq,
@@ -320,16 +324,34 @@ esp_err_t process_radio_frame(const sx1276_rx_frame_t *frame)
                     rssi,
                     snr
                 );
+                if (rf_fmt_err != ESP_OK) {
+                    ESP_LOGW(TAG, "[EVENT RX] RF alert block formatting failed (%s); proceeding without RF block",
+                             esp_err_to_name(rf_fmt_err));
+                    rf_block[0] = '\0';
+                }
 
                 /* Publish Event to Backend over MQTT for UI Charts */
-                char alert_payload[512];
-                int alert_len = snprintf(alert_payload, sizeof(alert_payload),
-                    "{\"schema_version\":\"1.0-draft\",\"event_id\":\"%s:00000000-0000-0000-0000-000000000001:%" PRIu32 "\",\"gateway_id\":\"%s\",\"node_id\":%u,\"event_code\":%u,\"event_value\":%d,\"battery_mv\":3300,\"severity\":\"P3_NORMAL\",\"radio_ack_sent\":true,\"data\":{\"event_ref\":%" PRIu32 ",\"event_code\":%u,\"event_value\":%d},%s}",
-                    s_gateway_id, (uint32_t)(esp_timer_get_time() / 1000ULL),
-                    s_gateway_id,
-                    hdr.node_id, up_ev.event_code, up_ev.event_value,
-                    up_ev.event_ref, up_ev.event_code, up_ev.event_value,
-                    rf_block);
+                const char *gw_epoch = gateway_rf_metrics_get_epoch();
+                char alert_payload[GATEWAY_TRANSPORT_MAX_PAYLOAD_LEN];
+                int alert_len;
+                if (rf_block[0] != '\0') {
+                    alert_len = snprintf(alert_payload, sizeof(alert_payload),
+                        "{\"schema_version\":\"1.0-draft\",\"event_id\":\"%s:%s:%" PRIu64 "\",\"gateway_id\":\"%s\",\"gateway_epoch\":\"%s\",\"event_seq\":\"%" PRIu64 "\",\"observed_at\":null,\"observed_time_source\":\"unknown\",\"radio_rx_monotonic_us\":\"%" PRIu64 "\",\"buffered\":false,\"node_id\":%u,\"superframe_seq\":1,\"seq_num\":1,\"schedule_version\":1,\"event_code\":%u,\"event_value\":%d,\"battery_mv\":3300,\"severity\":\"P3_NORMAL\",\"radio_ack_sent\":true,\"data\":{\"event_ref\":%" PRIu32 ",\"event_code\":%u,\"event_value\":%d},%s}",
+                        s_gateway_id, gw_epoch, sample_seq,
+                        s_gateway_id, gw_epoch, sample_seq,
+                        rx_monotonic_us,
+                        hdr.node_id, up_ev.event_code, up_ev.event_value,
+                        up_ev.event_ref, up_ev.event_code, up_ev.event_value,
+                        rf_block);
+                } else {
+                    alert_len = snprintf(alert_payload, sizeof(alert_payload),
+                        "{\"schema_version\":\"1.0-draft\",\"event_id\":\"%s:%s:%" PRIu32 "\",\"gateway_id\":\"%s\",\"gateway_epoch\":\"%s\",\"event_seq\":\"%" PRIu32 "\",\"observed_at\":null,\"observed_time_source\":\"unknown\",\"radio_rx_monotonic_us\":\"%" PRIu64 "\",\"buffered\":false,\"node_id\":%u,\"superframe_seq\":1,\"seq_num\":1,\"schedule_version\":1,\"event_code\":%u,\"event_value\":%d,\"battery_mv\":3300,\"severity\":\"P3_NORMAL\",\"radio_ack_sent\":true,\"data\":{\"event_ref\":%" PRIu32 ",\"event_code\":%u,\"event_value\":%d}}",
+                        s_gateway_id, gw_epoch, up_ev.event_ref,
+                        s_gateway_id, gw_epoch, up_ev.event_ref,
+                        rx_monotonic_us,
+                        hdr.node_id, up_ev.event_code, up_ev.event_value,
+                        up_ev.event_ref, up_ev.event_code, up_ev.event_value);
+                }
 
                 if (alert_len > 0 && (size_t)alert_len < sizeof(alert_payload)) {
                     esp_err_t pub_err = gateway_transport_publish_event((const uint8_t *)alert_payload, (size_t)alert_len);

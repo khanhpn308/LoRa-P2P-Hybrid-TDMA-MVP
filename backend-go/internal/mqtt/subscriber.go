@@ -101,6 +101,7 @@ type GatewayStatusSubscriber struct {
 	joinReqStore    storage.JoinRequestStorage
 	presenceTracker *presence.Tracker
 	rfTracker       *presence.RFTracker
+	rfLogLimiter    RateLimiter
 	hub             RealtimeBroadcaster
 	brokerURI       string
 	mu              sync.Mutex
@@ -134,6 +135,7 @@ func NewGatewayStatusSubscriber(
 		joinReqStore:    joinReqStore,
 		presenceTracker: presenceTracker,
 		rfTracker:       rfTracker,
+		rfLogLimiter:    NewTokenBucketLimiter(20, 5),
 		hub:             broadcaster,
 		stopTicker:      make(chan struct{}),
 	}
@@ -788,7 +790,16 @@ func (s *GatewayStatusSubscriber) ingestAlertRF(gwID string, nodeID int, rfMap m
 		validation = val
 	}
 
-	tracker.UpdateNodeRF(gwID, nodeID, rssiDbm, snrDb, chIdx, source, validation, epoch, sampleSeq, monoUS, 0)
+	ok, reason := tracker.UpdateNodeRFWithReason(gwID, nodeID, rssiDbm, snrDb, chIdx, source, validation, epoch, sampleSeq, monoUS, 0)
+	if s.rfLogLimiter != nil && s.rfLogLimiter.Allow(context.Background(), gwID) {
+		if ok {
+			log.Printf("[MQTT Subscriber] Accepted alert RF sample: gw=%s node=%d epoch=%s seq=%d reason=%s",
+				gwID, nodeID, epoch, sampleSeq, reason)
+		} else {
+			log.Printf("[MQTT Subscriber] Rejected alert RF sample: gw=%s node=%d epoch=%s seq=%d reason=%s",
+				gwID, nodeID, epoch, sampleSeq, reason)
+		}
+	}
 }
 
 // handleRFMetricsMessage processes dedicated LoRa RF metrics publications.
@@ -872,7 +883,7 @@ func (s *GatewayStatusSubscriber) processRFMetricSample(tracker *presence.RFTrac
 		if smp.NodeID == nil || smp.RssiDbm == nil || smp.SnrDb == nil {
 			return
 		}
-		tracker.UpdateNodeRF(
+		ok, reason := tracker.UpdateNodeRFWithReason(
 			gwID,
 			*smp.NodeID,
 			*smp.RssiDbm,
@@ -885,11 +896,20 @@ func (s *GatewayStatusSubscriber) processRFMetricSample(tracker *presence.RFTrac
 			monoUS,
 			ageMs,
 		)
+		if s.rfLogLimiter != nil && s.rfLogLimiter.Allow(context.Background(), gwID) {
+			if ok {
+				log.Printf("[MQTT Subscriber] Accepted rf-metrics node sample: gw=%s node=%d epoch=%s seq=%d reason=%s",
+					gwID, *smp.NodeID, epoch, seq, reason)
+			} else {
+				log.Printf("[MQTT Subscriber] Rejected rf-metrics node sample: gw=%s node=%d epoch=%s seq=%d reason=%s",
+					gwID, *smp.NodeID, epoch, seq, reason)
+			}
+		}
 	case "CHANNEL":
 		if smp.ChannelIdx == nil || smp.ChannelRssiDbm == nil {
 			return
 		}
-		tracker.UpdateChannelRF(
+		ok, reason := tracker.UpdateChannelRFWithReason(
 			gwID,
 			*smp.ChannelIdx,
 			*smp.ChannelRssiDbm,
@@ -899,5 +919,14 @@ func (s *GatewayStatusSubscriber) processRFMetricSample(tracker *presence.RFTrac
 			monoUS,
 			ageMs,
 		)
+		if s.rfLogLimiter != nil && s.rfLogLimiter.Allow(context.Background(), gwID) {
+			if ok {
+				log.Printf("[MQTT Subscriber] Accepted rf-metrics channel sample: gw=%s ch=%d epoch=%s seq=%d reason=%s",
+					gwID, *smp.ChannelIdx, epoch, seq, reason)
+			} else {
+				log.Printf("[MQTT Subscriber] Rejected rf-metrics channel sample: gw=%s ch=%d epoch=%s seq=%d reason=%s",
+					gwID, *smp.ChannelIdx, epoch, seq, reason)
+			}
+		}
 	}
 }

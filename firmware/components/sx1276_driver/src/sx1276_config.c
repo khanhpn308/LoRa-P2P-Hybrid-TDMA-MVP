@@ -267,9 +267,23 @@ esp_err_t sx1276_register_plan_build(const sx1276_phy_config_t *conf,
     if (conf->pa_path == SX1276_PA_PATH_BOOST) {
         int8_t pwr = conf->tx_power_dbm;
         if (pwr < 2) pwr = 2;
-        if (pwr > 17) pwr = 17;
-        uint8_t output_power = (uint8_t)(pwr - 2);
-        out_plan->reg_pa_config = SX1276_PACONFIG_PASELECT_PA_BOOST | 0x70U | (output_power & 0x0FU);
+        // User requested: comment lai phan gioi han phat 17dBm, toi da +20 dBm
+        // if (pwr > 17) pwr = 17;
+        if (pwr > 20) pwr = 20;
+
+        if (pwr > 17) {
+            // High Power (+20 dBm) mode on PA_BOOST per Semtech SX1276 datasheet Section 5.4.3
+            // Pout = 20 - (15 - OutputPower) -> OutputPower = pwr - 5 (for +20 dBm, OutputPower = 15)
+            uint8_t output_power = (uint8_t)(pwr - 5);
+            out_plan->reg_pa_config = SX1276_PACONFIG_PASELECT_PA_BOOST | 0x70U | (output_power & 0x0FU);
+            out_plan->reg_pa_dac = SX1276_PADAC_20DBM_ON;
+        } else {
+            // Standard PA_BOOST mode (+2 to +17 dBm)
+            // Pout = 2 + OutputPower -> OutputPower = pwr - 2
+            uint8_t output_power = (uint8_t)(pwr - 2);
+            out_plan->reg_pa_config = SX1276_PACONFIG_PASELECT_PA_BOOST | 0x70U | (output_power & 0x0FU);
+            out_plan->reg_pa_dac = SX1276_PADAC_DEFAULT;
+        }
     } else if (conf->pa_path == SX1276_PA_PATH_RFO) {
         int8_t pwr = conf->tx_power_dbm;
         if (pwr < -4) pwr = -4;
@@ -277,8 +291,10 @@ esp_err_t sx1276_register_plan_build(const sx1276_phy_config_t *conf,
         // Pout = Pmax - (15 - OutputPower), with Pmax = 14.8 dBm (MaxPower = 7)
         uint8_t output_power = (uint8_t)(pwr + 1);
         out_plan->reg_pa_config = SX1276_PACONFIG_PASELECT_RFO | 0x70U | (output_power & 0x0FU);
+        out_plan->reg_pa_dac = SX1276_PADAC_DEFAULT;
     } else {
         out_plan->reg_pa_config = 0x00U; // Unknown / disabled
+        out_plan->reg_pa_dac = SX1276_PADAC_DEFAULT;
     }
 
     // PA Ramp (40 us = 0x09)

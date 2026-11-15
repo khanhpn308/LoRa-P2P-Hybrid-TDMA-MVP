@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "esp_log.h"
+#include "esp_random.h"
 #include "esp_timer.h"
 #include "nvs_flash.h"
 #include "sdkconfig.h"
@@ -25,10 +26,45 @@ static const char *TAG = "gateway_master";
 
 static gateway_wal_t s_gateway_wal;
 static gateway_v2_join_engine_t s_join_engine;
+static char s_gateway_boot_epoch[37] = {0};
+
+static void gateway_app_init_boot_epoch(void)
+{
+    if (s_gateway_boot_epoch[0] != '\0') {
+        return; /* Retain same epoch throughout boot, including MQTT reconnects */
+    }
+    uint8_t rand_bytes[16];
+    esp_fill_random(rand_bytes, sizeof(rand_bytes));
+    /* RFC 4122 UUID v4: set version to 4 (0100b) and variant to RFC 4122 (10b) */
+    rand_bytes[6] = (uint8_t)((rand_bytes[6] & 0x0f) | 0x40);
+    rand_bytes[8] = (uint8_t)((rand_bytes[8] & 0x3f) | 0x80);
+    int written = snprintf(s_gateway_boot_epoch, sizeof(s_gateway_boot_epoch),
+        "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+        rand_bytes[0], rand_bytes[1], rand_bytes[2], rand_bytes[3],
+        rand_bytes[4], rand_bytes[5], rand_bytes[6], rand_bytes[7],
+        rand_bytes[8], rand_bytes[9], rand_bytes[10], rand_bytes[11],
+        rand_bytes[12], rand_bytes[13], rand_bytes[14], rand_bytes[15]);
+    if (written != 36) {
+        ESP_LOGE(TAG, "Failed to format gateway boot epoch UUID");
+    } else {
+        ESP_LOGI(TAG, "Gateway boot epoch initialized: %s", s_gateway_boot_epoch);
+    }
+}
+
+const char *gateway_app_get_boot_epoch(void)
+{
+    if (s_gateway_boot_epoch[0] == '\0') {
+        gateway_app_init_boot_epoch();
+    }
+    return s_gateway_boot_epoch;
+}
 
 esp_err_t gateway_app_init(void)
 {
     ESP_LOGI(TAG, "Starting Gateway Master (ESP-IDF v6.1 / SX1276 MVP Continuous RX)");
+
+    /* Initialize unique boot epoch UUID once at initialization */
+    gateway_app_init_boot_epoch();
 
     // Initialize NVS flash for durable session key storage
     esp_err_t ret = nvs_flash_init();
@@ -111,7 +147,7 @@ esp_err_t gateway_app_init(void)
         .network_id = 100,
     };
     snprintf(join_cfg.gateway_id, sizeof(join_cfg.gateway_id), "%s", transport_cfg.gateway_id);
-    snprintf(join_cfg.gateway_epoch, sizeof(join_cfg.gateway_epoch), "%s", GATEWAY_V2_JOIN_DEFAULT_EPOCH);
+    snprintf(join_cfg.gateway_epoch, sizeof(join_cfg.gateway_epoch), "%s", s_gateway_boot_epoch);
     ret = gateway_v2_join_init(&s_join_engine, &join_cfg);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize Gateway V2 Join Engine: %s", esp_err_to_name(ret));
@@ -137,10 +173,17 @@ esp_err_t gateway_app_init(void)
         .join_engine = &s_join_engine,
         .wal = &s_gateway_wal,
         .gateway_id = transport_cfg.gateway_id,
+        .gateway_epoch = s_gateway_boot_epoch,
     };
     ret = gateway_radio_bridge_init(&bridge_cfg);
-    if (ret == ESP_OK) {
-        (void)gateway_radio_bridge_start();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize gateway radio bridge: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    ret = gateway_radio_bridge_start();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start gateway radio bridge: %s", esp_err_to_name(ret));
+        return ret;
     }
 
     // Initialize and start Heartbeat and Liveness timers

@@ -233,3 +233,158 @@ func TestRFTracker_Concurrency(t *testing.T) {
 
 	wg.Wait()
 }
+
+func TestRFTracker_RebootEpochTransitionAndRetiredRejection(t *testing.T) {
+	tracker := presence.NewRFTracker()
+	gw := "gw-a"
+	nodeID := 3
+
+	epochA := "550e8400-e29b-41d4-a716-446655440001"
+	epochB := "550e8400-e29b-41d4-a716-446655440002"
+	epochC := "550e8400-e29b-41d4-a716-446655440003"
+
+	// 1. Initial boot with epochA: samples 1 to 62
+	for seq := uint64(1); seq <= 62; seq++ {
+		ok, reason := tracker.UpdateNodeRFWithReason(
+			gw, nodeID, -20, 6.5, nil, "UP_EVENT", "VERIFIED", epochA, seq, seq*1000, 0,
+		)
+		if !ok {
+			t.Fatalf("failed to ingest sample seq %d: reason=%s", seq, reason)
+		}
+	}
+
+	viewA := tracker.GetNodeRFView(gw, nodeID)
+	if viewA == nil || viewA.RssiDbm != -20 || viewA.SnrDb != 6.5 {
+		t.Fatalf("unexpected snapshot view A: %+v", viewA)
+	}
+	if tracker.GetCurrentEpoch(gw) != epochA {
+		t.Fatalf("expected active epoch to be epochA, got %s", tracker.GetCurrentEpoch(gw))
+	}
+
+	// 2. Gateway reboots: epochB arrives with reset sequence = 1, fresh RSSI/SNR
+	ok, reason := tracker.UpdateNodeRFWithReason(
+		gw, nodeID, -72, 9.25, nil, "UP_EVENT", "VERIFIED", epochB, 1, 1000, 0,
+	)
+	if !ok || reason != "ACCEPTED_NEW_EPOCH" {
+		t.Fatalf("expected epochB with seq 1 to be accepted as new epoch, got ok=%v reason=%s", ok, reason)
+	}
+
+	viewB := tracker.GetNodeRFView(gw, nodeID)
+	if viewB == nil || viewB.RssiDbm != -72 || viewB.SnrDb != 9.25 {
+		t.Fatalf("snapshot not updated to epochB: %+v", viewB)
+	}
+	if tracker.GetCurrentEpoch(gw) != epochB {
+		t.Fatalf("expected active epoch to be epochB, got %s", tracker.GetCurrentEpoch(gw))
+	}
+
+	// 3. Late delayed packet from retired epochA (high seq 63) arrives: MUST BE REJECTED
+	ok, reason = tracker.UpdateNodeRFWithReason(
+		gw, nodeID, -20, 6.5, nil, "UP_EVENT", "VERIFIED", epochA, 63, 63000, 0,
+	)
+	if ok || reason != "RETIRED_EPOCH" {
+		t.Fatalf("expected late packet from retired epochA to be rejected, got ok=%v reason=%s", ok, reason)
+	}
+
+	// Verify snapshot is NOT overwritten
+	viewCurrent := tracker.GetNodeRFView(gw, nodeID)
+	if viewCurrent.RssiDbm != -72 || viewCurrent.SnrDb != 9.25 {
+		t.Fatalf("snapshot was corrupted by retired epochA: %+v", viewCurrent)
+	}
+
+	// 4. Duplicate sequence in epochB (seq 1 again): MUST BE REJECTED as STALE_OR_DUPLICATE_SEQUENCE
+	ok, reason = tracker.UpdateNodeRFWithReason(
+		gw, nodeID, -99, 1.0, nil, "UP_EVENT", "VERIFIED", epochB, 1, 1000, 0,
+	)
+	if ok || reason != "STALE_OR_DUPLICATE_SEQUENCE" {
+		t.Fatalf("expected duplicate seq 1 in epochB to be rejected, got ok=%v reason=%s", ok, reason)
+	}
+
+	// 5. Subsequent monotonic samples in epochB (seq 2, 3): MUST BE ACCEPTED
+	ok, reason = tracker.UpdateNodeRFWithReason(
+		gw, nodeID, -68, 10.0, nil, "UP_EVENT", "VERIFIED", epochB, 2, 2000, 0,
+	)
+	if !ok || reason != "ACCEPTED_MONOTONIC" {
+		t.Fatalf("expected monotonic seq 2 in epochB to be accepted, got ok=%v reason=%s", ok, reason)
+	}
+
+	// 6. Another reboot: epochC arrives with seq 1
+	ok, reason = tracker.UpdateNodeRFWithReason(
+		gw, nodeID, -60, 11.5, nil, "UP_EVENT", "VERIFIED", epochC, 1, 1000, 0,
+	)
+	if !ok || reason != "ACCEPTED_NEW_EPOCH" {
+		t.Fatalf("expected epochC to be accepted, got ok=%v reason=%s", ok, reason)
+	}
+
+	// Now BOTH epochA and epochB are retired
+	retired := tracker.GetRetiredEpochs(gw)
+	if len(retired) != 2 || retired[0] != epochA || retired[1] != epochB {
+		t.Fatalf("unexpected retired epochs list: %+v", retired)
+	}
+
+	// Both epochA and epochB must be rejected
+	if ok, _ := tracker.UpdateNodeRFWithReason(gw, nodeID, -10, 0, nil, "UP_EVENT", "VERIFIED", epochA, 999, 999, 0); ok {
+		t.Fatalf("epochA should be rejected as retired")
+	}
+	if ok, _ := tracker.UpdateNodeRFWithReason(gw, nodeID, -10, 0, nil, "UP_EVENT", "VERIFIED", epochB, 999, 999, 0); ok {
+		t.Fatalf("epochB should be rejected as retired")
+	}
+}
+
+func TestRFTracker_BoundedRetiredEpochs(t *testing.T) {
+	tracker := presence.NewRFTracker()
+	gw := "gw-bounded"
+
+	// Transition through 25 epochs (exceeds MaxRetiredEpochsPerGateway = 16)
+	for i := 1; i <= 25; i++ {
+		epoch := fmt.Sprintf("550e8400-e29b-41d4-a716-%012d", i)
+		ok, _ := tracker.UpdateNodeRFWithReason(gw, 1, -80, 5.0, nil, "UP_EVENT", "VERIFIED", epoch, 1, 1000, 0)
+		if !ok {
+			t.Fatalf("failed at epoch %d", i)
+		}
+	}
+
+	retired := tracker.GetRetiredEpochs(gw)
+	if len(retired) > 16 {
+		t.Fatalf("retired epochs exceeded max bound 16: got %d", len(retired))
+	}
+	if len(retired) != 16 {
+		t.Fatalf("expected exactly 16 retired epochs, got %d", len(retired))
+	}
+	// Oldest retained epoch should be 9 (25 - 1 - 15 = 9)
+	expectedOldest := fmt.Sprintf("550e8400-e29b-41d4-a716-%012d", 9)
+	if retired[0] != expectedOldest {
+		t.Fatalf("expected oldest retained epoch %s, got %s", expectedOldest, retired[0])
+	}
+}
+
+func TestRFTracker_ChannelRF_EpochTransitionAndRetiredRejection(t *testing.T) {
+	tracker := presence.NewRFTracker()
+	gw := "gw-channel"
+	ch := 3
+
+	epochA := "550e8400-e29b-41d4-a716-446655440010"
+	epochB := "550e8400-e29b-41d4-a716-446655440020"
+
+	// Epoch A sample
+	ok, reason := tracker.UpdateChannelRFWithReason(gw, ch, -105, "RX_IDLE", epochA, 10, 10000, 0)
+	if !ok || reason != "ACCEPTED_FIRST_SAMPLE" {
+		t.Fatalf("expected first sample accepted, got ok=%v reason=%s", ok, reason)
+	}
+
+	// Reboot: Epoch B sample with reset seq = 1
+	ok, reason = tracker.UpdateChannelRFWithReason(gw, ch, -112, "RX_ACTIVE", epochB, 1, 1000, 0)
+	if !ok || reason != "ACCEPTED_NEW_EPOCH" {
+		t.Fatalf("expected new epoch accepted, got ok=%v reason=%s", ok, reason)
+	}
+
+	// Retired Epoch A sample rejected
+	ok, reason = tracker.UpdateChannelRFWithReason(gw, ch, -90, "RX_IDLE", epochA, 99, 99000, 0)
+	if ok || reason != "RETIRED_EPOCH" {
+		t.Fatalf("expected retired epoch rejected, got ok=%v reason=%s", ok, reason)
+	}
+
+	view := tracker.GetChannelRFView(gw, ch)
+	if view == nil || view.ChannelRssiDbm != -112 || view.SampleContext != "RX_ACTIVE" {
+		t.Fatalf("channel view corrupted by retired epoch: %+v", view)
+	}
+}

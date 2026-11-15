@@ -210,6 +210,116 @@ class TestGatewayRfMetrics(unittest.TestCase):
         }
         jsonschema.validate(batch_payload, self.rf_metrics_schema)
 
+    def test_boot_epoch_uuid_validation_and_reboot_transition(self):
+        """Verify strict UUID validation matching C implementation and schema validation across reboot."""
+        def is_valid_uuid_c(u):
+            if u is None or len(u) != 36:
+                return False
+            for i, c in enumerate(u):
+                if i in (8, 13, 18, 23):
+                    if c != "-":
+                        return False
+                else:
+                    if not ((c >= "0" and c <= "9") or (c >= "a" and c <= "f") or (c >= "A" and c <= "F")):
+                        return False
+            return True
+
+        # Valid UUIDs
+        self.assertTrue(is_valid_uuid_c("550e8400-e29b-41d4-a716-446655440000"))
+        self.assertTrue(is_valid_uuid_c("01234567-89ab-cdef-0123-456789abcdef"))
+        self.assertTrue(is_valid_uuid_c("A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D"))
+
+        # Invalid UUIDs
+        self.assertFalse(is_valid_uuid_c(None))
+        self.assertFalse(is_valid_uuid_c(""))
+        self.assertFalse(is_valid_uuid_c("not-a-uuid"))
+        self.assertFalse(is_valid_uuid_c("550e8400-e29b-41d4-a716-44665544000")) # 35 chars
+        self.assertFalse(is_valid_uuid_c("550e8400-e29b-41d4-a716-4466554400000")) # 37 chars
+        self.assertFalse(is_valid_uuid_c("550e8400_e29b_41d4_a716_446655440000")) # underscores
+        self.assertFalse(is_valid_uuid_c("550e8400-e29b-41d4-a716-44665544000g")) # non-hex 'g'
+
+        # Verify alert payload across reboot (new epoch, lower seq) validates against alert schema
+        epoch1 = "550e8400-e29b-41d4-a716-446655440000"
+        epoch2 = "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+
+        pre_reboot_alert = {
+            "schema_version": "1.0-draft",
+            "event_id": f"gw-a:{epoch1}:1050",
+            "gateway_id": "gw-a",
+            "gateway_epoch": epoch1,
+            "event_seq": "1050",
+            "observed_at": None,
+            "observed_time_source": "unknown",
+            "radio_rx_monotonic_us": "9876543210",
+            "buffered": False,
+            "node_id": 3,
+            "superframe_seq": 100,
+            "seq_num": 51,
+            "schedule_version": 1,
+            "data": {"event_ref": 62, "event_code": 1, "event_value": 25},
+            "severity": "P3_NORMAL",
+            "radio_ack_sent": True,
+            "rf": {
+                "channel_idx": 2,
+                "gateway_epoch": epoch1,
+                "sample_seq": "1050",
+                "rx_monotonic_us": "9876543210",
+                "rssi_dbm": -85,
+                "snr_db": 6.5
+            }
+        }
+        jsonschema.validate(pre_reboot_alert, self.alert_schema)
+
+        # Post-reboot: new epoch, reset sequence = 1
+        post_reboot_alert = {
+            "schema_version": "1.0-draft",
+            "event_id": f"gw-a:{epoch2}:1",
+            "gateway_id": "gw-a",
+            "gateway_epoch": epoch2,
+            "event_seq": "1",
+            "observed_at": None,
+            "observed_time_source": "unknown",
+            "radio_rx_monotonic_us": "1000000",
+            "buffered": False,
+            "node_id": 3,
+            "superframe_seq": 1,
+            "seq_num": 1,
+            "schedule_version": 1,
+            "data": {"event_ref": 63, "event_code": 1, "event_value": 26},
+            "severity": "P3_NORMAL",
+            "radio_ack_sent": True,
+            "rf": {
+                "channel_idx": 2,
+                "gateway_epoch": epoch2,
+                "sample_seq": "1",
+                "rx_monotonic_us": "1000000",
+                "rssi_dbm": -72,
+                "snr_db": 9.25
+            }
+        }
+        jsonschema.validate(post_reboot_alert, self.alert_schema)
+
+        # Post-reboot alert when optional RF formatting fails (valid alert without rf block)
+        post_reboot_no_rf = {
+            "schema_version": "1.0-draft",
+            "event_id": f"gw-a:{epoch2}:64",
+            "gateway_id": "gw-a",
+            "gateway_epoch": epoch2,
+            "event_seq": "64",
+            "observed_at": None,
+            "observed_time_source": "unknown",
+            "radio_rx_monotonic_us": "2000000",
+            "buffered": False,
+            "node_id": 3,
+            "superframe_seq": 1,
+            "seq_num": 2,
+            "schedule_version": 1,
+            "data": {"event_ref": 64, "event_code": 1, "event_value": 27},
+            "severity": "P3_NORMAL",
+            "radio_ack_sent": True
+        }
+        jsonschema.validate(post_reboot_no_rf, self.alert_schema)
+
 
 if __name__ == "__main__":
     unittest.main()

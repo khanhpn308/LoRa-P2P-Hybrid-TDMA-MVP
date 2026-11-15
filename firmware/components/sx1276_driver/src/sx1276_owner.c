@@ -49,10 +49,13 @@ static esp_err_t apply_register_plan(const sx1276_register_plan_t *plan)
     sx1276_hal_write_reg(SX1276_REG_FR_MID, plan->reg_fr_mid);
     sx1276_hal_write_reg(SX1276_REG_FR_LSB, plan->reg_fr_lsb);
 
-    // 4. PA & OCP
+    // 4. PA, OCP & PA_DAC
     sx1276_hal_write_reg(SX1276_REG_PA_CONFIG, plan->reg_pa_config);
     sx1276_hal_write_reg(SX1276_REG_PA_RAMP, plan->reg_pa_ramp);
     sx1276_hal_write_reg(SX1276_REG_OCP, plan->reg_ocp);
+    if (plan->reg_pa_dac != 0x00U) {
+        sx1276_hal_write_reg(SX1276_REG_PA_DAC, plan->reg_pa_dac);
+    }
 
     // 5. LNA
     sx1276_hal_write_reg(SX1276_REG_LNA, plan->reg_lna);

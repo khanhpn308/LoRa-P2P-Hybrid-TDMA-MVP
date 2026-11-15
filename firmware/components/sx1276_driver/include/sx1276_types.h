@@ -133,6 +133,7 @@ typedef struct {
     uint8_t reg_sync_word;
     uint8_t reg_detect_optimize;
     uint8_t reg_detection_threshold;
+    uint8_t reg_pa_dac;
 } sx1276_register_plan_t;
 
 typedef struct {
