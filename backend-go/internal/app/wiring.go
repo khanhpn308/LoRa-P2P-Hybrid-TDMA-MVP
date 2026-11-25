@@ -32,6 +32,9 @@ func New(cfg *config.Config, opts ...Option) (*App, error) {
 	if cfg == nil {
 		cfg = config.Load()
 	}
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
 
 	var db *sql.DB
 	var statusStore storage.StatusStorage
