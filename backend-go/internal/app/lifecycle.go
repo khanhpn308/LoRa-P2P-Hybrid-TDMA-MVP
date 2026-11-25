@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+
+	"github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/backend-go/internal/config"
 )
 
 // Run starts the application background workers and HTTP server, blocking until the context is canceled or a server error occurs.
@@ -19,7 +21,12 @@ func (a *App) Run(ctx context.Context) error {
 		if err := sub.Start(context.Background()); err != nil {
 			log.Printf("Warning: failed to start MQTT status subscriber: %v", err)
 		} else {
-			log.Printf("MQTT status subscriber initialized on %s", a.cfg.ResolveMQTTBrokerURI())
+			uri, err := a.cfg.ResolveMQTTBrokerURI()
+			if err != nil {
+				log.Printf("MQTT status subscriber initialized (broker URI unavailable: %v)", err)
+			} else {
+				log.Printf("MQTT status subscriber initialized on %s", config.RedactURI(uri))
+			}
 		}
 	}
 
