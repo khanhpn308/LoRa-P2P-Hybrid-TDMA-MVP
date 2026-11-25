@@ -104,6 +104,7 @@ type GatewayStatusSubscriber struct {
 	rfLogLimiter    RateLimiter
 	hub             RealtimeBroadcaster
 	brokerURI       string
+	auth            ClientAuthOptions
 	mu              sync.Mutex
 	stopTicker      chan struct{}
 }
@@ -116,6 +117,7 @@ func NewGatewayStatusSubscriber(
 	eventStore storage.EventRepository,
 	joinReqStore storage.JoinRequestStorage,
 	presenceTracker *presence.Tracker,
+	opts ...SubscriberOption,
 ) *GatewayStatusSubscriber {
 	if presenceTracker == nil {
 		presenceTracker = presence.NewTracker()
@@ -128,7 +130,7 @@ func NewGatewayStatusSubscriber(
 	if hub != nil {
 		broadcaster = hub
 	}
-	return &GatewayStatusSubscriber{
+	sub := &GatewayStatusSubscriber{
 		brokerURI:       brokerURI,
 		store:           store,
 		eventStore:      eventStore,
@@ -139,6 +141,12 @@ func NewGatewayStatusSubscriber(
 		hub:             broadcaster,
 		stopTicker:      make(chan struct{}),
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(sub)
+		}
+	}
+	return sub
 }
 
 // RFTracker returns the active RFTracker instance.
@@ -156,32 +164,14 @@ func (s *GatewayStatusSubscriber) SetRFTracker(tracker *presence.RFTracker) {
 }
 
 // Start begins listening to MQTT publications asynchronously with an automatic background retry loop.
+// Fails closed before connecting if TLS or broker URI configuration is invalid.
 func (s *GatewayStatusSubscriber) Start(ctx context.Context) error {
-	opts := paho.NewClientOptions()
-	opts.AddBroker(s.brokerURI)
-	opts.SetClientID(fmt.Sprintf("backend-sub-%d", time.Now().UnixNano()%100000))
-	opts.SetAutoReconnect(true)
-	opts.SetKeepAlive(30 * time.Second)
+	opts, err := s.buildClientOptions()
+	if err != nil {
+		return err
+	}
 
-	opts.SetOnConnectHandler(func(c paho.Client) {
-		log.Printf("[MQTT Subscriber] Connected to broker %s; registering subscriptions...", s.brokerURI)
-		// 1. Gateway Status
-		c.Subscribe("iot/v1/gw/+/uplink/status", 1, s.handleMessage)
-		// 2. Node Events / Alerts
-		c.Subscribe("iot/v1/gw/+/uplink/alert", 1, s.handleAlertMessage)
-		// 3. Node Join Requests
-		c.Subscribe("iot/v1/gw/+/uplink/join-hello", 1, s.handleJoinMessage)
-		c.Subscribe("iot/v1/gw/+/uplink/join-request", 1, s.handleJoinMessage)
-		// 4. Binary Heartbeat & Node Liveness Bitmap
-		c.Subscribe("iot/v1/gw/+/uplink/heartbeat", 1, s.handleHeartbeatMessage)
-		// 5. LoRa RF Metrics (Issue #392 / #393)
-		c.Subscribe("iot/v1/gw/+/uplink/rf-metrics", 1, s.handleRFMetricsMessage)
-	})
-
-	opts.SetConnectionLostHandler(func(c paho.Client, err error) {
-		log.Printf("[MQTT Subscriber] Broker connection lost: %v", err)
-	})
-
+	safeURI := redactBrokerURI(s.brokerURI)
 	client := paho.NewClient(opts)
 	s.client = client
 
@@ -197,7 +187,7 @@ func (s *GatewayStatusSubscriber) Start(ctx context.Context) error {
 					if !s.client.IsConnected() {
 						t := s.client.Connect()
 						if t.Wait() && t.Error() == nil {
-							log.Printf("[MQTT Subscriber] Background connection succeeded to %s", s.brokerURI)
+							log.Printf("[MQTT Subscriber] Background connection succeeded to %s", safeURI)
 							return
 						}
 					}

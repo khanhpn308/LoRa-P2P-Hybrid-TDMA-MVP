@@ -42,11 +42,11 @@ directory. No key or certificate is supplied in Git.
 
 ```bash
 umask 077
-mkdir -p deploy/secrets/pki deploy/secrets/broker deploy/secrets/clients
+mkdir -p deploy/secrets/pki deploy/secrets/broker deploy/secrets/clients deploy/secrets/backend
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=local-test-ca \
   -keyout deploy/secrets/pki/ca.key -out deploy/secrets/broker/ca.crt
-openssl req -new -newkey rsa:2048 -nodes -subj /CN=localhost \
-  -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
+openssl req -new -newkey rsa:2048 -nodes -subj /CN=mqtt-tls \
+  -addext 'subjectAltName=DNS:mqtt-tls,DNS:localhost,IP:127.0.0.1' \
   -addext 'extendedKeyUsage=serverAuth' \
   -keyout deploy/secrets/broker/server.key -out deploy/secrets/pki/server.csr
 openssl x509 -req -in deploy/secrets/pki/server.csr -days 1 \
@@ -61,18 +61,38 @@ for identity in gw-a gw-b backend; do
     -CA deploy/secrets/broker/ca.crt -CAkey deploy/secrets/pki/ca.key -CAcreateserial \
     -copy_extensions copy -out "deploy/secrets/clients/$identity.crt"
 done
+# Isolate backend credentials from gateway keys and ca.key (backend container runs as appuser/appgroup, gid 101 in Alpine).
+cp deploy/secrets/broker/ca.crt deploy/secrets/clients/backend.crt deploy/secrets/clients/backend.key deploy/secrets/backend/
+sudo chown -R "$(id -u):101" deploy/secrets/backend
+chmod 750 deploy/secrets/backend
+chmod 640 deploy/secrets/backend/*
 # Mosquitto in the existing image reads as uid/gid 1883.
 sudo chown -R "$(id -u):1883" deploy/secrets/broker
 chmod 750 deploy/secrets/broker
 chmod 640 deploy/secrets/broker/*
 ```
 
-Set `MQTT_CERT_DIR=./secrets/broker` in `.env`. Relative paths resolve from
-`deploy/`; an absolute external path also works. The directory must exist with
-readable `ca.crt`, `server.crt`, and `server.key`. Compose does not silently create
-a missing certificate directory. Each client needs its own certificate/key and
-the public CA certificate. Verify the broker hostname against its certificate
-SAN. Do not use `--insecure`.
+Set `MQTT_CERT_DIR=./secrets/broker` and `MQTT_BACKEND_CERT_DIR=./secrets/backend` in `.env`.
+Relative paths resolve from `deploy/`; an absolute external path also works.
+The broker mount must exist with readable `ca.crt`, `server.crt`, and `server.key`.
+The backend mount must contain only `ca.crt`, `backend.crt`, and `backend.key` (never `ca.key` or Gateway keys).
+Compose does not silently create a missing certificate directory.
+Verify the broker hostname against its certificate SAN (`DNS:mqtt-tls`, `DNS:localhost`, `IP:127.0.0.1`). Do not use `--insecure`.
+
+### Backend MQTT TLS / Authentication Environment Variables
+
+| Variable | Default in `.env.example` / Compose | Description |
+|---|---|---|
+| `MQTT_HOST` | `mqtt-tls` | Broker hostname (`mqtt-tls` in Docker Compose `--profile tls`, `localhost` when running `backend-go` on host, `mqtt-dev` only for opt-in `dev-insecure`). Unresolved hosts fail closed (no hardcoded LAN IP fallback). |
+| `MQTT_PORT` | `8883` (`1883` when TLS disabled) | Broker port. |
+| `MQTT_TLS_ENABLED` | `true` | Enables `tls://` scheme and TLS 1.2+ verification; fails closed if invalid or if cert files are missing/unreadable. |
+| `MQTT_BACKEND_CERT_DIR` | `./secrets/backend` | Host directory bound read-only to `/run/secrets/mqtt` in the `backend` container. |
+| `MQTT_TLS_CA_FILE` | `/run/secrets/mqtt/ca.crt` | Required PEM CA certificate path when TLS is enabled. |
+| `MQTT_TLS_CERT_FILE` | `/run/secrets/mqtt/backend.crt` | Client certificate PEM path for mTLS (must be paired with `MQTT_TLS_KEY_FILE`). |
+| `MQTT_TLS_KEY_FILE` | `/run/secrets/mqtt/backend.key` | Client private key PEM path for mTLS (must be paired with `MQTT_TLS_CERT_FILE`). |
+| `MQTT_TLS_SERVER_NAME` | *(unset)* | Optional TLS SNI / server hostname override. |
+| `MQTT_USERNAME` | *(unset)* | Optional MQTT username (for username/password broker auth). |
+| `MQTT_PASSWORD` | *(unset)* | Optional MQTT password (requires `MQTT_USERNAME`; never logged or committed). |
 
 ```bash
 docker compose --env-file .env -f deploy/compose.yaml --profile tls up -d --build mqtt-tls
@@ -159,10 +179,10 @@ Ensure `.env` is configured with `POSTGRES_PASSWORD`, `POSTGRES_USER`, and `POST
 # 1. Build frontend với API URL mới (hoặc khi thay đổi NEXT_PUBLIC_API_URL):
 docker compose --env-file .env -f deploy/compose.yaml build web-dashboard
 
-# 2. Khởi chạy toàn bộ hệ thống (PostgreSQL, Backend, Frontend):
-docker compose --env-file .env -f deploy/compose.yaml --profile fullstack up -d
+# 2. Khởi chạy toàn bộ hệ thống với MQTT TLS (PostgreSQL, MQTT TLS, Backend, Frontend):
+docker compose --env-file .env -f deploy/compose.yaml --profile fullstack --profile tls up -d
 
-# Hoặc khởi chạy toàn bộ hệ thống gồm cả MQTT Broker (PostgreSQL, MQTT, Backend, Frontend):
+# Hoặc opt-in dev-insecure (cần đặt MQTT_HOST=mqtt-dev, MQTT_PORT=1883, MQTT_TLS_ENABLED=false trong .env):
 docker compose --env-file .env -f deploy/compose.yaml --profile fullstack --profile dev-insecure up -d
 
 # 3. Kiểm tra trạng thái và sức khỏe các container:
@@ -176,11 +196,11 @@ docker compose --env-file .env -f deploy/compose.yaml logs -f web-dashboard
 ```
 
 > [!NOTE]
-> Trong cấu hình `deploy/compose.yaml`, container `backend` tự động kết nối tới MQTT Broker (`mqtt-dev:1883`) để lắng nghe trạng thái Gateway.
-> Nếu chỉ chạy `--profile fullstack`, Docker chỉ khởi chạy `postgres`, `backend` và `web-dashboard` (chưa có `mqtt-dev`).
-> Để khởi chạy toàn bộ hệ thống gồm cả Backend, Web Dashboard, PostgreSQL **và MQTT Broker**:
+> Trong cấu hình `deploy/compose.yaml`, `backend` mặc định kết nối bảo mật tới `mqtt-tls:8883` bằng mTLS (`MQTT_TLS_ENABLED=true`, mount read-only `./secrets/backend` tại `/run/secrets/mqtt`).
+> Nếu chỉ chạy `--profile fullstack`, Docker chỉ khởi chạy `postgres`, `backend` và `web-dashboard` (chưa có `mqtt-tls`).
+> Hãy chạy kèm `--profile tls` sau khi đã cấp phát chứng chỉ cục bộ ở bước trên:
 > ```bash
-> docker compose --env-file .env -f deploy/compose.yaml --profile fullstack --profile dev-insecure up -d
+> docker compose --env-file .env -f deploy/compose.yaml --profile fullstack --profile tls up -d
 > ```
 
 ### External & LAN Access (Dev Opt-in) vs Production Reverse Proxy
