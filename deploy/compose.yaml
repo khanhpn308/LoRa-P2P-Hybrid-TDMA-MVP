@@ -50,8 +50,9 @@ services:
       dockerfile: Dockerfile
     profiles: ["fullstack", "backend"]
     environment:
+      APP_ENV: ${APP_ENV:-development}
       PORT: "8080"
-      DATABASE_URL: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+      DATABASE_URL: "${DATABASE_URL:-postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=${POSTGRES_SSLMODE:-disable}}"
       MQTT_HOST: ${MQTT_HOST:-mqtt-tls}
       MQTT_PORT: ${MQTT_PORT:-8883}
       MQTT_TLS_ENABLED: ${MQTT_TLS_ENABLED:-true}
@@ -61,7 +62,8 @@ services:
       MQTT_TLS_SERVER_NAME: ${MQTT_TLS_SERVER_NAME:-}
       MQTT_USERNAME: ${MQTT_USERNAME:-}
       MQTT_PASSWORD: ${MQTT_PASSWORD:-}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-default-dev-jwt-secret-key-min-32-bytes-secure!!}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
+      DEVICE_PROVISION_MASTER_KEY: ${DEVICE_PROVISION_MASTER_KEY:-}
     volumes:
       - type: bind
         source: ${MQTT_BACKEND_CERT_DIR:-./secrets/backend}
@@ -70,7 +72,7 @@ services:
         bind:
           create_host_path: false
     ports:
-      - "${BACKEND_PORT_BIND:-0.0.0.0:8080}:8080"
+      - "${BACKEND_PORT_BIND:-127.0.0.1:8080}:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -88,18 +90,46 @@ services:
       dockerfile: Dockerfile
       network: host
       args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://192.168.88.113:8080}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
     profiles: ["fullstack", "frontend"]
     environment:
       PORT: "3000"
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://192.168.88.113:8080}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
     ports:
-      - "${WEB_PORT_BIND:-0.0.0.0:3000}:3000"
+      - "${WEB_PORT_BIND:-127.0.0.1:3000}:3000"
     depends_on:
       backend:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks: [local]
+
+  # TLS-terminating reverse proxy for HTTPS & WSS on port 443.
+  # Requires locally provisioned TLS certificates (server.crt, server.key) under PROXY_CERT_DIR.
+  reverse-proxy:
+    image: nginx:1.27-alpine
+    profiles: ["reverse-proxy"]
+    ports:
+      - "${PROXY_HTTPS_BIND:-127.0.0.1:443}:443"
+    volumes:
+      - ./reverse-proxy/nginx.conf:/etc/nginx/nginx.conf:ro
+      - type: bind
+        source: ${PROXY_CERT_DIR:-./secrets/proxy}
+        target: /etc/nginx/certs
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      backend:
+        condition: service_healthy
+      web-dashboard:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /var/run/nginx.pid && nc -z 127.0.0.1 443 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5

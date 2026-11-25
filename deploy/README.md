@@ -203,9 +203,31 @@ docker compose --env-file .env -f deploy/compose.yaml logs -f web-dashboard
 > docker compose --env-file .env -f deploy/compose.yaml --profile fullstack --profile tls up -d
 > ```
 
-### External & LAN Access (Laptop & Mobile)
+### External & LAN Access (Dev Opt-in) vs Production Reverse Proxy
 
-Khi cần truy cập từ các thiết bị ngoài trong cùng mạng Wi-Fi/LAN (điện thoại, ESP32 Gateway):
+Mặc định `deploy/compose.yaml` bind toàn bộ dịch vụ về loopback (`127.0.0.1:8080`, `127.0.0.1:3000`, `127.0.0.1:5432`) và không chứa literal secret fallback.
+
+#### Chạy sau Reverse Proxy HTTPS / WSS (Port 443)
+Trong môi trường staging/production, dùng `reverse-proxy` (Nginx TLS 1.2/1.3 termination trên cổng `443`) và file overlay `deploy/reverse-proxy/compose.prod.yaml` để chạy `APP_ENV=production`, bắt buộc `JWT_SECRET_KEY` và `DEVICE_PROVISION_MASTER_KEY`, đồng thời khóa `backend`, `web-dashboard`, `postgres` chỉ giao tiếp nội bộ trên Docker network:
+
+1. Chuẩn bị chứng chỉ TLS (không commit vào Git) tại `deploy/secrets/proxy/` (`server.crt`, `server.key`) và cấu hình file env ngoài Git (ví dụ `.env.prod` với `chmod 600`):
+   - `APP_ENV=production`
+   - `JWT_SECRET_KEY` (>= 32 bytes ngẫu nhiên, ví dụ `openssl rand -base64 32`)
+   - `DEVICE_PROVISION_MASTER_KEY` (64 ký tự hex ngẫu nhiên, ví dụ `openssl rand -hex 32`)
+   - `POSTGRES_SSLMODE=require` hoặc `verify-full` (khi dùng PostgreSQL bên ngoài qua `DATABASE_URL`)
+   - `NEXT_PUBLIC_API_URL=https://<your-domain-or-host>`
+   - `PROXY_CERT_DIR=./secrets/proxy`
+2. Kiểm tra cấu hình và khởi chạy:
+   ```bash
+   docker compose --env-file .env.prod -f deploy/compose.yaml -f deploy/reverse-proxy/compose.prod.yaml \
+     --profile fullstack --profile reverse-proxy config -q
+   docker compose --env-file .env.prod -f deploy/compose.yaml -f deploy/reverse-proxy/compose.prod.yaml \
+     --profile fullstack --profile reverse-proxy up -d --build
+   ```
+   Nginx trên cổng `443` sẽ terminate TLS cho cả HTTPS (`/api/v1/`, `/healthz` -> `backend:8080`; `/` -> `web-dashboard:3000`) và WSS (`/api/v1/ws/realtime` -> `backend:8080`).
+
+#### External & LAN Access (Laptop & Mobile trong mạng nội bộ Dev)
+Chỉ dùng cho phát triển cục bộ khi cần truy cập từ thiết bị cùng mạng Wi-Fi/LAN:
 1. Cấu hình biến môi trường trong file `.env`:
    - `NEXT_PUBLIC_API_URL=http://<LAN_IP>:8080` (ví dụ `http://192.168.88.113:8080`).
    - `BACKEND_PORT_BIND=0.0.0.0:8080`

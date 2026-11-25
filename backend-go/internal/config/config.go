@@ -20,12 +20,18 @@ const (
 	DefaultMQTTPort         = "1883"
 	DefaultMQTTTLSPort      = "8883"
 	DefaultJWTSecret        = "default-mvp-jwt-secret-key-minimum-32-bytes!!"
+	DefaultAppEnv           = EnvDevelopment
+	EnvDevelopment          = "development"
+	EnvStaging              = "staging"
+	EnvProduction           = "production"
 	DefaultOfflineThreshold = 5 * time.Minute
 	DefaultReadTimeout      = 15 * time.Second
 	DefaultWriteTimeout     = 15 * time.Second
 	DefaultIdleTimeout      = 60 * time.Second
 	DefaultShutdownTimeout  = 5 * time.Second
 )
+
+const legacyComposeDevJWTSecret = "default-dev-jwt-secret-key-min-32-bytes-secure!!"
 
 var (
 	// ErrUnresolvedMQTTHost is returned when a broker hostname cannot be resolved via DNS.
@@ -36,8 +42,10 @@ var (
 
 // Config encapsulates configuration for the Go backend server.
 type Config struct {
+	AppEnv                   string
 	Port                     string
 	DatabaseURL              string
+	PostgresSSLMode          string
 	MQTTHost                 string
 	MQTTPort                 string
 	MQTTBrokerURI            string
@@ -57,6 +65,7 @@ type Config struct {
 	WriteTimeout             time.Duration
 	IdleTimeout              time.Duration
 	ShutdownTimeout          time.Duration
+	validationErr            error
 }
 
 // RedactURI removes password credentials from a URI string for safe logging.
@@ -83,9 +92,11 @@ func sanitizeHost(host string) string {
 func (c *Config) String() string {
 	hasMasterKey := c.DeviceProvisionMasterKey != [32]byte{}
 	return fmt.Sprintf(
-		"Config{Port:%s, DatabaseURLSet:%t, MQTTHost:%s, MQTTPort:%s, MQTTBrokerURI:%s, MQTTTLSEnabled:%t, MQTTTLSCAFileSet:%t, MQTTTLSCertSet:%t, MQTTTLSKeySet:%t, MQTTUsernameSet:%t, MQTTPasswordSet:%t, JWTSecretKeyLen:%d, MasterKeySet:%t}",
+		"Config{AppEnv:%s, Port:%s, DatabaseURLSet:%t, PostgresSSLMode:%s, MQTTHost:%s, MQTTPort:%s, MQTTBrokerURI:%s, MQTTTLSEnabled:%t, MQTTTLSCAFileSet:%t, MQTTTLSCertSet:%t, MQTTTLSKeySet:%t, MQTTUsernameSet:%t, MQTTPasswordSet:%t, JWTSecretKeyLen:%d, MasterKeySet:%t}",
+		c.AppEnv,
 		c.Port,
 		c.DatabaseURL != "",
+		c.PostgresSSLMode,
 		sanitizeHost(c.MQTTHost),
 		c.MQTTPort,
 		RedactURI(c.MQTTBrokerURI),
@@ -98,6 +109,157 @@ func (c *Config) String() string {
 		len(c.JWTSecretKey),
 		hasMasterKey,
 	)
+}
+
+func parseAppEnv(raw string) (string, error) {
+	trimmed := strings.ToLower(strings.TrimSpace(raw))
+	switch trimmed {
+	case "", "development", "dev", "local", "test":
+		return EnvDevelopment, nil
+	case "staging":
+		return EnvStaging, nil
+	case "production", "prod":
+		return EnvProduction, nil
+	default:
+		return "", errors.New("invalid APP_ENV: must be development, staging, or production")
+	}
+}
+
+func validatePostgresSSLMode(raw string) (string, error) {
+	trimmed := strings.ToLower(strings.TrimSpace(raw))
+	if trimmed == "" {
+		return "", nil
+	}
+	switch trimmed {
+	case "disable", "allow", "prefer", "require", "verify-ca", "verify-full":
+		return trimmed, nil
+	default:
+		return "", errors.New("invalid POSTGRES_SSLMODE: must be one of disable, allow, prefer, require, verify-ca, verify-full")
+	}
+}
+
+func applyPostgresSSLMode(dbURL, sslMode string) (string, error) {
+	if dbURL == "" || sslMode == "" {
+		return dbURL, nil
+	}
+	u, err := url.Parse(dbURL)
+	if err != nil {
+		return "", errors.New("invalid DATABASE_URL")
+	}
+	q := u.Query()
+	if !q.Has("sslmode") {
+		q.Set("sslmode", sslMode)
+		u.RawQuery = q.Encode()
+		return u.String(), nil
+	}
+	return dbURL, nil
+}
+
+func hasPlaceholderPrefix(val string) bool {
+	return strings.HasPrefix(strings.ToUpper(strings.TrimSpace(val)), "REPLACE_WITH_")
+}
+
+func isInsecureJWTSecret(secret string) bool {
+	return secret == DefaultJWTSecret ||
+		secret == legacyComposeDevJWTSecret ||
+		hasPlaceholderPrefix(secret)
+}
+
+func deriveProvisionMasterKey(jwtSecret string) [32]byte {
+	return sha256.Sum256([]byte(jwtSecret + ":provision:master:key"))
+}
+
+func parseProvisionMasterKey(raw string) ([32]byte, error) {
+	var key [32]byte
+	if raw == "" {
+		return key, errors.New("DEVICE_PROVISION_MASTER_KEY is required in production")
+	}
+	if hasPlaceholderPrefix(raw) {
+		return key, errors.New("DEVICE_PROVISION_MASTER_KEY must not use placeholder value in production")
+	}
+	if len(raw) == 64 {
+		decoded, err := hex.DecodeString(raw)
+		if err != nil || len(decoded) != 32 {
+			return key, errors.New("DEVICE_PROVISION_MASTER_KEY of length 64 must be valid hex")
+		}
+		copy(key[:], decoded)
+	} else if len(raw) >= 32 {
+		copy(key[:], []byte(raw[:32]))
+	} else {
+		return key, errors.New("DEVICE_PROVISION_MASTER_KEY must be 64 hex characters or at least 32 bytes")
+	}
+	if key == [32]byte{} {
+		return [32]byte{}, errors.New("DEVICE_PROVISION_MASTER_KEY must not be all zeros")
+	}
+	return key, nil
+}
+
+func validateJWTSecret(secret string) error {
+	if secret == "" {
+		return errors.New("JWT_SECRET_KEY is required in production")
+	}
+	if strings.TrimSpace(secret) == "" {
+		return errors.New("JWT_SECRET_KEY must not be blank in production")
+	}
+	if len(secret) < 32 {
+		return errors.New("JWT_SECRET_KEY must be at least 32 bytes in production")
+	}
+	if isInsecureJWTSecret(secret) {
+		return errors.New("JWT_SECRET_KEY must not use default or placeholder value in production")
+	}
+	return nil
+}
+
+// IsProduction returns true when APP_ENV is configured as production.
+func (c *Config) IsProduction() bool {
+	if c == nil {
+		return false
+	}
+	env, err := parseAppEnv(c.AppEnv)
+	return err == nil && env == EnvProduction
+}
+
+// RequiresStrictSecrets returns true when runtime mode requires fail-fast secret validation (production/staging).
+func (c *Config) RequiresStrictSecrets() bool {
+	if c == nil {
+		return false
+	}
+	env, err := parseAppEnv(c.AppEnv)
+	if err != nil {
+		return true
+	}
+	return env == EnvProduction || env == EnvStaging
+}
+
+// Validate verifies environment mode, SSL settings, and production secret invariants without leaking secret values.
+func (c *Config) Validate() error {
+	if c == nil {
+		return errors.New("config cannot be nil")
+	}
+	if c.validationErr != nil {
+		return c.validationErr
+	}
+
+	var errs []error
+	env, err := parseAppEnv(c.AppEnv)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	if _, err := validatePostgresSSLMode(c.PostgresSSLMode); err != nil {
+		errs = append(errs, err)
+	}
+	if env == EnvProduction || env == EnvStaging {
+		if err := validateJWTSecret(c.JWTSecretKey); err != nil {
+			errs = append(errs, err)
+		}
+		if c.DeviceProvisionMasterKey == [32]byte{} {
+			errs = append(errs, errors.New("DEVICE_PROVISION_MASTER_KEY is required in production"))
+		} else if c.DeviceProvisionMasterKey == deriveProvisionMasterKey(c.JWTSecretKey) ||
+			c.DeviceProvisionMasterKey == deriveProvisionMasterKey(DefaultJWTSecret) {
+			errs = append(errs, errors.New("DEVICE_PROVISION_MASTER_KEY must not be derived from JWT_SECRET_KEY in production"))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // LookupHostFunc matches the signature of net.LookupHost.
@@ -246,6 +408,20 @@ func Load() *Config {
 	return LoadFromEnv(os.Getenv)
 }
 
+// LoadWithError reads and validates backend configuration from OS environment variables.
+func LoadWithError() (*Config, error) {
+	return LoadFromEnvWithError(os.Getenv)
+}
+
+// LoadFromEnvWithError loads and validates configuration using a custom environment accessor.
+func LoadFromEnvWithError(getEnv func(string) string, lookupHost ...LookupHostFunc) (*Config, error) {
+	cfg := LoadFromEnv(getEnv, lookupHost...)
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
 // LoadFromEnv loads configuration using custom environment accessor.
 // Note: MQTT host resolution, DNS lookups, and TLS file reads are intentionally NOT performed
 // during LoadFromEnv to preserve conditional resolution and prevent unconditional I/O.
@@ -259,12 +435,35 @@ func LoadFromEnv(getEnv func(string) string, lookupHost ...LookupHostFunc) *Conf
 		dns = lookupHost[0]
 	}
 
+	var errs []error
+
+	rawAppEnv := getEnv("APP_ENV")
+	appEnv, envErr := parseAppEnv(rawAppEnv)
+	if envErr != nil {
+		errs = append(errs, envErr)
+		appEnv = strings.TrimSpace(rawAppEnv)
+	}
+	strictSecrets := envErr != nil || appEnv == EnvProduction || appEnv == EnvStaging
+
 	port := getEnv("PORT")
 	if port == "" {
 		port = DefaultPort
 	}
 
+	sslMode, sslErr := validatePostgresSSLMode(getEnv("POSTGRES_SSLMODE"))
+	if sslErr != nil {
+		errs = append(errs, sslErr)
+	}
+
 	dbURL := getEnv("DATABASE_URL")
+	if sslErr == nil {
+		updatedDBURL, dbErr := applyPostgresSSLMode(dbURL, sslMode)
+		if dbErr != nil {
+			errs = append(errs, dbErr)
+		} else {
+			dbURL = updatedDBURL
+		}
+	}
 
 	var tlsEnabled bool
 	var mqttTLSConfigErr error
@@ -296,28 +495,31 @@ func LoadFromEnv(getEnv func(string) string, lookupHost ...LookupHostFunc) *Conf
 	mqttPassword := getEnv("MQTT_PASSWORD")
 
 	jwtSecret := getEnv("JWT_SECRET_KEY")
-	if len(jwtSecret) < 32 {
+	if strictSecrets {
+		if err := validateJWTSecret(jwtSecret); err != nil {
+			errs = append(errs, err)
+			jwtSecret = ""
+		}
+	} else if len(jwtSecret) < 32 {
 		jwtSecret = DefaultJWTSecret
 	}
 
 	var masterKey [32]byte
 	provisionKeyEnv := getEnv("DEVICE_PROVISION_MASTER_KEY")
-	if len(provisionKeyEnv) == 64 {
-		decoded, err := hex.DecodeString(provisionKeyEnv)
-		if err == nil && len(decoded) == 32 {
-			copy(masterKey[:], decoded)
-		}
-	} else if len(provisionKeyEnv) >= 32 {
-		copy(masterKey[:], []byte(provisionKeyEnv[:32]))
-	}
-	if masterKey == [32]byte{} {
-		h := sha256.Sum256([]byte(jwtSecret + ":provision:master:key"))
-		copy(masterKey[:], h[:])
+	parsedKey, keyErr := parseProvisionMasterKey(provisionKeyEnv)
+	if keyErr == nil {
+		masterKey = parsedKey
+	} else if strictSecrets {
+		errs = append(errs, keyErr)
+	} else {
+		masterKey = deriveProvisionMasterKey(jwtSecret)
 	}
 
 	return &Config{
+		AppEnv:                   appEnv,
 		Port:                     port,
 		DatabaseURL:              dbURL,
+		PostgresSSLMode:          sslMode,
 		MQTTHost:                 mqttHost,
 		MQTTPort:                 mqttPort,
 		MQTTTLSEnabled:           tlsEnabled,
@@ -336,5 +538,6 @@ func LoadFromEnv(getEnv func(string) string, lookupHost ...LookupHostFunc) *Conf
 		WriteTimeout:             DefaultWriteTimeout,
 		IdleTimeout:              DefaultIdleTimeout,
 		ShutdownTimeout:          DefaultShutdownTimeout,
+		validationErr:            errors.Join(errs...),
 	}
 }

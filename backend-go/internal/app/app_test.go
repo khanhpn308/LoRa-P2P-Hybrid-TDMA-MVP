@@ -475,3 +475,53 @@ func TestApp_New_PersistentMode_TLSValidCerts_Succeeds(t *testing.T) {
 		t.Errorf("expected tls://mqtt-tls:8883, got (%q, %v)", uri, err)
 	}
 }
+
+func TestApp_New_ProductionFailFastSecretValidation(t *testing.T) {
+	weakJWT := "short-secret-value-not-leaked"
+	cfg := config.LoadFromEnv(func(key string) string {
+		switch key {
+		case "APP_ENV":
+			return "production"
+		case "JWT_SECRET_KEY":
+			return weakJWT
+		default:
+			return ""
+		}
+	})
+
+	application, err := app.New(cfg)
+	if err == nil {
+		t.Fatal("expected app.New to fail fast on invalid production secrets, got nil")
+	}
+	if application != nil {
+		t.Errorf("expected nil application on config validation failure")
+	}
+	if !strings.Contains(err.Error(), "invalid configuration:") {
+		t.Errorf("expected wrapped 'invalid configuration:' error, got %v", err)
+	}
+	if strings.Contains(err.Error(), weakJWT) {
+		t.Errorf("app.New error leaked weak JWT secret: %v", err)
+	}
+
+	validCfg := config.LoadFromEnv(func(key string) string {
+		switch key {
+		case "PORT":
+			return "0"
+		case "APP_ENV":
+			return "production"
+		case "JWT_SECRET_KEY":
+			return "prod-super-secure-jwt-secret-key-at-least-32-bytes!"
+		case "DEVICE_PROVISION_MASTER_KEY":
+			return "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+		default:
+			return ""
+		}
+	})
+	validApp, err := app.New(validCfg)
+	if err != nil {
+		t.Fatalf("expected app.New to succeed with valid production secrets, got %v", err)
+	}
+	if validApp == nil {
+		t.Fatal("expected non-nil application")
+	}
+}
