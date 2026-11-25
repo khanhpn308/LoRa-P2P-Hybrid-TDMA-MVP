@@ -52,9 +52,23 @@ services:
     environment:
       PORT: "8080"
       DATABASE_URL: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
-      MQTT_HOST: ${MQTT_HOST:-mqtt-dev}
-      MQTT_PORT: ${MQTT_PORT:-1883}
+      MQTT_HOST: ${MQTT_HOST:-mqtt-tls}
+      MQTT_PORT: ${MQTT_PORT:-8883}
+      MQTT_TLS_ENABLED: ${MQTT_TLS_ENABLED:-true}
+      MQTT_TLS_CA_FILE: ${MQTT_TLS_CA_FILE:-/run/secrets/mqtt/ca.crt}
+      MQTT_TLS_CERT_FILE: ${MQTT_TLS_CERT_FILE:-/run/secrets/mqtt/backend.crt}
+      MQTT_TLS_KEY_FILE: ${MQTT_TLS_KEY_FILE:-/run/secrets/mqtt/backend.key}
+      MQTT_TLS_SERVER_NAME: ${MQTT_TLS_SERVER_NAME:-}
+      MQTT_USERNAME: ${MQTT_USERNAME:-}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-default-dev-jwt-secret-key-min-32-bytes-secure!!}
+    volumes:
+      - type: bind
+        source: ${MQTT_BACKEND_CERT_DIR:-./secrets/backend}
+        target: /run/secrets/mqtt
+        read_only: true
+        bind:
+          create_host_path: false
     ports:
       - "${BACKEND_PORT_BIND:-0.0.0.0:8080}:8080"
     depends_on:
