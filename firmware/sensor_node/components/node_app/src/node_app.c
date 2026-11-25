@@ -88,8 +88,8 @@ static void node_handle_revoke_and_sleep(button_driver_t *btn_driver)
     /* 3. Put radio completely to sleep */
     (void)sx1276_sleep();
 
-    /* 4. Disable timer wakeup explicitly to prevent periodic wakes */
-    (void)esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+    /* 4. Disable all previous wakeup sources explicitly */
+    (void)esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
 
     /* 5. Arm EXT0 wakeup on button GPIO only */
     if (btn_driver != NULL && btn_driver->is_initialized) {
@@ -421,7 +421,7 @@ void node_app_run(void)
                 (void)node_v2_join_erase_session(&s_join_ctx);
                 s_join_ctx.state = NODE_V2_JOIN_STATE_UNJOINED;
                 (void)sx1276_sleep();
-                (void)esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+                (void)esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
                 if (s_btn_driver.is_initialized) {
                     (void)button_driver_arm_sleep(&s_btn_driver);
                 }
@@ -436,7 +436,7 @@ void node_app_run(void)
                 (void)node_v2_join_erase_session(&s_join_ctx);
                 s_join_ctx.state = NODE_V2_JOIN_STATE_UNJOINED;
                 (void)sx1276_sleep();
-                (void)esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+                (void)esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
                 if (s_btn_driver.is_initialized) {
                     (void)button_driver_arm_sleep(&s_btn_driver);
                 }
@@ -566,6 +566,7 @@ void node_app_run(void)
     }
 
     /* 11. Enter Deep-Sleep */
+    (void)esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
     if (s_btn_driver.is_initialized) {
         (void)button_driver_arm_sleep(&s_btn_driver);
     }
@@ -574,15 +575,11 @@ void node_app_run(void)
     if (s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
         ESP_LOGI(TAG, "Enabling Timer Wakeup in %d seconds (Auto Event Transmission)", CONFIG_NODE_AUTO_EVENT_INTERVAL_SEC);
         (void)esp_sleep_enable_timer_wakeup((uint64_t)CONFIG_NODE_AUTO_EVENT_INTERVAL_SEC * 1000000ULL);
-    } else {
-        (void)esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
     }
 #elif CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC > 0
     if (s_join_ctx.state == NODE_V2_JOIN_STATE_INSTALLED_INACTIVE) {
         ESP_LOGI(TAG, "Enabling Timer Wakeup in %d seconds", CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC);
         (void)esp_sleep_enable_timer_wakeup((uint64_t)CONFIG_NODE_DEEP_SLEEP_TIMEOUT_SEC * 1000000ULL);
-    } else {
-        (void)esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
     }
 #endif
 

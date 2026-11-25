@@ -36,8 +36,8 @@ static bool is_pin_prohibited(gpio_num_t pin)
     if (pin == GPIO_NUM_1 || pin == GPIO_NUM_3) {
         return true;
     }
-    /* Strapping pins: GPIO 0, 2, 12, 15 */
-    if (pin == GPIO_NUM_0 || pin == GPIO_NUM_2 || pin == GPIO_NUM_12 || pin == GPIO_NUM_15) {
+    /* Strapping pins: GPIO 0, 2, 15 (GPIO 12 is permitted for active-high ACK LED) */
+    if (pin == GPIO_NUM_0 || pin == GPIO_NUM_2 || pin == GPIO_NUM_15) {
         return true;
     }
     /* Configured wakeup button GPIO */

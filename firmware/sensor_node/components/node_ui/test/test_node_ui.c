@@ -149,7 +149,8 @@ static bool test_is_pin_prohibited(gpio_num_t pin)
     if (pin == GPIO_NUM_1 || pin == GPIO_NUM_3) {
         return true;
     }
-    if (pin == GPIO_NUM_0 || pin == GPIO_NUM_2 || pin == GPIO_NUM_12 || pin == GPIO_NUM_15) {
+    /* Strapping pins: GPIO 0, 2, 15 (GPIO 12 is permitted for active-high ACK LED) */
+    if (pin == GPIO_NUM_0 || pin == GPIO_NUM_2 || pin == GPIO_NUM_15) {
         return true;
     }
 #ifdef CONFIG_NODE_BUTTON_GPIO
@@ -232,7 +233,6 @@ static int test_prohibited_pins_system(void)
     /* Strapping */
     ASSERT_TRUE(test_is_pin_prohibited(GPIO_NUM_0));
     ASSERT_TRUE(test_is_pin_prohibited(GPIO_NUM_2));
-    ASSERT_TRUE(test_is_pin_prohibited(GPIO_NUM_12));
     ASSERT_TRUE(test_is_pin_prohibited(GPIO_NUM_15));
 
     /* Button */
@@ -259,8 +259,9 @@ static int test_prohibited_pins_system(void)
 
 static int test_permitted_pin_candidate(void)
 {
-    /* GPIO 25 is the proposed candidate on HW-001 */
+    /* GPIO 25 is the proposed candidate on HW-001, GPIO 12 is permitted for active-high ACK LED */
     ASSERT_TRUE(!test_is_pin_prohibited(GPIO_NUM_25));
+    ASSERT_TRUE(!test_is_pin_prohibited(GPIO_NUM_12));
 
     /* Other valid general purpose RTC pins */
     ASSERT_TRUE(!test_is_pin_prohibited(GPIO_NUM_13));
