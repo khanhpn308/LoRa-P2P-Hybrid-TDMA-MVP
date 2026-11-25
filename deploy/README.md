@@ -147,9 +147,100 @@ shared CA material.
 
 ## Full-stack Containerization (Backend & Web Dashboard)
 
-Issue #266 integrates full-stack containerization for local execution and end-to-end verification:
-- **`backend`**: Go Modular Monolith (`backend-go`), multi-stage Alpine build, non-root user (`appuser:appgroup`), automated PostgreSQL schema migrations, exposed at `127.0.0.1:8080`.
-- **`web-dashboard`**: Next.js 16 standalone output (`clients/web-dashboard`), multi-stage Node 22 Alpine build, non-root user (`nextjs:nodejs`), exposed at `127.0.0.1:3000`.
+Issue #266 integrates full-stack containerization for local execution and end-to-end verification, and Issue #406 decouples migrations, adds restart/resource policies, and defines the `pg_data` backup/restore runbook:
+- **`migrate`**: One-shot migration runner built from `backend-go/Dockerfile` (`entrypoint: ["/app/migrate.sh"]`, `restart: "no"`). Acquires a PostgreSQL session advisory lock (`pg_advisory_lock`), creates `schema_migrations` under lock, and applies pending `/app/migrations/*.up.sql` scripts inside individual transactions with `ON_ERROR_STOP=1`.
+- **`backend`**: Go Modular Monolith (`backend-go`), multi-stage Alpine build, non-root user (`appuser:appgroup`), startup `/app/entrypoint.sh` waits only for `pg_isready` (never runs `psql` migrations, preventing multi-replica races), depends on `postgres` (`service_healthy`) and `migrate` (`service_completed_successfully`), exposed at `8080`.
+- **`web-dashboard`**: Next.js 16 standalone output (`clients/web-dashboard`), multi-stage Node 22 Alpine build, non-root user (`nextjs:nodejs`), exposed at `3000`.
+
+### Database Migrations (Decoupled One-Shot Runner)
+
+When starting `--profile fullstack` or `--profile backend`, Compose automatically runs `migrate` to completion before starting `backend`. You can also invoke migrations explicitly:
+
+```bash
+# Run migrations standalone against healthy postgres:
+docker compose --env-file .env -f deploy/compose.yaml --profile migrate up --exit-code-from migrate migrate
+
+# Or execute as a one-off container (auto-removed on exit):
+docker compose --env-file .env -f deploy/compose.yaml run --rm migrate
+```
+
+Because `/app/migrate.sh` holds `pg_advisory_lock(748291045239184721)` across the entire `psql -v ON_ERROR_STOP=1` session and wraps each migration + `schema_migrations` insert in `BEGIN; ... COMMIT;`, concurrent runs serialize safely and partial migration failures roll back without leaving `schema_migrations` dirty.
+
+### Resource Limits & Restart Policies
+
+All services in `deploy/compose.yaml` declare explicit `restart` policies and bounded `deploy.resources` limits/reservations sized for MVP workloads (1–5 Gateways, tens of Nodes, local dashboard/API traffic):
+
+| Service | Restart Policy | CPU Limit (Reservation) | Memory Limit (Reservation) | Sizing Assumptions |
+|---|---|---|---|---|
+| `postgres` | `unless-stopped` | `1.0` (`0.25`) | `512M` (`128M`) | Covers PG 16 default `shared_buffers=128MB`, WAL/vacuum, query backends, and `pg_dump` headroom. |
+| `mqtt-dev` | `unless-stopped` | `0.5` (`0.1`) | `128M` (`32M`) | Mosquitto C daemon uses ~5–20 MiB RSS; >6x headroom for local dev traffic. |
+| `mqtt-tls` | `unless-stopped` | `0.5` (`0.1`) | `256M` (`64M`) | Extra headroom for TLS 1.2/1.3 handshakes, QoS 1 queues, and `mqtt_data` persistence. |
+| `migrate` | `"no"` | `0.5` (`0.1`) | `128M` (`32M`) | One-shot `pg_isready` + `psql` execution; exits `0` upon completion. |
+| `backend` | `unless-stopped` | `1.0` (`0.25`) | `256M` (`64M`) | Go HTTP/WSS/MQTT runtime + DB pool uses ~20–60 MiB RSS; >4x headroom prevents GC thrashing. |
+| `web-dashboard` | `unless-stopped` | `1.0` (`0.25`) | `512M` (`128M`) | Node 22 + Next.js standalone runtime uses ~80–180 MiB RSS; avoids V8 heap OOM on SSR bursts. |
+
+### PostgreSQL Backup & Restore Runbook (`pg_data`)
+
+> [!CAUTION]
+> **Never store database dumps inside the Git repository** (neither tracked paths nor `deploy/`). Always write backups to an external host directory with restricted permissions (`0700` directory, `0600` dump files).
+
+#### 1. Logical Backup (`pg_dump` custom format)
+
+Use `docker compose exec -T postgres` and read `$POSTGRES_USER` / `$POSTGRES_DB` inside the container so database credentials are never passed as host CLI arguments:
+
+```bash
+BACKUP_DIR="${BACKUP_DIR:-$HOME/backups/lora-tdma}"
+umask 077
+mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
+
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+DUMP_FILE="$BACKUP_DIR/lora_tdma_${STAMP}.dump"
+
+docker compose --env-file .env -f deploy/compose.yaml exec -T postgres \
+  sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc --no-owner --no-privileges' \
+  > "$DUMP_FILE"
+
+chmod 600 "$DUMP_FILE"
+sha256sum "$DUMP_FILE" > "${DUMP_FILE}.sha256"
+```
+
+Verify the backup archive is readable and non-empty without modifying any database state:
+
+```bash
+sha256sum -c "${DUMP_FILE}.sha256"
+docker compose --env-file .env -f deploy/compose.yaml exec -T postgres \
+  pg_restore --list < "$DUMP_FILE" | head -n 30
+```
+
+#### 2. Repeatable Restore Procedure
+
+Always practice this procedure against a **disposable Compose project** (`-p lora-restore-drill`) before performing a restore on an active environment.
+
+1. **Verify the backup checksum** before stopping services:
+   ```bash
+   sha256sum -c "${DUMP_FILE}.sha256"
+   ```
+2. **Stop writer services** (`web-dashboard` and `backend`) while keeping `postgres` healthy (take a pre-restore safety backup first if recovering an existing database):
+   ```bash
+   docker compose --env-file .env -f deploy/compose.yaml --profile fullstack stop web-dashboard backend
+   ```
+3. **Restore into PostgreSQL** (using `--clean --if-exists --no-owner --no-privileges --exit-on-error` for an existing database, or into a freshly recreated `pg_data` volume):
+   ```bash
+   docker compose --env-file .env -f deploy/compose.yaml exec -T postgres \
+     sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner --no-privileges --exit-on-error' \
+     < "$DUMP_FILE"
+   ```
+   *(If restoring into a brand-new empty `pg_data` volume after `down -v`, wait for `up -d --wait postgres` first, then run `pg_restore` without `--clean --if-exists`.)*
+4. **Verify restored schema and data integrity**:
+   ```bash
+   docker compose --env-file .env -f deploy/compose.yaml exec -T postgres \
+     sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "SELECT version, applied_at FROM schema_migrations ORDER BY version;" -c "SELECT count(*) AS rf_channels FROM rf_channels;"'
+   ```
+5. **Bring the stack back up** (runs `migrate` idempotency check, then starts `backend` and `web-dashboard`):
+   ```bash
+   docker compose --env-file .env -f deploy/compose.yaml --profile fullstack up -d
+   ```
 
 ### Start Full-stack with Docker Compose
 

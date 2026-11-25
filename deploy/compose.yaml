@@ -2,6 +2,7 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
@@ -15,22 +16,40 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
     networks: [local]
 
   # Unsafe for real Gateway connections. Local host-only development opt-in.
   mqtt-dev:
     image: eclipse-mosquitto:2.0
     user: "1883:1883"
+    restart: unless-stopped
     profiles: ["dev-insecure"]
     ports:
       - "0.0.0.0:1883:1883"
     volumes:
       - ./mosquitto/dev.conf:/mosquitto/config/mosquitto.conf:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+        reservations:
+          cpus: "0.1"
+          memory: 32M
     networks: [dev, local]
 
   # TLS profile requires locally provisioned certificates (gitignored).
   mqtt-tls:
     build: ./mosquitto
+    restart: unless-stopped
     profiles: ["tls"]
     ports:
       - "127.0.0.1:8883:8883"
@@ -42,12 +61,44 @@ services:
         bind:
           create_host_path: false
       - mqtt_data:/mosquitto/data
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    networks: [local]
+
+  # Dedicated one-shot migration runner decoupled from backend container startup.
+  migrate:
+    build:
+      context: ../backend-go
+      dockerfile: Dockerfile
+    profiles: ["fullstack", "backend", "migrate"]
+    restart: "no"
+    entrypoint: ["/app/migrate.sh"]
+    environment:
+      DATABASE_URL: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+        reservations:
+          cpus: "0.1"
+          memory: 32M
     networks: [local]
 
   backend:
     build:
       context: ../backend-go
       dockerfile: Dockerfile
+    restart: unless-stopped
     profiles: ["fullstack", "backend"]
     environment:
       PORT: "8080"
@@ -60,12 +111,22 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
+        reservations:
+          cpus: "0.25"
+          memory: 64M
     networks: [local]
 
   web-dashboard:
@@ -75,6 +136,7 @@ services:
       network: host
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://192.168.88.113:8080}
+    restart: unless-stopped
     profiles: ["fullstack", "frontend"]
     environment:
       PORT: "3000"
@@ -90,6 +152,14 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
     networks: [local]
 
 volumes:
