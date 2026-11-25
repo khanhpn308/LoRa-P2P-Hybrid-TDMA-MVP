@@ -57,13 +57,15 @@ func TestBuildServeMux_NilDependencies_HealthCheck(t *testing.T) {
 		t.Fatal("expected non-nil ServeMux")
 	}
 
-	// /healthz should work even with all optional dependencies nil
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+	// /healthz and /api/v1/health should work unauthenticated even with all optional dependencies nil
+	for _, healthPath := range []string{"/healthz", "/api/v1/health"} {
+		req := httptest.NewRequest(http.MethodGet, healthPath, nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200 OK for /healthz, got %d", rec.Code)
+		if rec.Code != http.StatusOK {
+			t.Errorf("expected 200 OK for %s, got %d", healthPath, rec.Code)
+		}
 	}
 
 	// Unauthenticated request under /api/v1/ with nil jwtService returns 401 Unauthorized

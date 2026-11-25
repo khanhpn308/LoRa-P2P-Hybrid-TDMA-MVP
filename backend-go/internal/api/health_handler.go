@@ -10,7 +10,7 @@ type HealthResponseDTO struct {
 	Status string `json:"status"`
 }
 
-// HealthHandler provides the /healthz liveness endpoint.
+// HealthHandler provides the /healthz and /api/v1/health liveness endpoints.
 type HealthHandler struct{}
 
 // NewHealthHandler creates a new HealthHandler.
@@ -18,9 +18,10 @@ func NewHealthHandler() *HealthHandler {
 	return &HealthHandler{}
 }
 
-// RegisterRoutes registers the health endpoint on a ServeMux.
+// RegisterRoutes registers the liveness health endpoints on a ServeMux.
 func (h *HealthHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /healthz", h.handleHealthz)
+	mux.HandleFunc("GET /api/v1/health", h.handleHealthz)
 }
 
 func (h *HealthHandler) handleHealthz(w http.ResponseWriter, r *http.Request) {
