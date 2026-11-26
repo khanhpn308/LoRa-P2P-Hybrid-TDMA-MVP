@@ -11,6 +11,7 @@ extern "C" {
 #endif
 
 #define GATEWAY_MQTT_TOPIC_MAX_LEN 128
+#define GATEWAY_MQTT_PEM_MAX_LEN   4096U
 
 typedef void (*gateway_mqtt_status_cb_t)(bool connected);
 typedef void (*gateway_mqtt_downlink_cb_t)(const char *topic, size_t topic_len, const uint8_t *data, size_t data_len);
@@ -99,6 +100,48 @@ esp_err_t gateway_mqtt_build_client_id(char *out, size_t max_len, const char *gw
  * @return ESP_OK on success, ESP_ERR_INVALID_SIZE if truncated.
  */
 esp_err_t gateway_mqtt_build_topic(char *out, size_t max_len, const char *gw_id, const char *suffix);
+
+/**
+ * @brief Check whether a broker URI selects TLS transport ("mqtts://" or "ssl://").
+ *
+ * @param broker_uri Null-terminated broker URI string.
+ * @return true if TLS scheme, false otherwise.
+ */
+bool gateway_mqtt_is_tls_uri(const char *broker_uri);
+
+/**
+ * @brief Validate a null-terminated PEM certificate or private key buffer.
+ *
+ * Checks non-NULL, non-empty, null-termination within max_len, and valid
+ * PEM BEGIN/END markers with non-empty body. Does not allocate memory.
+ *
+ * @param pem Pointer to null-terminated PEM text (caller retains ownership).
+ * @param max_len Maximum allowed buffer length including NUL terminator.
+ * @param is_private_key true to validate a PRIVATE KEY block, false for CERTIFICATE.
+ * @return ESP_OK if valid, ESP_ERR_INVALID_ARG or ESP_ERR_INVALID_SIZE otherwise.
+ */
+esp_err_t gateway_mqtt_validate_pem(const char *pem, size_t max_len, bool is_private_key);
+
+/**
+ * @brief Resolve the canonical MQTT broker URI from override or host/port/TLS settings.
+ *
+ * If uri_override is non-empty, validates scheme ("mqtts://" or "mqtt://"),
+ * rejects cleartext "mqtt://" downgrade when tls_enabled is true, and copies to out.
+ * Otherwise builds "<scheme>://<host>:<port>" using "mqtts" when tls_enabled is true
+ * or port == 8883, and "mqtt" only when tls_enabled is false and port != 8883.
+ *
+ * @param out Destination URI buffer.
+ * @param max_len Size of destination buffer in bytes.
+ * @param uri_override Optional full URI override (may be NULL or empty).
+ * @param host Broker hostname or IPv4 address.
+ * @param port Broker TCP port (1..65535).
+ * @param tls_enabled Enforce TLS scheme and block cleartext downgrade.
+ * @return ESP_OK on success, ESP_ERR_INVALID_ARG or ESP_ERR_INVALID_SIZE on failure.
+ */
+esp_err_t gateway_mqtt_resolve_broker_uri(char *out, size_t max_len,
+                                          const char *uri_override,
+                                          const char *host, uint16_t port,
+                                          bool tls_enabled);
 
 #ifdef __cplusplus
 }

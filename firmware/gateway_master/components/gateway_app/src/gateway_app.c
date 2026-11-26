@@ -6,12 +6,14 @@
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "nvs_flash.h"
+#include "mbedtls/platform_util.h"
 #include "sdkconfig.h"
 
 #include "lora_mac.h"
 #include "lora_mac_crypto.h"
 #include "sx1276_driver.h"
 #include "session_key_store.h"
+#include "gateway_mqtt.h"
 #include "gateway_transport.h"
 #include "gateway_v2_join.h"
 #include "gateway_wal.h"
@@ -27,6 +29,17 @@ static const char *TAG = "gateway_master";
 static gateway_wal_t s_gateway_wal;
 static gateway_v2_join_engine_t s_join_engine;
 static char s_gateway_boot_epoch[37] = {0};
+
+/* Static PEM buffers retained for ESP-MQTT reconnect lifecycle (MEM-001, MEM-002, MEM-005) */
+static char s_tls_ca_cert[GATEWAY_TLS_PEM_MAX_LEN];
+static char s_tls_client_cert[GATEWAY_TLS_PEM_MAX_LEN];
+static char s_tls_client_key[GATEWAY_TLS_PEM_MAX_LEN];
+
+#ifdef GATEWAY_HAS_EMBEDDED_TLS_CERTS
+extern const char _binary_ca_crt_start[] asm("_binary_ca_crt_start");
+extern const char _binary_client_crt_start[] asm("_binary_client_crt_start");
+extern const char _binary_client_key_start[] asm("_binary_client_key_start");
+#endif
 
 static void gateway_app_init_boot_epoch(void)
 {
@@ -120,21 +133,88 @@ esp_err_t gateway_app_init(void)
 #else
         .wifi_max_retry = 5,
 #endif
-#ifdef CONFIG_GATEWAY_BROKER_URI
-        .broker_uri = CONFIG_GATEWAY_BROKER_URI,
-#else
-        .broker_uri = "",
-#endif
         .disable_auto_connect = false,
     };
 
-    ret = gateway_transport_init(&transport_cfg);
+#ifdef CONFIG_GATEWAY_BROKER_URI
+    const char *broker_uri_override = CONFIG_GATEWAY_BROKER_URI;
+#else
+    const char *broker_uri_override = "";
+#endif
+#ifdef CONFIG_GATEWAY_BROKER_HOST
+    const char *broker_host = CONFIG_GATEWAY_BROKER_HOST;
+#else
+    const char *broker_host = "";
+#endif
+#ifdef CONFIG_GATEWAY_BROKER_PORT
+    uint16_t broker_port = (uint16_t)CONFIG_GATEWAY_BROKER_PORT;
+#else
+    uint16_t broker_port = 8883U;
+#endif
+#ifdef CONFIG_GATEWAY_MQTT_TLS_ENABLED
+    bool tls_enabled = (CONFIG_GATEWAY_MQTT_TLS_ENABLED != 0);
+#else
+    bool tls_enabled = true;
+#endif
+
+    bool transport_ready_to_init = true;
+    ret = gateway_mqtt_resolve_broker_uri(transport_cfg.broker_uri,
+                                          sizeof(transport_cfg.broker_uri),
+                                          broker_uri_override,
+                                          broker_host,
+                                          broker_port,
+                                          tls_enabled);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize gateway transport: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Fail-closed: failed to resolve MQTT broker URI (%s)", esp_err_to_name(ret));
+        transport_ready_to_init = false;
+    } else if (gateway_mqtt_is_tls_uri(transport_cfg.broker_uri)) {
+        esp_err_t tls_err = gateway_transport_load_tls_certs_from_nvs(
+            transport_cfg.gateway_id,
+            s_tls_ca_cert, sizeof(s_tls_ca_cert),
+            s_tls_client_cert, sizeof(s_tls_client_cert),
+            s_tls_client_key, sizeof(s_tls_client_key));
+        if (tls_err == ESP_OK) {
+            transport_cfg.broker_ca_cert = s_tls_ca_cert;
+            transport_cfg.client_cert = s_tls_client_cert;
+            transport_cfg.client_key = s_tls_client_key;
+            ESP_LOGI(TAG, "Loaded mTLS credentials from NVS namespace '%s' for gateway '%s'",
+                     GATEWAY_TLS_NVS_NAMESPACE, transport_cfg.gateway_id);
+        } else {
+#ifdef GATEWAY_HAS_EMBEDDED_TLS_CERTS
+            if (tls_err == ESP_ERR_NVS_NOT_FOUND) {
+                ESP_LOGW(TAG, "NVS '%s' not provisioned; using gitignored embedded mTLS fallback",
+                         GATEWAY_TLS_NVS_NAMESPACE);
+                transport_cfg.broker_ca_cert = _binary_ca_crt_start;
+                transport_cfg.client_cert = _binary_client_crt_start;
+                transport_cfg.client_key = _binary_client_key_start;
+            } else {
+                ESP_LOGE(TAG, "Fail-closed: NVS mTLS credential error (%s); refusing MQTT connection",
+                         esp_err_to_name(tls_err));
+                transport_ready_to_init = false;
+            }
+#else
+            ESP_LOGE(TAG, "Fail-closed: mTLS credentials missing/invalid in NVS '%s' (%s); refusing MQTT connection",
+                     GATEWAY_TLS_NVS_NAMESPACE, esp_err_to_name(tls_err));
+            transport_ready_to_init = false;
+#endif
+        }
     } else {
-        ESP_LOGI(TAG, "Gateway transport initialized successfully");
-        gateway_downlink_register_callbacks();
-        gateway_transport_register_status_callback(&gateway_liveness_on_transport_connection_status);
+        ESP_LOGW(TAG, "Plaintext MQTT dev-insecure mode active (%s); mTLS disabled by configuration",
+                 transport_cfg.broker_uri);
+    }
+
+    if (transport_ready_to_init) {
+        ret = gateway_transport_init(&transport_cfg);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to initialize gateway transport: %s", esp_err_to_name(ret));
+            mbedtls_platform_zeroize(s_tls_ca_cert, sizeof(s_tls_ca_cert));
+            mbedtls_platform_zeroize(s_tls_client_cert, sizeof(s_tls_client_cert));
+            mbedtls_platform_zeroize(s_tls_client_key, sizeof(s_tls_client_key));
+        } else {
+            ESP_LOGI(TAG, "Gateway transport initialized successfully (%s)", transport_cfg.broker_uri);
+            gateway_downlink_register_callbacks();
+            gateway_transport_register_status_callback(&gateway_liveness_on_transport_connection_status);
+        }
     }
 
     // Initialize Gateway V2 Join Relay Engine
