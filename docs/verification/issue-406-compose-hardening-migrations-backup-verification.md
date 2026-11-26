@@ -2,7 +2,7 @@
 
 - **Issue:** [#406 - [Infra] Harden Docker Compose restart/resource policies, decouple DB migrations, and add pg_data backup runbook](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/406)
 - **Branch:** `feature/406-harden-compose-migrations-backup`
-- **Base SHA:** `aec70071774e0eb2607eaea8d297d11782ad9c05`
+- **Base SHA:** `0a50a31` (merged `origin/main` #403/#404/#405 over initial base `aec70071774e0eb2607eaea8d297d11782ad9c05`)
 - **Authority:** `docs/architecture/deployment.md`, `deploy/compose.yaml`, `deploy/README.md`, `AGENTS.md`
 
 ---
@@ -19,8 +19,8 @@
 2. **Compose Policies & Service Ordering (`deploy/compose.yaml`):**
    - Added one-shot `migrate` service (`profiles: ["fullstack", "backend", "migrate"]`, `restart: "no"`, `entrypoint: ["/app/migrate.sh"]`, `depends_on: postgres: condition: service_healthy`).
    - Updated `backend` to depend on `postgres` (`service_healthy`) and `migrate` (`service_completed_successfully`).
-   - Added `restart: unless-stopped` to `postgres`, `mqtt-dev`, `mqtt-tls`, `backend`, and `web-dashboard`.
-   - Added `deploy.resources.limits` and `reservations` across all 6 services (`postgres`: 1.0 CPU / 512M, `mqtt-dev`: 0.5 CPU / 128M, `mqtt-tls`: 0.5 CPU / 256M, `migrate`: 0.5 CPU / 128M, `backend`: 1.0 CPU / 256M, `web-dashboard`: 1.0 CPU / 512M).
+   - Added `restart: unless-stopped` to `postgres`, `mqtt-dev`, `mqtt-tls`, `backend`, `web-dashboard`, and `reverse-proxy`.
+   - Added `deploy.resources.limits` and `reservations` across all 7 services (`postgres`: 1.0 CPU / 512M, `mqtt-dev`: 0.5 CPU / 128M, `mqtt-tls`: 0.5 CPU / 256M, `migrate`: 0.5 CPU / 128M, `backend`: 1.0 CPU / 256M, `web-dashboard`: 1.0 CPU / 512M, `reverse-proxy`: 0.5 CPU / 128M).
 3. **Documentation & Runbooks (`deploy/README.md`, `docs/architecture/deployment.md`):**
    - Documented the decoupled `migrate` service, resource sizing assumptions, restart policies, and a repeatable external-host `pg_dump -Fc` / `pg_restore` backup/restore runbook (explicitly prohibiting database dumps inside tracked Git paths).
 
@@ -30,7 +30,7 @@
 
 | Check | Scope & Method | Observed Result | Status |
 |---|---|---|---|
-| Compose config validation | `docker compose --env-file .env.example -f deploy/compose.yaml --profile fullstack --profile dev-insecure --profile tls --profile migrate config -q` + normalized JSON inspection | Exit 0; verified restart policies, resource limits/reservations on all 6 services, and `backend` dependency on `migrate` (`service_completed_successfully`) | **PASS** |
+| Compose config validation | `docker compose --env-file .env.example -f deploy/compose.yaml --profile fullstack --profile dev-insecure --profile tls --profile migrate --profile reverse-proxy config -q` + `compose.prod.yaml` overlay + normalized JSON inspection | Exit 0; verified restart policies, resource limits/reservations on all 7 services, and `backend` dependency on `migrate` (`service_completed_successfully`) | **PASS** |
 | Concurrent migration race & idempotency | Two parallel `docker compose run --rm --no-deps migrate` invocations against fresh `postgres:16-alpine` | Both exited 0; `pg_advisory_lock` serialized execution; `schema_migrations` count = `11` | **PASS** |
 | Partial-failure rollback | Mounted disposable `000001_good.up.sql` + failing `000002_bad.up.sql` against `rollback_test` DB | Exited non-zero (`ON_ERROR_STOP=1`); `good_tbl` committed (`000001_good.up.sql` recorded); `should_rollback` rolled back and absent from `schema_migrations` | **PASS** |
 | Decoupled `backend` startup & health | `docker compose --profile backend up -d --wait`; inspected `backend` logs + HTTP `GET /healthz` and `GET /api/v1/health` | Zero migration `psql` calls in `backend` logs; both endpoints returned HTTP 200 `{"status":"ok"}` | **PASS** |

@@ -7,8 +7,15 @@ topic write iot/v1/gw/gw-a/uplink/status
 topic write iot/v1/gw/gw-a/uplink/schedule-ack
 topic write iot/v1/gw/gw-a/uplink/command-ack
 topic write iot/v1/gw/gw-a/uplink/rf-metrics
+topic write iot/v1/gw/gw-a/uplink/join-hello
+topic write iot/v1/gw/gw-a/uplink/join-request
+topic write iot/v1/gw/gw-a/uplink/heartbeat
 topic read iot/v1/gw/gw-a/downlink/schedule
 topic read iot/v1/gw/gw-a/downlink/command
+topic read iot/v1/gw/gw-a/downlink/join-wait
+topic read iot/v1/gw/gw-a/downlink/join-reject
+topic read iot/v1/gw/gw-a/downlink/join-grant
+topic read iot/v1/gw/gw-a/downlink/node-revoke
 # Session Key Install & ACK
 topic read iot/v1/gw/gw-a/downlink/session-key-install
 topic write iot/v1/gw/gw-a/uplink/session-key-ack
@@ -20,8 +27,15 @@ topic write iot/v1/gw/gw-b/uplink/status
 topic write iot/v1/gw/gw-b/uplink/schedule-ack
 topic write iot/v1/gw/gw-b/uplink/command-ack
 topic write iot/v1/gw/gw-b/uplink/rf-metrics
+topic write iot/v1/gw/gw-b/uplink/join-hello
+topic write iot/v1/gw/gw-b/uplink/join-request
+topic write iot/v1/gw/gw-b/uplink/heartbeat
 topic read iot/v1/gw/gw-b/downlink/schedule
 topic read iot/v1/gw/gw-b/downlink/command
+topic read iot/v1/gw/gw-b/downlink/join-wait
+topic read iot/v1/gw/gw-b/downlink/join-reject
+topic read iot/v1/gw/gw-b/downlink/join-grant
+topic read iot/v1/gw/gw-b/downlink/node-revoke
 # Session Key Install & ACK
 topic read iot/v1/gw/gw-b/downlink/session-key-install
 topic write iot/v1/gw/gw-b/uplink/session-key-ack
@@ -33,8 +47,15 @@ topic read iot/v1/gw/+/uplink/status
 topic read iot/v1/gw/+/uplink/schedule-ack
 topic read iot/v1/gw/+/uplink/command-ack
 topic read iot/v1/gw/+/uplink/rf-metrics
+topic read iot/v1/gw/+/uplink/join-hello
+topic read iot/v1/gw/+/uplink/join-request
+topic read iot/v1/gw/+/uplink/heartbeat
 topic write iot/v1/gw/+/downlink/schedule
 topic write iot/v1/gw/+/downlink/command
+topic write iot/v1/gw/+/downlink/join-wait
+topic write iot/v1/gw/+/downlink/join-reject
+topic write iot/v1/gw/+/downlink/join-grant
+topic write iot/v1/gw/+/downlink/node-revoke
 # Session Key Install & ACK
 topic write iot/v1/gw/+/downlink/session-key-install
 topic read iot/v1/gw/+/uplink/session-key-ack

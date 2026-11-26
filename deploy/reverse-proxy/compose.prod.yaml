@@ -1,0 +1,23 @@
+# Production overlay: enforces strict secret injection, internal-only backend/frontend/DB
+# network exposure, and TLS termination through reverse-proxy on port 443.
+# Usage:
+#   docker compose --env-file .env.prod -f deploy/compose.yaml -f deploy/reverse-proxy/compose.prod.yaml \
+#     --profile fullstack --profile reverse-proxy up -d
+services:
+  postgres:
+    ports: !reset []
+
+  backend:
+    environment:
+      APP_ENV: "production"
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY in production env}
+      DEVICE_PROVISION_MASTER_KEY: ${DEVICE_PROVISION_MASTER_KEY:?set DEVICE_PROVISION_MASTER_KEY in production env}
+      DATABASE_URL: "${DATABASE_URL:-postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=${POSTGRES_SSLMODE:-disable}}"
+    ports: !reset []
+
+  web-dashboard:
+    ports: !reset []
+
+  reverse-proxy:
+    ports: !override
+      - "${PROXY_HTTPS_BIND:-0.0.0.0:443}:443"

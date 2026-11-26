@@ -42,11 +42,11 @@ directory. No key or certificate is supplied in Git.
 
 ```bash
 umask 077
-mkdir -p deploy/secrets/pki deploy/secrets/broker deploy/secrets/clients
+mkdir -p deploy/secrets/pki deploy/secrets/broker deploy/secrets/clients deploy/secrets/backend
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=local-test-ca \
   -keyout deploy/secrets/pki/ca.key -out deploy/secrets/broker/ca.crt
-openssl req -new -newkey rsa:2048 -nodes -subj /CN=localhost \
-  -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
+openssl req -new -newkey rsa:2048 -nodes -subj /CN=mqtt-tls \
+  -addext 'subjectAltName=DNS:mqtt-tls,DNS:localhost,IP:127.0.0.1' \
   -addext 'extendedKeyUsage=serverAuth' \
   -keyout deploy/secrets/broker/server.key -out deploy/secrets/pki/server.csr
 openssl x509 -req -in deploy/secrets/pki/server.csr -days 1 \
@@ -61,18 +61,38 @@ for identity in gw-a gw-b backend; do
     -CA deploy/secrets/broker/ca.crt -CAkey deploy/secrets/pki/ca.key -CAcreateserial \
     -copy_extensions copy -out "deploy/secrets/clients/$identity.crt"
 done
+# Isolate backend credentials from gateway keys and ca.key (backend container runs as appuser/appgroup, gid 101 in Alpine).
+cp deploy/secrets/broker/ca.crt deploy/secrets/clients/backend.crt deploy/secrets/clients/backend.key deploy/secrets/backend/
+sudo chown -R "$(id -u):101" deploy/secrets/backend
+chmod 750 deploy/secrets/backend
+chmod 640 deploy/secrets/backend/*
 # Mosquitto in the existing image reads as uid/gid 1883.
 sudo chown -R "$(id -u):1883" deploy/secrets/broker
 chmod 750 deploy/secrets/broker
 chmod 640 deploy/secrets/broker/*
 ```
 
-Set `MQTT_CERT_DIR=./secrets/broker` in `.env`. Relative paths resolve from
-`deploy/`; an absolute external path also works. The directory must exist with
-readable `ca.crt`, `server.crt`, and `server.key`. Compose does not silently create
-a missing certificate directory. Each client needs its own certificate/key and
-the public CA certificate. Verify the broker hostname against its certificate
-SAN. Do not use `--insecure`.
+Set `MQTT_CERT_DIR=./secrets/broker` and `MQTT_BACKEND_CERT_DIR=./secrets/backend` in `.env`.
+Relative paths resolve from `deploy/`; an absolute external path also works.
+The broker mount must exist with readable `ca.crt`, `server.crt`, and `server.key`.
+The backend mount must contain only `ca.crt`, `backend.crt`, and `backend.key` (never `ca.key` or Gateway keys).
+Compose does not silently create a missing certificate directory.
+Verify the broker hostname against its certificate SAN (`DNS:mqtt-tls`, `DNS:localhost`, `IP:127.0.0.1`). Do not use `--insecure`.
+
+### Backend MQTT TLS / Authentication Environment Variables
+
+| Variable | Default in `.env.example` / Compose | Description |
+|---|---|---|
+| `MQTT_HOST` | `mqtt-tls` | Broker hostname (`mqtt-tls` in Docker Compose `--profile tls`, `localhost` when running `backend-go` on host, `mqtt-dev` only for opt-in `dev-insecure`). Unresolved hosts fail closed (no hardcoded LAN IP fallback). |
+| `MQTT_PORT` | `8883` (`1883` when TLS disabled) | Broker port. |
+| `MQTT_TLS_ENABLED` | `true` | Enables `tls://` scheme and TLS 1.2+ verification; fails closed if invalid or if cert files are missing/unreadable. |
+| `MQTT_BACKEND_CERT_DIR` | `./secrets/backend` | Host directory bound read-only to `/run/secrets/mqtt` in the `backend` container. |
+| `MQTT_TLS_CA_FILE` | `/run/secrets/mqtt/ca.crt` | Required PEM CA certificate path when TLS is enabled. |
+| `MQTT_TLS_CERT_FILE` | `/run/secrets/mqtt/backend.crt` | Client certificate PEM path for mTLS (must be paired with `MQTT_TLS_KEY_FILE`). |
+| `MQTT_TLS_KEY_FILE` | `/run/secrets/mqtt/backend.key` | Client private key PEM path for mTLS (must be paired with `MQTT_TLS_CERT_FILE`). |
+| `MQTT_TLS_SERVER_NAME` | *(unset)* | Optional TLS SNI / server hostname override. |
+| `MQTT_USERNAME` | *(unset)* | Optional MQTT username (for username/password broker auth). |
+| `MQTT_PASSWORD` | *(unset)* | Optional MQTT password (requires `MQTT_USERNAME`; never logged or committed). |
 
 ```bash
 docker compose --env-file .env -f deploy/compose.yaml --profile tls up -d --build mqtt-tls
@@ -149,8 +169,8 @@ shared CA material.
 
 Issue #266 integrates full-stack containerization for local execution and end-to-end verification, and Issue #406 decouples migrations, adds restart/resource policies, and defines the `pg_data` backup/restore runbook:
 - **`migrate`**: One-shot migration runner built from `backend-go/Dockerfile` (`entrypoint: ["/app/migrate.sh"]`, `restart: "no"`). Acquires a PostgreSQL session advisory lock (`pg_advisory_lock`), creates `schema_migrations` under lock, and applies pending `/app/migrations/*.up.sql` scripts inside individual transactions with `ON_ERROR_STOP=1`.
-- **`backend`**: Go Modular Monolith (`backend-go`), multi-stage Alpine build, non-root user (`appuser:appgroup`), startup `/app/entrypoint.sh` waits only for `pg_isready` (never runs `psql` migrations, preventing multi-replica races), depends on `postgres` (`service_healthy`) and `migrate` (`service_completed_successfully`), exposed at `8080`.
-- **`web-dashboard`**: Next.js 16 standalone output (`clients/web-dashboard`), multi-stage Node 22 Alpine build, non-root user (`nextjs:nodejs`), exposed at `3000`.
+- **`backend`**: Go Modular Monolith (`backend-go`), multi-stage Alpine build, non-root user (`appuser:appgroup`), startup `/app/entrypoint.sh` waits only for `pg_isready` (never runs `psql` migrations, preventing multi-replica races), depends on `postgres` (`service_healthy`) and `migrate` (`service_completed_successfully`), exposed at `127.0.0.1:8080`.
+- **`web-dashboard`**: Next.js 16 standalone output (`clients/web-dashboard`), multi-stage Node 22 Alpine build, non-root user (`nextjs:nodejs`), exposed at `127.0.0.1:3000`.
 
 ### Database Migrations (Decoupled One-Shot Runner)
 
@@ -178,6 +198,7 @@ All services in `deploy/compose.yaml` declare explicit `restart` policies and bo
 | `migrate` | `"no"` | `0.5` (`0.1`) | `128M` (`32M`) | One-shot `pg_isready` + `psql` execution; exits `0` upon completion. |
 | `backend` | `unless-stopped` | `1.0` (`0.25`) | `256M` (`64M`) | Go HTTP/WSS/MQTT runtime + DB pool uses ~20–60 MiB RSS; >4x headroom prevents GC thrashing. |
 | `web-dashboard` | `unless-stopped` | `1.0` (`0.25`) | `512M` (`128M`) | Node 22 + Next.js standalone runtime uses ~80–180 MiB RSS; avoids V8 heap OOM on SSR bursts. |
+| `reverse-proxy` | `unless-stopped` | `0.5` (`0.1`) | `128M` (`32M`) | Nginx TLS 1.2/1.3 termination & WebSocket proxy uses ~10–30 MiB RSS under MVP load. |
 
 ### PostgreSQL Backup & Restore Runbook (`pg_data`)
 
@@ -250,10 +271,10 @@ Ensure `.env` is configured with `POSTGRES_PASSWORD`, `POSTGRES_USER`, and `POST
 # 1. Build frontend với API URL mới (hoặc khi thay đổi NEXT_PUBLIC_API_URL):
 docker compose --env-file .env -f deploy/compose.yaml build web-dashboard
 
-# 2. Khởi chạy toàn bộ hệ thống (PostgreSQL, Backend, Frontend):
-docker compose --env-file .env -f deploy/compose.yaml --profile fullstack up -d
+# 2. Khởi chạy toàn bộ hệ thống với MQTT TLS (PostgreSQL, MQTT TLS, Backend, Frontend):
+docker compose --env-file .env -f deploy/compose.yaml --profile fullstack --profile tls up -d
 
-# Hoặc khởi chạy toàn bộ hệ thống gồm cả MQTT Broker (PostgreSQL, MQTT, Backend, Frontend):
+# Hoặc opt-in dev-insecure (cần đặt MQTT_HOST=mqtt-dev, MQTT_PORT=1883, MQTT_TLS_ENABLED=false trong .env):
 docker compose --env-file .env -f deploy/compose.yaml --profile fullstack --profile dev-insecure up -d
 
 # 3. Kiểm tra trạng thái và sức khỏe các container:
@@ -267,16 +288,38 @@ docker compose --env-file .env -f deploy/compose.yaml logs -f web-dashboard
 ```
 
 > [!NOTE]
-> Trong cấu hình `deploy/compose.yaml`, container `backend` tự động kết nối tới MQTT Broker (`mqtt-dev:1883`) để lắng nghe trạng thái Gateway.
-> Nếu chỉ chạy `--profile fullstack`, Docker chỉ khởi chạy `postgres`, `backend` và `web-dashboard` (chưa có `mqtt-dev`).
-> Để khởi chạy toàn bộ hệ thống gồm cả Backend, Web Dashboard, PostgreSQL **và MQTT Broker**:
+> Trong cấu hình `deploy/compose.yaml`, `backend` mặc định kết nối bảo mật tới `mqtt-tls:8883` bằng mTLS (`MQTT_TLS_ENABLED=true`, mount read-only `./secrets/backend` tại `/run/secrets/mqtt`).
+> Nếu chỉ chạy `--profile fullstack`, Docker chỉ khởi chạy `postgres`, `backend` và `web-dashboard` (chưa có `mqtt-tls`).
+> Hãy chạy kèm `--profile tls` sau khi đã cấp phát chứng chỉ cục bộ ở bước trên:
 > ```bash
-> docker compose --env-file .env -f deploy/compose.yaml --profile fullstack --profile dev-insecure up -d
+> docker compose --env-file .env -f deploy/compose.yaml --profile fullstack --profile tls up -d
 > ```
 
-### External & LAN Access (Laptop & Mobile)
+### External & LAN Access (Dev Opt-in) vs Production Reverse Proxy
 
-Khi cần truy cập từ các thiết bị ngoài trong cùng mạng Wi-Fi/LAN (điện thoại, ESP32 Gateway):
+Mặc định `deploy/compose.yaml` bind toàn bộ dịch vụ về loopback (`127.0.0.1:8080`, `127.0.0.1:3000`, `127.0.0.1:5432`) và không chứa literal secret fallback.
+
+#### Chạy sau Reverse Proxy HTTPS / WSS (Port 443)
+Trong môi trường staging/production, dùng `reverse-proxy` (Nginx TLS 1.2/1.3 termination trên cổng `443`) và file overlay `deploy/reverse-proxy/compose.prod.yaml` để chạy `APP_ENV=production`, bắt buộc `JWT_SECRET_KEY` và `DEVICE_PROVISION_MASTER_KEY`, đồng thời khóa `backend`, `web-dashboard`, `postgres` chỉ giao tiếp nội bộ trên Docker network:
+
+1. Chuẩn bị chứng chỉ TLS (không commit vào Git) tại `deploy/secrets/proxy/` (`server.crt`, `server.key`) và cấu hình file env ngoài Git (ví dụ `.env.prod` với `chmod 600`):
+   - `APP_ENV=production`
+   - `JWT_SECRET_KEY` (>= 32 bytes ngẫu nhiên, ví dụ `openssl rand -base64 32`)
+   - `DEVICE_PROVISION_MASTER_KEY` (64 ký tự hex ngẫu nhiên, ví dụ `openssl rand -hex 32`)
+   - `POSTGRES_SSLMODE=require` hoặc `verify-full` (khi dùng PostgreSQL bên ngoài qua `DATABASE_URL`)
+   - `NEXT_PUBLIC_API_URL=https://<your-domain-or-host>`
+   - `PROXY_CERT_DIR=./secrets/proxy`
+2. Kiểm tra cấu hình và khởi chạy:
+   ```bash
+   docker compose --env-file .env.prod -f deploy/compose.yaml -f deploy/reverse-proxy/compose.prod.yaml \
+     --profile fullstack --profile reverse-proxy config -q
+   docker compose --env-file .env.prod -f deploy/compose.yaml -f deploy/reverse-proxy/compose.prod.yaml \
+     --profile fullstack --profile reverse-proxy up -d --build
+   ```
+   Nginx trên cổng `443` sẽ terminate TLS cho cả HTTPS (`/api/v1/`, `/healthz` -> `backend:8080`; `/` -> `web-dashboard:3000`) và WSS (`/api/v1/ws/realtime` -> `backend:8080`).
+
+#### External & LAN Access (Laptop & Mobile trong mạng nội bộ Dev)
+Chỉ dùng cho phát triển cục bộ khi cần truy cập từ thiết bị cùng mạng Wi-Fi/LAN:
 1. Cấu hình biến môi trường trong file `.env`:
    - `NEXT_PUBLIC_API_URL=http://<LAN_IP>:8080` (ví dụ `http://192.168.88.113:8080`).
    - `BACKEND_PORT_BIND=0.0.0.0:8080`

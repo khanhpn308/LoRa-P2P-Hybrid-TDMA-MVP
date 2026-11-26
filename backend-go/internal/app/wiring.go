@@ -32,6 +32,9 @@ func New(cfg *config.Config, opts ...Option) (*App, error) {
 	if cfg == nil {
 		cfg = config.Load()
 	}
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
 
 	var db *sql.DB
 	var statusStore storage.StatusStorage
@@ -81,8 +84,28 @@ func New(cfg *config.Config, opts ...Option) (*App, error) {
 
 	var statusSub *mqtt.GatewayStatusSubscriber
 	if statusStore != nil {
-		brokerURI := cfg.ResolveMQTTBrokerURI()
-		statusSub = mqtt.NewGatewayStatusSubscriber(brokerURI, statusStore, hub, eventStorage, joinReqStore, presenceTracker)
+		brokerURI, err := cfg.ResolveMQTTBrokerURI()
+		if err != nil {
+			if db != nil {
+				_ = db.Close()
+			}
+			return nil, fmt.Errorf("failed to resolve MQTT broker URI: %w", err)
+		}
+		tlsCfg, err := cfg.BuildMQTTTLSConfig()
+		if err != nil {
+			if db != nil {
+				_ = db.Close()
+			}
+			return nil, fmt.Errorf("failed to configure MQTT TLS: %w", err)
+		}
+		var subOpts []mqtt.SubscriberOption
+		if tlsCfg != nil {
+			subOpts = append(subOpts, mqtt.WithTLSConfig(tlsCfg))
+		}
+		if cfg.MQTTUsername != "" || cfg.MQTTPassword != "" {
+			subOpts = append(subOpts, mqtt.WithCredentials(cfg.MQTTUsername, cfg.MQTTPassword))
+		}
+		statusSub = mqtt.NewGatewayStatusSubscriber(brokerURI, statusStore, hub, eventStorage, joinReqStore, presenceTracker, subOpts...)
 	}
 
 	var joinReqHandler *api.JoinRequestHandler

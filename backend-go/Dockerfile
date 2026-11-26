@@ -1,19 +1,16 @@
 # syntax=docker/dockerfile:1
 # Stage 1: Build binary
-FROM golang:alpine AS builder
+FROM golang:1.27.3-alpine AS builder
 
 WORKDIR /app
 
-COPY go.mod ./
+COPY go.mod go.sum ./
 COPY . .
-
-# Support both OpenAPI standard /healthz and AC1 /api/v1/health in the compiled binary
-RUN sed -i 's|mux.HandleFunc("GET /healthz", h.handleHealthz)|mux.HandleFunc("GET /healthz", h.handleHealthz)\n\tmux.HandleFunc("GET /api/v1/health", h.handleHealthz)|g' internal/api/health_handler.go
 
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /server ./cmd/server
 
 # Stage 2: Minimal runtime image
-FROM alpine:latest
+FROM alpine:3.24.3
 
 RUN apk add --no-cache ca-certificates postgresql-client tzdata bash
 
