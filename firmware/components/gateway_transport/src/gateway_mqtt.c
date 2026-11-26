@@ -4,6 +4,7 @@
 
 #ifdef ESP_PLATFORM
 #include "esp_log.h"
+#include "mbedtls/x509_crt.h"
 #include "mqtt_client.h"
 #include "mqtt5_client.h"
 #endif
@@ -107,9 +108,14 @@ static void mqtt5_event_handler(void *handler_args, esp_event_base_t base,
     case MQTT_EVENT_ERROR:
         ESP_LOGE(TAG, "MQTT_EVENT_ERROR occurred");
         if (event->error_handle) {
-            ESP_LOGE(TAG, "Connect return code: %d, error type: %d",
+            ESP_LOGE(TAG,
+                     "Connect return code: %d, error type: %d, tls_esp_err: 0x%x, tls_stack_err: 0x%x, cert_flags: 0x%x, sock_errno: %d",
                      event->error_handle->connect_return_code,
-                     event->error_handle->error_type);
+                     event->error_handle->error_type,
+                     (unsigned int)event->error_handle->esp_tls_last_esp_err,
+                     event->error_handle->esp_tls_stack_err,
+                     event->error_handle->esp_tls_cert_verify_flags,
+                     event->error_handle->esp_transport_sock_errno);
         }
         break;
 
@@ -144,6 +150,240 @@ esp_err_t gateway_mqtt_build_topic(char *out, size_t max_len, const char *gw_id,
     return ESP_OK;
 }
 
+static size_t bounded_strnlen(const char *s, size_t max_len)
+{
+    size_t len = 0;
+    while (len < max_len && s[len] != '\0') {
+        len++;
+    }
+    return len;
+}
+
+static bool has_valid_uri_host(const char *host)
+{
+    if (host == NULL || host[0] == '\0') {
+        return false;
+    }
+    for (size_t i = 0; host[i] != '\0'; i++) {
+        unsigned char c = (unsigned char)host[i];
+        if (c <= 0x20U || c == '/' || c == '\\' || c == '?' || c == '#') {
+            return false;
+        }
+    }
+    if (strstr(host, "://") != NULL) {
+        return false;
+    }
+    return true;
+}
+
+static bool is_supported_broker_uri(const char *uri, bool *out_is_tls)
+{
+    if (uri == NULL || uri[0] == '\0') {
+        return false;
+    }
+
+    const char *rest = NULL;
+    bool is_tls = false;
+    if (strncmp(uri, "mqtts://", 8) == 0) {
+        rest = uri + 8;
+        is_tls = true;
+    } else if (strncmp(uri, "ssl://", 6) == 0) {
+        rest = uri + 6;
+        is_tls = true;
+    } else if (strncmp(uri, "mqtt://", 7) == 0) {
+        rest = uri + 7;
+        is_tls = false;
+    } else {
+        return false;
+    }
+
+    if (rest[0] == '\0') {
+        return false;
+    }
+
+    for (size_t i = 0; rest[i] != '\0'; i++) {
+        unsigned char c = (unsigned char)rest[i];
+        if (c <= 0x20U || c == '\\') {
+            return false;
+        }
+    }
+
+    if (out_is_tls != NULL) {
+        *out_is_tls = is_tls;
+    }
+    return true;
+}
+
+bool gateway_mqtt_is_tls_uri(const char *broker_uri)
+{
+    bool is_tls = false;
+    if (!is_supported_broker_uri(broker_uri, &is_tls)) {
+        return false;
+    }
+    return is_tls;
+}
+
+esp_err_t gateway_mqtt_validate_pem(const char *pem, size_t max_len, bool is_private_key)
+{
+    if (pem == NULL || max_len == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    size_t len = bounded_strnlen(pem, max_len);
+    if (len == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (len >= max_len) {
+        /* Not NUL-terminated within max_len */
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    static const char k_begin_prefix[] = "-----BEGIN ";
+    static const char k_end_prefix[] = "-----END ";
+    static const char k_cert_suffix[] = "CERTIFICATE-----";
+    static const char k_key_suffix[] = "PRIVATE KEY-----";
+    const char *expected_suffix = is_private_key ? k_key_suffix : k_cert_suffix;
+
+    const char *begin = strstr(pem, k_begin_prefix);
+    if (begin == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const char *begin_line_end = strchr(begin, '\n');
+    if (begin_line_end == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const char *begin_suffix = strstr(begin, expected_suffix);
+    if (begin_suffix == NULL || begin_suffix > begin_line_end) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const char *end = strstr(begin_line_end + 1, k_end_prefix);
+    if (end == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const char *end_suffix = strstr(end, expected_suffix);
+    if (end_suffix == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    /* Require at least one non-whitespace Base64 body character between header and footer */
+    bool has_body = false;
+    for (const char *p = begin_line_end + 1; p < end; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (c > 0x20U) {
+            has_body = true;
+            break;
+        }
+    }
+    if (!has_body) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t gateway_mqtt_resolve_broker_uri(char *out, size_t max_len,
+                                          const char *uri_override,
+                                          const char *host, uint16_t port,
+                                          bool tls_enabled)
+{
+    if (out == NULL || max_len == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    out[0] = '\0';
+
+    if (uri_override != NULL && uri_override[0] != '\0') {
+        bool uri_is_tls = false;
+        if (!is_supported_broker_uri(uri_override, &uri_is_tls)) {
+            return ESP_ERR_INVALID_ARG;
+        }
+        if (tls_enabled && !uri_is_tls) {
+            /* Fail closed: never allow silent cleartext downgrade when TLS is enabled */
+            return ESP_ERR_INVALID_ARG;
+        }
+        int ret = snprintf(out, max_len, "%s", uri_override);
+        if (ret < 0 || (size_t)ret >= max_len) {
+            out[0] = '\0';
+            return ESP_ERR_INVALID_SIZE;
+        }
+        return ESP_OK;
+    }
+
+    if (!has_valid_uri_host(host) || port == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    bool use_tls = tls_enabled || (port == 8883U);
+    const char *scheme = use_tls ? "mqtts" : "mqtt";
+    int ret = snprintf(out, max_len, "%s://%s:%u", scheme, host, (unsigned int)port);
+    if (ret < 0 || (size_t)ret >= max_len) {
+        out[0] = '\0';
+        return ESP_ERR_INVALID_SIZE;
+    }
+    return ESP_OK;
+}
+
+#ifdef ESP_PLATFORM
+static esp_err_t verify_x509_certs_and_identity(const char *ca_pem,
+                                                const char *client_pem,
+                                                const char *expected_gw_id)
+{
+    mbedtls_x509_crt ca_crt;
+    mbedtls_x509_crt client_crt;
+    mbedtls_x509_crt_init(&ca_crt);
+    mbedtls_x509_crt_init(&client_crt);
+
+    int ret = mbedtls_x509_crt_parse(&ca_crt,
+                                     (const unsigned char *)ca_pem,
+                                     strlen(ca_pem) + 1);
+    if (ret != 0) {
+        ESP_LOGE(TAG, "Failed to parse broker CA X.509 certificate (mbedtls -0x%04x)", (unsigned int)(-ret));
+        mbedtls_x509_crt_free(&ca_crt);
+        mbedtls_x509_crt_free(&client_crt);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    ret = mbedtls_x509_crt_parse(&client_crt,
+                                 (const unsigned char *)client_pem,
+                                 strlen(client_pem) + 1);
+    if (ret != 0) {
+        ESP_LOGE(TAG, "Failed to parse gateway client X.509 certificate (mbedtls -0x%04x)", (unsigned int)(-ret));
+        mbedtls_x509_crt_free(&ca_crt);
+        mbedtls_x509_crt_free(&client_crt);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    /* Verify client certificate CN matches configured gateway_id (Mosquitto use_identity_as_username) */
+    bool cn_found = false;
+    bool cn_matched = false;
+    size_t expected_len = strlen(expected_gw_id);
+    static const unsigned char k_oid_at_cn[3] = {0x55U, 0x04U, 0x03U};
+    for (const mbedtls_x509_name *name = &client_crt.subject; name != NULL; name = name->next) {
+        if (name->oid.len == sizeof(k_oid_at_cn) &&
+            memcmp(name->oid.p, k_oid_at_cn, sizeof(k_oid_at_cn)) == 0) {
+            cn_found = true;
+            if (name->val.len == expected_len &&
+                memcmp(name->val.p, expected_gw_id, expected_len) == 0) {
+                cn_matched = true;
+                break;
+            }
+        }
+    }
+
+    mbedtls_x509_crt_free(&ca_crt);
+    mbedtls_x509_crt_free(&client_crt);
+
+    if (!cn_found || !cn_matched) {
+        ESP_LOGE(TAG, "Client certificate CN does not match gateway_id '%s'", expected_gw_id);
+        return ESP_ERR_INVALID_ARG;
+    }
+    return ESP_OK;
+}
+#endif
+
 esp_err_t gateway_mqtt_init(const gateway_mqtt_config_t *config)
 {
     if (config == NULL || config->gateway_id[0] == '\0') {
@@ -154,16 +394,35 @@ esp_err_t gateway_mqtt_init(const gateway_mqtt_config_t *config)
         return ESP_OK;
     }
 
+    bool uri_is_tls = false;
+    if (!is_supported_broker_uri(config->broker_uri, &uri_is_tls)) {
+        ESP_LOGE(TAG, "Missing or invalid MQTT broker URI; refusing hardcoded fallback");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (uri_is_tls) {
+        if (gateway_mqtt_validate_pem(config->broker_ca_cert, GATEWAY_MQTT_PEM_MAX_LEN, false) != ESP_OK ||
+            gateway_mqtt_validate_pem(config->client_cert, GATEWAY_MQTT_PEM_MAX_LEN, false) != ESP_OK ||
+            gateway_mqtt_validate_pem(config->client_key, GATEWAY_MQTT_PEM_MAX_LEN, true) != ESP_OK) {
+            ESP_LOGE(TAG, "Fail-closed: mqtts:// requires valid non-empty PEM CA cert, client cert, and client key");
+            return ESP_ERR_INVALID_ARG;
+        }
+#ifdef ESP_PLATFORM
+        esp_err_t x509_err = verify_x509_certs_and_identity(config->broker_ca_cert,
+                                                            config->client_cert,
+                                                            config->gateway_id);
+        if (x509_err != ESP_OK) {
+            return x509_err;
+        }
+#endif
+    }
+
     memset(&s_config, 0, sizeof(s_config));
     strncpy(s_config.gateway_id, config->gateway_id, sizeof(s_config.gateway_id) - 1);
-    if (config->broker_uri[0] != '\0') {
-        strncpy(s_config.broker_uri, config->broker_uri, sizeof(s_config.broker_uri) - 1);
-    } else {
-        snprintf(s_config.broker_uri, sizeof(s_config.broker_uri), "mqtts://192.168.1.10:8883");
-    }
-    s_config.broker_ca_cert = config->broker_ca_cert;
-    s_config.client_cert = config->client_cert;
-    s_config.client_key = config->client_key;
+    strncpy(s_config.broker_uri, config->broker_uri, sizeof(s_config.broker_uri) - 1);
+    s_config.broker_ca_cert = uri_is_tls ? config->broker_ca_cert : NULL;
+    s_config.client_cert = uri_is_tls ? config->client_cert : NULL;
+    s_config.client_key = uri_is_tls ? config->client_key : NULL;
     s_config.status_cb = config->status_cb;
     s_config.downlink_cb = config->downlink_cb;
 

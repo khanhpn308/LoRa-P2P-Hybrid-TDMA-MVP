@@ -58,7 +58,16 @@ menu "Gateway Master Configuration"
             default ""
             help
                 Optional full URI override (e.g. mqtts://192.168.1.10:8883).
-                If empty, constructed from host and port.
+                If empty, constructed from host, port, and TLS setting.
+
+        config GATEWAY_MQTT_TLS_ENABLED
+            bool "Enable MQTT 5.0 over mTLS (mqtts://)"
+            default y
+            help
+                Enforces mutual TLS (mqtts://) with Broker CA verification and Gateway
+                client certificate + private key loaded from NVS namespace nvs_tls
+                (or gitignored embedded fallback). Disable ONLY for isolated dev-insecure
+                plaintext mqtt:// testing.
 
         config GATEWAY_TRANSPORT_QUEUE_SIZE
             int "Outbound MQTT Event Queue Capacity"

@@ -21,11 +21,13 @@ class TestGatewayTransportUnit(unittest.TestCase):
         cls.transport_c = cls.component_dir / "src" / "gateway_transport.c"
         cls.wifi_c = cls.component_dir / "src" / "gateway_wifi.c"
         cls.mqtt_c = cls.component_dir / "src" / "gateway_mqtt.c"
+        cls.mock_nvs_c = cls.repo_root / "tests" / "unit" / "mock_nvs.c"
         cls.test_c = cls.repo_root / "tests" / "unit" / "test_gateway_transport.c"
 
         assert cls.transport_c.is_file(), f"Source not found: {cls.transport_c}"
         assert cls.wifi_c.is_file(), f"Source not found: {cls.wifi_c}"
         assert cls.mqtt_c.is_file(), f"Source not found: {cls.mqtt_c}"
+        assert cls.mock_nvs_c.is_file(), f"Mock NVS not found: {cls.mock_nvs_c}"
         assert cls.test_c.is_file(), f"Test not found: {cls.test_c}"
         assert (cls.c_inc / "gateway_transport.h").is_file(), "gateway_transport.h missing"
 
@@ -45,6 +47,7 @@ class TestGatewayTransportUnit(unittest.TestCase):
                 str(self.transport_c),
                 str(self.wifi_c),
                 str(self.mqtt_c),
+                str(self.mock_nvs_c),
                 str(self.test_c),
                 "-o",
                 str(bin_path),

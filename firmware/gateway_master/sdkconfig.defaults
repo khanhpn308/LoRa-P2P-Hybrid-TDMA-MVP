@@ -2,6 +2,7 @@ CONFIG_IDF_TARGET="esp32"
 
 # Enable MQTT v5 support in the managed ESP-MQTT component (ADR-0002)
 CONFIG_MQTT_PROTOCOL_5=y
+CONFIG_GATEWAY_MQTT_TLS_ENABLED=y
 
 # Enable mbedtls certificate bundle for TLS server verification
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y

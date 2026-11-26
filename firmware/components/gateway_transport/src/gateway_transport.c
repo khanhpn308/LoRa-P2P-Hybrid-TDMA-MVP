@@ -1,6 +1,9 @@
 #include "gateway_transport.h"
 #include "gateway_wifi.h"
 #include "gateway_mqtt.h"
+#include "nvs.h"
+#include "nvs_flash.h"
+#include "mbedtls/platform_util.h"
 #include <string.h>
 
 #ifdef ESP_PLATFORM
@@ -94,8 +97,10 @@ static void transport_task(void *pvParameters)
                 retain = 0;
                 break;
             default:
-                suffix = "uplink/unknown";
-                break;
+                ESP_LOGW(TAG, "Dropping unsupported outbound msg type: %d", (int)msg.type);
+                s_dropped_events++;
+                memset(&msg, 0, sizeof(msg));
+                continue;
             }
 
             esp_err_t err = gateway_mqtt_build_topic(topic, sizeof(topic),
@@ -252,6 +257,104 @@ static esp_err_t enqueue_outbound(gateway_msg_type_t type, const uint8_t *payloa
 #endif
 }
 
+static esp_err_t read_nvs_pem_blob(nvs_handle_t handle, const char *key,
+                                   char *buf, size_t buf_len,
+                                   bool is_private_key)
+{
+    size_t blob_len = 0;
+    esp_err_t err = nvs_get_blob(handle, key, NULL, &blob_len);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    if (blob_len < 2U || blob_len > buf_len) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    err = nvs_get_blob(handle, key, buf, &blob_len);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    if (buf[blob_len - 1U] != '\0') {
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    return gateway_mqtt_validate_pem(buf, buf_len, is_private_key);
+}
+
+esp_err_t gateway_transport_load_tls_certs_from_nvs(
+    const char *expected_gateway_id,
+    char *ca_buf, size_t ca_buf_len,
+    char *client_cert_buf, size_t client_cert_buf_len,
+    char *client_key_buf, size_t client_key_buf_len)
+{
+    if (expected_gateway_id == NULL || expected_gateway_id[0] == '\0' ||
+        ca_buf == NULL || ca_buf_len == 0 ||
+        client_cert_buf == NULL || client_cert_buf_len == 0 ||
+        client_key_buf == NULL || client_key_buf_len == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    memset(ca_buf, 0, ca_buf_len);
+    memset(client_cert_buf, 0, client_cert_buf_len);
+    memset(client_key_buf, 0, client_key_buf_len);
+
+    nvs_handle_t handle = 0;
+    esp_err_t err = nvs_open(GATEWAY_TLS_NVS_NAMESPACE, NVS_READONLY, &handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    /* Check optional provisioned gateway_id binding if present in NVS */
+    char nvs_gw_id[GATEWAY_ID_MAX_LEN] = {0};
+    size_t gw_id_len = sizeof(nvs_gw_id);
+    esp_err_t gw_err = nvs_get_blob(handle, "gateway_id", nvs_gw_id, &gw_id_len);
+    if (gw_err == ESP_OK) {
+        if (gw_id_len < 2U || gw_id_len > sizeof(nvs_gw_id) ||
+            nvs_gw_id[gw_id_len - 1U] != '\0' ||
+            strcmp(nvs_gw_id, expected_gateway_id) != 0) {
+            ESP_LOGE(TAG, "Provisioned NVS gateway_id mismatch against '%s'", expected_gateway_id);
+            err = ESP_ERR_INVALID_STATE;
+            goto fail;
+        }
+    } else if (gw_err != ESP_ERR_NVS_NOT_FOUND) {
+        err = gw_err;
+        goto fail;
+    }
+
+    err = read_nvs_pem_blob(handle, "ca_cert", ca_buf, ca_buf_len, false);
+    if (err != ESP_OK) {
+        goto fail;
+    }
+
+    err = read_nvs_pem_blob(handle, "client_cert", client_cert_buf, client_cert_buf_len, false);
+    if (err != ESP_OK) {
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            err = ESP_ERR_INVALID_STATE; /* Partial provisioning: CA exists but client_cert missing */
+        }
+        goto fail;
+    }
+
+    err = read_nvs_pem_blob(handle, "client_key", client_key_buf, client_key_buf_len, true);
+    if (err != ESP_OK) {
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            err = ESP_ERR_INVALID_STATE; /* Partial provisioning: client_key missing */
+        }
+        goto fail;
+    }
+
+    nvs_close(handle);
+    return ESP_OK;
+
+fail:
+    nvs_close(handle);
+    mbedtls_platform_zeroize(ca_buf, ca_buf_len);
+    mbedtls_platform_zeroize(client_cert_buf, client_cert_buf_len);
+    mbedtls_platform_zeroize(client_key_buf, client_key_buf_len);
+    return err;
+}
+
 esp_err_t gateway_transport_init(const gateway_transport_config_t *cfg)
 {
     if (cfg == NULL || cfg->gateway_id[0] == '\0') {
@@ -260,6 +363,23 @@ esp_err_t gateway_transport_init(const gateway_transport_config_t *cfg)
 
     if (s_initialized) {
         return ESP_OK;
+    }
+
+    gateway_mqtt_config_t mqtt_cfg = {
+        .broker_ca_cert = cfg->broker_ca_cert,
+        .client_cert = cfg->client_cert,
+        .client_key = cfg->client_key,
+        .status_cb = &on_mqtt_status,
+        .downlink_cb = &on_mqtt_downlink,
+    };
+    strncpy(mqtt_cfg.gateway_id, cfg->gateway_id, sizeof(mqtt_cfg.gateway_id) - 1);
+    strncpy(mqtt_cfg.broker_uri, cfg->broker_uri, sizeof(mqtt_cfg.broker_uri) - 1);
+
+    /* Validate URI + mTLS credentials fail-closed before creating tasks or queues */
+    esp_err_t err = gateway_mqtt_init(&mqtt_cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "gateway_mqtt_init failed: %s", esp_err_to_name(err));
+        return err;
     }
 
     memset(&s_config, 0, sizeof(s_config));
@@ -273,6 +393,7 @@ esp_err_t gateway_transport_init(const gateway_transport_config_t *cfg)
 #ifdef ESP_PLATFORM
     s_state_mutex = xSemaphoreCreateMutex();
     if (s_state_mutex == NULL) {
+        gateway_mqtt_deinit();
         return ESP_ERR_NO_MEM;
     }
 
@@ -281,6 +402,7 @@ esp_err_t gateway_transport_init(const gateway_transport_config_t *cfg)
     if (s_outbound_queue == NULL) {
         vSemaphoreDelete(s_state_mutex);
         s_state_mutex = NULL;
+        gateway_mqtt_deinit();
         return ESP_ERR_NO_MEM;
     }
 
@@ -297,25 +419,10 @@ esp_err_t gateway_transport_init(const gateway_transport_config_t *cfg)
         s_outbound_queue = NULL;
         vSemaphoreDelete(s_state_mutex);
         s_state_mutex = NULL;
+        gateway_mqtt_deinit();
         return ESP_ERR_NO_MEM;
     }
 #endif
-
-    gateway_mqtt_config_t mqtt_cfg = {
-        .broker_ca_cert = cfg->broker_ca_cert,
-        .client_cert = cfg->client_cert,
-        .client_key = cfg->client_key,
-        .status_cb = &on_mqtt_status,
-        .downlink_cb = &on_mqtt_downlink,
-    };
-    strncpy(mqtt_cfg.gateway_id, cfg->gateway_id, sizeof(mqtt_cfg.gateway_id) - 1);
-    strncpy(mqtt_cfg.broker_uri, cfg->broker_uri, sizeof(mqtt_cfg.broker_uri) - 1);
-
-    esp_err_t err = gateway_mqtt_init(&mqtt_cfg);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "gateway_mqtt_init failed: %s", esp_err_to_name(err));
-        return err;
-    }
 
     gateway_wifi_config_t wifi_cfg = {
         .max_retry = cfg->wifi_max_retry,
@@ -327,6 +434,21 @@ esp_err_t gateway_transport_init(const gateway_transport_config_t *cfg)
     err = gateway_wifi_init(&wifi_cfg);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "gateway_wifi_init failed: %s", esp_err_to_name(err));
+#ifdef ESP_PLATFORM
+        s_task_running = false;
+        if (s_transport_task_handle) {
+            vTaskDelay(pdMS_TO_TICKS(150));
+            s_transport_task_handle = NULL;
+        }
+        if (s_outbound_queue) {
+            vQueueDelete(s_outbound_queue);
+            s_outbound_queue = NULL;
+        }
+        if (s_state_mutex) {
+            vSemaphoreDelete(s_state_mutex);
+            s_state_mutex = NULL;
+        }
+#endif
         gateway_mqtt_deinit();
         return err;
     }

@@ -13,6 +13,8 @@ extern "C" {
 #define GATEWAY_TRANSPORT_MAX_PAYLOAD_LEN 1024
 #define GATEWAY_TRANSPORT_QUEUE_CAPACITY  16
 #define GATEWAY_ID_MAX_LEN                32
+#define GATEWAY_TLS_NVS_NAMESPACE         "nvs_tls"
+#define GATEWAY_TLS_PEM_MAX_LEN           4096U
 
 typedef enum {
     GATEWAY_TRANSPORT_STATUS_DISCONNECTED = 0,
@@ -72,6 +74,30 @@ typedef void (*gateway_downlink_join_wait_cb_t)(const uint8_t *data, size_t len)
 typedef void (*gateway_downlink_join_reject_cb_t)(const uint8_t *data, size_t len);
 typedef void (*gateway_downlink_node_revoke_cb_t)(const uint8_t *data, size_t len);
 typedef void (*gateway_transport_status_cb_t)(bool connected);
+
+/**
+ * @brief Load and validate Gateway mTLS PEM credentials from NVS namespace "nvs_tls".
+ *
+ * Reads null-terminated blobs "ca_cert", "client_cert", "client_key" (and optional
+ * "gateway_id" identity binding check against expected_gateway_id). Zeroizes all
+ * caller-owned output buffers on any error (fail-closed).
+ *
+ * @param expected_gateway_id Non-empty expected gateway identity (e.g. CONFIG_GATEWAY_ID).
+ * @param ca_buf Caller-owned buffer for Broker CA certificate PEM.
+ * @param ca_buf_len Size of ca_buf in bytes (must accommodate trailing NUL).
+ * @param client_cert_buf Caller-owned buffer for Gateway client certificate PEM.
+ * @param client_cert_buf_len Size of client_cert_buf in bytes.
+ * @param client_key_buf Caller-owned buffer for Gateway client private key PEM.
+ * @param client_key_buf_len Size of client_key_buf in bytes.
+ * @return ESP_OK on success, ESP_ERR_NVS_NOT_FOUND if namespace/CA absent,
+ *         ESP_ERR_INVALID_STATE on partial provisioning or gateway_id mismatch,
+ *         or ESP_ERR_INVALID_ARG / ESP_ERR_INVALID_SIZE on invalid PEM/bounds.
+ */
+esp_err_t gateway_transport_load_tls_certs_from_nvs(
+    const char *expected_gateway_id,
+    char *ca_buf, size_t ca_buf_len,
+    char *client_cert_buf, size_t client_cert_buf_len,
+    char *client_key_buf, size_t client_key_buf_len);
 
 /**
  * @brief Initialize Gateway Transport subsystem (WiFi station, MQTT 5.0 client, queues, and worker task).
