@@ -170,5 +170,22 @@ class ToolchainTests(unittest.TestCase):
             self.assertNotIn("private_example_value", str(caught.exception))
             self.assertIn("token=[REDACTED]", str(caught.exception))
 
+    def test_check_dependency_cache_detects_missing_managed_components(self):
+        from toolchains import check as tc_check
+        with tempfile.TemporaryDirectory() as d:
+            repo = pathlib.Path(d)
+            gw = repo / "firmware" / "gateway_master"
+            sn = repo / "firmware" / "sensor_node"
+            gw.mkdir(parents=True)
+            sn.mkdir(parents=True)
+            (gw / "dependencies.lock").write_text("dependencies:\n  espressif/mqtt:\n    version: 1.1.0\n")
+            missing = tc_check.check_dependency_cache(repo)
+            self.assertFalse(missing["gateway_master"]["cached"])
+            self.assertTrue(missing["sensor_node"]["cached"])
+            (gw / "managed_components" / "espressif__mqtt").mkdir(parents=True)
+            present = tc_check.check_dependency_cache(repo)
+            self.assertTrue(present["gateway_master"]["cached"])
+
+
 if __name__ == "__main__":
     unittest.main()

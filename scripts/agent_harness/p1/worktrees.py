@@ -96,3 +96,30 @@ def prepare(plan: WorktreePlan) -> None:
         raise WorktreeError("New worktree branch identity mismatch")
     if git(plan.target, "status", "--porcelain", "--untracked-files=normal"):
         raise WorktreeError("New worktree is unexpectedly dirty")
+
+
+def cleanup_owned_worktree(plan: WorktreePlan) -> bool:
+    """Safely remove ONLY an untouched worktree owned by this exact WorktreePlan.
+
+    Refuses symlinks, dirty worktrees, unowned branches, or diverged HEADs so
+    user/concurrent worktrees are never affected.
+    """
+    parent = (plan.source.resolve() / ".." / ".lora-p1-worktrees" / plan.source.resolve().name).resolve()
+    if plan.target.is_symlink():
+        raise WorktreeError("Refusing to remove symlinked worktree target")
+    if not plan.target.exists():
+        return False
+    resolved_target = plan.target.resolve(strict=True)
+    if resolved_target.parent != parent:
+        raise WorktreeError("Refusing cleanup outside owned .lora-p1-worktrees namespace")
+    if BRANCH.fullmatch(plan.branch) is None:
+        raise WorktreeError("Invalid owned branch identity")
+    if git(resolved_target, "branch", "--show-current") != plan.branch:
+        raise WorktreeError("Worktree branch mismatch; refusing cleanup")
+    if git(resolved_target, "rev-parse", "HEAD") != plan.base_sha:
+        raise WorktreeError("Worktree has commits beyond base SHA; refusing cleanup")
+    if git(resolved_target, "status", "--porcelain", "--untracked-files=all"):
+        raise WorktreeError("Worktree has uncommitted/untracked changes; preserving work")
+    git(plan.source, "worktree", "remove", str(resolved_target))
+    git(plan.source, "branch", "-d", plan.branch)
+    return True

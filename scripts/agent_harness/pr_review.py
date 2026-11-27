@@ -1262,8 +1262,35 @@ def run_auto_audit(
         prompt_file.write_text(prompt, encoding="utf-8")
 
         # Invoke Auditor with bounded retry for transient infrastructure errors
+        # Snapshot evidence_dir recursively before Auditor runs; symlinks fail closed.
+        def _snapshot_dir(root: Path) -> dict[str, str]:
+            if root.is_symlink() or not root.is_dir():
+                raise PRReviewError("Evidence directory missing or is a symlink")
+            snap: dict[str, str] = {}
+
+            def _walk(current: Path) -> None:
+                for p in sorted(current.iterdir(), key=lambda x: x.name):
+                    rel = p.relative_to(root).as_posix()
+                    if p.is_symlink():
+                        raise PRReviewError(
+                            f"Symlink forbidden in read-only evidence directory: {rel}"
+                        )
+                    if p.is_dir():
+                        snap[rel] = "DIR"
+                        _walk(p)
+                    elif p.is_file():
+                        snap[rel] = hashlib.sha256(p.read_bytes()).hexdigest()
+                    else:
+                        raise PRReviewError(
+                            f"Unsupported non-regular entry in evidence directory: {rel}"
+                        )
+
+            _walk(root)
+            return snap
+
         batch_report = None
         for attempt in range(1, 1 + max_retries + 1):
+            pre_evidence_snap = _snapshot_dir(evidence_dir)
             try:
                 batch_report = antigravity.invoke(
                     prompt=prompt,
@@ -1275,8 +1302,19 @@ def run_auto_audit(
                     selection_sha256=b_parent_hash if has_rules else None,
                     evidence_inventory=target_inventory,
                 )
+                post_evidence_snap = _snapshot_dir(evidence_dir)
+                if post_evidence_snap != pre_evidence_snap:
+                    raise PRReviewError(
+                        f"Auditor modified read-only evidence directory during job '{job_id}'"
+                    )
                 break
+            except PRReviewError:
+                raise
             except Exception as exc:
+                if _snapshot_dir(evidence_dir) != pre_evidence_snap:
+                    raise PRReviewError(
+                        f"Auditor modified read-only evidence directory during job '{job_id}'"
+                    ) from exc
                 if is_transient_error(exc) and attempt <= max_retries:
                     fail_file = evidence_dir / f"auditor_failure_{job_id}_attempt_{attempt}.json"
                     fail_file.write_text(

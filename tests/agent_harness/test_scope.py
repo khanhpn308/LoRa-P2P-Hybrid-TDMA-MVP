@@ -49,6 +49,28 @@ class ScopeTests(unittest.TestCase):
             bad = violations(root, ("firmware/components/",), ["firmware/components/payload.c"])
             self.assertTrue(any("symlink escape" in p for p in bad))
 
+    def test_allows_intro_prose_before_list_while_failing_closed(self):
+        body_with_prose = (
+            "## Target Directories (allowed paths)\n"
+            "Only the following paths may change:\n"
+            "- `docs/harness/phase-01/HARNESS_BASELINE_REPORT.md`\n"
+            "- `docs/harness/phase-01/HARNESS_RTM.json`\n\n"
+            "## Work packages\n"
+            "- `contracts/`\n"
+        )
+        self.assertEqual(
+            parse_allowed_paths(body_with_prose),
+            ("docs/harness/phase-01/HARNESS_BASELINE_REPORT.md",
+             "docs/harness/phase-01/HARNESS_RTM.json"),
+        )
+        for bad_body in (
+            "## Target Directories (allowed paths)\nNo bullet list here.\n## Next\n- `firmware/`\n",
+            "## Target Directories (allowed paths)\n- firmware/\n",
+            "## Target Directories (allowed paths)\nIntro prose\n",
+        ):
+            with self.subTest(bad_body=bad_body[:40]), self.assertRaises(ValueError):
+                parse_allowed_paths(bad_body)
+
 
 if __name__ == "__main__":
     unittest.main()

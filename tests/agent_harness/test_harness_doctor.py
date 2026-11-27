@@ -147,6 +147,125 @@ class HarnessDoctorTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertTrue(json.loads(stream.getvalue())["ready"])
 
+    def test_backend_profile_detects_go_version_drift_and_uses_pinned_docker(self):
+        (self.repo / ".go-version").write_text("1.27.3\n", encoding="utf-8")
+        (self.repo / "backend-go").mkdir()
+        (self.repo / "backend-go/go.mod").write_text("module example\n\ngo 1.27.3\n", encoding="utf-8")
+
+        def mock_stdout(argv, timeout=10):
+            if Path(argv[0]).name == "go" and argv[1:] == ["version"]:
+                return (0, "go version go1.27.1 linux/amd64")
+            return (1, "")
+
+        with patch.object(doctor.shutil, "which", side_effect=self.which), \
+             patch.object(doctor, "probe", return_value=True), \
+             patch.object(doctor, "probe_stdout", side_effect=mock_stdout), \
+             patch.object(doctor, "auth_configured", return_value=True), \
+             patch.object(doctor.subprocess, "run") as run:
+            run.return_value.returncode = 0
+            run.return_value.stdout = b""
+            report = doctor.collect(repo=self.repo, profile="backend")
+        self.assertTrue(report["ready"])
+        host_chk = next(x for x in report["checks"] if x["check"] == "go_host_version")
+        self.assertEqual(host_chk["status"], "WARN")
+        self.assertIn("drift", host_chk["detail"].lower())
+
+        # If neither host Go matches nor Docker image is cached, go_toolchain fails.
+        def mock_probe(args, *rest):
+            return "golang:1.27.3-alpine" not in args
+
+        with patch.object(doctor.shutil, "which", side_effect=self.which), \
+             patch.object(doctor, "probe", side_effect=mock_probe), \
+             patch.object(doctor, "probe_stdout", side_effect=mock_stdout), \
+             patch.object(doctor, "auth_configured", return_value=True), \
+             patch.object(doctor.subprocess, "run") as run:
+            run.return_value.returncode = 0
+            run.return_value.stdout = b""
+            blocked = doctor.collect(repo=self.repo, profile="backend")
+        self.assertIn("go_toolchain", blocked["failed_required_checks"])
+
+    def test_web_and_firmware_dependency_caches_fail_closed_when_missing(self):
+        (self.repo / "clients/web-dashboard").mkdir(parents=True)
+        (self.repo / "clients/web-dashboard/package.json").write_text("{}\n", encoding="utf-8")
+        (self.repo / "clients/web-dashboard/package-lock.json").write_text("{}\n", encoding="utf-8")
+        web_missing, _ = self.report(profile="web")
+        self.assertIn("web_deps_cache", web_missing["failed_required_checks"])
+
+        (self.repo / "clients/web-dashboard/node_modules").mkdir()
+        (self.repo / "clients/web-dashboard/node_modules/.package-lock.json").write_text("{}\n", encoding="utf-8")
+        web_ok, _ = self.report(profile="web")
+        self.assertNotIn("web_deps_cache", web_ok["failed_required_checks"])
+
+        (self.repo / "firmware/gateway_master").mkdir(parents=True)
+        (self.repo / "firmware/gateway_master/dependencies.lock").write_text(
+            "dependencies:\n  espressif/mqtt:\n    version: 1.1.0\n", encoding="utf-8"
+        )
+        fw_missing, _ = self.report(profile="firmware")
+        self.assertIn("firmware_deps_cache", fw_missing["failed_required_checks"])
+
+        (self.repo / "firmware/gateway_master/managed_components/espressif__mqtt").mkdir(parents=True)
+        fw_ok, _ = self.report(profile="firmware")
+        self.assertNotIn("firmware_deps_cache", fw_ok["failed_required_checks"])
+
+    def test_symlinked_agents_md_unsafe_git_filter_and_prod_env_blocked(self):
+        agents = self.repo / "AGENTS.md"
+        agents.unlink()
+        other = self.repo / "OTHER.md"
+        other.write_text("x\n", encoding="utf-8")
+        agents.symlink_to(other)
+        res_sym, _ = self.report()
+        self.assertIn("agents_context_integrity", res_sym["failed_required_checks"])
+
+        agents.unlink()
+        agents.write_text("fixture\n", encoding="utf-8")
+        with patch.object(doctor.shutil, "which", side_effect=self.which), \
+             patch.object(doctor, "probe", return_value=True), \
+             patch.object(doctor, "probe_stdout", return_value=(0, "filter.evil.clean cat")), \
+             patch.object(doctor, "auth_configured", return_value=True), \
+             patch.object(doctor.subprocess, "run") as run:
+            run.return_value.returncode = 0
+            run.return_value.stdout = b""
+            res_flt = doctor.collect(repo=self.repo)
+        self.assertIn("git_clean_filters", res_flt["failed_required_checks"])
+
+        with patch.dict(doctor.os.environ, {"LORA_ALLOW_PROD_DB": "1"}):
+            res_env, _ = self.report()
+        self.assertIn("env_isolation", res_env["failed_required_checks"])
+
+    def test_capabilities_matrix_never_claims_full_access_is_os_sandbox(self):
+        report, _ = self.report()
+        roles = {c["role"]: c for c in report["capabilities"]}
+        self.assertIn("coordinator", roles)
+        self.assertIn("auditor", roles)
+        self.assertIn("no_os_sandbox", roles["coordinator"]["isolation_mode"])
+        self.assertIn("read_only", roles["auditor"]["isolation_mode"])
+
+    def test_smoke_mode_fails_closed_on_smoke_failure(self):
+        result, _ = self.report()
+        fake_smoke = {"executed": True, "passed": False,
+                      "checks": [{"smoke": "quality_gates_head", "status": "FAIL", "exit_code": 1}]}
+        stream = io.StringIO()
+        with patch.object(doctor, "collect", return_value=result), \
+             patch.object(doctor, "run_smoke_checks", return_value=fake_smoke), \
+             contextlib.redirect_stdout(stream):
+            code = doctor.main(["--json", "--smoke"])
+        self.assertEqual(code, 1)
+        payload = json.loads(stream.getvalue())
+        self.assertFalse(payload["ready"])
+        self.assertIn("smoke:quality_gates_head", payload["failed_required_checks"])
+
+    def test_setup_harness_script_valid_and_read_only_by_default(self):
+        setup_sh = Path(__file__).resolve().parents[2] / "scripts" / "setup_harness.sh"
+        text = setup_sh.read_text(encoding="utf-8")
+        self.assertNotIn("--needs-setup", text)
+        res = doctor.subprocess.run(["bash", "-n", str(setup_sh)],
+                                    capture_output=True, text=True, check=False)
+        self.assertEqual(res.returncode, 0, res.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -45,6 +45,23 @@ class ProcessTests(unittest.TestCase):
             with self.assertRaises(ProcessBlocked):
                 execute_checked(["true"], pathlib.Path(d), timeout=0)
 
+    def test_execution_identity_and_cancellation_cleanup(self):
+        from unittest.mock import patch, MagicMock
+        with tempfile.TemporaryDirectory() as d:
+            rec = execute_checked(["true"], pathlib.Path(d), timeout=5, execution_id="exec-427.1")
+            self.assertEqual(rec.execution_id, "exec-427.1")
+            with self.assertRaises(ProcessBlocked):
+                execute_checked(["true"], pathlib.Path(d), timeout=5, execution_id="../bad")
+            fake_proc = MagicMock()
+            fake_proc.pid = 424242
+            fake_proc.poll.return_value = None
+            fake_proc.communicate.side_effect = [KeyboardInterrupt(), (b"", b"")]
+            with patch("p1.process.subprocess.Popen", return_value=fake_proc), \
+                 patch("p1.process._kill_process_group") as killer:
+                with self.assertRaises(KeyboardInterrupt):
+                    execute_checked(["sleep", "5"], pathlib.Path(d), timeout=5, execution_id="exec-cancel")
+                killer.assert_called_once_with(424242)
+
 
 class PublisherTests(unittest.TestCase):
     def setUp(self):

@@ -63,3 +63,18 @@ Use only locally authorized direct CLI account sessions, never copied login data
   Auditor review, exact candidate binding and final human disposition.
 - This workflow is **SUPERVISED_ONLY**. M01/M02 review and H01/H02/H04 closure
   remain separate. No autonomous E2E or deployment approval is implied.
+
+## OD-04 Runtime Isolation & Role Capability Matrix (Issue #427 / P03)
+
+Machine-readable role capabilities are probed by `scripts/harness_doctor.py` (`capabilities`).
+Per `H2-TOL-02` and `OD-04`, unsupported runtime isolation fails closed (`BLOCKED`) or carries
+an explicit Owner-approved limitation (`SUPERVISED_ONLY`):
+
+| Role / Surface | Execution Mechanism | Actual Runtime Boundary | Limitation / Fail-Closed Behavior |
+|---|---|---|---|
+| **Coordinator / Worker (Native Fast Lane)** | Interactive operator `agy` / `codex` session (`.agents/agents/harness-coordinator.md`) | Operator-supervised CLI permissions + post-diff Host `scope.py` / `quality_gates.py` | **Full Access / Turbo is NOT an OS/network/credential sandbox.** `SUPERVISED_ONLY`; consumer provider TOS prohibits wrapping `agy` for unattended runs (`p1/auto_issue.py` remains disabled). |
+| **Worker (Codex CLI Adapter)** | `scripts/agent_harness/adapters/codex.py` (`--ask-for-approval never --sandbox workspace-write` / `read-only`) | Provider workspace sandbox + symlinked-worktree rejection + bounded/redacted output | Workspace sandbox does not replace a VM or credential-free container (`H2-TOL-02`). |
+| **Fresh Independent Auditor** | `invoke_subagent` (`Fresh-Independent-Auditor`) or `pr_review.py --auto-audit` (`adapters/antigravity.py --sandbox`) | Read-only context-separated snapshot + `audit.schema.json` + pre/post `evidence_dir` SHA verification | Context-separated (not model-independent on same provider). Evidence mutation, denial, or missing binary fails closed (`AI_REVIEW_PASS=NOT_VERIFIED`). Never substitute self-review. |
+| **Build Sandbox (ESP-IDF / Go)** | `scripts/agent_harness/toolchains/resolver.py` & `p1/runtime_boundary.py` (`BuildBoundary`) | Docker `--network=none --cap-drop=ALL --security-opt=no-new-privileges --read-only --tmpfs=/tmp` | Requires cached image (`espressif/idf:v6.1` / `golang:1.27.3-alpine`) and pre-cached dependencies (`managed_components`); missing cache blocks offline build. |
+| **Host Process Guard & Worktrees** | `scripts/agent_harness/p1/{process.py,worktrees.py}` | `SAFE_FIXTURES` allowlist, stripped `env`, `start_new_session=True`, `os.killpg` on timeout/cancel, clean-only owned worktree removal | Does not run arbitrary models; refuses dirty/unowned worktree cleanup. |
+| **Optional Read-Only MCP Bridge** | `scripts/agent_harness/mcp_server.py` + `mcp_host.py` | Three read-only P1 Host tools (`harness_preflight`, `harness_status`, `harness_verify_candidate`); no write/shell/model tools | Requires explicit opt-in `--install-mcp` (`mcp==2.3.0`); disabled by default. |

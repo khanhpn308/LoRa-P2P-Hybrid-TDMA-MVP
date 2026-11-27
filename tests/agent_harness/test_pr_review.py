@@ -2153,6 +2153,110 @@ class PRReviewCLITests(unittest.TestCase):
         self.assertIn("BLOCKED", out)
         self.assertIn("Hardware-in-the-Loop (HIL) test receipt absent", out)
 
+    @patch("shutil.which", return_value="/usr/local/bin/agy")
+    def test_run_auto_audit_rejects_evidence_mutation(self, mock_which):
+        """H2-TOL-02: Auditor mutating evidence_dir during invoke fails closed."""
+        with tempfile.TemporaryDirectory() as tmp:
+            ev_dir = Path(tmp)
+            diff_file = ev_dir / "diff.patch"
+            diff_file.write_text("diff --git a/README.md b/README.md\n+ok\n", encoding="utf-8")
+            diff_sha = pr_review.hashlib.sha256(diff_file.read_bytes()).hexdigest()
+            pr_data = {
+                "base_sha": "1" * 40,
+                "head_sha": "2" * 40,
+                "files": [{"filename": "README.md", "status": "modified"}],
+            }
+
+            def mutating_invoke(**kwargs):
+                (ev_dir / "tampered.txt").write_text("evil", encoding="utf-8")
+                return {
+                    "status": "PASS",
+                    "findings": [],
+                    "limitations": [],
+                    "reviewed_scope": ["README.md"],
+                }
+
+            with patch("adapters.antigravity.invoke", side_effect=mutating_invoke):
+                with self.assertRaises(pr_review.PRReviewError) as ctx:
+                    pr_review.run_auto_audit(
+                        pr_data=pr_data,
+                        rule_selection=None,
+                        evidence_inventory={"diff.patch": diff_sha},
+                        cumulative_diff=diff_file.read_text(encoding="utf-8"),
+                        evidence_dir=ev_dir,
+                        max_retries=0,
+                    )
+            self.assertIn("modified read-only evidence directory", str(ctx.exception))
+
+    @patch("shutil.which", return_value="/usr/local/bin/agy")
+    def test_run_auto_audit_rejects_recursive_evidence_mutation_and_symlinks(self, mock_which):
+        """H2-TOL-02: Recursive nested file changes and symlinks in evidence_dir fail closed."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            ev_dir = base / "evidence"
+            sub = ev_dir / "nested"
+            sub.mkdir(parents=True)
+            diff_file = ev_dir / "diff.patch"
+            diff_file.write_text("diff --git a/README.md b/README.md\n+ok\n", encoding="utf-8")
+            nested_file = sub / "check_runs.json"
+            nested_file.write_text("[]\n", encoding="utf-8")
+            outside = base / "outside.txt"
+            outside.write_text("secret\n", encoding="utf-8")
+            diff_sha = pr_review.hashlib.sha256(diff_file.read_bytes()).hexdigest()
+            pr_data = {
+                "base_sha": "1" * 40,
+                "head_sha": "2" * 40,
+                "files": [{"filename": "README.md", "status": "modified"}],
+            }
+
+            # 1. Nested subdirectory file mutation during invoke fails closed.
+            def mutate_nested(**kwargs):
+                nested_file.write_text('[{"status":"PASS"}]\n', encoding="utf-8")
+                return {"status": "PASS", "findings": [], "limitations": [], "reviewed_scope": ["README.md"]}
+
+            with patch("adapters.antigravity.invoke", side_effect=mutate_nested):
+                with self.assertRaises(pr_review.PRReviewError) as ctx:
+                    pr_review.run_auto_audit(
+                        pr_data=pr_data,
+                        rule_selection=None,
+                        evidence_inventory={"diff.patch": diff_sha},
+                        cumulative_diff=diff_file.read_text(encoding="utf-8"),
+                        evidence_dir=ev_dir,
+                        max_retries=0,
+                    )
+            self.assertIn("modified read-only evidence directory", str(ctx.exception))
+
+            # 2. Symlink created in nested directory during invoke fails closed.
+            def create_symlink(**kwargs):
+                (sub / "escape.txt").symlink_to(outside)
+                return {"status": "PASS", "findings": [], "limitations": [], "reviewed_scope": ["README.md"]}
+
+            with patch("adapters.antigravity.invoke", side_effect=create_symlink):
+                with self.assertRaises(pr_review.PRReviewError) as ctx:
+                    pr_review.run_auto_audit(
+                        pr_data=pr_data,
+                        rule_selection=None,
+                        evidence_inventory={"diff.patch": diff_sha},
+                        cumulative_diff=diff_file.read_text(encoding="utf-8"),
+                        evidence_dir=ev_dir,
+                        max_retries=0,
+                    )
+            self.assertIn("Symlink forbidden", str(ctx.exception))
+
+            # 3. Pre-existing symlink in evidence_dir fails closed before invoke runs.
+            with patch("adapters.antigravity.invoke") as mocked_invoke:
+                with self.assertRaises(pr_review.PRReviewError) as ctx:
+                    pr_review.run_auto_audit(
+                        pr_data=pr_data,
+                        rule_selection=None,
+                        evidence_inventory={"diff.patch": diff_sha},
+                        cumulative_diff=diff_file.read_text(encoding="utf-8"),
+                        evidence_dir=ev_dir,
+                        max_retries=0,
+                    )
+                self.assertIn("Symlink forbidden", str(ctx.exception))
+                mocked_invoke.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

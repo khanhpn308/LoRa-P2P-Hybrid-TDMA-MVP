@@ -182,6 +182,96 @@ class AdapterTests(unittest.TestCase):
                 antigravity.invoke("Review", pathlib.Path(directory),
                                    pathlib.Path(directory) / "schema.json", 120, FILES)
 
+    def test_adapters_reject_symlink_working_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            real_dir = root / "real"
+            real_dir.mkdir()
+            sym_dir = root / "link"
+            sym_dir.symlink_to(real_dir, target_is_directory=True)
+            with self.assertRaises(codex.WorkerError):
+                codex.invoke("write", sym_dir, 60)
+            with self.assertRaises(antigravity.AuditError):
+                antigravity.invoke("review", sym_dir, real_dir / "schema.json", 60, FILES)
+
+    def test_run_bounded_kills_process_group_on_timeout_and_cancellation(self):
+        import os
+        import signal
+        import time
+
+        def assert_dead(pid: int) -> None:
+            for _ in range(30):
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    return
+                time.sleep(0.05)
+            self.fail(f"Process {pid} survived process-group cleanup")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            pid_file = root / "pids.txt"
+            script = (
+                "import os, pathlib, subprocess, sys, time\n"
+                "gc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+                "pathlib.Path(sys.argv[1]).write_text(f'{os.getpid()} {gc.pid}')\n"
+                "time.sleep(30)\n"
+            )
+            # 1. Timeout kills both child and grandchild in the session process group.
+            with self.assertRaises(subprocess.TimeoutExpired):
+                antigravity.run_bounded(
+                    [sys.executable, "-c", script, str(pid_file)],
+                    cwd=root,
+                    timeout=1.0,
+                )
+            child_pid, gc_pid = (int(x) for x in pid_file.read_text().split())
+            self.addCleanup(lambda p=gc_pid: self._cleanup_pid(p, signal))
+            self.addCleanup(lambda p=child_pid: self._cleanup_pid(p, signal))
+            assert_dead(child_pid)
+            assert_dead(gc_pid)
+
+            # 2. Cancellation (KeyboardInterrupt) kills both child and grandchild.
+            pid_file.unlink()
+            orig_popen = subprocess.Popen
+
+            def canceling_popen(*args, **kwargs):
+                proc = orig_popen(*args, **kwargs)
+                orig_comm = proc.communicate
+                first = {"done": False}
+
+                def comm_wrapper(*c_args, **c_kwargs):
+                    if not first["done"]:
+                        first["done"] = True
+                        for _ in range(40):
+                            if pid_file.is_file() and len(pid_file.read_text().split()) == 2:
+                                break
+                            time.sleep(0.05)
+                        raise KeyboardInterrupt("simulated cancellation")
+                    return orig_comm(*c_args, **c_kwargs)
+
+                proc.communicate = comm_wrapper
+                return proc
+
+            with patch("adapters.antigravity.subprocess.Popen", side_effect=canceling_popen):
+                with self.assertRaises(KeyboardInterrupt):
+                    antigravity.run_bounded(
+                        [sys.executable, "-c", script, str(pid_file)],
+                        cwd=root,
+                        timeout=10.0,
+                    )
+            child_pid2, gc_pid2 = (int(x) for x in pid_file.read_text().split())
+            self.addCleanup(lambda p=gc_pid2: self._cleanup_pid(p, signal))
+            self.addCleanup(lambda p=child_pid2: self._cleanup_pid(p, signal))
+            assert_dead(child_pid2)
+            assert_dead(gc_pid2)
+
+    @staticmethod
+    def _cleanup_pid(pid: int, signal_mod) -> None:
+        import os
+        try:
+            os.kill(pid, signal_mod.SIGKILL)
+        except OSError:
+            pass
 
 
 if __name__ == "__main__":
