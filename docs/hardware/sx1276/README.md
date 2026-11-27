@@ -1,6 +1,6 @@
-# SX1276 Driver — Agent Reference (MVP V1)
+# SX1276 Driver — Agent Reference (MVP V2)
 
-Use this directory to implement the **SX1276 LoRa P2P radio driver** for **ESP32-WROOM-32E, ESP-IDF v6.1, FreeRTOS/C**. The system uses a Custom Binary MAC and Event-only Static TDMA, **not** the LoRaWAN MAC stack.
+Use this directory to implement the **SX1276 LoRa P2P radio driver** for **ESP32-WROOM-32E, ESP-IDF v6.1, FreeRTOS/C**. The system uses a Custom Binary MAC V2 (**Event-driven CAD + exponential random backoff CSMA/CA** and **Gateway Continuous RX 24/7** per [ADR-0004](../../adr/0004-pure-cad-csma-ca-mac.md), Owner #273), **not** superseded Hybrid TDMA or the LoRaWAN MAC stack.
 
 ## Read These Four Files
 
@@ -8,7 +8,7 @@ Use this directory to implement the **SX1276 LoRa P2P radio driver** for **ESP32
 |---|---|
 | [`README.md`](README.md) | Entry point, architectural pipeline, hardware constraints, and role policies |
 | [`SX1276_ACTIVE_PROFILE.md`](SX1276_ACTIVE_PROFILE.md) | Approved PHY presets, VN920 channel table, typed-config register mappings, and ToA formula |
-| [`SX1276_DRIVER_OPERATIONS.md`](SX1276_DRIVER_OPERATIONS.md) | SPI/reset, TX/RX lifecycles, FIFO, DIO0 IRQ, timeout, Radio Owner, recovery, and half-duplex TDMA transitions |
+| [`SX1276_DRIVER_OPERATIONS.md`](SX1276_DRIVER_OPERATIONS.md) | SPI/reset, TX/RX/CAD lifecycles, FIFO, DIO0 IRQ, timeout, Radio Owner, recovery, and half-duplex transitions |
 | [`SX1276_REGISTER_REFERENCE.md`](SX1276_REGISTER_REFERENCE.md) | Required register addresses, bitfields, reset values, write masks, and consolidated test-profile register semantics |
 
 Read only the files relevant to the implementation task; start from the Active Profile and Operations Guide, then consult the Register Reference for exact SPI/register access. No additional SX1276 reference or audit files are required for the MVP.
@@ -42,7 +42,7 @@ Radio Owner SPI Execution & Readback Validation
 3. **Approved Baseline Preset (`PHY_PROFILE_MVP_V1`):**
    - Radio: SX1276 LoRa P2P. SF7, BW125 kHz, CR4/5, Explicit Header, Payload CRC ON, Sync Word `0x12`, LDRO OFF; frequency hopping disabled.
    - RF plan: 11 center frequencies CH00–CH10 (920.250–922.750 MHz in 250 kHz steps) per `VN920_V1`.
-   - **Backend Authority:** Active operational channel is assigned at runtime by authorized Backend PostgreSQL schedule (#154). `menuconfig` supplies only boot/lab-test defaults; lab settings must not silently override production Backend schedule.
+   - **Channel Authority:** Active operational channel (CH00–CH10, VN920) is assigned by Backend PostgreSQL (#154 / [ADR-0004](../../adr/0004-pure-cad-csma-ca-mac.md)). `menuconfig` supplies only boot/lab-test defaults; lab settings must not silently override production Backend channel configuration.
 4. **Approved Test Preset (`SX1276_TEST_PROFILE_V1`):**
    - Preamble: **8 symbols** (selectable test preset default, not a measured production constant).
    - PA Ramp: **40 µs** (`RegPaRamp = 0x09`).
@@ -60,26 +60,24 @@ Radio Owner SPI Execution & Readback Validation
 - A single FreeRTOS **Radio Owner task** serializes all SPI access. The DIO0 ISR issues task notifications only: **no SPI or blocking calls in ISR context**.
 - For ESP32 wake-up from Deep-sleep, perform a full hardware reset (GPIO23 low $\ge 100\text{ }\mu\text{s}$) and complete register reconfiguration.
 
-## Radio RX-Mode Policy & TDMA Roles
+## Radio RX-Mode Policy & MAC V2 Roles (ADR-0004)
 
 1. **Node Normal Event Flow:**
-   - Baseline is ESP32 Deep-sleep / radio low-power per #149.
-   - Local button/event triggers alarm and durable pending Event; **no immediate RF TX on event**.
-   - At its Backend-approved static DATA slot (#125/#131), Node transmits Event, then enters **`RxSingle` only during a bounded ACK receive window**.
-   - Upon validating authenticated ACK, Node returns to sleep. If ACK is missing or invalid, preserve the pending Event and retry only in a subsequent authorized own DATA slot; do not switch to unrestricted continuous listening.
-2. **Node Scheduled Maintenance:**
-   - Node wakes for scheduled Maintenance reception window, configures **`RxSingle`** to receive authenticated Gateway `SYNC_BEACON`.
-   - Node switches mode to transmit **`HEALTH_REPLY`** in its permitted Maintenance response slot. Maintenance is **not RX-only**; no DATA/Maintenance/ACK overlap.
-3. **Gateway Baseline:**
-   - Gateway operates in **`RxContinuous` during permitted receive phases** (including DATA RX windows) to monitor Node packets.
-   - Single half-duplex radio: Gateway Radio Owner explicitly executes state transitions: `RxContinuous → Standby → TX (ACK or SYNC_BEACON) → RxContinuous`. The Gateway cannot listen while transmitting. Gateway uses no LoRaWAN stack.
+   - Baseline is ESP32 Deep-sleep / radio low-power per #149/#353.
+   - Local physical button press (GPIO/EXT0, #149/#230) writes a durable pending `UP_EVENT` (`0x41`); local hardware alarms are abolished (#230).
+   - Node executes SX1276 **CAD** (`RegOpMode = LORA_MODE_CAD`) and exponential random backoff (CSMA/CA) before transmitting `UP_EVENT`, then enters **`RxSingle` only during a bounded ACK receive window** (`DOWN_EVENT_ACK`, `0x42`).
+   - Upon validating authenticated ACK, Node returns to sleep. If ACK is missing or invalid, preserve the pending Event in NVS/RTC FIFO and retry via bounded CAD/ARQ policy; do not switch to unrestricted continuous listening on battery Nodes.
+2. **Gateway Baseline:**
+   - Gateway operates in **`RxContinuous` 24/7** on its exclusive VN920 channel to receive Node packets.
+   - Single half-duplex radio: Gateway Radio Owner explicitly executes state transitions: `RxContinuous → Standby → TX (ACK / Join response) → RxContinuous`. The Gateway cannot listen while transmitting. Gateway uses no LoRaWAN stack.
+   - *(Historical provenance: Static DATA slots, `SYNC_BEACON`, and TDMA Maintenance Superframes from ADR-0001/#125 were superseded by ADR-0004 / Owner #273.)*
 
 ## Runtime Parameters Not Yet Frozen (TBD)
 
-- **TBD:** Actual module PA path; RF output matching at 920–923 MHz; conducted/radiated power measurements; production TX power; RX Symbol Timeout; Host RX Timeout; ACK/Beacon receive windows; clock-drift and TDMA guard timing budgets; hardware mode turnaround.
+- **TBD:** Actual module PA path; RF output matching at 920–923 MHz; conducted/radiated power measurements; production TX power; RX Symbol Timeout; Host RX Timeout; ACK/Join receive windows; hardware mode turnaround and airtime budgets.
 - Do not hardcode a TBD as an immutable project constant. Use explicit validation, fail-safe defaults, and report unresolved blockers.
 - Only the BW125 MVP configuration is in scope. Do not apply BW500 or non-MVP errata workarounds. Preserve the mandatory `RegDetectOptimize` bit 7 read-modify-write rule.
 
 ## Scope Boundary
 
-These files describe radio hardware control and driver register architecture, **not** a complete MAC or TDMA wire contract. Follow versioned `contracts/radio-mac/` and approved architecture documents for application integration. Documented calculations and test presets do not constitute measured RF, HIL, timing, or regulatory compliance results.
+These files describe radio hardware control and driver register architecture, **not** a complete MAC wire contract. Follow versioned `contracts/radio-mac/` and approved architecture documents ([ADR-0004](../../adr/0004-pure-cad-csma-ca-mac.md)) for application integration. Documented calculations and test presets do not constitute measured RF, HIL, timing, or regulatory compliance results.

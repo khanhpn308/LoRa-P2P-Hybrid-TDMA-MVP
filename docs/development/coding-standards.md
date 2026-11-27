@@ -16,8 +16,8 @@
 - PR authors must repeat allowed paths; reviewers compare the PR `Files changed` to the Issue, not just the label.
 - Current checks validate templates and structure, NOT full automatic enforcement of per-Issue path allowances. See `docs/development/task-breakdown-readiness.md`.
 
-## Go backend baseline (Issue #39 — pending review)
+## Mandatory standards & tooling baseline (Owner #137 / ADR-0003 / ADR-0004)
 
-- Required backend compiler/toolchain: **Go 1.27.3**, matching root `.go-version`, `backend-go/go.mod` and the exact CI selection. No `@latest` toolchain auto-upgrades; CI must run with `GOTOOLCHAIN=local`.
-- Canonical proposed standard: [Go Backend Engineering Standard v1.0](backend-go/GO_BACKEND_ENGINEERING_STANDARD_V1.0.md); path-scoped AI rules: [backend.instructions.md](../../.github/instructions/backend.instructions.md). The standard remains **DRAFT** until independently reviewed.
-- HTTP routing: stdlib `net/http`; PostgreSQL: `pgx/v5`; MQTT 5.0: `eclipse/paho.golang` `autopaho`/`paho`. Names are pre-approved in the standard draft; concrete module versions are not installed/approved in the scaffold.
+- **Firmware (C / ESP-IDF v6.1):** Pin `v6.1` per [`firmware/esp-idf-version.txt`](../../firmware/esp-idf-version.txt) and [ADR-0003](../adr/0003-esp-idf-v6-1.md). Applicable rules in [C Coding Standard v2](firmware/C_CODING_STANDARD_V2.md) are **mandatory** (`MUST`/`MUST_NOT` bind via Owner #137, Host-selected per task). Structural refactoring follows [CCARS v1.4](c-clean-code-refactoring-standard.md). Radio MAC follows [ADR-0004 CAD/CSMA-CA](../adr/0004-pure-cad-csma-ca-mac.md) (superseding Hybrid TDMA).
+- **Backend (Go 1.27.3):** Match root [`.go-version`](../../.go-version) and [`backend-go/go.mod`](../../backend-go/go.mod) (`GOTOOLCHAIN=local`, no `@latest` auto-upgrades). Applicable rules in [Go Backend Engineering Standard v2](backend-go/GO_BACKEND_ENGINEERING_STANDARD_V2.md) are **mandatory** (superseding historical `GO_BACKEND_ENGINEERING_STANDARD_V1.0.md` DRAFT). Structural refactoring follows [GOCARS](backend-go/GOCARS.md).
+- **Backend stack:** HTTP routing `net/http` stdlib; PostgreSQL `pgx/v5`; MQTT 5.0 `eclipse/paho.golang` (`autopaho`/`paho`). No ORM or unapproved extra broker/cache services.

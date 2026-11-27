@@ -11,7 +11,7 @@ activation: AGENTS.md_ROUTING_AFTER_HUMAN_REVIEW_AND_MERGE
 
 # AI Task Start Protocol v1.0.0-DRAFT
 
-> **Purpose:** An agent-readable, deterministic START gate. **Reading this runbook may be required by `AGENTS.md`; the runbook remains PROPOSED / NOT_APPROVED until human review.** It does not authorize unattended coding, new contracts, auto-merge, hardware flash, RF transmission or any G0–G6 approval. Approved Issue scope, Requirements, ADRs, contracts and current repository governance outrank this document.
+> **Purpose & Status:** Historical `1.0.0-DRAFT` (Issue #70) — **PROPOSED / NOT_APPROVED** and **subordinate to active [`AGENTS.md`](../../AGENTS.md) and [`harness-fast-lane.md`](harness-fast-lane.md)**. Do not use this draft as independent authority, nor infer approval for unattended coding, new contracts, auto-merge, hardware flash, RF transmission, or G0–G6 acceptance. Approved Issue scope, Requirements, ADRs ([ADR-0004 CAD/CSMA-CA](../adr/0004-pure-cad-csma-ca-mac.md)), contracts, and current repository governance outrank this document.
 
 ## 0. Input → decision → permitted action
 

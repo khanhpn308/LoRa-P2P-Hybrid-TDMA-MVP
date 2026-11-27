@@ -160,6 +160,39 @@ class HarnessCoordinatorConfigTests(unittest.TestCase):
                        "codegraph_explore", "No bulk-read fallback"):
             self.assertIn(marker, content)
 
+    def test_active_instruction_and_routing_links_exist(self):
+        import re
+
+        link_re = re.compile(r"\[[^\]]+\]\(([^)#]+)(?:#[^)]+)?\)")
+        active_docs = (
+            "AGENTS.md",
+            ".agents/agents/harness-coordinator.md",
+            "docs/adr/README.md",
+            "docs/hardware/sx1276/README.md",
+            "docs/development/coding-standards.md",
+            "docs/development/harness-fast-lane.md",
+            "docs/development/agy-native-coordinator-sop.md",
+            "docs/development/AI_TASK_START_PROTOCOL.md",
+        )
+        for rel in active_docs:
+            doc_path = self.repo_root / rel
+            text = doc_path.read_text(encoding="utf-8")
+            for target in link_re.findall(text):
+                if target.startswith(("http://", "https://", "mailto:")):
+                    continue
+                resolved = (doc_path.parent / target).resolve()
+                self.assertTrue(
+                    resolved.exists(),
+                    f"Broken link in {rel}: {target} -> {resolved}",
+                )
+
+    def test_coordinator_and_auditor_use_mac_v2_not_tdma_timing(self):
+        coord = self.coordinator_path.read_text(encoding="utf-8")
+        self.assertNotIn("TDMA timing PASS", coord)
+        auditor = (self.repo_root / ".agent-harness" / "auditor.md").read_text(encoding="utf-8")
+        self.assertIn("ADR-0004", auditor)
+        self.assertNotIn("backend-controlled schedule", auditor)
+
 
 if __name__ == "__main__":
     unittest.main()

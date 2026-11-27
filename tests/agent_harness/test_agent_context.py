@@ -109,6 +109,28 @@ class AgentContextTests(unittest.TestCase):
         self.assertIn("AGENTS_SHA256=", data["agent_input"])
         self.assertIn("MANDATORY VERIFIED RULES", data["agent_input"])
 
+    def test_repo_agents_md_concise_and_selective_routing_preserved(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        ctx = load_context(repo_root)
+        self.assertEqual(ctx["status"], "HOST_CONTEXT_LOADED")
+        lines = (repo_root / "AGENTS.md").read_text(encoding="utf-8").splitlines()
+        self.assertLessEqual(len(lines), 120)
+        self.assertLessEqual(sum(1 for line in lines if line.startswith("## ")), 10)
+        self.assertIn("0004-pure-cad-csma-ca-mac.md", ctx["agent_input"])
+        self.assertIn("superseding Hybrid TDMA", ctx["agent_input"])
+        docs_cmd = [sys.executable, str(repo_root / "scripts/agent_harness/agent_context.py"),
+                    "--repo", str(repo_root), "--allowed-path", "docs/adr/README.md"]
+        docs_res = subprocess.run(docs_cmd, capture_output=True, text=True, timeout=15)
+        self.assertEqual(docs_res.returncode, 0, docs_res.stdout)
+        self.assertEqual(json.loads(docs_res.stdout)["standards"]["selected_ids"], [])
+        c_cmd = [sys.executable, str(repo_root / "scripts/agent_harness/agent_context.py"),
+                 "--repo", str(repo_root), "--allowed-path", "firmware/components/sx1276_driver/sx1276.c"]
+        c_res = subprocess.run(c_cmd, capture_output=True, text=True, timeout=15)
+        self.assertEqual(c_res.returncode, 0, c_res.stdout)
+        c_ids = json.loads(c_res.stdout)["standards"]["selected_ids"]
+        self.assertTrue(any(rid.startswith("RTOS-") for rid in c_ids))
+        self.assertFalse(any(rid.startswith(("GO-", "DB-", "MQ-")) for rid in c_ids))
+
 
 if __name__ == "__main__":
     unittest.main()
