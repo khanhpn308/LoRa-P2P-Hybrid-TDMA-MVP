@@ -34,7 +34,7 @@ try:
         verify_host_proof,
     )
     from .p1.worktrees import WorktreeError, inspect_worktree
-    from .quality_gates import evaluate as evaluate_quality_gates, inventory, safe_read, secret_line
+    from .quality_gates import digest as qg_digest, evaluate as evaluate_quality_gates, inventory, safe_read, secret_line
     from .scope import parse_allowed_paths, violations
 except ImportError:
     from agent_context import ContextGateError, load_context
@@ -46,7 +46,7 @@ except ImportError:
         verify_host_proof,
     )
     from p1.worktrees import WorktreeError, inspect_worktree
-    from quality_gates import evaluate as evaluate_quality_gates, inventory, safe_read, secret_line
+    from quality_gates import digest as qg_digest, evaluate as evaluate_quality_gates, inventory, safe_read, secret_line
     from scope import parse_allowed_paths, violations
 
 REPO = "khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP"
@@ -572,6 +572,132 @@ def _normalize_cmd(cmd: str | list[str]) -> str:
     return " ".join(str(cmd).split())
 
 
+def load_trusted_definitions(
+    definitions_path: pathlib.Path,
+    *,
+    repo: pathlib.Path,
+) -> dict[str, dict[str, Any]]:
+    """Load external Host-owned expected unit verification definitions outside candidate control."""
+    repo_root = repo.resolve(strict=True)
+    if definitions_path.is_symlink() or definitions_path.parent.is_symlink() or not definitions_path.is_file():
+        raise VerificationTamperError("Trusted definitions file must be a real non-symlink file")
+    resolved = definitions_path.resolve(strict=True)
+    if resolved.is_relative_to(repo_root):
+        raise VerificationTamperError("Trusted definitions must reside outside candidate worktree")
+    raw = resolved.read_bytes()
+    if len(raw) > 512_000 or secret_line(raw):
+        raise VerificationTamperError("Trusted definitions file oversized or contains secret signature")
+    payload = json.loads(raw.decode("utf-8"))
+    by_id: dict[str, dict[str, Any]] = {}
+    if isinstance(payload, dict) and isinstance(payload.get("units"), list):
+        for item in payload["units"]:
+            if isinstance(item, dict) and isinstance(item.get("id"), str) and isinstance(item.get("verification"), dict):
+                v = copy.deepcopy(item["verification"])
+                v["definition_sha256"] = compute_verification_sha256(v)
+                by_id[item["id"]] = v
+    elif isinstance(payload, dict):
+        for uid, verif in payload.items():
+            if isinstance(uid, str) and isinstance(verif, dict):
+                v = copy.deepcopy(verif)
+                v["definition_sha256"] = compute_verification_sha256(v)
+                by_id[uid] = v
+    else:
+        raise VerificationTamperError("Malformed trusted definitions payload")
+    if not by_id:
+        raise VerificationTamperError("Trusted definitions contain no unit entries")
+    return by_id
+
+
+def _validate_command_receipt_entry(
+    entry: Any,
+    *,
+    ev_root: pathlib.Path,
+    actual_source_sha: str,
+    actual_cand_sha: str,
+    actual_diff_sha: str,
+    unit_ver_sha: str,
+) -> dict[str, Any]:
+    if not isinstance(entry, dict):
+        raise ValidationError("Host check receipt entry must be an object")
+    obs = entry.get("observations")
+    if (
+        entry.get("waived")
+        or entry.get("owner_waived")
+        or entry.get("commit_only")
+        or entry.get("skipped")
+        or (
+            isinstance(obs, dict)
+            and any(obs.get(k) for k in ("waived", "owner_waived", "commit_only", "skipped", "self_asserted"))
+        )
+    ):
+        raise UnauthorizedTransition("Waived, skipped, commit-only, or self-asserted receipts cannot mark a unit PASSING")
+    if entry.get("self_asserted") or entry.get("verified_by") in ("worker", "maker", "agent"):
+        raise UnauthorizedTransition("Worker self-asserted observations cannot mark a unit PASSING")
+    if not isinstance(obs, dict) or obs.get("checks_complete") is not True:
+        raise UnauthorizedTransition("Host receipt missing checks_complete=true observation")
+    if obs.get("actor") in ("worker", "maker") or entry.get("actor") in ("worker", "maker"):
+        raise UnauthorizedTransition("Worker-authored receipt cannot mark a unit PASSING")
+
+    if entry.get("exit_code") != 0 or type(entry.get("exit_code")) is not int:
+        raise UnauthorizedTransition("Host command receipt exit_code must be integer 0")
+    if entry.get("source_sha") != actual_source_sha or entry.get("candidate_sha256") != actual_cand_sha:
+        raise RevisionConflict("Stale receipt: source_sha or candidate_sha256 mismatch")
+
+    entry_diff_sha = entry.get("diff_sha256")
+    if entry_diff_sha is None:
+        entry_diff_sha = obs.get("diff_sha256")
+    if not SHA256_RE.fullmatch(str(entry_diff_sha or "")) or entry_diff_sha != actual_diff_sha:
+        raise RevisionConflict("Missing or stale diff_sha256 in Host command receipt")
+
+    obs_ver_sha = entry.get("verification_sha256")
+    if obs_ver_sha is None:
+        obs_ver_sha = obs.get("verification_sha256")
+    if not SHA256_RE.fullmatch(str(obs_ver_sha or "")) or obs_ver_sha != unit_ver_sha:
+        raise VerificationTamperError("Host command receipt verification_sha256 mismatches unit definition")
+
+    cmd = entry.get("command")
+    if not isinstance(cmd, list) or not cmd or not all(isinstance(a, str) and a for a in cmd):
+        raise ValidationError("Host command receipt must carry non-empty argv command list")
+    cmd_sha = qg_digest(json.dumps(cmd).encode("utf-8"))
+    if entry.get("command_sha256") is not None and entry.get("command_sha256") != cmd_sha:
+        raise ValidationError("Host command receipt command_sha256 mismatch")
+
+    tool_ver = entry.get("tool_version")
+    if (
+        not isinstance(tool_ver, str)
+        or not tool_ver.strip()
+        or len(tool_ver) > 250
+        or "\n" in tool_ver
+        or secret_line(tool_ver.encode("utf-8"))
+    ):
+        raise ValidationError("Host command receipt missing valid tool_version")
+
+    receipt_path = validate_relative_path(str(entry.get("receipt_path", "")), label="receipt_path")
+    declared_sha = str(entry.get("receipt_sha256", ""))
+    if not SHA256_RE.fullmatch(declared_sha):
+        raise ValidationError("Host command receipt missing valid receipt_sha256")
+    raw_log = safe_read(ev_root, receipt_path)
+    actual_log_sha = qg_digest(raw_log)
+    if actual_log_sha != declared_sha:
+        raise UnauthorizedTransition(f"Recomputed log hash mismatch for {receipt_path}")
+    if not raw_log.decode("utf-8").strip() or secret_line(raw_log):
+        raise UnauthorizedTransition(f"Empty or secret-bearing log rejected for {receipt_path}")
+
+    return {
+        "command": list(cmd),
+        "command_norm": _normalize_cmd(cmd),
+        "command_sha256": cmd_sha,
+        "exit_code": 0,
+        "source_sha": actual_source_sha,
+        "candidate_sha256": actual_cand_sha,
+        "diff_sha256": actual_diff_sha,
+        "verification_sha256": unit_ver_sha,
+        "tool_version": tool_ver.strip(),
+        "receipt_path": receipt_path,
+        "receipt_sha256": actual_log_sha,
+    }
+
+
 def verify_host_gate_evidence(
     doc: dict[str, Any],
     unit_id: str,
@@ -580,6 +706,7 @@ def verify_host_gate_evidence(
     base_sha: str,
     evidence_dir: pathlib.Path,
     manifest_name: str = "manifest.json",
+    trusted_definitions: dict[str, dict[str, Any]] | pathlib.Path | None = None,
 ) -> HostVerificationProof:
     """Verify unit completion strictly through trusted Host quality_gates evaluation."""
     validated = validate_feature_doc(doc)
@@ -594,6 +721,20 @@ def verify_host_gate_evidence(
     ev_root = evidence_dir.resolve(strict=True)
     if ev_root.is_relative_to(repo_root):
         raise ValidationError("Host evidence_dir must remain outside candidate worktree")
+
+    if trusted_definitions is not None:
+        if isinstance(trusted_definitions, pathlib.Path):
+            def_map = load_trusted_definitions(trusted_definitions, repo=repo_root)
+        else:
+            def_map = trusted_definitions
+        expected_def = def_map.get(unit_id)
+        if expected_def is None:
+            raise VerificationTamperError(f"Unit {unit_id!r} missing from external trusted definitions")
+        expected_def_sha = compute_verification_sha256(expected_def)
+        if target["verification"]["definition_sha256"] != expected_def_sha:
+            raise VerificationTamperError(
+                f"Unit {unit_id!r} verification definition differs from external trusted definition"
+            )
 
     try:
         eval_result = evaluate_quality_gates(repo_root, base_sha, manifest_name, ev_root)
@@ -614,47 +755,80 @@ def verify_host_gate_evidence(
     expected_cand_sha = validated["git"].get("candidate_sha256")
     actual_source_sha = str(eval_result.get("source_sha", ""))
     actual_cand_sha = str(eval_result.get("candidate_sha256", ""))
+    actual_diff_sha = str(eval_result.get("diff_sha256", ""))
     if expected_source_sha and actual_source_sha != expected_source_sha:
         raise RevisionConflict("Stale candidate: Host evaluated source_sha mismatches feature state")
     if expected_cand_sha and actual_cand_sha != expected_cand_sha:
         raise RevisionConflict("Stale candidate: Host evaluated candidate_sha256 mismatches feature state")
+    if not SHA256_RE.fullmatch(actual_diff_sha):
+        raise ValidationError("Host quality_gates evaluation missing diff_sha256")
 
     manifest_raw = safe_read(ev_root, manifest_name)
     manifest_doc = json.loads(manifest_raw.decode("utf-8"))
     checks = manifest_doc.get("checks", {})
     unit_ver_sha = target["verification"]["definition_sha256"]
-    expected_cmds = {_normalize_cmd(c) for c in target["verification"]["commands"]}
+    required_cmds = [_normalize_cmd(c) for c in target["verification"]["commands"]]
 
-    matched_rule: dict[str, Any] | None = None
+    candidate_receipts: list[tuple[str, dict[str, Any]]] = []
+    raw_cmd_receipts = manifest_doc.get("command_receipts")
+    if raw_cmd_receipts is not None:
+        if not isinstance(raw_cmd_receipts, list):
+            raise ValidationError("manifest.command_receipts must be a list")
+        for item in raw_cmd_receipts:
+            candidate_receipts.append((str(item.get("gate_rule_id", "UNIT-CHECK") if isinstance(item, dict) else "UNIT-CHECK"), item))
+
     for res in eval_result.get("results", []):
         if res.get("status") != "PASS":
             continue
-        rid = res.get("rule_id")
+        rid = str(res.get("rule_id", ""))
         if rid in ("SECRET-SCAN", "DIFF-CHECK", "STANDARDS-CHECK"):
             continue
         entry = checks.get(rid)
-        if not isinstance(entry, dict):
-            continue
-        if entry.get("waived") or entry.get("owner_waived") or entry.get("commit_only"):
-            raise UnauthorizedTransition("Waivers or commits alone cannot mark a unit PASSING")
-        obs = entry.get("observations") or {}
-        obs_ver_sha = obs.get("verification_sha256")
-        cmd_norm = _normalize_cmd(entry.get("command", []))
-        if obs_ver_sha is not None and obs_ver_sha != unit_ver_sha:
-            continue
-        if obs_ver_sha == unit_ver_sha or cmd_norm in expected_cmds:
-            matched_rule = res
-            break
+        if isinstance(entry, dict):
+            candidate_receipts.append((rid, entry))
 
-    if matched_rule is None:
+    verified_by_cmd: dict[str, tuple[str, dict[str, Any]]] = {}
+    last_rejection: Exception | None = None
+    for gate_id, raw_entry in candidate_receipts:
+        try:
+            verified = _validate_command_receipt_entry(
+                raw_entry,
+                ev_root=ev_root,
+                actual_source_sha=actual_source_sha,
+                actual_cand_sha=actual_cand_sha,
+                actual_diff_sha=actual_diff_sha,
+                unit_ver_sha=unit_ver_sha,
+            )
+            verified_by_cmd.setdefault(verified["command_norm"], (gate_id, verified))
+        except (UnauthorizedTransition, VerificationTamperError, RevisionConflict) as exc:
+            last_rejection = exc
+            if isinstance(raw_entry, dict) and _normalize_cmd(raw_entry.get("command", [])) in required_cmds:
+                raise
+        except ValidationError as exc:
+            last_rejection = exc
+
+    matched_receipts: list[dict[str, Any]] = []
+    missing_cmds: list[str] = []
+    primary_gate_id = ""
+    for req_cmd in required_cmds:
+        hit = verified_by_cmd.get(req_cmd)
+        if hit is None:
+            missing_cmds.append(req_cmd)
+        else:
+            gate_id, rec = hit
+            if not primary_gate_id:
+                primary_gate_id = gate_id
+            matched_receipts.append({k: v for k, v in rec.items() if k != "command_norm"})
+
+    if missing_cmds:
+        if last_rejection is not None and not matched_receipts:
+            raise last_rejection
         raise ValidationError(
-            f"No verified Host check receipt in {manifest_name} matches unit {unit_id!r} verification definition"
+            f"Missing verified Host receipts for required unit command(s): {missing_cmds}"
         )
 
-    receipt_path = validate_relative_path(str(matched_rule.get("receipt_path", "")), label="receipt_path")
-    receipt_sha = str(matched_rule.get("receipt_sha256", ""))
-    if not SHA256_RE.fullmatch(receipt_sha):
-        raise ValidationError("Verified Host receipt missing valid receipt_sha256")
+    primary = matched_receipts[0]
+    command_receipts_sha = _sha256_bytes(_canonical_json(matched_receipts).encode("utf-8"))
 
     return issue_host_proof(
         issue=validated["issue"],
@@ -664,10 +838,13 @@ def verify_host_gate_evidence(
         candidate_sha256=actual_cand_sha,
         manifest_sha256=str(eval_result["manifest_sha256"]),
         runner_sha256=str(eval_result["runner_sha256"]),
-        receipt_path=receipt_path,
-        receipt_sha256=receipt_sha,
-        gate_rule_id=str(matched_rule["rule_id"]),
+        receipt_path=primary["receipt_path"],
+        receipt_sha256=primary["receipt_sha256"],
+        gate_rule_id=primary_gate_id,
         auto_check="AUTO_CHECK_PASS",
+        diff_sha256=actual_diff_sha,
+        command_receipts_sha256=command_receipts_sha,
+        tool_version=primary["tool_version"],
     )
 
 
@@ -677,11 +854,16 @@ def verify_unit_passing(
     *,
     proof: HostVerificationProof,
     expected_revision: int | None = None,
+    command_receipts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if not isinstance(proof, HostVerificationProof):
         raise UnauthorizedTransition(
             "Only a verified HostVerificationProof from trusted Host evaluation may mark a unit PASSING"
         )
+    if not SHA256_RE.fullmatch(str(proof.diff_sha256 or "")) or not SHA256_RE.fullmatch(
+        str(proof.command_receipts_sha256 or "")
+    ):
+        raise ValidationError("HostVerificationProof must bind diff_sha256 and complete command_receipts_sha256")
 
     updated = validate_feature_doc(copy.deepcopy(doc))
     _check_cas(updated, expected_revision)
@@ -699,21 +881,28 @@ def verify_unit_passing(
     if expected_cand_sha and proof.candidate_sha256 != expected_cand_sha:
         raise RevisionConflict("Stale proof: candidate_sha256 does not match current candidate")
 
+    evidence_payload: dict[str, Any] = {
+        "verified_by": "host_verifier",
+        "status": "AUTO_CHECK_PASS",
+        "exit_code": 0,
+        "source_sha": proof.source_sha,
+        "candidate_sha256": proof.candidate_sha256,
+        "diff_sha256": proof.diff_sha256,
+        "verification_sha256": proof.verification_sha256,
+        "command_receipts_sha256": proof.command_receipts_sha256,
+        "tool_version": proof.tool_version,
+        "receipt_path": proof.receipt_path,
+        "receipt_sha256": proof.receipt_sha256,
+        "gate_rule_id": proof.gate_rule_id,
+        "manifest_sha256": proof.manifest_sha256,
+        "runner_sha256": proof.runner_sha256,
+        "recorded_at": _utc_now(),
+    }
+    if command_receipts is not None:
+        evidence_payload["command_receipts"] = copy.deepcopy(command_receipts)
+
     normalized_evidence = _validate_evidence(
-        {
-            "verified_by": "host_verifier",
-            "status": "AUTO_CHECK_PASS",
-            "exit_code": 0,
-            "source_sha": proof.source_sha,
-            "candidate_sha256": proof.candidate_sha256,
-            "verification_sha256": proof.verification_sha256,
-            "receipt_path": proof.receipt_path,
-            "receipt_sha256": proof.receipt_sha256,
-            "gate_rule_id": proof.gate_rule_id,
-            "manifest_sha256": proof.manifest_sha256,
-            "runner_sha256": proof.runner_sha256,
-            "recorded_at": _utc_now(),
-        },
+        evidence_payload,
         expected_verification_sha256=target["verification"]["definition_sha256"],
         label="host_proof",
     )
@@ -727,9 +916,15 @@ def verify_unit_passing(
     updated["revision"] += 1
     updated["handoff"]["active_unit"] = None
     updated["handoff"]["blocker"] = ""
-    ref = {"path": normalized_evidence["receipt_path"], "sha256": normalized_evidence["receipt_sha256"]}
-    if ref not in updated["handoff"]["evidence_refs"]:
-        updated["handoff"]["evidence_refs"].append(ref)
+    refs_to_add = [
+        {"path": normalized_evidence["receipt_path"], "sha256": normalized_evidence["receipt_sha256"]}
+    ]
+    if command_receipts:
+        for rec in command_receipts:
+            refs_to_add.append({"path": rec["receipt_path"], "sha256": rec["receipt_sha256"]})
+    for ref in refs_to_add:
+        if ref not in updated["handoff"]["evidence_refs"]:
+            updated["handoff"]["evidence_refs"].append(ref)
     updated["handoff"]["updated_at"] = _utc_now()
     return validate_feature_doc(updated)
 
@@ -948,6 +1143,7 @@ def compute_candidate_snapshot(repo: pathlib.Path, *, base_sha: str | None = Non
         **wt,
         "source_sha": source_info["source_sha"],
         "base_sha": source_info["base_sha"],
+        "diff_sha256": source_info["diff_sha256"],
         "candidate_sha256": source_info["candidate_sha256"],
         "changed_paths": source_info["changed_paths"],
     }
@@ -1426,6 +1622,7 @@ def main(argv: list[str] | None = None) -> int:
     p_init.add_argument("--issue", type=int, required=True)
     p_init.add_argument("--repo", type=pathlib.Path, default=pathlib.Path.cwd())
     p_init.add_argument("--units-file", type=pathlib.Path, required=True)
+    p_init.add_argument("--trusted-definitions", type=pathlib.Path, default=None)
     p_init.add_argument("--base-sha", default=None)
     p_init.add_argument("--state", type=pathlib.Path, default=None)
     p_init.add_argument("--feature-file", type=pathlib.Path, default=None)
@@ -1458,6 +1655,7 @@ def main(argv: list[str] | None = None) -> int:
     p_ver.add_argument("--base-sha", default=None)
     p_ver.add_argument("--evidence-dir", type=pathlib.Path, required=True)
     p_ver.add_argument("--manifest", default="manifest.json")
+    p_ver.add_argument("--trusted-definitions", type=pathlib.Path, default=None)
     p_ver.add_argument("--expected-revision", type=int, default=None)
     p_ver.add_argument("--state", type=pathlib.Path, default=None)
     p_ver.add_argument("--feature-file", type=pathlib.Path, default=None)
@@ -1509,6 +1707,19 @@ def main(argv: list[str] | None = None) -> int:
             raw_units = json.loads(args.units_file.read_text(encoding="utf-8"))
             if isinstance(raw_units, dict):
                 raw_units = raw_units.get("units", [])
+            if args.trusted_definitions is not None:
+                trusted_map = load_trusted_definitions(args.trusted_definitions, repo=root)
+                for u in raw_units:
+                    if isinstance(u, dict) and u.get("id") in trusted_map:
+                        t_hash = trusted_map[u["id"]]["definition_sha256"]
+                        if compute_verification_sha256(u.get("verification")) != t_hash:
+                            raise VerificationTamperError(
+                                f"Unit {u.get('id')!r} verification differs from trusted external definitions"
+                            )
+                    elif isinstance(u, dict):
+                        raise VerificationTamperError(
+                            f"Unit {u.get('id')!r} missing from trusted external definitions"
+                        )
             issue_meta = {"title": "", "issue_sha256": "", "scope": ()}
             if not args.offline:
                 issue_meta = _fetch_issue(root, args.issue)
@@ -1584,6 +1795,7 @@ def main(argv: list[str] | None = None) -> int:
                 base_sha=base_sha,
                 evidence_dir=args.evidence_dir,
                 manifest_name=args.manifest,
+                trusted_definitions=args.trusted_definitions,
             )
             updated = verify_unit_passing(
                 doc,

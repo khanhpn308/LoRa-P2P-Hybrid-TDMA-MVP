@@ -266,6 +266,11 @@ class JournalTests(unittest.TestCase):
             self.assertGreaterEqual(ckpt_id, 1)
             self.assertEqual(state.latest_checkpoint(429)["active_unit"], "U1")
 
+            # Journal doc and unit projection disagreement MUST fail closed
+            state.db.execute("UPDATE feature_units SET state='PASSING' WHERE issue=429 AND unit_id='U1'")
+            with self.assertRaises(StateConflict):
+                state.get_feature_snapshot(429)
+
 
 if __name__ == "__main__":
     unittest.main()

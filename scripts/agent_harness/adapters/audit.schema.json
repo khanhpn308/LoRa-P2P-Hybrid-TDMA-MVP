@@ -141,6 +141,111 @@
           "reason"
         ]
       }
+    },
+    "rubric_dimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "score",
+        "rationale",
+        "evidence",
+        "findings"
+      ],
+      "properties": {
+        "score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "evidence": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "receipt_path",
+              "receipt_sha256"
+            ],
+            "properties": {
+              "receipt_path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "receipt_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          }
+        },
+        "findings": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          }
+        }
+      }
+    },
+    "rubric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "decision",
+        "hard_gate_passed",
+        "total_score",
+        "dimensions"
+      ],
+      "properties": {
+        "version": {
+          "const": "1.0"
+        },
+        "decision": {
+          "type": "string",
+          "enum": [
+            "ACCEPT",
+            "REVISE",
+            "BLOCK"
+          ]
+        },
+        "hard_gate_passed": {
+          "type": "boolean"
+        },
+        "total_score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 12
+        },
+        "dimensions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "correctness",
+            "verification",
+            "scope_discipline",
+            "reliability",
+            "maintainability",
+            "handoff_readiness"
+          ],
+          "properties": {
+            "correctness": { "$ref": "#/$defs/rubric_dimension" },
+            "verification": { "$ref": "#/$defs/rubric_dimension" },
+            "scope_discipline": { "$ref": "#/$defs/rubric_dimension" },
+            "reliability": { "$ref": "#/$defs/rubric_dimension" },
+            "maintainability": { "$ref": "#/$defs/rubric_dimension" },
+            "handoff_readiness": { "$ref": "#/$defs/rubric_dimension" }
+          }
+        }
+      }
     }
   }
 }

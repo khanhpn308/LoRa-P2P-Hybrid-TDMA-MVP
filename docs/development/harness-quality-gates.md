@@ -17,11 +17,19 @@ The PR review route stays read-only unless the operator authorizes fixes.
 The examples below are for reproducing the Coordinator's checks.
 
 ```bash
+python3 scripts/agent_harness/check.py --repo /path/to/candidate --base <trusted-base-sha> --profile software --evidence-dir /path/to/host-evidence
+python3 scripts/agent_harness/dependency_checks.py --repo /path/to/candidate --json
 python3 scripts/agent_harness/quality_gates.py --repo /path/to/candidate --base <trusted-base-sha> --fingerprint-only
 python3 scripts/agent_harness/quality_gates.py --repo /path/to/candidate --base <trusted-base-sha>
 python3 scripts/agent_harness/quality_gates.py --repo /path/to/candidate --base <trusted-base-sha> --evidence-dir /path/to/host-evidence --manifest manifest.json
 python3 -m unittest discover -s tests/agent_harness -p test_quality_gates.py -v
 ```
+
+### P05 verification runner, dependency boundaries, and unit receipt completeness (OD-03, H2-INS-06/FBK-04, P04 completion)
+
+- **`scripts/agent_harness/check.py` (OD-03):** Unified check runner supporting `--profile quick|software|integration|bench`. Freezes required checks from approved scope before edits (`--freeze-checks`), recomputes on the full diff (`--verify-frozen`), executes actual commands (never skips missing prerequisites as PASS), emits `command_receipts` bound to `source_sha`, `candidate_sha256`, `diff_sha256`, `tool_version`, `command_sha256`, and recomputed log hashes, and validates via `quality_gates.py`. `--profile bench` (`OD-07`) fails closed as `NOT_VERIFIED` without `--allow-bench` and external `--bench-auth`.
+- **`scripts/agent_harness/dependency_checks.py` (H2-INS-06/FBK-04):** Enforces approved structural dependency boundaries for firmware C (`CMakeLists.txt` + `#include` across 3-tier layout), Go (`go.mod` + `import` across `cmd/internal`), web client (`package.json` + TypeScript `import`), and contracts (`$ref` resolution), failing with actionable `rule_id`, `path`, `source`, `reason`, and `fix`.
+- **Complete unit receipts (`feature_state.py verify-unit`):** Every command in a unit's `verification.commands` requires an actual Host-collected receipt bound to command identity, exit 0, `source_sha`, `candidate_sha256`, `diff_sha256`, `verification_sha256`, `tool_version`, and recomputed log hash; optional external `--trusted-definitions` outside the candidate protects expected criteria/commands. In-process HMAC seals are an API integrity guard, not independent OS isolation under Full Access.
 
 Keep evidence outside the candidate worktree. A manifest inside the candidate
 would change its own fingerprint. Run the checker from a trusted checkout,

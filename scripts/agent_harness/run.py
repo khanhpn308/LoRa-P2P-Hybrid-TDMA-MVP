@@ -288,14 +288,30 @@ def run(args: argparse.Namespace) -> int:
             evidence = {"checks.log": digest((artifacts / "checks.log").read_bytes())}
             versions = "Python " + sys.version.split()[0] + ("; ESP-IDF " + idf.version if idf else "")
             common = {"source_sha": source["source_sha"], "candidate_sha256": source["candidate_sha256"],
+                      "diff_sha256": source["diff_sha256"],
                       "command": ["supervised-host", "checks"], "exit_code": 0, "tool_version": versions,
                       "receipt_path": "checks.log", "receipt_sha256": evidence["checks.log"],
-                      "observations": {"checks_complete": True}}
+                      "observations": {"checks_complete": True, "diff_sha256": source["diff_sha256"]}}
             check_entries = {rule: dict(common) for rule, (_, risk) in REGISTRY.items()
                              if risk in risks and rule not in ("SECRET-SCAN", "DIFF-CHECK", "STANDARDS-CHECK")}
             # Runtime infrastructure rules require their dedicated collectors, never generic tests.
             for rule in ("INFRA-CHECK", "SEC-KEY-MOUNT", "MQTT-ACL-PERM", "NET-LOOPBACK", "TLS-AUTH/ACL-NEGATIVE"):
                 check_entries.pop(rule, None)
+            command_receipts = [
+                {
+                    "source_sha": source["source_sha"],
+                    "candidate_sha256": source["candidate_sha256"],
+                    "diff_sha256": source["diff_sha256"],
+                    "command": ticket["command"],
+                    "command_sha256": digest(json.dumps(ticket["command"]).encode()),
+                    "exit_code": ticket["exit_code"],
+                    "tool_version": versions,
+                    "receipt_path": "checks.log",
+                    "receipt_sha256": evidence["checks.log"],
+                    "observations": {"checks_complete": True, "diff_sha256": source["diff_sha256"]},
+                }
+                for ticket in receipts
+            ]
             write("checks.json", receipts)
             record_common = {"agent_input_sha256": selection["agent_input_sha256"],
                              "selection_sha256": selection["selection_sha256"],
@@ -349,7 +365,7 @@ def run(args: argparse.Namespace) -> int:
                       "rules": {r["rule_id"]: {**common, "observations": {"checks_complete": True,
                                 "selection_sha256": selection["selection_sha256"], "rule_sha256": r["rule_sha256"]}}
                                 for r in selection["rules"]}}
-            gate_manifest = {"checks": check_entries, "standards": policy}
+            gate_manifest = {"checks": check_entries, "command_receipts": command_receipts, "standards": policy}
             write("quality-manifest.json", gate_manifest)
             before = evaluate(repo, result["base_sha"], "quality-manifest.json", artifacts)
             write("pre-audit-gates.json", before)
@@ -445,7 +461,7 @@ def run(args: argparse.Namespace) -> int:
                             unit = next((u for u in doc["units"] if u["id"] == args.unit_id), None)
                             if unit is not None:
                                 unit_ver_sha = unit["verification"]["definition_sha256"]
-                                for entry in check_entries.values():
+                                for entry in list(check_entries.values()) + list(command_receipts):
                                     entry["observations"] = {
                                         **entry.get("observations", {}),
                                         "verification_sha256": unit_ver_sha,

@@ -255,7 +255,14 @@ class StrictAuditContractTests(unittest.TestCase):
         schema_path = pathlib.Path(__file__).resolve().parents[2] /             "scripts" / "agent_harness" / "adapters" / "audit.schema.json"
         schema = json.loads(schema_path.read_text())
         definitions = schema.pop("$defs")
-        self.assertEqual(set(definitions), {"selection_sha256", "rule_results"})
+        self.assertEqual(set(definitions), {"selection_sha256", "rule_results", "rubric", "rubric_dimension"})
+        rubric_def = definitions["rubric"]
+        self.assertFalse(rubric_def["additionalProperties"])
+        self.assertEqual(set(rubric_def["properties"]["decision"]["enum"]), {"ACCEPT", "REVISE", "BLOCK"})
+        self.assertEqual(
+            set(rubric_def["properties"]["dimensions"]["required"]),
+            {"correctness", "verification", "scope_discipline", "reliability", "maintainability", "handoff_readiness"},
+        )
         result = definitions["rule_results"]
         self.assertEqual(result["maxItems"], 128)
         self.assertFalse(result["items"]["additionalProperties"])
@@ -417,6 +424,142 @@ class ScopedRuleReportTests(unittest.TestCase):
             self.assertIn("--print-timeout", call_args)
             idx = call_args.index("--print-timeout")
             self.assertEqual(call_args[idx + 1], "120s")
+
+
+class RubricEvaluationTests(unittest.TestCase):
+    def setUp(self):
+        self.rules = [{"rule_id": "MEM-001", "rule_sha256": "a" * 64}]
+        self.selection = "b" * 64
+        self.inventory = {"unit.log": "c" * 64}
+        self.evidence = [{"receipt_path": "unit.log", "receipt_sha256": "c" * 64}]
+
+    def _make_rubric(self, *, decision="ACCEPT", hard_gate=True, scores=None):
+        dims = {}
+        score_map = scores or {
+            "correctness": 2,
+            "verification": 2,
+            "scope_discipline": 2,
+            "reliability": 2,
+            "maintainability": 2,
+            "handoff_readiness": 2,
+        }
+        for name, sc in score_map.items():
+            dims[name] = {
+                "score": sc,
+                "rationale": f"{name} evaluated from Host evidence",
+                "evidence": list(self.evidence) if sc == 2 else [],
+                "findings": [] if sc == 2 else [f"{name} deficiency"],
+            }
+        return {
+            "version": "1.0",
+            "decision": decision,
+            "hard_gate_passed": hard_gate,
+            "total_score": sum(score_map.values()),
+            "dimensions": dims,
+        }
+
+    def _make_report(self, *, status="PASS", rubric=None, findings=None):
+        return {
+            "status": status,
+            "findings": findings or [],
+            "limitations": [],
+            "reviewed_scope": sorted(PATHS),
+            "selection_sha256": self.selection,
+            "rule_results": [
+                {
+                    "rule_id": "MEM-001",
+                    "rule_sha256": "a" * 64,
+                    "status": "PASS" if status == "PASS" else "FAIL",
+                    "evidence": list(self.evidence) if status == "PASS" else [],
+                    "reason": "Evaluated against unit.log",
+                }
+            ],
+            "rubric": rubric or self._make_rubric(),
+        }
+
+    def test_valid_12_of_12_accept_rubric_passes(self):
+        rep = self._make_report()
+        checked = check_report(rep, PATHS, self.rules, self.selection, self.inventory, require_rubric=True)
+        self.assertEqual(checked["rubric"]["decision"], "ACCEPT")
+        self.assertEqual(checked["rubric"]["total_score"], 12)
+        schema = scoped_schema(self.rules, self.selection, PATHS, include_rubric=True)
+        self.assertIn("rubric", schema["required"])
+
+    def test_hard_gate_failure_or_low_score_cannot_be_averaged_into_accept(self):
+        # 11/12 with hard_gate=True cannot ACCEPT
+        rep_11 = self._make_report(
+            status="PASS",
+            rubric=self._make_rubric(
+                decision="ACCEPT",
+                hard_gate=True,
+                scores={
+                    "correctness": 2, "verification": 2, "scope_discipline": 2,
+                    "reliability": 2, "maintainability": 1, "handoff_readiness": 2,
+                },
+            ),
+        )
+        with self.assertRaises(AuditError):
+            check_report(rep_11, PATHS, self.rules, self.selection, self.inventory, require_rubric=True)
+
+        # hard_gate_passed=False with 10/12 cannot ACCEPT or REVISE
+        for bad_dec in ("ACCEPT", "REVISE"):
+            rep_hg = self._make_report(
+                status="FAIL",
+                findings=[{"severity": "CRITICAL", "file": next(iter(PATHS)), "line": 1,
+                           "rule": "MEM-001", "explanation": "overflow", "fix": "bound"}],
+                rubric=self._make_rubric(
+                    decision=bad_dec,
+                    hard_gate=False,
+                    scores={
+                        "correctness": 0, "verification": 2, "scope_discipline": 2,
+                        "reliability": 2, "maintainability": 2, "handoff_readiness": 2,
+                    },
+                ),
+            )
+            with self.assertRaises(AuditError):
+                check_report(rep_hg, PATHS, self.rules, self.selection, self.inventory, require_rubric=True)
+
+        # Properly formed BLOCK decision passes validation as a FAIL/BLOCK report
+        rep_block = self._make_report(
+            status="FAIL",
+            findings=[{"severity": "CRITICAL", "file": next(iter(PATHS)), "line": 1,
+                       "rule": "MEM-001", "explanation": "overflow", "fix": "bound"}],
+            rubric=self._make_rubric(
+                decision="BLOCK",
+                hard_gate=False,
+                scores={
+                    "correctness": 0, "verification": 2, "scope_discipline": 2,
+                    "reliability": 2, "maintainability": 2, "handoff_readiness": 2,
+                },
+            ),
+        )
+        self.assertEqual(
+            check_report(rep_block, PATHS, self.rules, self.selection, self.inventory, require_rubric=True)["rubric"]["decision"],
+            "BLOCK",
+        )
+
+    def test_missing_evidence_or_bad_total_or_boolean_score_rejected(self):
+        rep = self._make_report()
+        rep["rubric"]["dimensions"]["verification"]["evidence"] = []
+        with self.assertRaises(AuditError):
+            check_report(rep, PATHS, self.rules, self.selection, self.inventory, require_rubric=True)
+
+        rep2 = self._make_report()
+        rep2["rubric"]["total_score"] = 10
+        with self.assertRaises(AuditError):
+            check_report(rep2, PATHS, self.rules, self.selection, self.inventory, require_rubric=True)
+
+        rep3 = self._make_report()
+        rep3["rubric"]["dimensions"]["correctness"]["score"] = True
+        with self.assertRaises(AuditError):
+            check_report(rep3, PATHS, self.rules, self.selection, self.inventory, require_rubric=True)
+
+        # Empty Host evidence inventory must still reject score=2 without evidence
+        rep_empty_inv = self._make_report()
+        rep_empty_inv["rule_results"] = []
+        rep_empty_inv["rubric"]["dimensions"]["verification"]["evidence"] = []
+        with self.assertRaises(AuditError):
+            check_report(rep_empty_inv, PATHS, [], self.selection, {}, require_rubric=True)
 
 
 if __name__ == "__main__":

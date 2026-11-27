@@ -639,6 +639,17 @@ class StandardsCheckV2Tests(unittest.TestCase):
         _, _, status, _ = gates.standards_check(self.root, self.base, self.source, self.payload, self.evidence)
         self.assertEqual(status, "NOT_VERIFIED")
 
+    def test_receipt_check_rejects_stale_diff_sha_and_waived_or_skipped_flags(self):
+        source = {**self.source, "diff_sha256": "d" * 64}
+        entry = {**self.receipt, "diff_sha256": "e" * 64}
+        status, reason, _ = gates.receipt_check("TOOLING-CHECK", entry, self.evidence, source)
+        self.assertEqual(status, "NOT_VERIFIED")
+        self.assertIn("diff_sha256", reason)
+        for flag in ("waived", "owner_waived", "commit_only", "skipped"):
+            flagged = {**self.receipt, flag: True}
+            status_f, _, _ = gates.receipt_check("TOOLING-CHECK", flagged, self.evidence, source)
+            self.assertEqual(status_f, "NOT_VERIFIED")
+
 
 if __name__ == "__main__":
     unittest.main()

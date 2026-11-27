@@ -116,16 +116,20 @@ class FeatureStateUnitTests(unittest.TestCase):
         log_sha = "f" * 64 if tamper_receipt_sha else _sha256(log_bytes)
         unit = next(u for u in doc["units"] if u["id"] == unit_id)
         cmd = command or ["python3", "-m", "unittest", "tests/agent_harness/test_feature_state.py"]
+        snap_now = fs.compute_candidate_snapshot(self.repo, base_sha=doc["git"]["base_sha"])
         entry = {
             "source_sha": doc["git"]["head_sha"],
             "candidate_sha256": doc["git"]["candidate_sha256"],
+            "diff_sha256": snap_now["diff_sha256"],
             "command": cmd,
+            "command_sha256": _sha256(json.dumps(cmd).encode("utf-8")),
             "exit_code": exit_code,
             "tool_version": "Python 3.12.3",
             "receipt_path": "unit.log",
             "receipt_sha256": log_sha,
             "observations": {
                 "checks_complete": checks_complete,
+                "diff_sha256": snap_now["diff_sha256"],
                 "verification_sha256": unit["verification"]["definition_sha256"],
             },
         }
@@ -267,6 +271,9 @@ class FeatureStateUnitTests(unittest.TestCase):
             gate_rule_id="TOOLING-CHECK",
             auto_check="AUTO_CHECK_PASS",
             _seal=b"forged" * 5 + b"xx",
+            diff_sha256=self.snap["diff_sha256"],
+            command_receipts_sha256="d" * 64,
+            tool_version="Python 3.12.3",
         )
         with self.assertRaises(StateConflict):
             fs.verify_unit_passing(doc, "U-01", proof=forged_proof)
@@ -294,13 +301,17 @@ class FeatureStateUnitTests(unittest.TestCase):
                     doc, "U-01", repo=self.repo, base_sha=self.base_sha, evidence_dir=ev
                 )
 
-        # Unrelated command without matching verification definition rejected
+        # Unrelated command (even with matching verification_sha256) and missing verification_sha256 rejected
         ev_wrong_cmd = self._write_host_evidence(doc, "U-01", dirname="ev_cmd", command=["echo", "fake"])
+        with self.assertRaises(fs.ValidationError):
+            fs.verify_host_gate_evidence(
+                doc, "U-01", repo=self.repo, base_sha=self.base_sha, evidence_dir=ev_wrong_cmd
+            )
         manifest_obj = json.loads((ev_wrong_cmd / "manifest.json").read_text())
         for c in manifest_obj["checks"].values():
             c["observations"].pop("verification_sha256", None)
         (ev_wrong_cmd / "manifest.json").write_text(json.dumps(manifest_obj))
-        with self.assertRaises(fs.ValidationError):
+        with self.assertRaises(fs.VerificationTamperError):
             fs.verify_host_gate_evidence(
                 doc, "U-01", repo=self.repo, base_sha=self.base_sha, evidence_dir=ev_wrong_cmd
             )
@@ -669,6 +680,107 @@ class FeatureStateUnitTests(unittest.TestCase):
         self.assertEqual(res["status"], "READY_TO_RESUME")
         self.assertEqual(res["units"]["passing"], ["U-01"])
         self.assertEqual(res["next_action"], "Activate U-02")
+
+    def test_partial_receipts_self_asserted_diff_mismatch_and_external_trusted_defs(self):
+        units = [
+            {
+                "id": "U-MULTI",
+                "behavior": "Unit requiring two distinct verification commands",
+                "verification": {
+                    "criteria": ["Both checks pass"],
+                    "commands": [
+                        "python3 scripts/verify_structure.py",
+                        "python3 -m unittest tests/agent_harness/test_feature_state.py",
+                    ],
+                },
+                "dependencies": [],
+                "scope": ["scripts/agent_harness/"],
+                "state": "PENDING",
+            }
+        ]
+        doc = fs.create_feature_doc(
+            431,
+            units=units,
+            approved_scope=["scripts/agent_harness/"],
+            base_sha=self.base_sha,
+            head_sha=self.snap["source_sha"],
+            branch=self.snap["branch"],
+            candidate_sha256=self.snap["candidate_sha256"],
+        )
+        doc = fs.activate_unit(doc, "U-MULTI")
+
+        # 1. Partial acceptance (only 1 of 2 required commands has a receipt) MUST fail
+        ev_partial = self._write_host_evidence(
+            doc, "U-MULTI", dirname="ev_partial", command=["python3", "scripts/verify_structure.py"]
+        )
+        with self.assertRaises(fs.ValidationError):
+            fs.verify_host_gate_evidence(
+                doc, "U-MULTI", repo=self.repo, base_sha=self.base_sha, evidence_dir=ev_partial
+            )
+
+        # 2. Both required commands via command_receipts PASS
+        manifest_partial = json.loads((ev_partial / "manifest.json").read_text())
+        first_rec = dict(manifest_partial["checks"]["TOOLING-CHECK"])
+        second_cmd = ["python3", "-m", "unittest", "tests/agent_harness/test_feature_state.py"]
+        second_rec = {
+            **first_rec,
+            "command": second_cmd,
+            "command_sha256": _sha256(json.dumps(second_cmd).encode("utf-8")),
+        }
+        manifest_partial["command_receipts"] = [first_rec, second_rec]
+        (ev_partial / "manifest.json").write_text(json.dumps(manifest_partial, indent=2))
+        proof = fs.verify_host_gate_evidence(
+            doc, "U-MULTI", repo=self.repo, base_sha=self.base_sha, evidence_dir=ev_partial
+        )
+        passed = fs.verify_unit_passing(
+            doc, "U-MULTI", proof=proof, command_receipts=manifest_partial["command_receipts"]
+        )
+        self.assertEqual(passed["units"][0]["state"], "PASSING")
+        self.assertEqual(len(passed["units"][0]["evidence"]["command_receipts"]), 2)
+
+        # 3. Self-asserted worker observations / missing diff_sha256 / skipped rejected
+        for bad_name, mut in (
+            ("self_asserted", {"self_asserted": True}),
+            ("worker_actor", {"actor": "worker"}),
+            ("skipped", {"skipped": True}),
+        ):
+            ev_bad = self._write_host_evidence(doc, "U-MULTI", dirname=f"ev_{bad_name}", extra_flags=mut)
+            with self.assertRaises(fs.UnauthorizedTransition):
+                fs.verify_host_gate_evidence(
+                    doc, "U-MULTI", repo=self.repo, base_sha=self.base_sha, evidence_dir=ev_bad
+                )
+
+        ev_nodiff = self._write_host_evidence(doc, "U-MULTI", dirname="ev_nodiff")
+        m_nodiff = json.loads((ev_nodiff / "manifest.json").read_text())
+        for c in m_nodiff["checks"].values():
+            c.pop("diff_sha256", None)
+            c["observations"].pop("diff_sha256", None)
+        (ev_nodiff / "manifest.json").write_text(json.dumps(m_nodiff))
+        with self.assertRaises(fs.RevisionConflict):
+            fs.verify_host_gate_evidence(
+                doc, "U-MULTI", repo=self.repo, base_sha=self.base_sha, evidence_dir=ev_nodiff
+            )
+
+        # 4. External trusted definitions protect against candidate tampering
+        inside_defs = self.repo / "trusted_defs.json"
+        inside_defs.write_text(json.dumps({"U-MULTI": units[0]["verification"]}), encoding="utf-8")
+        with self.assertRaises(fs.VerificationTamperError):
+            fs.load_trusted_definitions(inside_defs, repo=self.repo)
+
+        ext_defs = self.root / "trusted_defs.json"
+        ext_defs.write_text(
+            json.dumps({"U-MULTI": {"criteria": ["Original"], "commands": ["python3 -m unittest original.py"]}}),
+            encoding="utf-8",
+        )
+        with self.assertRaises(fs.VerificationTamperError):
+            fs.verify_host_gate_evidence(
+                doc,
+                "U-MULTI",
+                repo=self.repo,
+                base_sha=self.base_sha,
+                evidence_dir=ev_partial,
+                trusted_definitions=ext_defs,
+            )
 
 
 if __name__ == "__main__":

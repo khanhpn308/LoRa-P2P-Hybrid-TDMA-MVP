@@ -206,9 +206,15 @@ def inventory(repo, base):
         line = secret_line(git(repo, "cat-file", "blob", blob))
         if line:
             findings.append((name, line))
+    diff_bytes = git(repo, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", base)
+    untracked_hashes = {name: hashes[name] for name in sorted(extra)}
+    diff_sha256 = digest(
+        diff_bytes + b"\n" + json.dumps(untracked_hashes, sort_keys=True).encode("utf-8")
+    )
     payload = {"source_sha": head, "base_sha": base, "index_sha256": digest(staged),
                "files": hashes, "changed_paths": paths}
     return {"source_sha": head, "base_sha": base,
+            "diff_sha256": diff_sha256,
             "candidate_sha256": digest(json.dumps(payload, sort_keys=True).encode()),
             "changed_paths": paths}, findings
 
@@ -305,6 +311,12 @@ def receipt_check(rule, entry, evidence_root, source):
         if (entry["source_sha"] != source["source_sha"]
                 or entry["candidate_sha256"] != source["candidate_sha256"]):
             return "NOT_VERIFIED", "Stale source/index/worktree receipt", {}
+        obs_raw = entry.get("observations")
+        if any(entry.get(k) for k in ("waived", "owner_waived", "commit_only", "skipped")) or (
+            isinstance(obs_raw, dict)
+            and any(obs_raw.get(k) for k in ("waived", "owner_waived", "commit_only", "skipped"))
+        ):
+            return "NOT_VERIFIED", "Waived, skipped, or commit-only receipt cannot pass Host gate", {}
         if (not isinstance(entry["command"], list) or not entry["command"]
                 or not all(isinstance(arg, str) and arg for arg in entry["command"])
                 or not isinstance(entry["tool_version"], str) or not entry["tool_version"].strip()
@@ -313,6 +325,14 @@ def receipt_check(rule, entry, evidence_root, source):
                 or "\n" in entry["tool_version"]
                 or secret_line(entry["tool_version"].encode())):
             raise ValueError("Invalid command, tool version or exit code")
+        cmd_sha256 = digest(json.dumps(entry["command"]).encode())
+        if entry.get("command_sha256") is not None and entry["command_sha256"] != cmd_sha256:
+            return "NOT_VERIFIED", "Receipt command_sha256 mismatch", {}
+        entry_diff_sha = entry.get("diff_sha256")
+        if entry_diff_sha is None and isinstance(obs_raw, dict):
+            entry_diff_sha = obs_raw.get("diff_sha256")
+        if entry_diff_sha is not None and source.get("diff_sha256") and entry_diff_sha != source["diff_sha256"]:
+            return "NOT_VERIFIED", "Stale diff_sha256 receipt", {}
         raw = safe_read(evidence_root, entry["receipt_path"])
         if digest(raw) != entry["receipt_sha256"]:
             return "NOT_VERIFIED", "Receipt hash mismatch", {}
@@ -320,9 +340,12 @@ def receipt_check(rule, entry, evidence_root, source):
         if not log.strip() or secret_line(raw):
             return "NOT_VERIFIED", "Empty or credential-bearing receipt rejected", {}
         # Commands are hashed to avoid echoing passwords embedded in arguments.
-        metadata = {"command": "sha256:" + digest(json.dumps(entry["command"]).encode()),
+        metadata = {"command": "sha256:" + cmd_sha256,
+                    "command_sha256": cmd_sha256,
                     "exit_code": entry["exit_code"], "receipt_path": entry["receipt_path"],
                     "tool_version": entry["tool_version"], "receipt_sha256": digest(raw)}
+        if entry_diff_sha is not None:
+            metadata["diff_sha256"] = entry_diff_sha
         if entry["exit_code"] != 0:
             return "FAIL", "Host command exited unsuccessfully", metadata
         facts = entry["observations"]

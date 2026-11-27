@@ -630,6 +630,7 @@ def build_auditor_prompt(
     batch_info: dict[str, Any] | None = None,
     rule_batch_info: dict[str, Any] | None = None,
     max_unbatched_bytes: int = MAX_BATCH_DIFF_BYTES,
+    include_rubric: bool = False,
 ) -> str:
     """Build bounded read-only prompt for independent Auditor without silent truncation."""
     required_paths = sorted({f.get("filename", "") for f in pr_data.get("files", [])})
@@ -687,6 +688,11 @@ Batch Reviewed Scope ({len(scope_files)} files):
         rule_batch_section = ""
         rule_eval_instruction = '5. In "rule_results", you must evaluate each applicable Rule ID:'
 
+    rubric_note = ""
+    if include_rubric:
+        rubric_note = """7. Include "rubric" scoring 0-2 on all six dimensions ("correctness", "verification", "scope_discipline", "reliability", "maintainability", "handoff_readiness") with "version": "1.0", "decision": "ACCEPT" | "REVISE" | "BLOCK", "hard_gate_passed": boolean, "total_score": 0..12, and per-dimension "score", "rationale", "evidence", "findings". Hard failures cannot be averaged away.
+"""
+
     prompt = f"""You are a fresh, independent, read-only code and compliance Auditor.
 Your audit is strictly read-only: do NOT make edits or self-approve.
 You must review the full diff and evaluate compliance against applicable Host-selected Rule IDs.
@@ -728,7 +734,7 @@ Instructions:
    - "status" = "PASS"
    - "findings" = []
    - "limitations" = []
-"""
+{rubric_note}"""
     return prompt
 
 
@@ -1083,6 +1089,57 @@ def aggregate_batch_reports(
     if rule_selection and rule_selection.get("selection_sha256"):
         agg["selection_sha256"] = rule_selection["selection_sha256"]
 
+    batch_rubrics = [rep["rubric"] for rep in batch_reports if isinstance(rep.get("rubric"), dict)]
+    if batch_rubrics:
+        dim_names = (
+            "correctness",
+            "verification",
+            "scope_discipline",
+            "reliability",
+            "maintainability",
+            "handoff_readiness",
+        )
+        merged_dims: dict[str, dict[str, Any]] = {}
+        for dname in dim_names:
+            entries = [r["dimensions"][dname] for r in batch_rubrics if isinstance(r.get("dimensions"), dict) and dname in r["dimensions"]]
+            min_score = min((e["score"] for e in entries), default=0)
+            ev_seen: set[tuple[str, str]] = set()
+            ev_merged: list[dict[str, str]] = []
+            findings_merged: list[str] = []
+            rationales: list[str] = []
+            for e in entries:
+                if e.get("rationale") and e["rationale"] not in rationales:
+                    rationales.append(e["rationale"])
+                for f_item in e.get("findings", []):
+                    if f_item not in findings_merged:
+                        findings_merged.append(f_item)
+                for ev in e.get("evidence", []):
+                    key = (ev.get("receipt_path", ""), ev.get("receipt_sha256", ""))
+                    if key not in ev_seen:
+                        ev_seen.add(key)
+                        ev_merged.append(ev)
+            merged_dims[dname] = {
+                "score": min_score,
+                "rationale": "; ".join(rationales)[:1000] or "Aggregated across batches",
+                "evidence": ev_merged[:16],
+                "findings": findings_merged[:32],
+            }
+        hard_ok = all(r.get("hard_gate_passed") is True for r in batch_rubrics) and overall_status == "PASS"
+        decisions = [r.get("decision") for r in batch_rubrics]
+        if not hard_ok or "BLOCK" in decisions:
+            agg_decision = "BLOCK"
+        elif "REVISE" in decisions or overall_status != "PASS" or sum(d["score"] for d in merged_dims.values()) < 12:
+            agg_decision = "REVISE"
+        else:
+            agg_decision = "ACCEPT"
+        agg["rubric"] = {
+            "version": "1.0",
+            "decision": agg_decision,
+            "hard_gate_passed": hard_ok,
+            "total_score": sum(d["score"] for d in merged_dims.values()),
+            "dimensions": merged_dims,
+        }
+
     return agg
 
 
@@ -1097,6 +1154,7 @@ def run_auto_audit(
     max_batch_rules: int = MAX_BATCH_RULES,
     max_retries: int = 1,
     total_budget: int | None = None,
+    require_rubric: bool = False,
 ) -> dict[str, Any]:
     """Spawn fresh independent Auditor in sandbox with two-dimensional (diff x rule) batching, manifests, and retry."""
     if not antigravity:
@@ -1233,7 +1291,7 @@ def run_auto_audit(
                     # Validate existing report via antigravity.check_report
                     clean_report = {
                         k: v for k, v in existing_report.items()
-                        if k in ("status", "findings", "limitations", "reviewed_scope", "selection_sha256", "rule_results")
+                        if k in ("status", "findings", "limitations", "reviewed_scope", "selection_sha256", "rule_results", "rubric")
                     }
                     antigravity.check_report(
                         clean_report,
@@ -1241,6 +1299,7 @@ def run_auto_audit(
                         required_rules=b_rules if has_rules else None,
                         selection_sha256=b_parent_hash if has_rules else None,
                         evidence_inventory=target_inventory,
+                        require_rubric=require_rubric,
                     )
                     batch_reports.append(existing_report)
                     resumed = True
@@ -1259,6 +1318,7 @@ def run_auto_audit(
             batch_info=d_batch if diff_count > 1 else None,
             rule_batch_info=r_batch if rule_count > 1 else None,
             max_unbatched_bytes=max_batch_bytes,
+            include_rubric=require_rubric,
         )
         prompt_file = evidence_dir / f"auditor_prompt_{job_id}.txt"
         prompt_file.write_text(prompt, encoding="utf-8")
@@ -1303,6 +1363,7 @@ def run_auto_audit(
                     required_rules=b_rules if has_rules else None,
                     selection_sha256=b_parent_hash if has_rules else None,
                     evidence_inventory=target_inventory,
+                    require_rubric=require_rubric,
                 )
                 post_evidence_snap = _snapshot_dir(evidence_dir)
                 if post_evidence_snap != pre_evidence_snap:
@@ -1387,6 +1448,7 @@ def validate_and_load_auditor_report(
     rule_selection: dict[str, Any] | None,
     evidence_inventory: dict[str, str] | None = None,
     expected_diff_sha256: str | None = None,
+    require_rubric: bool = False,
 ) -> dict[str, Any]:
     """Validate external Auditor report against schema, evidence inventory, exact changed paths, and snapshot binding."""
     if not report_path.is_file():
@@ -1634,6 +1696,7 @@ def validate_and_load_auditor_report(
                 required_rules=required_rules,
                 selection_sha256=sel_sha,
                 evidence_inventory=evidence_inventory if has_rules else None,
+                require_rubric=require_rubric,
             )
             validated.update(snapshot_fields)
             if rep_base and "base_sha" not in validated:
@@ -1708,6 +1771,7 @@ def render_markdown_report(
         f"| `SECRET_SCAN_PASS` | **{dims.get('SECRET_SCAN_PASS')}** | Static diff credential & secret pattern scan |",
         f"| `SECURITY_REVIEW_PASS` | **{dims.get('SECURITY_REVIEW_PASS')}** | Independent security & cryptographic specialist review |",
         f"| `AI_REVIEW_PASS` | **{dims.get('AI_REVIEW_PASS')}** | Fresh read-only model Auditor verification |",
+        f"| `RUBRIC_DECISION` | **{dims.get('RUBRIC_DECISION', 'NOT_VERIFIED')}** | 6-dimension 0-2 evaluator rubric (hard gates cannot be averaged away) |",
         f"| `HUMAN_APPROVED` | **{dims.get('HUMAN_APPROVED')}** | Required human approvals: {rec.get('required_approvals')} |",
         f"| `HIL_RF_PASS` | **{dims.get('HIL_RF_PASS')}** | Hardware-in-the-Loop RF test evidence |",
         f"| `MERGE_ENFORCEMENT_ACTIVE` | **{dims.get('MERGE_ENFORCEMENT_ACTIVE')}** | GitHub branch protection / ruleset enforcement |",
@@ -1842,6 +1906,162 @@ def inspect_pr_feature_state(
         "completed_units": doc["handoff"]["completed_units"],
         "stale_passing_units": stale_units,
         "issue_mismatch": issue_mismatch,
+    }
+
+
+def calibrate_rubric(dataset: dict[str, Any]) -> dict[str, Any]:
+    """Calibrate and validate 6-dimension 0-2 rubric against approved human labels & held-out cases.
+
+    Fail-closed: missing approved human labels or missing independent provider evaluation
+    yields NOT_VERIFIED (no synthetic calibration claims).
+    """
+    if not isinstance(dataset, dict):
+        return {
+            "status": "NOT_VERIFIED",
+            "reason": "Calibration dataset must be a JSON object",
+            "tuning_rounds": 0,
+            "held_out_cases": 0,
+        }
+
+    provider_available = dataset.get("independent_provider_available")
+    if provider_available is False:
+        return {
+            "status": "NOT_VERIFIED",
+            "reason": "Independent provider unavailable; calibration cannot be claimed synthetically",
+            "tuning_rounds": len(dataset.get("tuning_rounds", []) or []),
+            "held_out_cases": len(dataset.get("held_out", []) or []),
+        }
+
+    tuning_rounds = dataset.get("tuning_rounds", [])
+    held_out = dataset.get("held_out", [])
+    if not isinstance(tuning_rounds, list) or not tuning_rounds or not isinstance(held_out, list) or not held_out:
+        return {
+            "status": "NOT_VERIFIED",
+            "reason": "Calibration requires both tuning_rounds and blind held_out human-labeled cases",
+            "tuning_rounds": len(tuning_rounds) if isinstance(tuning_rounds, list) else 0,
+            "held_out_cases": len(held_out) if isinstance(held_out, list) else 0,
+        }
+
+    dim_names = (
+        "correctness",
+        "verification",
+        "scope_discipline",
+        "reliability",
+        "maintainability",
+        "handoff_readiness",
+    )
+
+    def _eval_cases(cases: list[dict[str, Any]], *, split: str) -> tuple[str | None, dict[str, Any]]:
+        if not cases:
+            return f"Empty case list in {split}", {}
+        decision_matches = 0
+        dim_matches = 0
+        dim_total = 0
+        dim_abs_err = 0
+        hard_gate_violations: list[str] = []
+        disagreements: list[dict[str, Any]] = []
+
+        for idx, case in enumerate(cases, start=1):
+            cid = str(case.get("case_id", f"{split}-{idx}"))
+            hlabel = case.get("human_label")
+            if (
+                not isinstance(hlabel, dict)
+                or hlabel.get("approval_status") != "APPROVED"
+                or not str(hlabel.get("approved_by", "")).strip()
+                or hlabel.get("decision") not in ("ACCEPT", "REVISE", "BLOCK")
+                or not isinstance(hlabel.get("dimensions"), dict)
+            ):
+                return f"Missing or unapproved human label on case {cid}", {}
+
+            ev = case.get("evaluator_report")
+            if (
+                not isinstance(ev, dict)
+                or ev.get("independent_provider") is not True
+                or not str(ev.get("provider", "")).strip()
+                or not isinstance(ev.get("rubric"), dict)
+            ):
+                return f"Missing independent provider evaluation on case {cid}", {}
+
+            author = str(case.get("author", "") or "")
+            if author and ev.get("evaluator_id") == author:
+                return f"Self-evaluation detected on calibration case {cid}", {}
+
+            if antigravity is not None:
+                try:
+                    antigravity.validate_rubric(ev)
+                except antigravity.AuditError as exc:
+                    hard_gate_violations.append(f"{cid}: {exc}")
+                    continue
+
+            rubric = ev["rubric"]
+            h_dec = hlabel["decision"]
+            e_dec = rubric.get("decision")
+            if h_dec == e_dec:
+                decision_matches += 1
+            else:
+                disagreements.append({"case_id": cid, "human": h_dec, "evaluator": e_dec})
+
+            if (rubric.get("hard_gate_passed") is False or hlabel.get("hard_gate_passed") is False) and e_dec == "ACCEPT":
+                hard_gate_violations.append(f"{cid}: hard gate failure averaged into ACCEPT")
+
+            h_dims = hlabel["dimensions"]
+            e_dims = rubric.get("dimensions", {})
+            for dn in dim_names:
+                hs = h_dims.get(dn)
+                es = e_dims.get(dn, {}).get("score") if isinstance(e_dims.get(dn), dict) else None
+                if type(hs) is not int or hs not in (0, 1, 2) or type(es) is not int or es not in (0, 1, 2):
+                    return f"Invalid dimension score on {cid}.{dn}", {}
+                dim_total += 1
+                if hs == es:
+                    dim_matches += 1
+                dim_abs_err += abs(hs - es)
+
+        total_cases = len(cases)
+        return None, {
+            "cases": total_cases,
+            "decision_agreement": round(decision_matches / total_cases, 4),
+            "dimension_exact_match": round(dim_matches / dim_total, 4) if dim_total else 0.0,
+            "dimension_mae": round(dim_abs_err / dim_total, 4) if dim_total else 0.0,
+            "hard_gate_violations": hard_gate_violations,
+            "disagreements": disagreements,
+        }
+
+    round_summaries: list[dict[str, Any]] = []
+    for r_idx, rnd in enumerate(tuning_rounds, start=1):
+        cases = rnd.get("cases", []) if isinstance(rnd, dict) else []
+        err, stats = _eval_cases(cases, split=f"round_{r_idx}")
+        if err is not None:
+            return {
+                "status": "NOT_VERIFIED",
+                "reason": err,
+                "tuning_rounds": len(tuning_rounds),
+                "held_out_cases": len(held_out),
+            }
+        round_summaries.append({"round": r_idx, **stats})
+
+    err, held_out_stats = _eval_cases(held_out, split="held_out")
+    if err is not None:
+        return {
+            "status": "NOT_VERIFIED",
+            "reason": err,
+            "tuning_rounds": len(tuning_rounds),
+            "held_out_cases": len(held_out),
+        }
+
+    any_hard_violation = bool(held_out_stats["hard_gate_violations"]) or any(
+        rs["hard_gate_violations"] for rs in round_summaries
+    )
+    recommended_rounds_met = 3 <= len(tuning_rounds) <= 5
+    held_out_ok = held_out_stats["decision_agreement"] >= 0.8 and not any_hard_violation
+    status = "CALIBRATED" if (recommended_rounds_met and held_out_ok) else "FAIL"
+    return {
+        "status": status,
+        "rubric_version": "1.0",
+        "tuning_rounds": len(tuning_rounds),
+        "recommended_rounds_met": recommended_rounds_met,
+        "held_out": held_out_stats,
+        "rounds": round_summaries,
+        "limitations": [] if recommended_rounds_met else ["Recommended 3-5 tuning rounds not met"],
     }
 
 
@@ -1988,6 +2208,7 @@ def run_pr_review(args: argparse.Namespace) -> int:
             batch_info=batches[0] if len(batches) > 1 else None,
             rule_batch_info=rule_batches[0] if len(rule_batches) > 1 else None,
             max_unbatched_bytes=MAX_BATCH_DIFF_BYTES,
+            include_rubric=bool(getattr(args, "require_rubric", False)),
         )
         context_payload = {
             "pr_number": pr_data.get("number"),
@@ -2015,6 +2236,7 @@ def run_pr_review(args: argparse.Namespace) -> int:
             return 0
 
     # 6. Auditor Report Intake (R-02)
+    require_rubric = bool(getattr(args, "require_rubric", False))
     auditor_report = None
     if getattr(args, "auditor_report", None):
         auditor_report_path = Path(args.auditor_report).resolve()
@@ -2024,6 +2246,7 @@ def run_pr_review(args: argparse.Namespace) -> int:
             rule_selection,
             evidence_inventory=evidence_inventory,
             expected_diff_sha256={h for h in (overall_diff_hash, evidence_inventory.get("diff.patch")) if h},
+            require_rubric=require_rubric,
         )
     elif getattr(args, "auto_audit", False):
         try:
@@ -2040,6 +2263,7 @@ def run_pr_review(args: argparse.Namespace) -> int:
                 timeout=audit_timeout,
                 max_batch_rules=max_batch_rules,
                 total_budget=audit_total_budget,
+                require_rubric=require_rubric,
             )
         except Exception as exc:
             required_paths = sorted({f.get("filename", "") for f in pr_data.get("files", [])})
@@ -2170,10 +2394,21 @@ def main() -> int:
     parser.add_argument("--export-auditor-context", help="Path to write frozen auditor context JSON")
     parser.add_argument("--output-json", help="Path to write structured JSON evaluation output")
     parser.add_argument("--output-md", help="Path to write Markdown review report")
+    parser.add_argument("--require-rubric", action="store_true", help="Require 6-dimension 0-2 evaluator rubric in Auditor report")
+    parser.add_argument("--calibrate-rubric", help="Path to approved human-labeled calibration dataset JSON")
     parser.add_argument("--publish-comment", action="store_true", help="Publish or update comment on GitHub PR (requires operator authorization)")
     args = parser.parse_args()
 
     try:
+        if args.calibrate_rubric:
+            cal_path = Path(args.calibrate_rubric).resolve()
+            if cal_path.is_symlink() or not cal_path.is_file():
+                print(json.dumps({"status": "NOT_VERIFIED", "reason": "Calibration file missing or is symlink"}))
+                return 2
+            dataset = json.loads(cal_path.read_text(encoding="utf-8"))
+            res = calibrate_rubric(dataset)
+            print(json.dumps(res, indent=2, ensure_ascii=False))
+            return 0 if res.get("status") == "CALIBRATED" else 1
         return run_pr_review(args)
     except Exception as exc:
         print(f"🔴 PR Review Execution Error: {exc}", file=sys.stderr)
