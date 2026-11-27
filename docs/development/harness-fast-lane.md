@@ -3,7 +3,7 @@
 > **Status:** OWNER-SELECTED / IMPLEMENTED_AS_AGENT_INSTRUCTIONS / E2E_NOT_VERIFIED.
 > **Áp dụng:** Coding Issue thông thường trong `khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP`.
 > **Mục tiêu UX:** Mỗi Issue, operator chỉ nhập `Chạy Issue #N` trong Codex hoặc AGY. `Nghiệm thu PR #N` chạy review read-only theo cùng quality gates, chỉ sửa khi operator đã cho phép.
-> **Phân biệt:** Fast Lane này là **native AI-agent orchestration**, không phải signed MCP execution runner. `scripts/agent_harness/mcp_execution.py` vẫn yêu cầu grant và KHÔNG được báo cáo là đã tự động chạy không cần chữ ký.
+> **Phân biệt:** Fast Lane này là **native AI-agent orchestration**, không phải signed MCP execution runner. Đường dẫn MCP hiện có chỉ là [`scripts/agent_harness/mcp_server.py`](../../scripts/agent_harness/mcp_server.py) (3 read-only P1 tools `harness_preflight`, `harness_status`, `harness_verify_candidate`, mặc định chưa kích hoạt SDK) và không tự động chạy thay Native Fast Lane.
 
 ## 0. Cài đặt một lần (không phải mỗi Issue)
 
@@ -72,9 +72,9 @@ receipts, không thay thế human review và không enforcement GitHub branch ru
 
 ## 3. Phân biệt hai con đường
 
-**A — DEFAULT: Native Fast Lane**: Agent thông thường với Full Access (được user bật). Mọi bước diễn ra nhờ native tools/commands/subagents; không dùng Ed25519 grant; không gọi `harness_prepare_issue` từ signed MCP. Đây là default cho routine Issue, dựa vào thực thi của AI Coordinator; việc tuân thủ SOP cần được kiểm tra bằng PR và evidence thực tế.
+**A — DEFAULT: Native Fast Lane**: Agent thông thường với Full Access (được user bật). Mọi bước diễn ra nhờ native tools/commands/subagents; không dùng Ed25519 grant; không gọi optional MCP tools. Đây là default cho routine Issue, dựa vào thực thi của AI Coordinator; việc tuân thủ SOP cần được kiểm tra bằng PR và evidence thực tế.
 
-**B — OPTIONAL: Signed MCP Host Runner**: Các MCP tools `harness_preflight`, `harness_prepare_issue`... hiện hữu trong PR #84 vẫn có kiểm tra grant. KHÔNG giả định `Full Access` tự bỏ qua guard bên trong server. Chỉ dùng B nếu chủ repo yêu cầu chế độ kiểm soát nghiêm ngặt; không bắt người dùng vào B trong tác vụ Fast Lane.
+**B — OPTIONAL: Read-Only MCP Bridge (`scripts/agent_harness/mcp_server.py`):** Hiện chỉ cung cấp 3 read-only P1 tools (`harness_preflight`, `harness_status`, `harness_verify_candidate`) khi MCP Python SDK v2.3.0 được cài và kích hoạt; không thay thế Native Fast Lane và không tự động thực thi code/commit/PR. Chỉ dùng nếu chủ repo yêu cầu rõ; không bắt người dùng vào B trong tác vụ Fast Lane.
 
 ## 4. Điểm dừng bắt buộc dù Full Access
 

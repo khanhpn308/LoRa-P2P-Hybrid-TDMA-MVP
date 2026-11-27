@@ -1,6 +1,7 @@
-# SOP v1.0 — AGY-native Harness Coordinator (operator-supervised)
+# SOP v1.0 — AGY-native Harness Coordinator (HISTORICAL / CONSOLIDATED)
 
-> **Status:** Draft for human review under Issue #66. **Intended mode:** native Google Antigravity (AGY) Coordinator + native subagents on an operator-supervised consumer login. **Evidence basis:** Issue #62's accepted-with-limitations local pilot, not a production security certification. This SOP does **not** enable unattended third-party AGY consumer-login orchestration.
+> **Status: SUPERSEDED / CONSOLIDATED into [`harness-fast-lane.md`](harness-fast-lane.md) and [`.agents/agents/harness-coordinator.md`](../../.agents/agents/harness-coordinator.md).** Retained as historical record for Issue #62 / #66 pilot provenance; do **not** treat this draft as overriding active [`AGENTS.md`](../../AGENTS.md) or [ADR-0004 CAD/CSMA-CA](../adr/0004-pure-cad-csma-ca-mac.md).
+> *(Original draft note:)* Draft for human review under Issue #66. **Intended mode:** native Google Antigravity (AGY) Coordinator + native subagents on an operator-supervised consumer login. **Evidence basis:** Issue #62's accepted-with-limitations local pilot, not a production security certification. This SOP does **not** enable unattended third-party AGY consumer-login orchestration.
 
 ## 1. Purpose and authority
 
@@ -20,7 +21,7 @@ Issue + Acceptance Criteria
   -> AWAIT_HUMAN -> separate owner-directed review/publication decision
 ```
 
-**Authority hierarchy:** approved Issues/ADR/contracts > pinned trusted Host scripts > actual deterministic evidence > AGY text. Follow `AGENTS.md`, scope declarations, relevant `contracts/`, `docs/verification/acceptance-gates.md` and ESP-IDF v6.1 baseline. This is LoRa **P2P Custom MAC + Hybrid TDMA**, NOT a LoRaWAN MAC stack. No implicit protocol, GPIO/RF, timing, security or contract change.
+**Authority hierarchy:** approved Issues/ADR/contracts > pinned trusted Host scripts > actual deterministic evidence > AGY text. Follow `AGENTS.md`, scope declarations, relevant `contracts/`, `docs/verification/acceptance-gates.md` and ESP-IDF v6.1 baseline. Current MAC authority is LoRa **P2P Custom MAC V2 (CAD/CSMA-CA per ADR-0004)**, NOT LoRaWAN or superseded Hybrid TDMA. No implicit protocol, GPIO/RF, timing, security or contract change.
 
 **Consumer plan:** start `agy` **directly** and use its **native** subagents. Do not embed consumer `agy -p` inside Codex, third-party apps or the P1-B3 `auto_issue.py --execute` runner; no automated account switching. The latter has separate Enterprise entitlement/runtime gates and is **not** this SOP. Google reference: https://www.antigravity.google/docs/faq and https://www.antigravity.google/docs/subagents/.
 

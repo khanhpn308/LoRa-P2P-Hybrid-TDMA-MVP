@@ -7,7 +7,7 @@ from pathlib import Path
 REFERENCES = (
     "AGENTS.md",
     "docs/development/firmware/C_CODING_STANDARD_V2.md",
-    "docs/adr/0001-hybrid-tdma.md",
+    "docs/adr/0004-pure-cad-csma-ca-mac.md",
     "docs/architecture/system-overview.md",
     "docs/verification/acceptance-gates.md",
     "contracts/radio-mac/specification.md",

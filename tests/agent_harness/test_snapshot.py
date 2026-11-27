@@ -53,5 +53,10 @@ class SnapshotTests(unittest.TestCase):
                 assemble(repo, dest, [changed], "+binary", [])
 
 
+    def test_references_use_adr_0004_not_superseded_tdma(self):
+        self.assertIn("docs/adr/0004-pure-cad-csma-ca-mac.md", REFERENCES)
+        self.assertNotIn("docs/adr/0001-hybrid-tdma.md", REFERENCES)
+
+
 if __name__ == "__main__":
     unittest.main()
