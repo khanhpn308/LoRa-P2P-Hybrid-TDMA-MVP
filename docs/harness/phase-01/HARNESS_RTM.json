@@ -1,0 +1,1160 @@
+{
+  "schema_version": "1.0.0",
+  "issue": 422,
+  "phase": "P01-B",
+  "audited_commit_sha": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+  "audited_tree_sha": "d065262bdce0880113c755103fe587dbb4edffcd",
+  "spec_version": "0.2.0",
+  "master_plan_version": "0.2.0",
+  "protocol_version": "0.3.0",
+  "total_requirements": 45,
+  "id_equality_verified": true,
+  "status_summary": {
+    "VERIFIED": 0,
+    "PARTIAL": 24,
+    "GAP": 16,
+    "FAIL": 3,
+    "NOT_VERIFIED": 1,
+    "CONDITIONAL_NOT_EXERCISED": 1
+  },
+  "severity_summary": {
+    "P0": 2,
+    "P1": 22,
+    "P2": 20,
+    "P3": 1
+  },
+  "requirements": [
+    {
+      "id": "H2-INS-01",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "AGENTS.md"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "AGENTS.md is 33 lines (10,784 bytes), densely packed single-paragraph bullets covering Authority, Architecture, Standards, CCARS, GOCARS, Native workflow; lacks concise startup/verification command index for all components.",
+      "verification_method": "STATIC + G0_CHECK",
+      "command_or_test_id": "python3 scripts/agent_harness/agent_context.py --repo . + wc -l -c AGENTS.md",
+      "expected": "Root AGENTS.md provides clear stack, startup, verify, constraints, DoD, handoff.",
+      "actual": "Loaded 10,784 bytes (33 long lines) via G0; stack/constraints present, but startup/verify commands are split across 7+ docs and missing Go/Web commands.",
+      "evidence_refs": [
+        "EV-001",
+        "EV-003"
+      ],
+      "evidence_hash": "e18a866cb7e65f41893b7610c07896ae0e9ec300e41ae7e7007c8b21e16cce20",
+      "status": "PARTIAL",
+      "severity": "P2",
+      "disposition": "REFACTOR_P02",
+      "blocker": "No unified startup/verify command routing in root AGENTS.md",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-INS-02",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "AGENTS.md",
+        "docs/development/harness-fast-lane.md"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "AGENTS.md is 33 lines but 10,784 bytes (dense paragraphs averaging >325 bytes/line) with ~14+ rule blocks; exceeds byte density of 80-120 concise lines target and repeats CCARS/GOCARS/workflow rules present in .agents/agents/.",
+      "verification_method": "STATIC",
+      "command_or_test_id": "wc -l -c AGENTS.md + line/topic inspection",
+      "expected": "80-120 concise lines, <=10 invariant groups, priority placement, byte/token inventory.",
+      "actual": "33 physical lines = 10,784 bytes with high duplication against .agents/agents/harness-coordinator.md (13,456B) and c-structural-refactor.md / gocars-refactor.",
+      "evidence_refs": [
+        "EV-003",
+        "EV-006"
+      ],
+      "evidence_hash": "1f5546c8a459daeb2f78ca8d344bffe59d3be6934e520cfe0cac09245d50ac30",
+      "status": "PARTIAL",
+      "severity": "P2",
+      "disposition": "REFACTOR_P02",
+      "blocker": "Dense instruction bloat and cross-file duplication across AGENTS.md and agent profiles",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-INS-03",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "AGENTS.md",
+        "docs/adr/README.md",
+        "docs/adr/0004-pure-cad-csma-ca-mac.md",
+        "scripts/agent_harness/snapshot.py"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "Authority hierarchy is documented in AGENTS.md, but multiple active harness/reference files contradict ADR-0004 (snapshot.py embeds 0001-hybrid-tdma.md; auditor.md checks backend-controlled schedule; adr/README.md summarizes TDMA as current; two ADRs share number 0004).",
+      "verification_method": "STATIC_AUDIT",
+      "command_or_test_id": "inspect docs/adr/, snapshot.py, .agent-harness/auditor.md, docs/hardware/sx1276/README.md",
+      "expected": "Consistent authority hierarchy; ADR-0004 CAD/CSMA-CA enforced without active TDMA contradictions.",
+      "actual": "Found 7+ active TDMA authority conflicts and duplicate ADR-0004 numbering.",
+      "evidence_refs": [
+        "EV-006",
+        "EV-007"
+      ],
+      "evidence_hash": "2526f2ec4576e821c05b02cf175a8a9bc356dcdc49385c14f15e03eb4d1fbe7e",
+      "status": "FAIL",
+      "severity": "P1",
+      "disposition": "REFACTOR_P02",
+      "blocker": "Active Harness/reference files point to superseded Hybrid TDMA (ADR-0001) instead of ADR-0004",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-INS-04",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "AGENTS.md",
+        "scripts/agent_harness/standards_policy.py",
+        "docs/development/coding-standards.md"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "C/Go standards use deterministic path/operation routing, while general development docs lack expiry/review conditions and coding-standards.md has a broken link to non-existent .github/instructions/backend.instructions.md and cites Go Standard v1.0 DRAFT.",
+      "verification_method": "STATIC + UNIT + PROBE",
+      "command_or_test_id": "python3 /tmp/p01-evidence-422/run_wph_probes.py + link check",
+      "expected": "Every rule routed by applicability with valid links, source, scope, review condition.",
+      "actual": "1 broken relative link in coding-standards.md; non-existent .github/instructions/ referenced; no systematic expiry metadata on SOPs.",
+      "evidence_refs": [
+        "EV-007",
+        "EV-024"
+      ],
+      "evidence_hash": "91fad41fd6b101724b84cd7905a29fbbad90ba3ddeca721478896aef22fdf26d",
+      "status": "PARTIAL",
+      "severity": "P2",
+      "disposition": "CONSOLIDATE_P02",
+      "blocker": "Broken instruction link and stale Go v1.0 reference in coding-standards.md",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-INS-05",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "scripts/agent_harness/agent_context.py",
+        "scripts/agent_harness/standards_policy.py",
+        "scripts/agent_harness/quality_gates.py"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "G0 AGENTS.md SHA-256 verification and deterministic C/Go V2 rule selection + ADR-0005 partitions work deterministically; negative probes block unknown IDs, wrong SHA, unsafe paths, and REF/GO-BE IDs. However, standards_policy.py still retains legacy TDMA/SC rule groups and Native Fast Lane lacks runtime interception outside run.py/pr_review.py.",
+      "verification_method": "UNIT + CLI_PROBE",
+      "command_or_test_id": "python3 -m unittest discover -s tests/agent_harness -v + run_wph_probes.py",
+      "expected": "G0 and deterministic rule selection/partitions/receipts preserved and enforced.",
+      "actual": "416 harness unit tests PASS; positive/negative routing probes PASS; Native interactive CLI lacks mandatory runtime hook enforcing injection.",
+      "evidence_refs": [
+        "EV-001",
+        "EV-012",
+        "EV-024"
+      ],
+      "evidence_hash": "e18a866cb7e65f41893b7610c07896ae0e9ec300e41ae7e7007c8b21e16cce20",
+      "status": "PARTIAL",
+      "severity": "P1",
+      "disposition": "KEEP_AND_TIGHTEN_P02_P03",
+      "blocker": "Runtime G0/selection bypassable in interactive CLI; legacy TDMA/SC groups active in standards_policy.py",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-INS-06",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "docs/architecture/interfaces.md",
+        "docs/development/monorepo-guide.md",
+        "docs/development/c-clean-code-refactoring-standard.md",
+        "docs/development/backend-go/GOCARS.md"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "Architecture/domain docs exist across docs/architecture/ and CCARS/GOCARS, but there is no root ARCHITECTURE.md index, and mechanical boundary checks (GO-BE-002 CI / cross-layer import guardrails) are not active in CI.",
+      "verification_method": "STATIC",
+      "command_or_test_id": "inspect docs/architecture/, .github/workflows/, scripts/",
+      "expected": "Clear architecture/domain map and mechanical boundary enforcement for firmware, Go, clients.",
+      "actual": "Fragmented domain maps; system-overview.md is R1 DRAFT; no active CI boundary linter.",
+      "evidence_refs": [
+        "EV-005",
+        "EV-006"
+      ],
+      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "status": "GAP",
+      "severity": "P2",
+      "disposition": "ADD_P02_ENFORCE_P05",
+      "blocker": "No unified ARCHITECTURE.md map and no mechanical cross-layer boundary check in CI",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-INS-07",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "docs/development/harness-fast-lane.md",
+        "docs/development/agy-native-coordinator-sop.md",
+        "docs/hardware/sx1276/README.md"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "Unseen knowledge was encoded in docs/references/harness-engineering/ (#420), but older docs and ADR/hardware readmes were not retired when ADR-0004 or SOP v1.2 replaced them.",
+      "verification_method": "STATIC_AUDIT",
+      "command_or_test_id": "wpb_docs_headers.txt + broken link check",
+      "expected": "Retire/mark superseded sources; update docs with behavior changes.",
+      "actual": "Multiple superseded/overlapping SOPs (v1.0 SOP, P0/P1 drafts, AI_TASK_START_PROTOCOL DRAFT) and stale TDMA docs remain unmarked.",
+      "evidence_refs": [
+        "EV-006",
+        "EV-007"
+      ],
+      "evidence_hash": "2526f2ec4576e821c05b02cf175a8a9bc356dcdc49385c14f15e03eb4d1fbe7e",
+      "status": "PARTIAL",
+      "severity": "P2",
+      "disposition": "DEPRECATE_CONSOLIDATE_P02",
+      "blocker": "Superseded TDMA and draft Harness SOPs remain active without clear deprecation banners",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-TOL-01",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        ".agents/agents/harness-coordinator.md",
+        "scripts/harness_doctor.py",
+        "scripts/agent_harness/mcp_server.py"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "Coordinator profile declares 5 native tools, mcp_server.py exposes 3 read-only tools (while harness-fast-lane.md falsely references non-existent harness_prepare_issue and mcp_execution.py), and harness_doctor checks CLI presence (misses ~/.local/bin/codex when not on PATH).",
+      "verification_method": "STATIC + CLI_PROBE",
+      "command_or_test_id": "python3 scripts/harness_doctor.py --profile all --json + python3 scripts/harness_mcp_setup.py",
+      "expected": "Accurate capability disclosure by role; missing required tool returns BLOCKED.",
+      "actual": "Doctor PASS on core/agy/docker; mcp_setup reports SDK not installed and AGY entry blocked; doc references non-existent mcp_execution.py.",
+      "evidence_refs": [
+        "EV-007",
+        "EV-008",
+        "EV-025"
+      ],
+      "evidence_hash": "91fad41fd6b101724b84cd7905a29fbbad90ba3ddeca721478896aef22fdf26d",
+      "status": "PARTIAL",
+      "severity": "P2",
+      "disposition": "REFACTOR_P03",
+      "blocker": "Doc/code mismatch on MCP tools and PATH detection for codex CLI",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-TOL-02",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        ".agent-harness/security/provider-decision.md",
+        "scripts/agent_harness/run.py",
+        "scripts/agent_harness/p1/auto_issue.py"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "Provider decision explicitly admits consumer AGY/Codex Full Access + post-diff checks do NOT enforce OS-level least privilege. Interactive Fast Lane Worker has full filesystem/network/credential access; run.py uses codex --sandbox but lacks external container isolation.",
+      "verification_method": "STATIC + DESIGN_AUDIT",
+      "command_or_test_id": "inspect .agent-harness/security/provider-decision.md, run.py, auto_issue.py",
+      "expected": "Runtime least privilege: Worker writes granted candidate only; Auditor read-only.",
+      "actual": "No runtime OS/container sandbox isolation for native Worker or interactive Coordinator; post-diff check only.",
+      "evidence_refs": [
+        "EV-003",
+        "EV-012"
+      ],
+      "evidence_hash": "1f5546c8a459daeb2f78ca8d344bffe59d3be6934e520cfe0cac09245d50ac30",
+      "status": "GAP",
+      "severity": "P0",
+      "disposition": "REFACTOR_P03",
+      "blocker": "Least privilege not enforced at runtime in Native Fast Lane (Full Access active)",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-TOL-03",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "scripts/agent_harness/scope.py",
+        "scripts/agent_harness/quality_gates.py",
+        "scripts/agent_harness/pr_review_policy.py"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "scope.py and quality_gates.py implement strong symlink, traversal, hidden-index-flag, and prompt-injection checks (verified in 416 unit tests). However, scope.parse_allowed_paths fails closed on Issue #422 itself due to a prose line before the bullet list.",
+      "verification_method": "UNIT + CLI_PROBE",
+      "command_or_test_id": "tests/agent_harness + python3 scripts/agent_harness/p1/cli.py prepare --issue 422",
+      "expected": "Exact scope guard, trusted Host, untrusted Issue handling.",
+      "actual": "Unit tests PASS, but p1/cli.py returned BLOCKED ('Malformed Issue or missing strict scope') on live OPEN Issue #422.",
+      "evidence_refs": [
+        "EV-012",
+        "EV-025"
+      ],
+      "evidence_hash": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354",
+      "status": "PARTIAL",
+      "severity": "P1",
+      "disposition": "KEEP_REFACTOR_P03",
+      "blocker": "scope.py parser brittle on explanatory text under Target Directories heading; interactive CLI lacks mandatory pre-edit Host enforcement",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-TOL-04",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "scripts/agent_harness/p1/process.py",
+        "scripts/agent_harness/adapters/antigravity.py",
+        "scripts/agent_harness/pr_review.py"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "Bounded timeouts and temp-dir cleanup exist in run.py, pr_review.py, and p1/process.py, and worktree isolation uses run_id/issue paths. However, interactive Fast Lane ad-hoc commands have no Host-tracked timeout/cancel registry.",
+      "verification_method": "UNIT + STATIC",
+      "command_or_test_id": "tests/agent_harness (test_p1_b_supervision.py, test_pr_review.py)",
+      "expected": "Identity-scoped timeout, cancellation, and cleanup without harming concurrent worktrees.",
+      "actual": "Scripted timeout/worktree cleanup tests PASS; native Coordinator interactive executions lack Host process registry.",
+      "evidence_refs": [
+        "EV-012",
+        "EV-005"
+      ],
+      "evidence_hash": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354",
+      "status": "PARTIAL",
+      "severity": "P2",
+      "disposition": "KEEP_EXTEND_P03",
+      "blocker": "Timeout/cleanup enforced in Python runners, not in Native interactive mode",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-TOL-05",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "scripts/agent_harness/adapters/codex.py",
+        "scripts/agent_harness/adapters/antigravity.py",
+        "scripts/agent_harness/run.py"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "Codex adapter and Antigravity adapter share audit.schema.json and check_report validation, while Harness Coordinator / GOCARS / CCARS maintain AGY-specific tool allowlists in YAML frontmatter. Codex CLI is not on default PATH (installed at ~/.local/bin/codex 0.172.0).",
+      "verification_method": "UNIT + CLI_PROBE",
+      "command_or_test_id": "tests/agent_harness/test_adapters.py + test_antigravity.py + harness_doctor.py",
+      "expected": "Shared Codex/AGY interface; MCP/provider profiles not independent policy authorities.",
+      "actual": "Adapter contract unit tests PASS; codex missing from default PATH in doctor; auto-audit spawn uses agy CLI.",
+      "evidence_refs": [
+        "EV-004",
+        "EV-008",
+        "EV-012"
+      ],
+      "evidence_hash": "9de22e563c0b4aec47674f20de0e548b955624695899368808113ee371ff6858",
+      "status": "PARTIAL",
+      "severity": "P2",
+      "disposition": "KEEP_ALIGN_P03",
+      "blocker": "Adapter unit contracts pass, but dual-provider runtime parity not verified E2E",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-ENV-01",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "scripts/setup_harness.sh",
+        "scripts/harness_doctor.py"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "setup_harness.sh and harness_doctor.py separate diagnostics from feature work, but do not run a unified product bootstrap/smoke test (no Go/Web/ESP-IDF dependency preflight or smoke execution).",
+      "verification_method": "CLI_EXEC",
+      "command_or_test_id": "python3 scripts/harness_doctor.py --profile all --json",
+      "expected": "Unified initialization entry point checking repo, versions, deps, and smoke test.",
+      "actual": "harness_doctor.py exited 0 on core/docker/idf image, but missed Go 1.27.1 vs 1.27.3 mismatch and Web node_modules / ESP-IDF managed_components offline gaps.",
+      "evidence_refs": [
+        "EV-008",
+        "EV-017",
+        "EV-018",
+        "EV-022"
+      ],
+      "evidence_hash": "89a224eabb72fc3ee304b9c0e58f7816e4746e8782f811c93a1380911a9838b5",
+      "status": "PARTIAL",
+      "severity": "P1",
+      "disposition": "REFACTOR_P03",
+      "blocker": "Initialization diagnostics do not verify Go/Web deps or ESP-IDF offline managed_components",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-ENV-02",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        ".go-version",
+        "backend-go/go.mod",
+        "firmware/esp-idf-version.txt",
+        "clients/web-dashboard/package-lock.json",
+        "scripts/agent_harness/toolchains/resolver.py"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "Version pins exist (.go-version=1.27.3, esp-idf=v6.1, package-lock.json). However: (1) host Go is 1.27.1 (mismatch with 1.27.3); (2) clean worktree ESP-IDF v6.1 build in resolver.py --network=none FAILS because espressif/mqtt 1.1.0 is not vendored/cached; (3) clean worktree web tests fail due to absent node_modules.",
+      "verification_method": "CLI_EXEC + CONTAINER_BUILD",
+      "command_or_test_id": "docker golang:1.27.3-alpine + docker espressif/idf:v6.1 --network=none + node --test",
+      "expected": "Pinned toolchains and reproducible clean-checkout dev/test builds.",
+      "actual": "Go 1.27.3 Docker build/test PASS when host modcache mounted; ESP-IDF v6.1 --network=none clean-copy build FAILS (exit 2); Web integration.test.ts FAILS (exit 1).",
+      "evidence_refs": [
+        "EV-004",
+        "EV-017",
+        "EV-018",
+        "EV-022"
+      ],
+      "evidence_hash": "9de22e563c0b4aec47674f20de0e548b955624695899368808113ee371ff6858",
+      "status": "FAIL",
+      "severity": "P1",
+      "disposition": "REFACTOR_P03",
+      "blocker": "Clean worktree builds fail offline for ESP-IDF (uncached espressif/mqtt) and Web (no node_modules); host Go 1.27.1 != 1.27.3",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-ENV-03",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "AGENTS.md",
+        "docs/development/harness-fast-lane.md",
+        "docs/development/harness-quality-gates.md"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "Standard commands are scattered across multiple docs; some referenced paths/commands do not exist (mcp_execution.py, harness_prepare_issue) and no unified bootstrap/start/test/check CLI exists.",
+      "verification_method": "STATIC + LINK_CHECK",
+      "command_or_test_id": "wpb_links_and_paths.txt + doc inspection",
+      "expected": "All documented standard commands exist with documented scope and side effects.",
+      "actual": "Non-existent mcp_execution.py / harness_prepare_issue documented in harness-fast-lane.md; no unified check entrypoint.",
+      "evidence_refs": [
+        "EV-007",
+        "EV-005"
+      ],
+      "evidence_hash": "91fad41fd6b101724b84cd7905a29fbbad90ba3ddeca721478896aef22fdf26d",
+      "status": "PARTIAL",
+      "severity": "P2",
+      "disposition": "CONSOLIDATE_P03",
+      "blocker": "Missing documented MCP file/tool and fragmented test/check commands",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-ENV-04",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "scripts/agent_harness/quality_gates.py",
+        "scripts/agent_harness/run.py",
+        ".github/workflows/ci-backend.yml"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "Baseline on main FAILS both quality_gates.py (SECRET-SCAN P0 at integration.test.ts:31) and Go CI (gofmt -l . at rf_tracker.go). Because quality_gates.py scans the entire repo, unrelated Issues cannot achieve AUTO_CHECK_PASS without touching out-of-scope baseline files, and run.py blocks at preflight.",
+      "verification_method": "CLI_EXEC",
+      "command_or_test_id": "quality_gates.py + gh run view + gofmt -l . + run.py --issue 422",
+      "expected": "Pre-edit baseline check blocks broken foundations while preserving strict Issue scope.",
+      "actual": "Both baseline gates fail on main fdbc9a5c; run.py preflight blocks at SECRET-SCAN.",
+      "evidence_refs": [
+        "EV-011",
+        "EV-016",
+        "EV-017",
+        "EV-025"
+      ],
+      "evidence_hash": "53ac16793f0d42432e46104ff9a85514504e06d76d594bf000d1afa1aa1f4038",
+      "status": "FAIL",
+      "severity": "P0",
+      "disposition": "KEEP_GATE_FIX_BASELINE_SEPARATE",
+      "blocker": "Pre-existing main failures in SECRET-SCAN and Go CI block clean baseline verification",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-ENV-05",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "scripts/setup_harness.sh",
+        "scripts/agent_harness/toolchains/resolver.py",
+        "docs/development/harness-fast-lane.md"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "setup_harness.sh separates read-only diagnostics from --install-core/--install-mcp; resolver.py uses --network=none read-only Docker mounts; no auto-flash or RF TX commands exist in Harness scripts. Still, interactive Full Access relies on instruction discipline.",
+      "verification_method": "STATIC + CLI_EXEC",
+      "command_or_test_id": "setup_harness.sh --json + harness_doctor.py + resolver.py inspection",
+      "expected": "Dev/test/prod and hardware safety isolated; no implicit deploy/flash/RF TX/install.",
+      "actual": "Deterministic scripts isolate cleanly; interactive Full Access remains instruction-enforced only.",
+      "evidence_refs": [
+        "EV-008",
+        "EV-018"
+      ],
+      "evidence_hash": "89a224eabb72fc3ee304b9c0e58f7816e4746e8782f811c93a1380911a9838b5",
+      "status": "PARTIAL",
+      "severity": "P2",
+      "disposition": "KEEP_HARDEN_P03",
+      "blocker": "Instruction-only safety boundary in interactive Full Access mode",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-STA-01",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "scripts/agent_harness/p1/state.py",
+        "scripts/agent_harness/p1/pilot.py"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "No machine-readable feature_list.json (or equivalent behavior/verification/evidence surface) exists in the repo. p1/state.py tracks GitHub Issue preparation runs only (PLANNED/PREPARING/PREPARED/RECOVERY_REQUIRED/BLOCKED/CANCELLED).",
+      "verification_method": "STATIC + UNIT",
+      "command_or_test_id": "inspect p1/state.py, p1/pilot.py + repo search for feature_list",
+      "expected": "Versioned machine-readable feature surface with stable ID, behavior, verification, state, evidence, dependency/scope.",
+      "actual": "Absent. GitHub Issues are prose-only; SQLite jobs table lacks feature behavior/verification/passing semantics.",
+      "evidence_refs": [
+        "EV-005",
+        "EV-012"
+      ],
+      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "status": "GAP",
+      "severity": "P1",
+      "disposition": "ADD_P04",
+      "blocker": "No machine-readable feature surface with verification steps and passing state",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-STA-02",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "scripts/agent_harness/p1/state.py"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "p1/state.py enforces unique active Issue index (PLANNED/PREPARING/PREPARED/RECOVERY_REQUIRED/BLOCKED) in SQLite, but Native Fast Lane does not use p1/state.py at all, so WIP=1 is instruction-only in normal workflow.",
+      "verification_method": "STATIC + UNIT",
+      "command_or_test_id": "tests/agent_harness/test_p1_state.py + inspect run.py/coordinator",
+      "expected": "WIP=1 per execution/active plan with controlled blocked transitions.",
+      "actual": "SQLite WIP=1 works in isolated P1 tests, but is bypassed by Native Fast Lane and lacks feature-level WIP=1.",
+      "evidence_refs": [
+        "EV-012",
+        "EV-005"
+      ],
+      "evidence_hash": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354",
+      "status": "PARTIAL",
+      "severity": "P1",
+      "disposition": "REFACTOR_P04",
+      "blocker": "WIP=1 SQLite constraint unused by Native Fast Lane",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-STA-03",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "scripts/agent_harness/quality_gates.py",
+        "scripts/agent_harness/p1/pilot.py"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "quality_gates.py binds check receipts to exact source_sha and candidate_sha256, rejecting stale receipts (verified in unit tests). However, no persistent feature passing registry exists across sessions.",
+      "verification_method": "UNIT",
+      "command_or_test_id": "tests/agent_harness/test_quality_gates.py + test_p1_b2_pilot.py",
+      "expected": "Trusted verifier controls passing transition tied to candidate SHA; regressions invalidate current passing.",
+      "actual": "Per-run SHA binding works in quality_gates.py and pilot.py, but cross-session persistent passing state is absent.",
+      "evidence_refs": [
+        "EV-012"
+      ],
+      "evidence_hash": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354",
+      "status": "PARTIAL",
+      "severity": "P1",
+      "disposition": "ADD_P04",
+      "blocker": "No persistent cross-session revision-bound passing registry",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-STA-04",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "No repo-tracked PROGRESS.md, exec-plans/active/, or standardized cross-session handoff artifact exists. Continuity relies on GitHub Issue/PR comments and ephemeral /tmp evidence.",
+      "verification_method": "STATIC",
+      "command_or_test_id": "inspect repo root, docs/, .lora-p1-state/",
+      "expected": "Execution plan lifecycle, durable progress/handoff, decision refs, next action, blockers.",
+      "actual": "Missing durable repo handoff and active plan lifecycle; /tmp artifacts expire across environments.",
+      "evidence_refs": [
+        "EV-005",
+        "EV-006"
+      ],
+      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "status": "GAP",
+      "severity": "P1",
+      "disposition": "ADD_P04",
+      "blocker": "No durable repo progress/handoff artifact for fresh-session resume",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-STA-05",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "scripts/agent_harness/p1/state.py",
+        "scripts/agent_harness/p1/worktrees.py",
+        "scripts/agent_harness/p1/pilot.py"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "p1/state.py uses SQLite WAL + CAS transitions + RECOVERY_REQUIRED state and forbids destructive resets. However, Native Fast Lane has no automated crash/interruption checkpoint recovery.",
+      "verification_method": "UNIT",
+      "command_or_test_id": "tests/agent_harness/test_p1_state.py + test_p1_worktrees.py",
+      "expected": "Atomic verified checkpoints, worktree isolation, non-destructive crash recovery.",
+      "actual": "P1 SQLite CAS and worktree isolation pass unit tests; Native Fast Lane lacks atomic checkpoint/resume.",
+      "evidence_refs": [
+        "EV-012"
+      ],
+      "evidence_hash": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354",
+      "status": "PARTIAL",
+      "severity": "P1",
+      "disposition": "EXTEND_P04",
+      "blocker": "Crash recovery exists only in unused P1 SQLite layer, not Native Fast Lane",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-STA-06",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "scripts/agent_harness/p1/state.py",
+        "scripts/agent_harness/mcp_host.py"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "Issues hold backlog/scope, Host journal holds P1 run state in parent .lora-p1-state/state.sqlite, and quality_gates uses external manifest.json. However, Native Fast Lane has no authoritative feature state store and no formal single-writer ownership spec.",
+      "verification_method": "STATIC",
+      "command_or_test_id": "inspect p1/state.py, mcp_host.py, quality_gates.py",
+      "expected": "Single source of truth per state type with explicit single-writer ownership.",
+      "actual": "Partial separation in P1 scripts; missing unified feature evidence ownership in Native Fast Lane.",
+      "evidence_refs": [
+        "EV-005"
+      ],
+      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "status": "PARTIAL",
+      "severity": "P2",
+      "disposition": "ADD_P04",
+      "blocker": "State ownership split across unlinked GitHub Issues, unused SQLite, and ephemeral /tmp",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-FBK-01",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "scripts/agent_harness/quality_gates.py",
+        ".github/workflows/ci-backend.yml",
+        ".github/workflows/ci-clients.yml",
+        ".github/workflows/ci-integration.yml"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "quality_gates.py validates Host receipts by risk routing, but is NOT a test runner. CI workflows contain placeholders (ci-clients.yml checks README existence only; ci-integration.yml is unimplemented warning; ci-firmware.yml only builds on firmware PRs) and no unified test/check runner exists.",
+      "verification_method": "STATIC + CLI_EXEC",
+      "command_or_test_id": "inspect .github/workflows/*.yml + run quality_gates.py + contracts + unit tests",
+      "expected": "Executable impact-selected check interface; mandatory tests cannot be skipped.",
+      "actual": "Harness unit (416), contract (15 + check_contracts), product unit (44) pass; ci-clients & ci-integration are placeholders; Go CI fails on gofmt.",
+      "evidence_refs": [
+        "EV-011",
+        "EV-012",
+        "EV-016",
+        "EV-019",
+        "EV-020",
+        "EV-021"
+      ],
+      "evidence_hash": "53ac16793f0d42432e46104ff9a85514504e06d76d594bf000d1afa1aa1f4038",
+      "status": "PARTIAL",
+      "severity": "P1",
+      "disposition": "CONSOLIDATE_P05",
+      "blocker": "No unified test runner; ci-clients and ci-integration are non-verifying placeholders",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-FBK-02",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "scripts/agent_harness/quality_gates.py",
+        "scripts/agent_harness/standards_policy.py"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "quality_gates.py deterministically verifies command hash, source_sha, candidate_sha256, exit_code, receipt_sha256, and observations (unit tested), and rejects stale/forged receipts. However, CLI cannot authenticate collector authorship in interactive Full Access.",
+      "verification_method": "UNIT + CLI_EXEC",
+      "command_or_test_id": "tests/agent_harness/test_quality_gates.py + quality_gates.py",
+      "expected": "Trusted deterministic validation/receipts bound to candidate SHA and logs.",
+      "actual": "Receipt validator passes all unit tests; baseline quality_gates run blocked by SECRET-SCAN P0 false positive.",
+      "evidence_refs": [
+        "EV-011",
+        "EV-012"
+      ],
+      "evidence_hash": "53ac16793f0d42432e46104ff9a85514504e06d76d594bf000d1afa1aa1f4038",
+      "status": "PARTIAL",
+      "severity": "P1",
+      "disposition": "KEEP_HARDEN_P05",
+      "blocker": "Receipt authorship unauthenticated in interactive CLI; baseline blocked by SECRET-SCAN",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-FBK-03",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "scripts/agent_harness/pr_review.py",
+        "scripts/agent_harness/adapters/antigravity.py",
+        "scripts/agent_harness/snapshot.py"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "pr_review.py freezes diff/check_runs/rule_selection, checks HEAD/BASE SHA immutability before/after audit, and validates audit.schema.json. However, snapshot.py embeds superseded ADR-0001, and auto-audit spawn depends on agy CLI without rubric scoring.",
+      "verification_method": "UNIT + STATIC",
+      "command_or_test_id": "tests/agent_harness/test_pr_review.py + test_snapshot.py",
+      "expected": "Independent evaluation on frozen candidate, immutable receipts, invalidation on code change.",
+      "actual": "PR review and snapshot unit tests PASS; snapshot.py REFERENCES stale; auto-audit E2E not verified.",
+      "evidence_refs": [
+        "EV-012"
+      ],
+      "evidence_hash": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354",
+      "status": "PARTIAL",
+      "severity": "P1",
+      "disposition": "REFACTOR_P05",
+      "blocker": "snapshot.py embeds superseded ADR-0001; auto-audit E2E unverified",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-FBK-04",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "scripts/verify_structure.py",
+        "scripts/agent_harness/quality_gates.py",
+        "scripts/agent_harness/standards_policy.py"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "Structural/secret/scope checks exist, and GOCARS proposes GO-BE-002 AST checks, but no mechanical architecture/layer dependency boundary enforcement runs in CI or quality_gates for firmware, Go (domain->adapter isolation), or clients.",
+      "verification_method": "STATIC",
+      "command_or_test_id": "inspect verify_structure.py, .github/workflows/, GOCARS.md",
+      "expected": "Recurring review failures promoted to mechanical checks with domain negative fixtures.",
+      "actual": "Missing mechanical dependency boundary checks across firmware, Go, and clients.",
+      "evidence_refs": [
+        "EV-005",
+        "EV-009"
+      ],
+      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "status": "GAP",
+      "severity": "P1",
+      "disposition": "ADD_P05",
+      "blocker": "No mechanical layer/dependency boundary enforcement with negative fixtures",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-FBK-05",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "tests/integration/README.md",
+        "tests/hil/README.md",
+        ".github/workflows/ci-integration.yml"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "Harness docs clearly separate software PASS from HIL/RF/security, and integration tests exist in tests/integration/. However, ci-integration.yml is a warning stub, live DB/broker/restart E2E was NOT run at this baseline, and HIL/RF remains NOT_VERIFIED.",
+      "verification_method": "STATIC",
+      "command_or_test_id": "inspect .github/workflows/ci-integration.yml + tests/hil/ + tests/integration/",
+      "expected": "Restart/health/golden-journey E2E verified; HW/RF separated.",
+      "actual": "Integration/restart/E2E NOT_RUN at baseline; HIL/RF NOT_VERIFIED; ci-integration.yml is a stub.",
+      "evidence_refs": [
+        "EV-005"
+      ],
+      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "status": "NOT_VERIFIED",
+      "severity": "P1",
+      "disposition": "ADD_WIRE_P05_P06",
+      "blocker": "No active CI integration/restart E2E gate; HIL/RF unavailable",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-FBK-06",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "scripts/agent_harness/run.py",
+        "scripts/agent_harness/p1/state.py"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "run.py writes /tmp/lora-harness-*/manifest.json with secret redaction regex, and p1/state.py writes SQLite events. No standardized queryable process/runtime signal collector or retention policy exists across Harness or golden journeys.",
+      "verification_method": "STATIC",
+      "command_or_test_id": "inspect run.py, quality_gates.py, p1/state.py",
+      "expected": "Redacted, queryable runtime and process signals with provenance.",
+      "actual": "Ad-hoc /tmp logs and minimal SQLite events only; no unified queryable observability or failure-injection journey.",
+      "evidence_refs": [
+        "EV-005",
+        "EV-012"
+      ],
+      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "status": "GAP",
+      "severity": "P2",
+      "disposition": "ADD_P06",
+      "blocker": "No structured cross-layer observability collector or retention policy",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-FBK-07",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "No QUALITY_SCORE.md, domain/layer quality grades (A-D / NOT_VERIFIED), or technical debt tracker exists in the repository.",
+      "verification_method": "STATIC",
+      "command_or_test_id": "inspect docs/ and root for QUALITY_SCORE / tech-debt-tracker",
+      "expected": "Domain/layer QUALITY_SCORE, debt tracker, and separate evidence-based rubric.",
+      "actual": "Absent from repository.",
+      "evidence_refs": [
+        "EV-005",
+        "EV-006"
+      ],
+      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "status": "GAP",
+      "severity": "P2",
+      "disposition": "ADD_P07",
+      "blocker": "No domain/layer quality grade surface or debt tracker",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-FBK-08",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "No controlled benchmark suite, paired baseline/candidate runner, ablation protocol, or periodic simplification log exists yet.",
+      "verification_method": "STATIC",
+      "command_or_test_id": "inspect scripts/agent_harness/ and docs/harness/",
+      "expected": "Controlled benchmark, failure attribution, regression guard, periodic simplification.",
+      "actual": "Absent; benchmark protocol is defined for the first time in P01 WP-F.",
+      "evidence_refs": [
+        "EV-005"
+      ],
+      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "status": "GAP",
+      "severity": "P2",
+      "disposition": "ADD_P01_F_EXEC_P10",
+      "blocker": "No baseline benchmark suite or simplification tracking exists",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-FBK-09",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "scripts/agent_harness/run.py",
+        "scripts/agent_harness/p1/pilot.py",
+        "scripts/agent_harness/p1/auto_issue.py"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "run.py and auto_issue.py hardcode max_repairs <= 1 (1 repair retry), pilot.py allows max_repairs <= 2 (simulated), all with no external token/cost budget, wall-clock run budget, or graph justification.",
+      "verification_method": "STATIC + UNIT",
+      "command_or_test_id": "inspect run.py, p1/pilot.py, p1/auto_issue.py",
+      "expected": "Bounded diagnostic/repair/retest loop with external stop conditions and graph gating.",
+      "actual": "Only 1-2 repair attempts in Python scripts; no token/wall budget or interactive Coordinator loop bounds.",
+      "evidence_refs": [
+        "EV-005",
+        "EV-012"
+      ],
+      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "status": "PARTIAL",
+      "severity": "P2",
+      "disposition": "REFACTOR_P08",
+      "blocker": "Loop bounds limited to max_repairs in unused scripts; no token/cost/wall budgets",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-GOV-01",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "docs/development/harness-fast-lane.md",
+        ".agents/agents/harness-coordinator.md",
+        "scripts/agent_harness/pr_review.py"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "Native Fast Lane defines Issue -> branch -> Worker -> quality_gates -> Auditor -> Draft PR -> human review, and pr_review.py enforces PR-01..PR-08 read-only. However, E2E execution of the full Fast Lane is explicitly marked E2E_NOT_VERIFIED.",
+      "verification_method": "STATIC + UNIT",
+      "command_or_test_id": "inspect harness-fast-lane.md, harness-coordinator.md, pr_review.py",
+      "expected": "End-to-end delivery flow preserving G0-G6 without auto-merge.",
+      "actual": "Static instructions and pr_review unit tests exist; full E2E delivery rehearsal NOT_VERIFIED.",
+      "evidence_refs": [
+        "EV-003",
+        "EV-012"
+      ],
+      "evidence_hash": "1f5546c8a459daeb2f78ca8d344bffe59d3be6934e520cfe0cac09245d50ac30",
+      "status": "PARTIAL",
+      "severity": "P1",
+      "disposition": "KEEP_VERIFY_P08_P10",
+      "blocker": "Native Fast Lane E2E execution NOT_VERIFIED",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-GOV-02",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "docs/harness/HARNESS_SPEC.md",
+        "docs/harness/HARNESS_MASTER_PLAN.md",
+        "docs/harness/phase-01/P01_EXECUTION_PLAN.md",
+        "docs/harness/phase-01/HARNESS_RTM.json"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "SPEC v0.2.0 and Master Plan v0.2.0 are versioned and Owner-approved; P01 Plan/Protocol v0.3.0 published; this P01-B audit establishes the 45-row RTM and migration/rollback map.",
+      "verification_method": "STATIC + VERIFY",
+      "command_or_test_id": "45-ID equality check + P01-B artifacts",
+      "expected": "Versioned spec/plan, proposed vs approved vs verified distinction, complete 45-row RTM, controlled rollback.",
+      "actual": "45/45 H2 IDs verified equal across SPEC, Master Plan, REFERENCE_INDEX, and HARNESS_RTM.json; rollback rehearsal pending P02+.",
+      "evidence_refs": [
+        "EV-024",
+        "EV-026"
+      ],
+      "evidence_hash": "56335ccfca407ae486b8209346a021e0194e97c4e21ec88f19af7b8ce61a39f1",
+      "status": "PARTIAL",
+      "severity": "P2",
+      "disposition": "KEEP_UPDATE_ALL_PHASES",
+      "blocker": "Rollback rehearsal and P02+ tracking pending subsequent phases",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-GOV-03",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "docs/development/harness-fast-lane.md",
+        ".github/CODEOWNERS",
+        "scripts/agent_harness/pr_review_policy.py"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "Human sign-off policy is encoded in AGENTS.md, CODEOWNERS, and pr_review_policy.py (HIGH/MEDIUM/LOW risk), and Fresh Session Test is specified in HARNESS_SPEC §7.2, but Fresh Session Test and clean-handoff acceptance have not been verified (blocked by missing PROGRESS.md/ARCHITECTURE.md).",
+      "verification_method": "STATIC",
+      "command_or_test_id": "inspect CODEOWNERS, pr_review_policy.py, HARNESS_SPEC.md §7.2",
+      "expected": "Fresh-session 5/5 test, clean-handoff acceptance, human approval for sensitive actions.",
+      "actual": "Human approval rules defined; Fresh Session Test NOT_VERIFIED and currently blocked by missing ARCHITECTURE.md / PROGRESS.md.",
+      "evidence_refs": [
+        "EV-005",
+        "EV-006"
+      ],
+      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "status": "GAP",
+      "severity": "P1",
+      "disposition": "ADD_P06_P10",
+      "blocker": "Fresh-session 5/5 resume and clean-handoff not implemented or verified",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-ORC-01",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "scripts/agent_harness/run.py",
+        "scripts/agent_harness/p1/pilot.py",
+        ".agents/agents/harness-coordinator.md"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "Orchestration is split across unverified Native Coordinator instructions, unused run.py (Codex+AGY), simulated p1/pilot.py, and blocked Enterprise auto_issue.py. No unified logical Orchestrator enforces admission, budgets, retries, and escalation across active workflows.",
+      "verification_method": "STATIC + CLI_PROBE",
+      "command_or_test_id": "inspect run.py, p1/pilot.py, p1/auto_issue.py, harness-coordinator.md",
+      "expected": "Logical Orchestrator owning admission, routing, lifecycle, handoff, budget, retry, cancel, escalation.",
+      "actual": "Fragmented across 4 disconnected paths; run.py and p1/cli.py blocked on baseline/Issue #422.",
+      "evidence_refs": [
+        "EV-005",
+        "EV-012",
+        "EV-025"
+      ],
+      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "status": "GAP",
+      "severity": "P1",
+      "disposition": "CONSOLIDATE_P08",
+      "blocker": "No unified active Orchestrator control plane",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-ORC-02",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        ".agent-harness/worker.md",
+        ".agent-harness/auditor.md",
+        "scripts/agent_harness/pr_review.py",
+        ".agents/agents/harness-coordinator.md"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "Role separation is implemented in pr_review.py (--export-auditor-context / --auditor-report) and run.py (codex Worker + agy Auditor), and instructionally via invoke_subagent in Coordinator. However, provider-decision.md notes consumer AGY lacks OS isolation, and auditor.md contains stale TDMA instructions.",
+      "verification_method": "UNIT + STATIC",
+      "command_or_test_id": "tests/agent_harness/test_pr_review.py + inspect .agent-harness/auditor.md",
+      "expected": "Role separation by permissions; Checker fresh context and independent evidence.",
+      "actual": "pr_review.py isolates context/diff/hashes in unit tests; runtime OS isolation and live E2E multi-role separation NOT_VERIFIED.",
+      "evidence_refs": [
+        "EV-003",
+        "EV-012"
+      ],
+      "evidence_hash": "1f5546c8a459daeb2f78ca8d344bffe59d3be6934e520cfe0cac09245d50ac30",
+      "status": "PARTIAL",
+      "severity": "P1",
+      "disposition": "REFACTOR_P05_P08",
+      "blocker": "Runtime role filesystem/process isolation NOT_VERIFIED; auditor.md has stale TDMA directive",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-ORC-03",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "scripts/agent_harness/p1/pilot.py",
+        "scripts/agent_harness/run.py"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "p1/pilot.py implements a simulated <=2-repair cycle without real executors; run.py implements max_repairs <= 1; neither implements a multi-round Maker-Checker loop with external round state or >=5-round pilot evidence.",
+      "verification_method": "STATIC + UNIT",
+      "command_or_test_id": "tests/agent_harness/test_p1_b2_pilot.py + inspect run.py",
+      "expected": "Multi-round Maker-Checker loop with external state, structured feedback, immutable candidate per round, bounded termination.",
+      "actual": "No production multi-round loop with external round state; P07 >=5-round pilot NOT_RUN.",
+      "evidence_refs": [
+        "EV-012"
+      ],
+      "evidence_hash": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354",
+      "status": "GAP",
+      "severity": "P1",
+      "disposition": "ADD_P08",
+      "blocker": "No multi-round Maker-Checker loop with external round state",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-ORC-04",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "scripts/agent_harness/adapters/audit.schema.json",
+        "scripts/agent_harness/adapters/antigravity.py"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "audit.schema.json only outputs status (PASS/FAIL/INCONCLUSIVE), findings, limitations, reviewed_scope, and optional rule_results. No 6-dimension 0-2 rubric, ACCEPT/REVISE/BLOCK decision, or human calibration history exists.",
+      "verification_method": "STATIC + UNIT",
+      "command_or_test_id": "inspect audit.schema.json + antigravity.py",
+      "expected": "Structured 6-dimension 0-2 evaluator rubric, ACCEPT/REVISE/BLOCK, hard gates, human calibration.",
+      "actual": "6-dimension rubric schema and human calibration are completely absent.",
+      "evidence_refs": [
+        "EV-005",
+        "EV-012"
+      ],
+      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "status": "GAP",
+      "severity": "P1",
+      "disposition": "ADD_P05_P08",
+      "blocker": "No 6-dimension 0-2 evaluator rubric or calibration baseline",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-ORC-05",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [
+        "scripts/agent_harness/p1/state.py",
+        "scripts/agent_harness/p1/pilot.py"
+      ],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "p1/state.py + p1/pilot.py record WAL SQLite checkpoints and mark INTERRUPTED -> RECOVERY_REQUIRED, forbidding blind retries. However, Native Fast Lane and run.py do not use p1/state.py and have no restart reconciliation.",
+      "verification_method": "UNIT + STATIC",
+      "command_or_test_id": "tests/agent_harness/test_p1_state.py + test_p1_b2_pilot.py",
+      "expected": "Persistent run contract and crash/restart reconciliation without duplicate non-idempotent effects.",
+      "actual": "SQLite CAS/recovery works in isolated P1 unit tests; unused by active Fast Lane and run.py.",
+      "evidence_refs": [
+        "EV-012"
+      ],
+      "evidence_hash": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354",
+      "status": "PARTIAL",
+      "severity": "P1",
+      "disposition": "CONSOLIDATE_P08",
+      "blocker": "Persistent run contract and restart reconciliation absent from active workflows",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-ORC-06",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "No formal evaluation of Anthropic's 5 workflow patterns or the 5 graph criteria exists; no dynamic graph orchestrator is deployed (and shouldn't be before P08/P09 evidence).",
+      "verification_method": "STATIC",
+      "command_or_test_id": "inspect docs/harness/ and scripts/agent_harness/",
+      "expected": "Evaluate 5 patterns; deploy dynamic graph/fan-out only if >=3 criteria met and Owner approved.",
+      "actual": "Core orchestration pattern assessment not yet executed; extended dynamic graph not applicable until P09.",
+      "evidence_refs": [
+        "EV-005"
+      ],
+      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "status": "GAP",
+      "severity": "P2",
+      "disposition": "ADD_P09",
+      "blocker": "Pattern assessment not yet performed; extended graph deferred to P09",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-ORC-07",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "No orchestration tax telemetry (review time, conflict/reconciliation effort, retries, context bytes/tokens, cost, escaped defects) or review-bandwidth concurrency cap is measured or enforced.",
+      "verification_method": "STATIC",
+      "command_or_test_id": "inspect scripts/agent_harness/ and docs/harness/",
+      "expected": "Measure orchestration tax and cap concurrency to human review capacity.",
+      "actual": "Zero orchestration tax metrics collected at baseline (NOT_RUN).",
+      "evidence_refs": [
+        "EV-005"
+      ],
+      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "status": "GAP",
+      "severity": "P2",
+      "disposition": "ADD_P08_P09",
+      "blocker": "No orchestration tax measurement or human-review concurrency cap",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-ORC-08",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "Level 5 Fleet Orchestration (parallel loops, shared state, lease locks, deterministic fan-in) does not exist and is not claimed.",
+      "verification_method": "STATIC",
+      "command_or_test_id": "inspect scripts/agent_harness/",
+      "expected": "Conditional Level 5 Fleet Orchestration or Owner-approved deferral at P09.",
+      "actual": "Not implemented; conditional target assigned to P09.",
+      "evidence_refs": [
+        "EV-005"
+      ],
+      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "status": "CONDITIONAL_NOT_EXERCISED",
+      "severity": "P3",
+      "disposition": "DEFER_TO_P09",
+      "blocker": "Conditional Level 5 target; deferred pending P08 core orchestration and P09 5-criteria evaluation",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-FBK-10",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "No isolated meta-improvement ratchet loop (attribution -> hypothesis -> isolated experiment -> matched eval -> keep/reject -> decision log) exists.",
+      "verification_method": "STATIC",
+      "command_or_test_id": "inspect scripts/agent_harness/ and docs/harness/",
+      "expected": "Separate Harness improvement loop without self-modifying evaluator/oracle.",
+      "actual": "Absent from current Harness.",
+      "evidence_refs": [
+        "EV-005"
+      ],
+      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "status": "GAP",
+      "severity": "P2",
+      "disposition": "ADD_P08",
+      "blocker": "No controlled Harness meta-improvement loop implemented",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    },
+    {
+      "id": "H2-FBK-11",
+      "requirement_revision": "HARNESS_SPEC.md v0.2.0",
+      "source_paths": [],
+      "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+      "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
+      "observed_behavior": "No frozen benchmark holdouts, anti-Goodhart experiment budget, or versioned Harness promotion guardrails exist yet.",
+      "verification_method": "STATIC",
+      "command_or_test_id": "inspect scripts/agent_harness/ and docs/harness/",
+      "expected": "Anti-Goodhart and self-modification drift guards.",
+      "actual": "Absent from current Harness.",
+      "evidence_refs": [
+        "EV-005"
+      ],
+      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "status": "GAP",
+      "severity": "P2",
+      "disposition": "ADD_P08_P10",
+      "blocker": "No frozen experiment holdouts or anti-Goodhart promotion gates",
+      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+    }
+  ]
+}
