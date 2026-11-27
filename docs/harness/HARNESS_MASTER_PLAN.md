@@ -9,7 +9,7 @@
 
 ## 1. Objective and execution boundary
 
-Chuẩn hóa Harness theo Learn Harness Engineering (PDF 221 trang, 2026-11-27), từ Minimal Pack đến Advanced Pack có điều chỉnh cho Embedded/IoT. Thực hiện từng phase, mỗi phase một hoặc nhiều Issue/PR nhỏ có phạm vi rõ, không big-bang rewrite.
+Chuẩn hóa Harness theo **Learn Harness Engineering** (`walkinglabs/learn-harness-engineering`, pinned commit `fe2c4ebd2010aa877b504e141437729296c934e8`, `docs/en/`, MIT License — đã nội bộ hóa thành Markdown tự chứa tại [docs/references/harness-engineering/](../references/harness-engineering/README.md) và [REFERENCE_INDEX.md](../references/harness-engineering/REFERENCE_INDEX.md); bản PDF lịch sử 221 trang đã xóa khỏi cây hiện hành theo Issue [#419](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/419)), từ Minimal Pack đến Advanced Pack có điều chỉnh cho Embedded/IoT. Các mã nguồn `L01–L14`, `MIN`, `START`, `ADV`, `SOP`, `LAB`, `REF-ORC` và số trang lịch sử trong các phase dưới đây được tra cứu cục bộ qua [REFERENCE_INDEX.md](../references/harness-engineering/REFERENCE_INDEX.md) mà không cần PDF hay truy cập mạng ngoài. Thực hiện từng phase, mỗi phase một hoặc nhiều Issue/PR nhỏ có phạm vi rõ, không big-bang rewrite.
 
 **P00 chỉ soạn và review hai tài liệu này.** Không được sửa AGENTS.md, scripts, policies, contracts, CI, source sản phẩm hoặc di chuyển/xóa tài liệu hiện hành. Không có lệnh đề xuất nào được xem là đã chạy. Owner đã duyệt design baseline v0.2.0 và cho phép publication docs-only theo Issue #413; không giải quyết OD-01…10 hoặc cấp quyền sửa implementation.
 
@@ -299,3 +299,5 @@ Next action: complete docs-only publication under Issue #413 with existing trust
 **Revision 0.2.0-draft:** 45 requirement IDs in RTM; P01 adds orchestration inventory, P05 rubric/role calibration, P08 mandatory core orchestration and experiment loop, P09 conditional graph/fleet, P10 independent acceptance. No new phase or repository changes.
 
 **Approval revision 0.2.0:** Owner-approved on 2026-11-27; approval/status/provenance only, no change to RTM, 11 phases or open decisions. See [Issue #413](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/413).
+
+**Source-reference revision (Issue #419):** Updated §1 source reference/locator note to point to the self-contained local Markdown library ([docs/references/harness-engineering/](../references/harness-engineering/README.md) and [REFERENCE_INDEX.md](../references/harness-engineering/REFERENCE_INDEX.md)) after removing `learn-harness-engineering-en.pdf` from the current tracked tree. Historical section/page locators in §6–13 remain provenance locators resolved locally via `REFERENCE_INDEX.md`; zero change to the 45 RTM rows, 11 phases (`P00–P10`), sequencing, exit criteria, or open decisions.
