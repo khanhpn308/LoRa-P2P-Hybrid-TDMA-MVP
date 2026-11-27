@@ -2257,6 +2257,60 @@ class PRReviewCLITests(unittest.TestCase):
                 self.assertIn("Symlink forbidden", str(ctx.exception))
                 mocked_invoke.assert_not_called()
 
+    def test_inspect_pr_feature_state_detects_valid_stale_and_issue_mismatch(self):
+        import feature_state as fs
+        from p1.state import issue_host_proof
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            feat_dir = repo / "docs" / "harness" / "features"
+            feat_dir.mkdir(parents=True)
+            doc = fs.create_feature_doc(
+                429,
+                units=[{
+                    "id": "U-01",
+                    "behavior": "Check feature state",
+                    "verification": {"criteria": ["ok"], "commands": ["true"]},
+                    "dependencies": [],
+                    "scope": ["scripts/agent_harness/"],
+                    "state": "PENDING",
+                }],
+                approved_scope=["scripts/agent_harness/"],
+                base_sha="1" * 40,
+                head_sha="1" * 40,
+                candidate_sha256="a" * 64,
+            )
+            doc = fs.activate_unit(doc, "U-01")
+            ver_sha = doc["units"][0]["verification"]["definition_sha256"]
+            proof = issue_host_proof(
+                issue=429,
+                unit_id="U-01",
+                verification_sha256=ver_sha,
+                source_sha="1" * 40,
+                candidate_sha256="a" * 64,
+                manifest_sha256="c" * 64,
+                runner_sha256="d" * 64,
+                receipt_path="evidence/checks.log",
+                receipt_sha256="b" * 64,
+                gate_rule_id="TOOLING-CHECK",
+                auto_check="AUTO_CHECK_PASS",
+            )
+            doc = fs.verify_unit_passing(doc, "U-01", proof=proof)
+            fs.export_feature_doc(doc, feat_dir / "issue-429.json")
+
+            pr_data = {
+                "head_sha": "2" * 40,
+                "files": [{"filename": "docs/harness/features/issue-429.json"}],
+            }
+            summary = pr_review.inspect_pr_feature_state(repo, pr_data, {"number": 429})
+            self.assertEqual(summary["status"], "VALID")
+            self.assertEqual(summary["stale_passing_units"], ["U-01"])
+            self.assertFalse(summary["issue_mismatch"])
+
+            mismatch = pr_review.inspect_pr_feature_state(repo, pr_data, {"number": 430})
+            self.assertEqual(mismatch["status"], "INVALID")
+            self.assertTrue(mismatch["issue_mismatch"])
+
 
 if __name__ == "__main__":
     unittest.main()

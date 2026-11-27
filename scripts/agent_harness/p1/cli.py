@@ -16,6 +16,7 @@ if __package__ in (None, ""):
 from p1.state import Journal, StateConflict
 from p1.worktrees import WorktreeError, make_plan, prepare, git
 from scope import parse_allowed_paths
+from feature_state import session_start, session_checkpoint, FeatureStateError
 
 REPO = "khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP"
 
@@ -68,18 +69,32 @@ def main() -> int:
     prep.add_argument("--state", type=Path, default=None,
                       help="Local Host SQLite journal, outside source worktree by default")
     status = sub.add_parser("status")
-    status.add_argument("--run-id", required=True)
+    status.add_argument("--run-id", default=None)
+    status.add_argument("--issue", type=int, default=None)
     status.add_argument("--source", type=Path, default=Path.cwd())
     status.add_argument("--state", type=Path, default=None)
     recover = sub.add_parser("recover")
     recover.add_argument("--run-id", required=True)
     recover.add_argument("--source", type=Path, default=Path.cwd())
     recover.add_argument("--state", type=Path, default=None)
+    resume = sub.add_parser("resume")
+    resume.add_argument("--issue", type=int, required=True)
+    resume.add_argument("--repo", type=Path, default=Path.cwd())
+    resume.add_argument("--state", type=Path, default=None)
+    resume.add_argument("--feature-file", type=Path, default=None)
+    resume.add_argument("--offline", action="store_true")
+    ckpt = sub.add_parser("checkpoint")
+    ckpt.add_argument("--issue", type=int, required=True)
+    ckpt.add_argument("--repo", type=Path, default=Path.cwd())
+    ckpt.add_argument("--state", type=Path, default=None)
+    ckpt.add_argument("--next-action", required=True)
+    ckpt.add_argument("--blocker", default="")
+    ckpt.add_argument("--export", type=Path, default=None)
     args = parser.parse_args()
-    if getattr(args, "issue", 1) < 1:
+    if getattr(args, "issue", None) is not None and args.issue < 1:
         parser.error("Issue must be positive")
     os.umask(0o077)
-    source = args.source.resolve()
+    source = (getattr(args, "source", None) or getattr(args, "repo", None) or Path.cwd()).resolve()
     state = args.state or (source.parent / ".lora-p1-state" / "state.sqlite")
     try:
         if args.command == "prepare":
@@ -111,9 +126,49 @@ def main() -> int:
                     raise PreflightError(str(exc)) from exc
                 journal.transition(data["run_id"], expected="PREPARING",
                                    next_state="PREPARED", note="Verified branch, SHA and clean tree")
+                journal.record_checkpoint(
+                    issue=args.issue,
+                    run_id=data["run_id"],
+                    revision_sha=item.base_sha,
+                    candidate_sha256="",
+                    branch=item.branch,
+                    worktree_rel=f"worktree:{item.target.name}",
+                    active_unit=None,
+                    blocker="",
+                    next_action="Begin or resume Issue execution in prepared worktree",
+                    decision_refs=("OD-02", "OD-08"),
+                    issue_sha256=data["issue_sha"],
+                    handoff_json=json.dumps({
+                        "issue": args.issue,
+                        "branch": item.branch,
+                        "source_sha": item.base_sha,
+                        "next_action": "Begin or resume Issue execution in prepared worktree",
+                    }, sort_keys=True),
+                )
                 preview["state"] = "PREPARED"
                 print(json.dumps(preview, indent=2))
                 return 0
+        if args.command == "resume":
+            res = session_start(
+                issue=args.issue,
+                repo=args.repo,
+                state_db=state,
+                feature_file=args.feature_file,
+                offline=args.offline,
+            )
+            print(json.dumps(res, indent=2))
+            return 2 if res["status"] in ("BLOCKED", "RECOVERY_REQUIRED") else 0
+        if args.command == "checkpoint":
+            res = session_checkpoint(
+                issue=args.issue,
+                repo=args.repo,
+                state_db=state,
+                next_action=args.next_action,
+                blocker=args.blocker,
+                export_path=args.export,
+            )
+            print(json.dumps(res, indent=2))
+            return 0
         with Journal(state) as journal:
             if args.command == "recover":
                 changed = journal.detect_interruption(args.run_id)
@@ -121,13 +176,22 @@ def main() -> int:
                                   "marked_recovery": changed,
                                   "state": journal.get(args.run_id)["state"]}, indent=2))
                 return 0
-            item = journal.get(args.run_id)
+            if args.run_id:
+                item = journal.get(args.run_id)
+            elif args.issue is not None:
+                item = journal.active_job_for_issue(args.issue) or journal.latest_job_for_issue(args.issue)
+                if item is None:
+                    raise StateConflict("No job found for Issue")
+            else:
+                raise PreflightError("status requires --run-id or --issue")
+            ckpt_row = journal.latest_checkpoint(item["issue"])
             print(json.dumps({"run_id": item["run_id"], "issue": item["issue"],
                               "state": item["state"], "source_sha": item["source_sha"],
                               "branch": item["branch"], "worktree": item["worktree"],
-                              "history": journal.events(args.run_id)}, indent=2))
+                              "history": journal.events(item["run_id"]),
+                              "latest_checkpoint": ckpt_row["handoff"] if ckpt_row else None}, indent=2))
             return 0
-    except (OSError, PreflightError, WorktreeError, StateConflict, subprocess.SubprocessError) as exc:
+    except (OSError, PreflightError, WorktreeError, StateConflict, FeatureStateError, subprocess.SubprocessError) as exc:
         print(json.dumps({"state": "BLOCKED", "reason": str(exc)[:240]}))
         return 2
 

@@ -17,6 +17,14 @@ import uuid
 
 from adapters import codex, antigravity
 from agent_context import load_context, ContextGateError
+from feature_state import (
+    FeatureStateError,
+    session_checkpoint,
+    verify_host_gate_evidence,
+    verify_unit_passing,
+    validate_feature_doc,
+)
+from p1.state import Journal, StateConflict
 from scope import _git, assert_scoped, parse_allowed_paths
 from snapshot import assemble, unchanged, digest
 from standards_policy import select_rules, verify_selection, StandardsError, STANDARDS, GROUPS
@@ -94,6 +102,20 @@ def run(args: argparse.Namespace) -> int:
         result["state"] = state
         if message:
             result["reason"] = message[:240]
+        if getattr(args, "journal", None) is not None:
+            try:
+                ckpt = session_checkpoint(
+                    issue=args.issue,
+                    repo=repo,
+                    state_db=args.journal,
+                    next_action=f"Inspect run {run_id} outcome ({state})",
+                    blocker=message[:240] if state in ("BLOCKED", "CHECKS_FAILED", "AUDIT_FAILED", "STALLED") else "",
+                    feature_file=getattr(args, "feature_file", None),
+                    base_sha=result.get("base_sha"),
+                )
+                result["checkpoint_id"] = ckpt["checkpoint_id"]
+            except (FeatureStateError, StateConflict, OSError, ValueError) as exc:
+                result["checkpoint_error"] = str(exc)[:200]
         write("manifest.tmp", result)
         (artifacts / "manifest.tmp").replace(manifest)
         print(f"{state}: {manifest}")
@@ -415,6 +437,43 @@ def run(args: argparse.Namespace) -> int:
             result["auto_checks"] = after["auto_check"]
             if review["status"] == "PASS" and after["auto_check"] == "AUTO_CHECK_PASS":
                 result["audit"] = "AUDIT_PASS_SOFTWARE_ONLY"
+                if getattr(args, "journal", None) is not None and getattr(args, "unit_id", None):
+                    with Journal(args.journal) as journal:
+                        snap = journal.get_feature_snapshot(args.issue)
+                        if snap is not None:
+                            doc = validate_feature_doc(snap["doc"])
+                            unit = next((u for u in doc["units"] if u["id"] == args.unit_id), None)
+                            if unit is not None:
+                                unit_ver_sha = unit["verification"]["definition_sha256"]
+                                for entry in check_entries.values():
+                                    entry["observations"] = {
+                                        **entry.get("observations", {}),
+                                        "verification_sha256": unit_ver_sha,
+                                    }
+                                write("quality-manifest.json", gate_manifest)
+                                proof = verify_host_gate_evidence(
+                                    doc,
+                                    args.unit_id,
+                                    repo=repo,
+                                    base_sha=result["base_sha"],
+                                    evidence_dir=artifacts,
+                                    manifest_name="quality-manifest.json",
+                                )
+                                updated_doc = verify_unit_passing(
+                                    doc,
+                                    args.unit_id,
+                                    proof=proof,
+                                    expected_revision=snap["revision"],
+                                )
+                                journal.save_feature_snapshot(
+                                    issue=args.issue,
+                                    expected_revision=snap["revision"],
+                                    revision=updated_doc["revision"],
+                                    doc_json=json.dumps(updated_doc, sort_keys=True),
+                                    units=updated_doc["units"],
+                                    actor="host_verifier",
+                                    host_proofs={args.unit_id: proof},
+                                )
                 return finish("READY_FOR_HUMAN_REVIEW", 0,
                               "Uncommitted scoped tree; human technical review required; no PR auto-created")
             if iteration == args.max_repairs:
@@ -439,6 +498,12 @@ def main() -> int:
                    help="Allow native host build fallback; not an isolation control")
     p.add_argument("--timeout", type=int, default=600)
     p.add_argument("--max-repairs", type=int, default=0)
+    p.add_argument("--journal", type=pathlib.Path, default=None,
+                   help="Optional local Host SQLite journal for session checkpoints")
+    p.add_argument("--feature-file", type=pathlib.Path, default=None,
+                   help="Optional versioned feature state JSON for continuity")
+    p.add_argument("--unit-id", default=None,
+                   help="Optional active feature unit ID to verify via host_verifier on PASS")
     args = p.parse_args()
     if args.issue < 1 or not 30 <= args.timeout <= 3600 or not 0 <= args.max_repairs <= 2:
         p.error("Invalid Issue, timeout or repair count (0..2)")

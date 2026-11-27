@@ -31,11 +31,19 @@ def main() -> int:
         with Journal(args.state) as journal:
             receipt = verify_candidate(journal, args.run_id)
             job = journal.get(args.run_id)
+            feat = journal.get_feature_snapshot(job["issue"])
+            ckpt = journal.latest_checkpoint(job["issue"])
         # Owner-approved ESP-IDF 6.1 baseline comes from worktree, not Issue text.
         version = load_project_version(pathlib.Path(job["worktree"]))
         if version != "6.1":
             raise VerificationBlocked("Unexpected ESP-IDF baseline")
         receipt["esp_idf"] = "v" + version
+        if feat is not None or ckpt is not None:
+            receipt["feature_continuity"] = {
+                "revision": feat["revision"] if feat else None,
+                "active_unit": feat["doc"]["handoff"]["active_unit"] if feat else (ckpt["active_unit"] if ckpt else None),
+                "last_checkpoint_id": ckpt["checkpoint_id"] if ckpt else None,
+            }
         if args.image_id:
             boundary = BuildBoundary(args.image_id)
             receipt["build_commands"] = [

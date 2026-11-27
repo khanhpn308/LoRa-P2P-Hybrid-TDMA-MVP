@@ -123,3 +123,51 @@ def cleanup_owned_worktree(plan: WorktreePlan) -> bool:
     git(plan.source, "worktree", "remove", str(resolved_target))
     git(plan.source, "branch", "-d", plan.branch)
     return True
+
+
+def inspect_worktree(
+    worktree: pathlib.Path,
+    *,
+    expected_branch: str | None = None,
+    expected_base_sha: str | None = None,
+) -> dict[str, object]:
+    """Read-only verification of an isolated Git worktree for safe session resume.
+
+    Never modifies, resets, stashes, or deletes worktree contents.
+    """
+    if worktree.is_symlink() or not worktree.exists() or not worktree.is_dir():
+        raise WorktreeError("Missing or symlink worktree")
+    root = worktree.resolve(strict=True)
+    top = git(root, "rev-parse", "--show-toplevel")
+    if pathlib.Path(top) != root:
+        raise WorktreeError("Worktree path is not a Git top-level root")
+    listing = git(root, "worktree", "list", "--porcelain")
+    if ("worktree " + str(root)) not in listing.splitlines():
+        raise WorktreeError("Path is not a registered Git worktree")
+    branch = git(root, "branch", "--show-current")
+    head_sha = git(root, "rev-parse", "HEAD")
+    porcelain = git(root, "status", "--porcelain", "--untracked-files=normal")
+    dirty_paths = [line[3:] for line in porcelain.splitlines() if len(line) > 3]
+    if expected_branch is not None and branch != expected_branch:
+        raise WorktreeError(f"Worktree branch mismatch: expected {expected_branch!r}, got {branch!r}")
+    base_is_ancestor = None
+    if expected_base_sha is not None:
+        if SHA.fullmatch(expected_base_sha) is None:
+            raise WorktreeError("Invalid expected_base_sha")
+        anc = subprocess.run(
+            ["git", "-C", str(root), "merge-base", "--is-ancestor", expected_base_sha, head_sha],
+            text=True, capture_output=True, check=False, timeout=20,
+        )
+        if anc.returncode not in (0, 1):
+            raise WorktreeError("Failed to verify base SHA ancestry")
+        base_is_ancestor = (anc.returncode == 0)
+    return {
+        "worktree": str(root),
+        "branch": branch,
+        "head_sha": head_sha,
+        "expected_base_sha": expected_base_sha,
+        "base_matches_head": (head_sha == expected_base_sha) if expected_base_sha else None,
+        "base_is_ancestor": base_is_ancestor,
+        "dirty": bool(porcelain),
+        "dirty_paths": dirty_paths,
+    }

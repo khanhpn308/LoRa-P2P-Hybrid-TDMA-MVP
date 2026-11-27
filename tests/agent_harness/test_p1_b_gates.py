@@ -108,6 +108,7 @@ class CandidateTests(unittest.TestCase):
         receipt = json.loads(buffer.getvalue())
         self.assertEqual(receipt["esp_idf"], "v6.1")
         self.assertEqual(receipt["status"], "SCOPE_SCAN_PASS_ONLY")
+        self.assertRegex(receipt["candidate_sha256"], r"^[0-9a-f]{64}$")
         self.assertNotIn("build_commands", receipt)
 
     def test_host_cli_rejects_unknown_job_without_creating_state(self):
