@@ -126,6 +126,22 @@ class WorktreeTests(unittest.TestCase):
             self.assertEqual(journal.db.execute("SELECT state FROM jobs").fetchone()["state"],
                              "RECOVERY_REQUIRED")
 
+    def test_cleanup_owned_worktree_only_removes_clean_owned_tree(self):
+        from p1.worktrees import cleanup_owned_worktree
+        p1 = make_plan(self.repo, 32, self.run_id)
+        p2 = make_plan(self.repo, 32, "b" * 32)
+        prepare(p1)
+        prepare(p2)
+        # Dirty worktree p1 refuses cleanup
+        (p1.target / "uncommitted.txt").write_text("keep")
+        with self.assertRaises(WorktreeError):
+            cleanup_owned_worktree(p1)
+        self.assertTrue((p1.target / "uncommitted.txt").exists())
+        # Clean owned worktree p2 is removed without affecting p1
+        self.assertTrue(cleanup_owned_worktree(p2))
+        self.assertFalse(p2.target.exists())
+        self.assertTrue(p1.target.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

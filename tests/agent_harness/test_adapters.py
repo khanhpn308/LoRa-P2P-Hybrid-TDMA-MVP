@@ -182,6 +182,17 @@ class AdapterTests(unittest.TestCase):
                 antigravity.invoke("Review", pathlib.Path(directory),
                                    pathlib.Path(directory) / "schema.json", 120, FILES)
 
+    def test_adapters_reject_symlink_working_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            real_dir = root / "real"
+            real_dir.mkdir()
+            sym_dir = root / "link"
+            sym_dir.symlink_to(real_dir, target_is_directory=True)
+            with self.assertRaises(codex.WorkerError):
+                codex.invoke("write", sym_dir, 60)
+            with self.assertRaises(antigravity.AuditError):
+                antigravity.invoke("review", sym_dir, real_dir / "schema.json", 60, FILES)
 
 
 if __name__ == "__main__":

@@ -1262,8 +1262,21 @@ def run_auto_audit(
         prompt_file.write_text(prompt, encoding="utf-8")
 
         # Invoke Auditor with bounded retry for transient infrastructure errors
+        # Snapshot evidence_dir before Auditor runs so any read-only violation is rejected.
+        def _snapshot_dir(root: Path) -> dict[str, str]:
+            snap: dict[str, str] = {}
+            for p in sorted(root.iterdir()):
+                if p.is_symlink():
+                    snap[p.name] = "SYMLINK"
+                elif p.is_file():
+                    snap[p.name] = hashlib.sha256(p.read_bytes()).hexdigest()
+                elif p.is_dir():
+                    snap[p.name] = "DIR"
+            return snap
+
         batch_report = None
         for attempt in range(1, 1 + max_retries + 1):
+            pre_evidence_snap = _snapshot_dir(evidence_dir)
             try:
                 batch_report = antigravity.invoke(
                     prompt=prompt,
@@ -1275,8 +1288,17 @@ def run_auto_audit(
                     selection_sha256=b_parent_hash if has_rules else None,
                     evidence_inventory=target_inventory,
                 )
+                post_evidence_snap = _snapshot_dir(evidence_dir)
+                if post_evidence_snap != pre_evidence_snap:
+                    raise PRReviewError(
+                        f"Auditor modified read-only evidence directory during job '{job_id}'"
+                    )
                 break
             except Exception as exc:
+                if _snapshot_dir(evidence_dir) != pre_evidence_snap:
+                    raise PRReviewError(
+                        f"Auditor modified read-only evidence directory during job '{job_id}'"
+                    ) from exc
                 if is_transient_error(exc) and attempt <= max_retries:
                     fail_file = evidence_dir / f"auditor_failure_{job_id}_attempt_{attempt}.json"
                     fail_file.write_text(

@@ -5,13 +5,20 @@
 > **Mục tiêu UX:** Mỗi Issue, operator chỉ nhập `Chạy Issue #N` trong Codex hoặc AGY. `Nghiệm thu PR #N` chạy review read-only theo cùng quality gates, chỉ sửa khi operator đã cho phép.
 > **Phân biệt:** Fast Lane này là **native AI-agent orchestration**, không phải signed MCP execution runner. Đường dẫn MCP hiện có chỉ là [`scripts/agent_harness/mcp_server.py`](../../scripts/agent_harness/mcp_server.py) (3 read-only P1 tools `harness_preflight`, `harness_status`, `harness_verify_candidate`, mặc định chưa kích hoạt SDK) và không tự động chạy thay Native Fast Lane.
 
-## 0. Cài đặt một lần (không phải mỗi Issue)
+## 0. Cài đặt và khởi động chuẩn (OD-03)
 
-- Đồng bộ SOP này và `AGENTS.md` từ PR #84 vào checkout sẽ sử dụng, **sau khi PR được review/merge hoặc chủ repo chủ động dùng nhánh chứa bản mới**. Tài liệu chỉ có trên feature branch thì `main` chưa có cấu hình Fast Lane.
-- **Codex CLI:** mở tại root repository và chọn **Full access** trong `/permissions`. Không cần tạo một agent ảo có tên `harness-coordinator` trong `/agents` của Codex; `/agents` ở đây là giao diện quản lý phiên agent, không giống AGY.
-- **AGY:** mở `agy` tại root repository; trong `/agents` chọn `harness-coordinator` phiên bản mới; chọn quyền CLI của operator (chẳng hạn Turbo, nếu khả dụng). Không cần chạy consumer `agy -p` từ bên trong công cụ khác.
+- **Bootstrap & chẩn đoán read-only (mặc định, không tự cài gói hay sửa file):**
+  - `bash scripts/setup_harness.sh --profile <core|firmware|backend|web|infra|all>`
+  - `python3 scripts/harness_doctor.py --profile all --repo <candidate> --json` (xuất trạng thái version pin, cache phụ thuộc và ma trận capability theo role).
+  - `bash scripts/setup_harness.sh --profile <profile> --repo <candidate> --smoke` (chạy smoke read-only: G0 `agent_context.py`, `verify_structure.py`, `quality_gates.py --base HEAD`, và `toolchains/check.py --check-deps` cho `firmware`/`all`). Thiếu dependency hoặc gate nền fail (như `SECRET-SCAN` false positive đã ghi nhận trên `main`) sẽ trả `BLOCKED` / nonzero rõ ràng, không tạo PASS giả.
+- **Cài đặt chỉ khi operator cấp quyền rõ (explicit opt-in):**
+  - `bash scripts/setup_harness.sh --install-core` (chỉ cài OS `python3`/`git`/`gh` sau khi gõ `INSTALL`).
+  - `bash scripts/setup_harness.sh --install-mcp` (cài optional `mcp==2.3.0` và đăng ký read-only bridge).
+  - Clean worktree thiếu `firmware/*/managed_components` hoặc `clients/web-dashboard/node_modules` phải được hydrate có chủ đích (hoặc dùng `golang:1.27.3-alpine` khi host `go` bị lệch pin `1.27.1 != 1.27.3`); build `--network=none` fail closed khi thiếu cache.
+- **Codex CLI:** mở tại root repository và chọn **Full access** trong `/permissions`. Không cần tạo một agent ảo có tên `harness-coordinator` trong `/agents` của Codex.
+- **AGY:** mở `agy` tại root repository; trong `/agents` chọn `harness-coordinator` phiên bản mới; chọn quyền CLI của operator (chẳng hạn Turbo, nếu khả dụng).
 - Dùng `gh` của user WSL đã đăng nhập, Docker/ESP-IDF v6.1 khi cần build. Không đăng nhập GitHub cho root, không ký `APPROVE`, không tạo thủ công approval JSON.
-- Full Access chỉ cấp quyền ở CLI/OS theo thiết lập thực tế của người dùng. `AGENTS.md` và SOP không thể tự nâng quyền hay đảm bảo native subagents hoạt động trên mọi phiên bản.
+- **Giới hạn cô lập (OD-04):** Full Access chỉ cấp quyền ở CLI/OS theo thiết lập thực tế của người dùng, **không phải** OS/network sandbox (`SUPERVISED_ONLY`); xem [`.agent-harness/security/provider-decision.md`](../../.agent-harness/security/provider-decision.md). Khi `invoke_subagent` hoặc `agy` Auditor không khả dụng, hệ thống fail closed (`AUDIT_NOT_VERIFIED`), tuyệt đối không tự chấm thay Auditor.
 
 ## 1. Mỗi task: chỉ một câu
 
@@ -70,11 +77,14 @@ receipts, không thay thế human review và không enforcement GitHub branch ru
 - `NOT_VERIFIED`: Không gán PASS cho thứ chưa đo/chạy. Build PASS không tương đương HIL/RF/timing PASS.
 - `AWAIT_HUMAN`: Dừng sau khi xuất Draft PR/evidence để human review, không tự merge.
 
-## 3. Phân biệt hai con đường
+## 3. Quyết định luồng thực thi mặc định (OD-01) và các đường dẫn tương thích
 
-**A — DEFAULT: Native Fast Lane**: Agent thông thường với Full Access (được user bật). Mọi bước diễn ra nhờ native tools/commands/subagents; không dùng Ed25519 grant; không gọi optional MCP tools. Đây là default cho routine Issue, dựa vào thực thi của AI Coordinator; việc tuân thủ SOP cần được kiểm tra bằng PR và evidence thực tế.
+**A — DEFAULT (OD-01): Native Fast Lane (`harness-coordinator` + Trusted Host CLIs):** Agent điều phối theo `AGENTS.md` và `.agents/agents/harness-coordinator.md`, kết hợp các lệnh Host deterministic (`agent_context.py`, `quality_gates.py`, `pr_review.py`, `setup_harness.sh`, `harness_doctor.py`). Đây là luồng mặc định duy nhất cho tác vụ thường ngày. Nếu `invoke_subagent` hoặc `agy` Auditor không chạy được, phải ghi `AUDIT_NOT_VERIFIED` (fail closed), không thay bằng self-review.
 
-**B — OPTIONAL: Read-Only MCP Bridge (`scripts/agent_harness/mcp_server.py`):** Hiện chỉ cung cấp 3 read-only P1 tools (`harness_preflight`, `harness_status`, `harness_verify_candidate`) khi MCP Python SDK v2.3.0 được cài và kích hoạt; không thay thế Native Fast Lane và không tự động thực thi code/commit/PR. Chỉ dùng nếu chủ repo yêu cầu rõ; không bắt người dùng vào B trong tác vụ Fast Lane.
+**B — LEGACY / OPTIONAL COMPATIBILITY PATHS (không chạy song song bắt buộc):**
+- `scripts/agent_harness/run.py` & `scripts/agent_harness/p1/cli.py`: giữ tương thích CLI/worktree/SQLite cho script Host có kiểm soát; không phải luồng mặc định thay thế Native Fast Lane.
+- `scripts/agent_harness/mcp_server.py`: chỉ cung cấp 3 read-only P1 tools (`harness_preflight`, `harness_status`, `harness_verify_candidate`) khi người dùng chủ động chạy `--install-mcp`; mặc định không cài SDK và không bật trong bootstrap.
+- `scripts/agent_harness/p1/auto_issue.py`: tiếp tục **disabled** theo boundary provider (chỉ dành cho Enterprise runner được cô lập ngoài repo).
 
 ## 4. Điểm dừng bắt buộc dù Full Access
 

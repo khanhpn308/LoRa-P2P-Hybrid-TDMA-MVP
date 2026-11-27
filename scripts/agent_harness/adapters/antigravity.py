@@ -50,7 +50,8 @@ def run_bounded(args, *, cwd, input=None, timeout):
     """Keep provider output off the console and bound bytes before decoding."""
     with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
         done = subprocess.run(args, cwd=cwd, input=input, text=True,
-                              stdout=output, stderr=errors, timeout=timeout, check=False)
+                              stdout=output, stderr=errors, timeout=timeout,
+                              start_new_session=True, check=False)
         streams = []
         for value, stream in ((done.stdout, output), (done.stderr, errors)):
             if isinstance(value, str):
@@ -259,6 +260,8 @@ def invoke(prompt: str, snapshot: Path, schema: Path, timeout: int,
            selection_sha256=None, evidence_inventory=None,
            effort: str = "low") -> dict:
     """Run only in an operator-provisioned sandbox. This is NOT a VM boundary."""
+    if not snapshot.is_dir() or snapshot.is_symlink():
+        raise AuditError("Auditor snapshot must be a non-symlink directory")
     print_timeout = f"{timeout}s"
     host_timeout = timeout + HOST_TIMEOUT_GRACE_SECONDS
     args = ["agy", "--sandbox", "-p", prompt, "--output-format", "json",

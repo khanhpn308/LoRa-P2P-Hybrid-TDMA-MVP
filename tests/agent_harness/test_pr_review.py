@@ -2153,6 +2153,41 @@ class PRReviewCLITests(unittest.TestCase):
         self.assertIn("BLOCKED", out)
         self.assertIn("Hardware-in-the-Loop (HIL) test receipt absent", out)
 
+    @patch("shutil.which", return_value="/usr/local/bin/agy")
+    def test_run_auto_audit_rejects_evidence_mutation(self, mock_which):
+        """H2-TOL-02: Auditor mutating evidence_dir during invoke fails closed."""
+        with tempfile.TemporaryDirectory() as tmp:
+            ev_dir = Path(tmp)
+            diff_file = ev_dir / "diff.patch"
+            diff_file.write_text("diff --git a/README.md b/README.md\n+ok\n", encoding="utf-8")
+            diff_sha = pr_review.hashlib.sha256(diff_file.read_bytes()).hexdigest()
+            pr_data = {
+                "base_sha": "1" * 40,
+                "head_sha": "2" * 40,
+                "files": [{"filename": "README.md", "status": "modified"}],
+            }
+
+            def mutating_invoke(**kwargs):
+                (ev_dir / "tampered.txt").write_text("evil", encoding="utf-8")
+                return {
+                    "status": "PASS",
+                    "findings": [],
+                    "limitations": [],
+                    "reviewed_scope": ["README.md"],
+                }
+
+            with patch("adapters.antigravity.invoke", side_effect=mutating_invoke):
+                with self.assertRaises(pr_review.PRReviewError) as ctx:
+                    pr_review.run_auto_audit(
+                        pr_data=pr_data,
+                        rule_selection=None,
+                        evidence_inventory={"diff.patch": diff_sha},
+                        cumulative_diff=diff_file.read_text(encoding="utf-8"),
+                        evidence_dir=ev_dir,
+                        max_retries=0,
+                    )
+            self.assertIn("modified read-only evidence directory", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

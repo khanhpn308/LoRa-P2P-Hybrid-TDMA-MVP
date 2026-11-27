@@ -9,11 +9,13 @@ import subprocess
 from typing import Iterable
 
 HEADER = re.compile(r"^#{2,6}\s+Target Directories \(allowed paths\)\s*$", re.I)
+ANY_HEADING = re.compile(r"^#{1,6}\s+\S")
+UNBACKTICKED_LIST = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
 ITEM = re.compile(r"^\s*-\s+`([^`]+)`\s*(?:\([^)]*\))?\s*$")
 
 
 def parse_allowed_paths(issue_body: str) -> tuple[str, ...]:
-    """Extract only the first contiguous bullet list below the exact heading."""
+    """Extract only the first contiguous backtick bullet list inside the scope section."""
     inside = False
     paths: list[str] = []
     for line in issue_body.splitlines():
@@ -21,13 +23,21 @@ def parse_allowed_paths(issue_body: str) -> tuple[str, ...]:
             if HEADER.match(line):
                 inside = True
             continue
+        if ANY_HEADING.match(line):
+            if paths:
+                break
+            raise ValueError("Scope heading must have an immediate backtick bullet list")
         if not line.strip() and not paths:
             continue
         m = ITEM.match(line)
         if not m:
             if paths:
                 break
-            raise ValueError("Scope heading must have an immediate backtick bullet list")
+            if UNBACKTICKED_LIST.match(line):
+                raise ValueError("Scope heading must have an immediate backtick bullet list")
+            # Allow brief introductory prose directly under the scope heading
+            # before the first contiguous bullet list, without crossing headings.
+            continue
         value = m.group(1)
         if (not value or value.startswith("/") or "\\" in value or ".." in value.split("/")
                 or any(ch in value for ch in "*?[]{}") or "//" in value
