@@ -17,36 +17,36 @@ Mục tiêu: giảm instruction bloat, giảm chi phí khám phá và khôi ph�
 
 ## 2. Reference and requirement semantics
 
-Nguồn tham chiếu chính do Owner lựa chọn: `learn-harness-engineering-en.pdf`, Learn Harness Engineering, English coursebook, 221 trang, generated 2026-11-27. SHA-256: `777e654c404c167020e29d0b0b4519e22c0c72bbcca383d83d873536cd012b67`. Số trang trong tài liệu này là số trang vật lý PDF (1-based), không phải số trang nội bộ từng bài giảng.
+Nguồn tham chiếu chính do Owner lựa chọn: **Learn Harness Engineering** (`walkinglabs/learn-harness-engineering`, pinned commit `fe2c4ebd2010aa877b504e141437729296c934e8`, `docs/en/`, MIT License). Toàn bộ tri thức thực thi đã được nội bộ hóa thành Markdown tự chứa tại [docs/references/harness-engineering/](../references/harness-engineering/README.md) thông qua [REFERENCE_INDEX.md](../references/harness-engineering/REFERENCE_INDEX.md) và `knowledge/01..06.md` (Issue [#419](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/419)); mọi tác vụ `P01–P10` thực thi offline từ tài liệu cục bộ mà không cần PDF hay truy cập upstream. Bản PDF lịch sử `learn-harness-engineering-en.pdf` (`221` trang, `7,797,038` bytes, SHA-256 `777e654c404c167020e29d0b0b4519e22c0c72bbcca383d83d873536cd012b67`, thêm tại `a4929e38338e08a451db0c408c832514ff83f94b`) đã bị xóa khỏi cây hiện hành theo Issue #419; số trang vật lý (1-based) dưới đây và trong §4 được giữ lại chỉ làm provenance locator ánh xạ sang local headings tại [REFERENCE_INDEX.md](../references/harness-engineering/REFERENCE_INDEX.md).
 
-| Ref | Nội dung | Trang PDF |
-|---|---|---:|
-| L01 | Reliable execution, diagnostic loop | 7–12 |
-| L02 | Five-subsystem model, ablation | 13–18 |
-| L03 | Repository as system of record, fresh session | 19–25 |
-| L04 | Split instructions, SNR, reveal on demand | 26–32 |
-| L05 | Persistent state, handoff, rebuild cost | 33–40 |
-| L06 | Dedicated initialization | 41–47 |
-| L07 | WIP=1, task boundaries | 48–54 |
-| L08 | Feature list, pass-state gating | 55–60 |
-| L09 | Termination validation, independent evaluation | 61–67 |
-| L10 | E2E and mechanical enforcement | 68–74 |
-| L11 | Runtime/process observability | 75–82 |
-| L12 | Clean handoff, quality, simplification | 83–90 |
-| L13 | Loop engineering | 91–112 |
-| L14 | Graph engineering | 113–132 |
-| MIN | Resource Library, Template Guide | 164–173 |
-| START | Startup Flow, Initializer Playbook, Method Map, Prompt Calibration | 174–175, 181–184 |
-| ADV | Advanced Pack and repository templates | 185–212 |
-| SOP | Chrome DevTools, knowledge capture, layered architecture, observability | 213–221 |
-| LAB | Projects 01–08 | 135–163 |
-| ORC | Orchestrator-Workers patterns, fleet ladder, orchestration tax | 110, 120–121, 127–129 |
-| EXP | Autoresearch ratchet; Maker-Checker laboratory; DAW case | 104–107, 156–158, 80–81 |
-| REF-ORC | Claude Code Dynamic Workflows and Orchestration; Symphony | 111, 177 |
+| Ref | Nội dung | Local Knowledge | Trang PDF (provenance) |
+|---|---|---|---|
+| L01 | Reliable execution, diagnostic loop | [01 #2](../references/harness-engineering/knowledge/01-foundations-and-instructions.md#2-why-capable-agents-still-fail-l01) | 7–12 |
+| L02 | Five-subsystem model, ablation | [01 #3](../references/harness-engineering/knowledge/01-foundations-and-instructions.md#3-five-subsystem-harness-model-and-ablation-l02) | 13–18 |
+| L03 | Repository as system of record, fresh session | [01 #4](../references/harness-engineering/knowledge/01-foundations-and-instructions.md#4-repository-as-the-single-source-of-truth-l03) | 19–25 |
+| L04 | Split instructions, SNR, reveal on demand | [01 #5](../references/harness-engineering/knowledge/01-foundations-and-instructions.md#5-splitting-instructions--progressive-disclosure-l04-startprompt-calibration-startmethod-map) | 26–32 |
+| L05 | Persistent state, handoff, rebuild cost | [03 #1](../references/harness-engineering/knowledge/03-state-and-session-continuity.md#1-cross-session-context-continuity-l05) | 33–40 |
+| L06 | Dedicated initialization | [02 #1](../references/harness-engineering/knowledge/02-tools-environment-and-initialization.md#1-dedicated-initialization-phase-l06) | 41–47 |
+| L07 | WIP=1, task boundaries | [03 #2](../references/harness-engineering/knowledge/03-state-and-session-continuity.md#2-task-boundaries-and-wip1-scope-control-l07) | 48–54 |
+| L08 | Feature list, pass-state gating | [03 #3](../references/harness-engineering/knowledge/03-state-and-session-continuity.md#3-feature-lists-as-executable-harness-primitives-l08) | 55–60 |
+| L09 | Termination validation, independent evaluation | [04 #1](../references/harness-engineering/knowledge/04-verification-feedback-and-observability.md#1-preventing-premature-completion-declarations-l09) | 61–67 |
+| L10 | E2E and mechanical enforcement | [04 #2](../references/harness-engineering/knowledge/04-verification-feedback-and-observability.md#2-end-to-end-verification-and-mechanical-boundary-enforcement-l10) | 68–74 |
+| L11 | Runtime/process observability | [04 #3](../references/harness-engineering/knowledge/04-verification-feedback-and-observability.md#3-layered-observability-sprint-contracts-and-evaluator-rubrics-l11-expdaw) | 75–82 |
+| L12 | Clean handoff, quality, simplification | [04 #4](../references/harness-engineering/knowledge/04-verification-feedback-and-observability.md#4-clean-session-handoff-entropy-control-and-harness-simplification-l12) | 83–90 |
+| L13 | Loop engineering | [05 #1](../references/harness-engineering/knowledge/05-orchestration-loops-and-graphs.md#1-loop-engineering-l13) | 91–112 |
+| L14 | Graph engineering | [05 #2](../references/harness-engineering/knowledge/05-orchestration-loops-and-graphs.md#2-graph-engineering-and-orchestration-economics-l14) | 113–132 |
+| MIN | Resource Library, Template Guide | [06 #2](../references/harness-engineering/knowledge/06-templates-advanced-pack-and-sops.md#2-minimal-pack-resource-library-and-templates-min) | 164–173 |
+| START | Startup Flow, Initializer Playbook, Method Map, Prompt Calibration | [02 #2](../references/harness-engineering/knowledge/02-tools-environment-and-initialization.md#2-initializer-agent-playbook--fixed-startup-flow-start); [01 #5](../references/harness-engineering/knowledge/01-foundations-and-instructions.md#prompt-calibration-startprompt-calibration) | 174–175, 181–184 |
+| ADV | Advanced Pack and repository templates | [06 #3](../references/harness-engineering/knowledge/06-templates-advanced-pack-and-sops.md#3-openai-advanced-pack--repo-template-adv-sections-3250) | 185–212 |
+| SOP | Chrome DevTools, knowledge capture, layered architecture, observability | [06 #4](../references/harness-engineering/knowledge/06-templates-advanced-pack-and-sops.md#4-openai-advanced-standard-operating-procedures-sop-sections-5155) | 213–221 |
+| LAB | Projects 01–08 | [06 #1](../references/harness-engineering/knowledge/06-templates-advanced-pack-and-sops.md#1-hands-on-labs-lab-intro-p01p08) | 135–163 |
+| ORC | Orchestrator-Workers patterns, fleet ladder, orchestration tax | [05 #1–2](../references/harness-engineering/knowledge/05-orchestration-loops-and-graphs.md#2-graph-engineering-and-orchestration-economics-l14) | 110, 120–121, 127–129 |
+| EXP | Autoresearch ratchet; Maker-Checker laboratory; DAW case | [05 #1](../references/harness-engineering/knowledge/05-orchestration-loops-and-graphs.md#karpathys-autoresearch-ratchet-loop-l13-exp-pp-104107); [06 #1](../references/harness-engineering/knowledge/06-templates-advanced-pack-and-sops.md#summary-of-projects-p01p08); [04 #3](../references/harness-engineering/knowledge/04-verification-feedback-and-observability.md#anthropics-three-agent-daw-case-l11-pp-8081) | 104–107, 156–158, 80–81 |
+| REF-ORC | Claude Code Dynamic Workflows and Orchestration; Symphony | [05 #3](../references/harness-engineering/knowledge/05-orchestration-loops-and-graphs.md#3-extended-industry-orchestration-references-ref-orc) | 111, 177 |
 
 Giáo trình là tài liệu hướng dẫn tổng hợp, không phải tiêu chuẩn chứng nhận chính thức của OpenAI/Anthropic. Nội dung ứng dụng mẫu (web app, OAuth, SQLAlchemy, lệnh npm/pytest, layer sequence) không tự động trở thành yêu cầu của LoRa.
 
-- `R` — REFERENCE: yêu cầu chuyển hóa từ giáo trình, có nguồn trang.
+- `R` — REFERENCE: yêu cầu chuyển hóa từ giáo trình, có nguồn mục cục bộ trong [REFERENCE_INDEX.md](../references/harness-engineering/REFERENCE_INDEX.md) và provenance trang lịch sử.
 - `X` — PROJECT_EXTENSION: bổ sung/điều chỉnh phù hợp dự án; cần Owner phê duyệt.
 - `OD` — OPEN_DECISION: chưa chốt phương án; không được Agent tự suy diễn.
 - `MUST` là tiêu chí bắt buộc sau khi SPEC được duyệt; `SHOULD` là mặc định có thể ngoại lệ bằng lý do được ghi nhận. Các requirement trong bản này là design baseline đã được Owner phê duyệt cho Harness V2.0; không tự thay thế active repository policy hoặc cấp quyền implementation trước approved phase/Issue.
@@ -357,3 +357,5 @@ Change this SPEC only through versioned review and Owner approval. New rules mus
 **Revision 0.2.0-draft:** giữ 35 IDs cũ, thêm 8 ORC và 2 FBK IDs (45 total); bổ sung explicit control plane, multi-round scoring, Fleet maturity, orchestration tax và bounded meta-improvement. No implementation authorization.
 
 **Approval revision 0.2.0:** Owner-approved on 2026-11-27; approval/status/provenance only, no change to 45 normative requirements or open decisions. See [Issue #413](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/413).
+
+**Source-reference revision (Issue #419):** Updated §2 source metadata and locator table to reference the self-contained local Markdown corpus ([docs/references/harness-engineering/](../references/harness-engineering/README.md) and [REFERENCE_INDEX.md](../references/harness-engineering/REFERENCE_INDEX.md), derived from `walkinglabs/learn-harness-engineering` @ `fe2c4ebd2010aa877b504e141437729296c934e8`, MIT License) after deleting `learn-harness-engineering-en.pdf` from the current tracked tree. Historical page citations in §2/§4/§6/§7 remain provenance-only locators resolved locally via `REFERENCE_INDEX.md`; zero change to the 45 `H2-*` normative requirements, R/X classifications, project adaptations, architecture decisions, or 10 open decisions (`OD-01..10`).
