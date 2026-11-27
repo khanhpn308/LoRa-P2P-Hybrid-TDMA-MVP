@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "issue": 422,
   "phase": "P01-B",
   "audited_commit_sha": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
@@ -9,6 +9,20 @@
   "protocol_version": "0.3.0",
   "total_requirements": 45,
   "id_equality_verified": true,
+  "wp_h_cases_covered": [
+    "H-A01",
+    "H-A02",
+    "H-A03",
+    "H-A04",
+    "H-A05",
+    "H-A06",
+    "H-A07",
+    "H-A08",
+    "H-A09",
+    "H-A10",
+    "H-A11",
+    "H-A12"
+  ],
   "status_summary": {
     "VERIFIED": 0,
     "PARTIAL": 24,
@@ -41,12 +55,31 @@
         "EV-001",
         "EV-003"
       ],
-      "evidence_hash": "e18a866cb7e65f41893b7610c07896ae0e9ec300e41ae7e7007c8b21e16cce20",
+      "evidence_hashes": {
+        "EV-001": "e18a866cb7e65f41893b7610c07896ae0e9ec300e41ae7e7007c8b21e16cce20",
+        "EV-003": "1f5546c8a459daeb2f78ca8d344bffe59d3be6934e520cfe0cac09245d50ac30"
+      },
+      "evidence_hash": "bdeb8e8ee512e481a6ed7ac14b3543f787d07a994bac5c42084669a77d1b7e7b",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-INS-AGENTS"
+      ],
+      "wp_h_case_refs": [
+        "H-A01",
+        "H-A10"
+      ],
+      "applicable_rule_ids": [
+        "GOV-002",
+        "QG-001"
+      ],
+      "routing_receipt_refs": {
+        "EV-001": "e18a866cb7e65f41893b7610c07896ae0e9ec300e41ae7e7007c8b21e16cce20"
+      },
       "status": "PARTIAL",
       "severity": "P2",
       "disposition": "REFACTOR_P02",
       "blocker": "No unified startup/verify command routing in root AGENTS.md",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-INS-02",
@@ -66,12 +99,32 @@
         "EV-003",
         "EV-006"
       ],
-      "evidence_hash": "1f5546c8a459daeb2f78ca8d344bffe59d3be6934e520cfe0cac09245d50ac30",
+      "evidence_hashes": {
+        "EV-003": "1f5546c8a459daeb2f78ca8d344bffe59d3be6934e520cfe0cac09245d50ac30",
+        "EV-006": "2526f2ec4576e821c05b02cf175a8a9bc356dcdc49385c14f15e03eb4d1fbe7e"
+      },
+      "evidence_hash": "67fcc26ca7056c60eb85b71dfe6fb43ef04c78daa5dd418f72c92059cd947bfd",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-INS-AGENTS",
+        "ART-SOP-FASTLANE",
+        "ART-AGT-COORD"
+      ],
+      "wp_h_case_refs": [
+        "H-A01",
+        "H-A11"
+      ],
+      "applicable_rule_ids": [
+        "GOV-002"
+      ],
+      "routing_receipt_refs": {
+        "EV-001": "e18a866cb7e65f41893b7610c07896ae0e9ec300e41ae7e7007c8b21e16cce20"
+      },
       "status": "PARTIAL",
       "severity": "P2",
       "disposition": "REFACTOR_P02",
       "blocker": "Dense instruction bloat and cross-file duplication across AGENTS.md and agent profiles",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-INS-03",
@@ -93,12 +146,38 @@
         "EV-006",
         "EV-007"
       ],
-      "evidence_hash": "2526f2ec4576e821c05b02cf175a8a9bc356dcdc49385c14f15e03eb4d1fbe7e",
+      "evidence_hashes": {
+        "EV-006": "2526f2ec4576e821c05b02cf175a8a9bc356dcdc49385c14f15e03eb4d1fbe7e",
+        "EV-007": "91fad41fd6b101724b84cd7905a29fbbad90ba3ddeca721478896aef22fdf26d"
+      },
+      "evidence_hash": "c0233cd6ada8e607c7731b1b50ec089820c3b43af44fd6c651f27457e683b2ca",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-ADR-0004-MAC",
+        "ART-ADR-README",
+        "ART-KN-SX1276",
+        "ART-KN-PLAYBOOK",
+        "ART-SCR-SNAPSHOT"
+      ],
+      "wp_h_case_refs": [
+        "H-A01",
+        "H-A05",
+        "H-A10"
+      ],
+      "applicable_rule_ids": [
+        "GOV-005",
+        "GOV-010",
+        "TDMA-001..010",
+        "SC-001..008"
+      ],
+      "routing_receipt_refs": {
+        "EV-024": "56335ccfca407ae486b8209346a021e0194e97c4e21ec88f19af7b8ce61a39f1"
+      },
       "status": "FAIL",
       "severity": "P1",
       "disposition": "REFACTOR_P02",
       "blocker": "Active Harness/reference files point to superseded Hybrid TDMA (ADR-0001) instead of ADR-0004",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-INS-04",
@@ -119,12 +198,38 @@
         "EV-007",
         "EV-024"
       ],
-      "evidence_hash": "91fad41fd6b101724b84cd7905a29fbbad90ba3ddeca721478896aef22fdf26d",
+      "evidence_hashes": {
+        "EV-007": "91fad41fd6b101724b84cd7905a29fbbad90ba3ddeca721478896aef22fdf26d",
+        "EV-024": "56335ccfca407ae486b8209346a021e0194e97c4e21ec88f19af7b8ce61a39f1"
+      },
+      "evidence_hash": "58aed9a114ed92fba319aa984973a0a3f9d3364caa2d75523900f3332ffac1d3",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-STD-C2",
+        "ART-STD-GO2",
+        "ART-DOC-CODING-STD",
+        "ART-SCR-SELECTOR"
+      ],
+      "wp_h_case_refs": [
+        "H-A02",
+        "H-A03",
+        "H-A08",
+        "H-A10",
+        "H-A12"
+      ],
+      "applicable_rule_ids": [
+        "GOV-001..010",
+        "C-001..020",
+        "GO-001..014"
+      ],
+      "routing_receipt_refs": {
+        "EV-024": "56335ccfca407ae486b8209346a021e0194e97c4e21ec88f19af7b8ce61a39f1"
+      },
       "status": "PARTIAL",
       "severity": "P2",
       "disposition": "CONSOLIDATE_P02",
       "blocker": "Broken instruction link and stale Go v1.0 reference in coding-standards.md",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-INS-05",
@@ -136,22 +241,61 @@
       ],
       "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
       "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
-      "observed_behavior": "G0 AGENTS.md SHA-256 verification and deterministic C/Go V2 rule selection + ADR-0005 partitions work deterministically; negative probes block unknown IDs, wrong SHA, unsafe paths, and REF/GO-BE IDs. However, standards_policy.py still retains legacy TDMA/SC rule groups and Native Fast Lane lacks runtime interception outside run.py/pr_review.py.",
+      "observed_behavior": "G0 AGENTS.md SHA-256 verification and deterministic C/Go V2 rule selection (104 C IDs, 148 Go IDs) + ADR-0005 partitions work deterministically; negative probes block unknown IDs, wrong SHA, unsafe paths, and REF/GO-BE IDs. However, standards_policy.py retains legacy TDMA/SC rule groups and Native Fast Lane lacks runtime interception outside run.py/pr_review.py.",
       "verification_method": "UNIT + CLI_PROBE",
       "command_or_test_id": "python3 -m unittest discover -s tests/agent_harness -v + run_wph_probes.py",
       "expected": "G0 and deterministic rule selection/partitions/receipts preserved and enforced.",
-      "actual": "416 harness unit tests PASS; positive/negative routing probes PASS; Native interactive CLI lacks mandatory runtime hook enforcing injection.",
+      "actual": "416 harness unit tests PASS; positive/negative routing probes PASS (77 C / 140 Go / 0 docs); Native interactive CLI lacks mandatory runtime hook enforcing injection.",
       "evidence_refs": [
         "EV-001",
         "EV-012",
         "EV-024"
       ],
-      "evidence_hash": "e18a866cb7e65f41893b7610c07896ae0e9ec300e41ae7e7007c8b21e16cce20",
+      "evidence_hashes": {
+        "EV-001": "e18a866cb7e65f41893b7610c07896ae0e9ec300e41ae7e7007c8b21e16cce20",
+        "EV-012": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354",
+        "EV-024": "56335ccfca407ae486b8209346a021e0194e97c4e21ec88f19af7b8ce61a39f1"
+      },
+      "evidence_hash": "d18182fee924f945ffb31bc6fc2238ac36469b9bb9a85fd968d4375e7a0032a8",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-SCR-G0",
+        "ART-SCR-SELECTOR",
+        "ART-STD-C2",
+        "ART-STD-GO2"
+      ],
+      "wp_h_case_refs": [
+        "H-A02",
+        "H-A03",
+        "H-A07",
+        "H-A08",
+        "H-A12"
+      ],
+      "applicable_rule_ids": [
+        "GOV-001..010",
+        "MEM-001..008",
+        "ERR-001..007",
+        "QA-001..008",
+        "RTOS-003",
+        "SEC-001",
+        "SEC-004",
+        "GB-001",
+        "GB-002",
+        "GGS-001",
+        "GGS-006",
+        "GO-001",
+        "QG-001..008",
+        "AI-001..012"
+      ],
+      "routing_receipt_refs": {
+        "EV-001": "e18a866cb7e65f41893b7610c07896ae0e9ec300e41ae7e7007c8b21e16cce20",
+        "EV-024": "56335ccfca407ae486b8209346a021e0194e97c4e21ec88f19af7b8ce61a39f1"
+      },
       "status": "PARTIAL",
       "severity": "P1",
       "disposition": "KEEP_AND_TIGHTEN_P02_P03",
       "blocker": "Runtime G0/selection bypassable in interactive CLI; legacy TDMA/SC groups active in standards_policy.py",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-INS-06",
@@ -173,12 +317,36 @@
         "EV-005",
         "EV-006"
       ],
-      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "evidence_hashes": {
+        "EV-005": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+        "EV-006": "2526f2ec4576e821c05b02cf175a8a9bc356dcdc49385c14f15e03eb4d1fbe7e"
+      },
+      "evidence_hash": "7313908ab04d790280ab86084f13f30787d1704a68631cee4fd2f90c528edcca",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-STD-CCARS",
+        "ART-STD-GOCARS",
+        "ART-DOC-ARCH"
+      ],
+      "wp_h_case_refs": [
+        "H-A06",
+        "H-A07"
+      ],
+      "applicable_rule_ids": [
+        "ARCH-001..007",
+        "AR-001..008",
+        "REF-001..011",
+        "GO-ARCH-*",
+        "GO-BE-002"
+      ],
+      "routing_receipt_refs": {
+        "EV-024": "56335ccfca407ae486b8209346a021e0194e97c4e21ec88f19af7b8ce61a39f1"
+      },
       "status": "GAP",
       "severity": "P2",
       "disposition": "ADD_P02_ENFORCE_P05",
       "blocker": "No unified ARCHITECTURE.md map and no mechanical cross-layer boundary check in CI",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-INS-07",
@@ -190,21 +358,47 @@
       ],
       "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
       "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
-      "observed_behavior": "Unseen knowledge was encoded in docs/references/harness-engineering/ (#420), but older docs and ADR/hardware readmes were not retired when ADR-0004 or SOP v1.2 replaced them.",
-      "verification_method": "STATIC_AUDIT",
-      "command_or_test_id": "wpb_docs_headers.txt + broken link check",
-      "expected": "Retire/mark superseded sources; update docs with behavior changes.",
-      "actual": "Multiple superseded/overlapping SOPs (v1.0 SOP, P0/P1 drafts, AI_TASK_START_PROTOCOL DRAFT) and stale TDMA docs remain unmarked.",
+      "observed_behavior": "Unseen knowledge was encoded in docs/references/harness-engineering/ (#420), and verified offline (--network=none, 248/248 anchors), but older docs and ADR/hardware readmes were not retired when ADR-0004 or SOP v1.2 replaced them.",
+      "verification_method": "STATIC_AUDIT + OFFLINE_PROBE",
+      "command_or_test_id": "wpb_docs_headers.txt + broken link check + EV-025A + EV-026",
+      "expected": "Retire/mark superseded sources; update docs with behavior changes; offline local knowledge valid.",
+      "actual": "Local corpus 248/248 anchors valid offline, but superseded/overlapping SOPs and stale TDMA docs remain unmarked.",
       "evidence_refs": [
         "EV-006",
-        "EV-007"
+        "EV-007",
+        "EV-025A",
+        "EV-026"
       ],
-      "evidence_hash": "2526f2ec4576e821c05b02cf175a8a9bc356dcdc49385c14f15e03eb4d1fbe7e",
+      "evidence_hashes": {
+        "EV-006": "2526f2ec4576e821c05b02cf175a8a9bc356dcdc49385c14f15e03eb4d1fbe7e",
+        "EV-007": "91fad41fd6b101724b84cd7905a29fbbad90ba3ddeca721478896aef22fdf26d",
+        "EV-025A": "a15c1aaa21c50815f3c3a3bbafc558108759ee82f163cd4e6bce9151796e68f2",
+        "EV-026": "e3127a8daa80bc74b51b60abec24f2b267b5a01982966a2169f4b56f9b464325"
+      },
+      "evidence_hash": "13161d2e83e76977f77f9229ddf12a81d8ff6057897ae592d4e5add847c2b6ed",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-KN-CORPUS",
+        "ART-KN-SX1276",
+        "ART-SOP-FASTLANE",
+        "ART-SOP-OLD"
+      ],
+      "wp_h_case_refs": [
+        "H-A05",
+        "H-A10"
+      ],
+      "applicable_rule_ids": [
+        "GOV-005",
+        "QA-006"
+      ],
+      "routing_receipt_refs": {
+        "EV-025A": "a15c1aaa21c50815f3c3a3bbafc558108759ee82f163cd4e6bce9151796e68f2"
+      },
       "status": "PARTIAL",
       "severity": "P2",
       "disposition": "DEPRECATE_CONSOLIDATE_P02",
       "blocker": "Superseded TDMA and draft Harness SOPs remain active without clear deprecation banners",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-TOL-01",
@@ -224,14 +418,40 @@
       "evidence_refs": [
         "EV-007",
         "EV-008",
-        "EV-025"
+        "EV-025B"
       ],
-      "evidence_hash": "91fad41fd6b101724b84cd7905a29fbbad90ba3ddeca721478896aef22fdf26d",
+      "evidence_hashes": {
+        "EV-007": "91fad41fd6b101724b84cd7905a29fbbad90ba3ddeca721478896aef22fdf26d",
+        "EV-008": "89a224eabb72fc3ee304b9c0e58f7816e4746e8782f811c93a1380911a9838b5",
+        "EV-025B": "a15c1aaa21c50815f3c3a3bbafc558108759ee82f163cd4e6bce9151796e68f2"
+      },
+      "evidence_hash": "731322d474ee99b942c53f79780ccae40999cb60485ce5f268f9c9effb8f66ad",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-AGT-COORD",
+        "ART-SCR-DOCTOR",
+        "ART-SCR-MCP",
+        "ART-SKL-GAP",
+        "ART-SKL-PROV-AGY",
+        "ART-SKL-PROV-CODEX"
+      ],
+      "wp_h_case_refs": [
+        "H-A01",
+        "H-A09",
+        "H-A12"
+      ],
+      "applicable_rule_ids": [
+        "QA-001",
+        "QA-002"
+      ],
+      "routing_receipt_refs": {
+        "EV-025B": "a15c1aaa21c50815f3c3a3bbafc558108759ee82f163cd4e6bce9151796e68f2"
+      },
       "status": "PARTIAL",
       "severity": "P2",
       "disposition": "REFACTOR_P03",
       "blocker": "Doc/code mismatch on MCP tools and PATH detection for codex CLI",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-TOL-02",
@@ -252,12 +472,35 @@
         "EV-003",
         "EV-012"
       ],
-      "evidence_hash": "1f5546c8a459daeb2f78ca8d344bffe59d3be6934e520cfe0cac09245d50ac30",
+      "evidence_hashes": {
+        "EV-003": "1f5546c8a459daeb2f78ca8d344bffe59d3be6934e520cfe0cac09245d50ac30",
+        "EV-012": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354"
+      },
+      "evidence_hash": "1a01b09776dd393de34bcce77692eb6f566886c473be90ed6dc552e4c0a6c247",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-SEC-PROVIDER",
+        "ART-AGT-COORD",
+        "ART-SKL-PROV-AGY",
+        "ART-SKL-PROV-CODEX"
+      ],
+      "wp_h_case_refs": [
+        "H-A09",
+        "H-A12"
+      ],
+      "applicable_rule_ids": [
+        "GOV-008",
+        "SE-003",
+        "SE-004"
+      ],
+      "routing_receipt_refs": {
+        "EV-001": "e18a866cb7e65f41893b7610c07896ae0e9ec300e41ae7e7007c8b21e16cce20"
+      },
       "status": "GAP",
       "severity": "P0",
       "disposition": "REFACTOR_P03",
       "blocker": "Least privilege not enforced at runtime in Native Fast Lane (Full Access active)",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-TOL-03",
@@ -273,17 +516,43 @@
       "verification_method": "UNIT + CLI_PROBE",
       "command_or_test_id": "tests/agent_harness + python3 scripts/agent_harness/p1/cli.py prepare --issue 422",
       "expected": "Exact scope guard, trusted Host, untrusted Issue handling.",
-      "actual": "Unit tests PASS, but p1/cli.py returned BLOCKED ('Malformed Issue or missing strict scope') on live OPEN Issue #422.",
+      "actual": "Unit tests PASS, but p1/cli.py returned exit 2 BLOCKED ('Malformed Issue or missing strict scope') on live OPEN Issue #422.",
       "evidence_refs": [
         "EV-012",
-        "EV-025"
+        "EV-024",
+        "EV-025B"
       ],
-      "evidence_hash": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354",
+      "evidence_hashes": {
+        "EV-012": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354",
+        "EV-024": "56335ccfca407ae486b8209346a021e0194e97c4e21ec88f19af7b8ce61a39f1",
+        "EV-025B": "a15c1aaa21c50815f3c3a3bbafc558108759ee82f163cd4e6bce9151796e68f2"
+      },
+      "evidence_hash": "096ec151c3166b5acf06c6919318920d45bc960b91e4adee533be5267858aabf",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-SCR-SCOPE",
+        "ART-SCR-QG",
+        "ART-SCR-PR"
+      ],
+      "wp_h_case_refs": [
+        "H-A02",
+        "H-A03",
+        "H-A08",
+        "H-A09"
+      ],
+      "applicable_rule_ids": [
+        "GOV-001",
+        "QA-006"
+      ],
+      "routing_receipt_refs": {
+        "EV-024": "56335ccfca407ae486b8209346a021e0194e97c4e21ec88f19af7b8ce61a39f1",
+        "EV-025B": "a15c1aaa21c50815f3c3a3bbafc558108759ee82f163cd4e6bce9151796e68f2"
+      },
       "status": "PARTIAL",
       "severity": "P1",
       "disposition": "KEEP_REFACTOR_P03",
       "blocker": "scope.py parser brittle on explanatory text under Target Directories heading; interactive CLI lacks mandatory pre-edit Host enforcement",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-TOL-04",
@@ -304,12 +573,28 @@
         "EV-012",
         "EV-005"
       ],
-      "evidence_hash": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354",
+      "evidence_hashes": {
+        "EV-012": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354",
+        "EV-005": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f"
+      },
+      "evidence_hash": "b49db4628208256d8416697bef8fad8efec1f83b1bcf823d547ad21a976cf81d",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-SCR-P1-PROC",
+        "ART-SCR-ADAPT-AGY",
+        "ART-SCR-PR"
+      ],
+      "wp_h_case_refs": [],
+      "applicable_rule_ids": [
+        "ERR-002",
+        "RTOS-009"
+      ],
+      "routing_receipt_refs": {},
       "status": "PARTIAL",
       "severity": "P2",
       "disposition": "KEEP_EXTEND_P03",
       "blocker": "Timeout/cleanup enforced in Python runners, not in Native interactive mode",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-TOL-05",
@@ -331,12 +616,29 @@
         "EV-008",
         "EV-012"
       ],
-      "evidence_hash": "9de22e563c0b4aec47674f20de0e548b955624695899368808113ee371ff6858",
+      "evidence_hashes": {
+        "EV-004": "9de22e563c0b4aec47674f20de0e548b955624695899368808113ee371ff6858",
+        "EV-008": "89a224eabb72fc3ee304b9c0e58f7816e4746e8782f811c93a1380911a9838b5",
+        "EV-012": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354"
+      },
+      "evidence_hash": "0b5c2e153bd0d7110a4edaa9fa39a8d11d85dd6b583813b3a68d9047ddab8aa6",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-SCR-ADAPT-CODEX",
+        "ART-SCR-ADAPT-AGY",
+        "ART-AGT-COORD"
+      ],
+      "wp_h_case_refs": [
+        "H-A01",
+        "H-A12"
+      ],
+      "applicable_rule_ids": [],
+      "routing_receipt_refs": {},
       "status": "PARTIAL",
       "severity": "P2",
       "disposition": "KEEP_ALIGN_P03",
       "blocker": "Adapter unit contracts pass, but dual-provider runtime parity not verified E2E",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-ENV-01",
@@ -358,12 +660,32 @@
         "EV-018",
         "EV-022"
       ],
-      "evidence_hash": "89a224eabb72fc3ee304b9c0e58f7816e4746e8782f811c93a1380911a9838b5",
+      "evidence_hashes": {
+        "EV-008": "89a224eabb72fc3ee304b9c0e58f7816e4746e8782f811c93a1380911a9838b5",
+        "EV-017": "49bcb3abc11ed007dfd278fd7dd71337a65a50c09a14d40edcc38dc7a1349ee5",
+        "EV-018": "1723573e48506e796cfc0acd17cdb138cc5b2bad25264e37c068fe0244f8ca5d",
+        "EV-022": "482f026cf075d64d5a14922894910656e7fe1e3952579f24556232e0bf61551c"
+      },
+      "evidence_hash": "d6cc437a5c4cbe0957633378353f1261ad890f200fbc2d84d97696b5447da4d5",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-SCR-DOCTOR",
+        "ART-SCR-SETUP"
+      ],
+      "wp_h_case_refs": [
+        "H-A04",
+        "H-A06"
+      ],
+      "applicable_rule_ids": [
+        "GOV-003",
+        "GO-014"
+      ],
+      "routing_receipt_refs": {},
       "status": "PARTIAL",
       "severity": "P1",
       "disposition": "REFACTOR_P03",
       "blocker": "Initialization diagnostics do not verify Go/Web deps or ESP-IDF offline managed_components",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-ENV-02",
@@ -388,12 +710,32 @@
         "EV-018",
         "EV-022"
       ],
-      "evidence_hash": "9de22e563c0b4aec47674f20de0e548b955624695899368808113ee371ff6858",
+      "evidence_hashes": {
+        "EV-004": "9de22e563c0b4aec47674f20de0e548b955624695899368808113ee371ff6858",
+        "EV-017": "49bcb3abc11ed007dfd278fd7dd71337a65a50c09a14d40edcc38dc7a1349ee5",
+        "EV-018": "1723573e48506e796cfc0acd17cdb138cc5b2bad25264e37c068fe0244f8ca5d",
+        "EV-022": "482f026cf075d64d5a14922894910656e7fe1e3952579f24556232e0bf61551c"
+      },
+      "evidence_hash": "6d2d3b55245f8d9208008e0ec4da107d40f5b8d703ef2e70f9661f2b199377aa",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-SCR-RESOLVER"
+      ],
+      "wp_h_case_refs": [
+        "H-A04",
+        "H-A06"
+      ],
+      "applicable_rule_ids": [
+        "GOV-003",
+        "QA-005",
+        "GO-014"
+      ],
+      "routing_receipt_refs": {},
       "status": "FAIL",
       "severity": "P1",
       "disposition": "REFACTOR_P03",
       "blocker": "Clean worktree builds fail offline for ESP-IDF (uncached espressif/mqtt) and Web (no node_modules); host Go 1.27.1 != 1.27.3",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-ENV-03",
@@ -414,12 +756,30 @@
         "EV-007",
         "EV-005"
       ],
-      "evidence_hash": "91fad41fd6b101724b84cd7905a29fbbad90ba3ddeca721478896aef22fdf26d",
+      "evidence_hashes": {
+        "EV-007": "91fad41fd6b101724b84cd7905a29fbbad90ba3ddeca721478896aef22fdf26d",
+        "EV-005": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f"
+      },
+      "evidence_hash": "e6aefdc4bb83f06364ad6e02a7ca2054970c30a262d1f8a3e5e7a5ecd0689579",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-SOP-FASTLANE",
+        "ART-SOP-QG",
+        "ART-SCR-MCP"
+      ],
+      "wp_h_case_refs": [
+        "H-A01",
+        "H-A10"
+      ],
+      "applicable_rule_ids": [
+        "QA-001"
+      ],
+      "routing_receipt_refs": {},
       "status": "PARTIAL",
       "severity": "P2",
       "disposition": "CONSOLIDATE_P03",
       "blocker": "Missing documented MCP file/tool and fragmented test/check commands",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-ENV-04",
@@ -431,23 +791,48 @@
       ],
       "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
       "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
-      "observed_behavior": "Baseline on main FAILS both quality_gates.py (SECRET-SCAN P0 at integration.test.ts:31) and Go CI (gofmt -l . at rf_tracker.go). Because quality_gates.py scans the entire repo, unrelated Issues cannot achieve AUTO_CHECK_PASS without touching out-of-scope baseline files, and run.py blocks at preflight.",
+      "observed_behavior": "Baseline on main FAILS local quality_gates.py (SECRET-SCAN P0 false positive at integration.test.ts:31) and Go CI gofmt -l . (rf_tracker.go). GitHub Actions CI is OWNER_WAIVED due to exhausted quota (NOT CI_PASS), while local SECRET-SCAN, Mandatory G0, and local Quality Gates remain NOT waived.",
       "verification_method": "CLI_EXEC",
       "command_or_test_id": "quality_gates.py + gh run view + gofmt -l . + run.py --issue 422",
       "expected": "Pre-edit baseline check blocks broken foundations while preserving strict Issue scope.",
-      "actual": "Both baseline gates fail on main fdbc9a5c; run.py preflight blocks at SECRET-SCAN.",
+      "actual": "Local SECRET-SCAN blocks quality_gates.py (exit 1) and run.py (exit 2); Go CI gofmt FAIL (rf_tracker.go) while go vet/test/build PASS in 1.27.3.",
       "evidence_refs": [
         "EV-011",
         "EV-016",
         "EV-017",
-        "EV-025"
+        "EV-025C"
       ],
-      "evidence_hash": "53ac16793f0d42432e46104ff9a85514504e06d76d594bf000d1afa1aa1f4038",
+      "evidence_hashes": {
+        "EV-011": "53ac16793f0d42432e46104ff9a85514504e06d76d594bf000d1afa1aa1f4038",
+        "EV-016": "578193585104d4fb9d261ce9ebcece75e3458e890de7dbb41ab44e7894d858ad",
+        "EV-017": "49bcb3abc11ed007dfd278fd7dd71337a65a50c09a14d40edcc38dc7a1349ee5",
+        "EV-025C": "a15c1aaa21c50815f3c3a3bbafc558108759ee82f163cd4e6bce9151796e68f2"
+      },
+      "evidence_hash": "2524db9bc31e4a017bac02267e26e5507b558b6f1cef5dca81d53201bb30e134",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-SCR-QG",
+        "ART-SCR-RUN",
+        "ART-CI-BACKEND"
+      ],
+      "wp_h_case_refs": [
+        "H-A04",
+        "H-A06"
+      ],
+      "applicable_rule_ids": [
+        "GOV-008",
+        "GGS-001",
+        "GO-001",
+        "QG-001"
+      ],
+      "routing_receipt_refs": {
+        "EV-025C": "a15c1aaa21c50815f3c3a3bbafc558108759ee82f163cd4e6bce9151796e68f2"
+      },
       "status": "FAIL",
       "severity": "P0",
       "disposition": "KEEP_GATE_FIX_BASELINE_SEPARATE",
-      "blocker": "Pre-existing main failures in SECRET-SCAN and Go CI block clean baseline verification",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "blocker": "Pre-existing main failures in local SECRET-SCAN and Go gofmt block clean baseline verification (GitHub Actions OWNER_WAIVED for quota; local gates NOT waived)",
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-ENV-05",
@@ -468,12 +853,30 @@
         "EV-008",
         "EV-018"
       ],
-      "evidence_hash": "89a224eabb72fc3ee304b9c0e58f7816e4746e8782f811c93a1380911a9838b5",
+      "evidence_hashes": {
+        "EV-008": "89a224eabb72fc3ee304b9c0e58f7816e4746e8782f811c93a1380911a9838b5",
+        "EV-018": "1723573e48506e796cfc0acd17cdb138cc5b2bad25264e37c068fe0244f8ca5d"
+      },
+      "evidence_hash": "0a654ec763b3fbcb3824942535f5ae3ac4bb5a993895998ba713a4797217be20",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-SCR-SETUP",
+        "ART-SCR-RESOLVER",
+        "ART-SOP-FASTLANE"
+      ],
+      "wp_h_case_refs": [
+        "H-A09"
+      ],
+      "applicable_rule_ids": [
+        "GOV-004",
+        "GOV-009"
+      ],
+      "routing_receipt_refs": {},
       "status": "PARTIAL",
       "severity": "P2",
       "disposition": "KEEP_HARDEN_P03",
       "blocker": "Instruction-only safety boundary in interactive Full Access mode",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-STA-01",
@@ -493,12 +896,24 @@
         "EV-005",
         "EV-012"
       ],
-      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "evidence_hashes": {
+        "EV-005": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+        "EV-012": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354"
+      },
+      "evidence_hash": "b49db4628208256d8416697bef8fad8efec1f83b1bcf823d547ad21a976cf81d",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-SCR-P1-STATE",
+        "ART-SCR-P1-PILOT"
+      ],
+      "wp_h_case_refs": [],
+      "applicable_rule_ids": [],
+      "routing_receipt_refs": {},
       "status": "GAP",
       "severity": "P1",
       "disposition": "ADD_P04",
       "blocker": "No machine-readable feature surface with verification steps and passing state",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-STA-02",
@@ -517,12 +932,23 @@
         "EV-012",
         "EV-005"
       ],
-      "evidence_hash": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354",
+      "evidence_hashes": {
+        "EV-012": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354",
+        "EV-005": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f"
+      },
+      "evidence_hash": "b49db4628208256d8416697bef8fad8efec1f83b1bcf823d547ad21a976cf81d",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-SCR-P1-STATE"
+      ],
+      "wp_h_case_refs": [],
+      "applicable_rule_ids": [],
+      "routing_receipt_refs": {},
       "status": "PARTIAL",
       "severity": "P1",
       "disposition": "REFACTOR_P04",
       "blocker": "WIP=1 SQLite constraint unused by Native Fast Lane",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-STA-03",
@@ -541,12 +967,26 @@
       "evidence_refs": [
         "EV-012"
       ],
+      "evidence_hashes": {
+        "EV-012": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354"
+      },
       "evidence_hash": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354",
+      "evidence_hash_method": "direct_artifact_sha256",
+      "wp_h_artifact_refs": [
+        "ART-SCR-QG",
+        "ART-SCR-P1-PILOT"
+      ],
+      "wp_h_case_refs": [],
+      "applicable_rule_ids": [
+        "QA-001",
+        "QA-002"
+      ],
+      "routing_receipt_refs": {},
       "status": "PARTIAL",
       "severity": "P1",
       "disposition": "ADD_P04",
       "blocker": "No persistent cross-session revision-bound passing registry",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-STA-04",
@@ -563,12 +1003,23 @@
         "EV-005",
         "EV-006"
       ],
-      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "evidence_hashes": {
+        "EV-005": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+        "EV-006": "2526f2ec4576e821c05b02cf175a8a9bc356dcdc49385c14f15e03eb4d1fbe7e"
+      },
+      "evidence_hash": "7313908ab04d790280ab86084f13f30787d1704a68631cee4fd2f90c528edcca",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-KN-CORPUS"
+      ],
+      "wp_h_case_refs": [],
+      "applicable_rule_ids": [],
+      "routing_receipt_refs": {},
       "status": "GAP",
       "severity": "P1",
       "disposition": "ADD_P04",
       "blocker": "No durable repo progress/handoff artifact for fresh-session resume",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-STA-05",
@@ -588,12 +1039,24 @@
       "evidence_refs": [
         "EV-012"
       ],
+      "evidence_hashes": {
+        "EV-012": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354"
+      },
       "evidence_hash": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354",
+      "evidence_hash_method": "direct_artifact_sha256",
+      "wp_h_artifact_refs": [
+        "ART-SCR-P1-STATE",
+        "ART-SCR-P1-WT",
+        "ART-SCR-P1-PILOT"
+      ],
+      "wp_h_case_refs": [],
+      "applicable_rule_ids": [],
+      "routing_receipt_refs": {},
       "status": "PARTIAL",
       "severity": "P1",
       "disposition": "EXTEND_P04",
       "blocker": "Crash recovery exists only in unused P1 SQLite layer, not Native Fast Lane",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-STA-06",
@@ -612,12 +1075,23 @@
       "evidence_refs": [
         "EV-005"
       ],
+      "evidence_hashes": {
+        "EV-005": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f"
+      },
       "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "evidence_hash_method": "direct_artifact_sha256",
+      "wp_h_artifact_refs": [
+        "ART-SCR-P1-STATE",
+        "ART-SCR-MCP"
+      ],
+      "wp_h_case_refs": [],
+      "applicable_rule_ids": [],
+      "routing_receipt_refs": {},
       "status": "PARTIAL",
       "severity": "P2",
       "disposition": "ADD_P04",
       "blocker": "State ownership split across unlinked GitHub Issues, unused SQLite, and ephemeral /tmp",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-FBK-01",
@@ -630,25 +1104,51 @@
       ],
       "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
       "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
-      "observed_behavior": "quality_gates.py validates Host receipts by risk routing, but is NOT a test runner. CI workflows contain placeholders (ci-clients.yml checks README existence only; ci-integration.yml is unimplemented warning; ci-firmware.yml only builds on firmware PRs) and no unified test/check runner exists.",
+      "observed_behavior": "quality_gates.py validates Host receipts by risk routing, but is NOT a test runner. CI workflows contain placeholders (ci-clients.yml checks README existence only; ci-integration.yml is unimplemented warning). GitHub Actions CI is OWNER_WAIVED due to quota (NOT CI_PASS), while local test/check runs show 416 harness unit, 15 contract, 44 unit, and Go vet/test/build PASS.",
       "verification_method": "STATIC + CLI_EXEC",
-      "command_or_test_id": "inspect .github/workflows/*.yml + run quality_gates.py + contracts + unit tests",
+      "command_or_test_id": "inspect .github/workflows/*.yml + run quality_gates.py + contracts + unit tests + Go Docker checks",
       "expected": "Executable impact-selected check interface; mandatory tests cannot be skipped.",
-      "actual": "Harness unit (416), contract (15 + check_contracts), product unit (44) pass; ci-clients & ci-integration are placeholders; Go CI fails on gofmt.",
+      "actual": "Local unit/contract/Go checks pass when prerequisites met; ci-clients & ci-integration are placeholders; Go CI fails gofmt; GitHub Actions OWNER_WAIVED (quota).",
       "evidence_refs": [
         "EV-011",
         "EV-012",
         "EV-016",
+        "EV-017",
         "EV-019",
         "EV-020",
         "EV-021"
       ],
-      "evidence_hash": "53ac16793f0d42432e46104ff9a85514504e06d76d594bf000d1afa1aa1f4038",
+      "evidence_hashes": {
+        "EV-011": "53ac16793f0d42432e46104ff9a85514504e06d76d594bf000d1afa1aa1f4038",
+        "EV-012": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354",
+        "EV-016": "578193585104d4fb9d261ce9ebcece75e3458e890de7dbb41ab44e7894d858ad",
+        "EV-017": "49bcb3abc11ed007dfd278fd7dd71337a65a50c09a14d40edcc38dc7a1349ee5",
+        "EV-019": "55fe437b7aa98f6c7e7277f4388aa8dfe41c5e024e917fa119251319473152d3",
+        "EV-020": "2dedf3080574b0687985242703ea393c4dd8e12a1861e54817bfc10481aad417",
+        "EV-021": "7e56d5bb31280d024545053edabff7054e412599344571f88259530f556cd99b"
+      },
+      "evidence_hash": "08e30d8f61ff6fffef6738a5410f517ebe123a8519f082da5337bb6c71250a9b",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-SCR-QG",
+        "ART-CI-BACKEND",
+        "ART-CI-CLIENTS",
+        "ART-CI-INTEG"
+      ],
+      "wp_h_case_refs": [
+        "H-A04",
+        "H-A06"
+      ],
+      "applicable_rule_ids": [
+        "QA-001..008",
+        "TS-001..011"
+      ],
+      "routing_receipt_refs": {},
       "status": "PARTIAL",
       "severity": "P1",
       "disposition": "CONSOLIDATE_P05",
-      "blocker": "No unified test runner; ci-clients and ci-integration are non-verifying placeholders",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "blocker": "No unified test runner; ci-clients and ci-integration are non-verifying placeholders; Go gofmt fails",
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-FBK-02",
@@ -663,17 +1163,39 @@
       "verification_method": "UNIT + CLI_EXEC",
       "command_or_test_id": "tests/agent_harness/test_quality_gates.py + quality_gates.py",
       "expected": "Trusted deterministic validation/receipts bound to candidate SHA and logs.",
-      "actual": "Receipt validator passes all unit tests; baseline quality_gates run blocked by SECRET-SCAN P0 false positive.",
+      "actual": "Receipt validator passes all unit tests; baseline quality_gates run blocked by SECRET-SCAN P0 false positive (NOT waived).",
       "evidence_refs": [
         "EV-011",
         "EV-012"
       ],
-      "evidence_hash": "53ac16793f0d42432e46104ff9a85514504e06d76d594bf000d1afa1aa1f4038",
+      "evidence_hashes": {
+        "EV-011": "53ac16793f0d42432e46104ff9a85514504e06d76d594bf000d1afa1aa1f4038",
+        "EV-012": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354"
+      },
+      "evidence_hash": "adbe34ae9c609c366342ec546033e88bc82c72d0d39c0a68717272426e14231d",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-SCR-QG",
+        "ART-SCR-SELECTOR"
+      ],
+      "wp_h_case_refs": [
+        "H-A02",
+        "H-A03",
+        "H-A08"
+      ],
+      "applicable_rule_ids": [
+        "QA-001",
+        "QA-002",
+        "QA-006"
+      ],
+      "routing_receipt_refs": {
+        "EV-024": "56335ccfca407ae486b8209346a021e0194e97c4e21ec88f19af7b8ce61a39f1"
+      },
       "status": "PARTIAL",
       "severity": "P1",
       "disposition": "KEEP_HARDEN_P05",
       "blocker": "Receipt authorship unauthenticated in interactive CLI; baseline blocked by SECRET-SCAN",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-FBK-03",
@@ -693,12 +1215,29 @@
       "evidence_refs": [
         "EV-012"
       ],
+      "evidence_hashes": {
+        "EV-012": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354"
+      },
       "evidence_hash": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354",
+      "evidence_hash_method": "direct_artifact_sha256",
+      "wp_h_artifact_refs": [
+        "ART-SCR-PR",
+        "ART-SCR-ADAPT-AGY",
+        "ART-SCR-SNAPSHOT"
+      ],
+      "wp_h_case_refs": [
+        "H-A05"
+      ],
+      "applicable_rule_ids": [
+        "QA-002",
+        "QG-001..008"
+      ],
+      "routing_receipt_refs": {},
       "status": "PARTIAL",
       "severity": "P1",
       "disposition": "REFACTOR_P05",
       "blocker": "snapshot.py embeds superseded ADR-0001; auto-audit E2E unverified",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-FBK-04",
@@ -719,12 +1258,32 @@
         "EV-005",
         "EV-009"
       ],
-      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "evidence_hashes": {
+        "EV-005": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+        "EV-009": "5c0b9deb7949fd68e99b34e661e720b14641f683d1ddb45af5469ded3d46ccce"
+      },
+      "evidence_hash": "d90517a9eb264c8a78c3e7d066ab47bfb8a333734acb11aff475f510df875695",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-STD-CCARS",
+        "ART-STD-GOCARS",
+        "ART-SCR-STRUCT"
+      ],
+      "wp_h_case_refs": [
+        "H-A06",
+        "H-A07"
+      ],
+      "applicable_rule_ids": [
+        "ARCH-001..007",
+        "AR-004",
+        "GO-BE-002"
+      ],
+      "routing_receipt_refs": {},
       "status": "GAP",
       "severity": "P1",
       "disposition": "ADD_P05",
       "blocker": "No mechanical layer/dependency boundary enforcement with negative fixtures",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-FBK-05",
@@ -744,12 +1303,32 @@
       "evidence_refs": [
         "EV-005"
       ],
+      "evidence_hashes": {
+        "EV-005": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f"
+      },
       "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "evidence_hash_method": "direct_artifact_sha256",
+      "wp_h_artifact_refs": [
+        "ART-CI-INTEG",
+        "ART-KN-SX1276"
+      ],
+      "wp_h_case_refs": [
+        "H-A04",
+        "H-A05",
+        "H-A06"
+      ],
+      "applicable_rule_ids": [
+        "QA-003",
+        "QA-008",
+        "RTOS-007",
+        "RTOS-010"
+      ],
+      "routing_receipt_refs": {},
       "status": "NOT_VERIFIED",
       "severity": "P1",
       "disposition": "ADD_WIRE_P05_P06",
       "blocker": "No active CI integration/restart E2E gate; HIL/RF unavailable",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-FBK-06",
@@ -769,12 +1348,28 @@
         "EV-005",
         "EV-012"
       ],
-      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "evidence_hashes": {
+        "EV-005": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+        "EV-012": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354"
+      },
+      "evidence_hash": "b49db4628208256d8416697bef8fad8efec1f83b1bcf823d547ad21a976cf81d",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-SCR-RUN",
+        "ART-SCR-P1-STATE"
+      ],
+      "wp_h_case_refs": [],
+      "applicable_rule_ids": [
+        "ERR-004",
+        "ERR-007",
+        "OB-001..012"
+      ],
+      "routing_receipt_refs": {},
       "status": "GAP",
       "severity": "P2",
       "disposition": "ADD_P06",
       "blocker": "No structured cross-layer observability collector or retention policy",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-FBK-07",
@@ -791,12 +1386,23 @@
         "EV-005",
         "EV-006"
       ],
-      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "evidence_hashes": {
+        "EV-005": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+        "EV-006": "2526f2ec4576e821c05b02cf175a8a9bc356dcdc49385c14f15e03eb4d1fbe7e"
+      },
+      "evidence_hash": "7313908ab04d790280ab86084f13f30787d1704a68631cee4fd2f90c528edcca",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-KN-CORPUS"
+      ],
+      "wp_h_case_refs": [],
+      "applicable_rule_ids": [],
+      "routing_receipt_refs": {},
       "status": "GAP",
       "severity": "P2",
       "disposition": "ADD_P07",
       "blocker": "No domain/layer quality grade surface or debt tracker",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-FBK-08",
@@ -808,16 +1414,32 @@
       "verification_method": "STATIC",
       "command_or_test_id": "inspect scripts/agent_harness/ and docs/harness/",
       "expected": "Controlled benchmark, failure attribution, regression guard, periodic simplification.",
-      "actual": "Absent; benchmark protocol is defined for the first time in P01 WP-F.",
+      "actual": "Absent; benchmark protocol is defined for the first time in P01 WP-F (all metrics NOT_RUN).",
       "evidence_refs": [
-        "EV-005"
+        "EV-005",
+        "EV-024"
       ],
-      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "evidence_hashes": {
+        "EV-005": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+        "EV-024": "56335ccfca407ae486b8209346a021e0194e97c4e21ec88f19af7b8ce61a39f1"
+      },
+      "evidence_hash": "d48f38d0b6164cb5a8142ab6b14613051eda129b5045bdbc4c918572d21babcb",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-KN-CORPUS"
+      ],
+      "wp_h_case_refs": [
+        "H-A11"
+      ],
+      "applicable_rule_ids": [],
+      "routing_receipt_refs": {
+        "EV-024": "56335ccfca407ae486b8209346a021e0194e97c4e21ec88f19af7b8ce61a39f1"
+      },
       "status": "GAP",
       "severity": "P2",
       "disposition": "ADD_P01_F_EXEC_P10",
       "blocker": "No baseline benchmark suite or simplification tracking exists",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-FBK-09",
@@ -838,12 +1460,25 @@
         "EV-005",
         "EV-012"
       ],
-      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "evidence_hashes": {
+        "EV-005": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+        "EV-012": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354"
+      },
+      "evidence_hash": "b49db4628208256d8416697bef8fad8efec1f83b1bcf823d547ad21a976cf81d",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-SCR-RUN",
+        "ART-SCR-P1-PILOT",
+        "ART-SCR-P1-AUTO"
+      ],
+      "wp_h_case_refs": [],
+      "applicable_rule_ids": [],
+      "routing_receipt_refs": {},
       "status": "PARTIAL",
       "severity": "P2",
       "disposition": "REFACTOR_P08",
       "blocker": "Loop bounds limited to max_repairs in unused scripts; no token/cost/wall budgets",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-GOV-01",
@@ -855,21 +1490,43 @@
       ],
       "source_revision": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
       "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
-      "observed_behavior": "Native Fast Lane defines Issue -> branch -> Worker -> quality_gates -> Auditor -> Draft PR -> human review, and pr_review.py enforces PR-01..PR-08 read-only. However, E2E execution of the full Fast Lane is explicitly marked E2E_NOT_VERIFIED.",
+      "observed_behavior": "Native Fast Lane defines Issue -> branch -> Worker -> quality_gates -> Auditor -> Draft PR -> human review, and pr_review.py enforces PR-01..PR-08 read-only. However, E2E execution of the full Fast Lane is explicitly marked E2E_NOT_VERIFIED, and GitHub Actions CI is OWNER_WAIVED (quota).",
       "verification_method": "STATIC + UNIT",
       "command_or_test_id": "inspect harness-fast-lane.md, harness-coordinator.md, pr_review.py",
       "expected": "End-to-end delivery flow preserving G0-G6 without auto-merge.",
       "actual": "Static instructions and pr_review unit tests exist; full E2E delivery rehearsal NOT_VERIFIED.",
       "evidence_refs": [
         "EV-003",
-        "EV-012"
+        "EV-012",
+        "EV-015"
       ],
-      "evidence_hash": "1f5546c8a459daeb2f78ca8d344bffe59d3be6934e520cfe0cac09245d50ac30",
+      "evidence_hashes": {
+        "EV-003": "1f5546c8a459daeb2f78ca8d344bffe59d3be6934e520cfe0cac09245d50ac30",
+        "EV-012": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354",
+        "EV-015": "a744dc378f535df7e01e53b04c849ff5bf5bcc3f9cf1765fd1d927e84c7d04e0"
+      },
+      "evidence_hash": "89917ca5d448b21122e804d87c444af0060421cf1ce134d94cc34053df626716",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-SOP-FASTLANE",
+        "ART-AGT-COORD",
+        "ART-SCR-PR"
+      ],
+      "wp_h_case_refs": [
+        "H-A01",
+        "H-A09"
+      ],
+      "applicable_rule_ids": [
+        "GOV-001",
+        "GOV-002",
+        "GOV-009"
+      ],
+      "routing_receipt_refs": {},
       "status": "PARTIAL",
       "severity": "P1",
       "disposition": "KEEP_VERIFY_P08_P10",
-      "blocker": "Native Fast Lane E2E execution NOT_VERIFIED",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "blocker": "Native Fast Lane E2E execution NOT_VERIFIED; GitHub Actions OWNER_WAIVED",
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-GOV-02",
@@ -891,12 +1548,30 @@
         "EV-024",
         "EV-026"
       ],
-      "evidence_hash": "56335ccfca407ae486b8209346a021e0194e97c4e21ec88f19af7b8ce61a39f1",
+      "evidence_hashes": {
+        "EV-024": "56335ccfca407ae486b8209346a021e0194e97c4e21ec88f19af7b8ce61a39f1",
+        "EV-026": "e3127a8daa80bc74b51b60abec24f2b267b5a01982966a2169f4b56f9b464325"
+      },
+      "evidence_hash": "3afe715a580a84bd19fdb439f83a4287e58da16ea62c5f68358496fc42a8d6e7",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-KN-CORPUS"
+      ],
+      "wp_h_case_refs": [
+        "H-A01",
+        "H-A10"
+      ],
+      "applicable_rule_ids": [
+        "GOV-010"
+      ],
+      "routing_receipt_refs": {
+        "EV-024": "56335ccfca407ae486b8209346a021e0194e97c4e21ec88f19af7b8ce61a39f1"
+      },
       "status": "PARTIAL",
       "severity": "P2",
       "disposition": "KEEP_UPDATE_ALL_PHASES",
       "blocker": "Rollback rehearsal and P02+ tracking pending subsequent phases",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-GOV-03",
@@ -917,12 +1592,26 @@
         "EV-005",
         "EV-006"
       ],
-      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "evidence_hashes": {
+        "EV-005": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+        "EV-006": "2526f2ec4576e821c05b02cf175a8a9bc356dcdc49385c14f15e03eb4d1fbe7e"
+      },
+      "evidence_hash": "7313908ab04d790280ab86084f13f30787d1704a68631cee4fd2f90c528edcca",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-SOP-FASTLANE",
+        "ART-SCR-PR"
+      ],
+      "wp_h_case_refs": [],
+      "applicable_rule_ids": [
+        "QA-008"
+      ],
+      "routing_receipt_refs": {},
       "status": "GAP",
       "severity": "P1",
       "disposition": "ADD_P06_P10",
       "blocker": "Fresh-session 5/5 resume and clean-handoff not implemented or verified",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-ORC-01",
@@ -936,20 +1625,45 @@
       "approval_status": "OWNER_APPROVED_DESIGN_BASELINE",
       "observed_behavior": "Orchestration is split across unverified Native Coordinator instructions, unused run.py (Codex+AGY), simulated p1/pilot.py, and blocked Enterprise auto_issue.py. No unified logical Orchestrator enforces admission, budgets, retries, and escalation across active workflows.",
       "verification_method": "STATIC + CLI_PROBE",
-      "command_or_test_id": "inspect run.py, p1/pilot.py, p1/auto_issue.py, harness-coordinator.md",
+      "command_or_test_id": "inspect run.py, p1/pilot.py, p1/auto_issue.py, harness-coordinator.md + EV-025B + EV-025C",
       "expected": "Logical Orchestrator owning admission, routing, lifecycle, handoff, budget, retry, cancel, escalation.",
-      "actual": "Fragmented across 4 disconnected paths; run.py and p1/cli.py blocked on baseline/Issue #422.",
+      "actual": "Fragmented across 4 disconnected paths; p1/cli.py (exit 2) and run.py (exit 2) both blocked on live Issue #422 / baseline SECRET-SCAN.",
       "evidence_refs": [
         "EV-005",
         "EV-012",
-        "EV-025"
+        "EV-025B",
+        "EV-025C"
       ],
-      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "evidence_hashes": {
+        "EV-005": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+        "EV-012": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354",
+        "EV-025B": "a15c1aaa21c50815f3c3a3bbafc558108759ee82f163cd4e6bce9151796e68f2",
+        "EV-025C": "a15c1aaa21c50815f3c3a3bbafc558108759ee82f163cd4e6bce9151796e68f2"
+      },
+      "evidence_hash": "12c248b2a7e9236bba068a6c8714fa3baa3dc8dab38f295017833bc5d021a0c0",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-AGT-COORD",
+        "ART-SCR-RUN",
+        "ART-SCR-P1-PILOT",
+        "ART-SCR-P1-AUTO",
+        "ART-SCR-P1-CLI"
+      ],
+      "wp_h_case_refs": [
+        "H-A01",
+        "H-A09",
+        "H-A12"
+      ],
+      "applicable_rule_ids": [],
+      "routing_receipt_refs": {
+        "EV-025B": "a15c1aaa21c50815f3c3a3bbafc558108759ee82f163cd4e6bce9151796e68f2",
+        "EV-025C": "a15c1aaa21c50815f3c3a3bbafc558108759ee82f163cd4e6bce9151796e68f2"
+      },
       "status": "GAP",
       "severity": "P1",
       "disposition": "CONSOLIDATE_P08",
       "blocker": "No unified active Orchestrator control plane",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-ORC-02",
@@ -971,12 +1685,32 @@
         "EV-003",
         "EV-012"
       ],
-      "evidence_hash": "1f5546c8a459daeb2f78ca8d344bffe59d3be6934e520cfe0cac09245d50ac30",
+      "evidence_hashes": {
+        "EV-003": "1f5546c8a459daeb2f78ca8d344bffe59d3be6934e520cfe0cac09245d50ac30",
+        "EV-012": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354"
+      },
+      "evidence_hash": "1a01b09776dd393de34bcce77692eb6f566886c473be90ed6dc552e4c0a6c247",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-AGT-WORKER",
+        "ART-AGT-AUDITOR",
+        "ART-SEC-PROVIDER",
+        "ART-SCR-PR"
+      ],
+      "wp_h_case_refs": [
+        "H-A05",
+        "H-A09"
+      ],
+      "applicable_rule_ids": [
+        "QA-002",
+        "QA-008"
+      ],
+      "routing_receipt_refs": {},
       "status": "PARTIAL",
       "severity": "P1",
       "disposition": "REFACTOR_P05_P08",
       "blocker": "Runtime role filesystem/process isolation NOT_VERIFIED; auditor.md has stale TDMA directive",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-ORC-03",
@@ -995,12 +1729,23 @@
       "evidence_refs": [
         "EV-012"
       ],
+      "evidence_hashes": {
+        "EV-012": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354"
+      },
       "evidence_hash": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354",
+      "evidence_hash_method": "direct_artifact_sha256",
+      "wp_h_artifact_refs": [
+        "ART-SCR-P1-PILOT",
+        "ART-SCR-RUN"
+      ],
+      "wp_h_case_refs": [],
+      "applicable_rule_ids": [],
+      "routing_receipt_refs": {},
       "status": "GAP",
       "severity": "P1",
       "disposition": "ADD_P08",
       "blocker": "No multi-round Maker-Checker loop with external round state",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-ORC-04",
@@ -1020,12 +1765,23 @@
         "EV-005",
         "EV-012"
       ],
-      "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "evidence_hashes": {
+        "EV-005": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+        "EV-012": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354"
+      },
+      "evidence_hash": "b49db4628208256d8416697bef8fad8efec1f83b1bcf823d547ad21a976cf81d",
+      "evidence_hash_method": "sha256_of_sorted_evidence_hashes_map",
+      "wp_h_artifact_refs": [
+        "ART-SCR-ADAPT-AGY"
+      ],
+      "wp_h_case_refs": [],
+      "applicable_rule_ids": [],
+      "routing_receipt_refs": {},
       "status": "GAP",
       "severity": "P1",
       "disposition": "ADD_P05_P08",
       "blocker": "No 6-dimension 0-2 evaluator rubric or calibration baseline",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-ORC-05",
@@ -1044,12 +1800,23 @@
       "evidence_refs": [
         "EV-012"
       ],
+      "evidence_hashes": {
+        "EV-012": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354"
+      },
       "evidence_hash": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354",
+      "evidence_hash_method": "direct_artifact_sha256",
+      "wp_h_artifact_refs": [
+        "ART-SCR-P1-STATE",
+        "ART-SCR-P1-PILOT"
+      ],
+      "wp_h_case_refs": [],
+      "applicable_rule_ids": [],
+      "routing_receipt_refs": {},
       "status": "PARTIAL",
       "severity": "P1",
       "disposition": "CONSOLIDATE_P08",
       "blocker": "Persistent run contract and restart reconciliation absent from active workflows",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-ORC-06",
@@ -1065,12 +1832,22 @@
       "evidence_refs": [
         "EV-005"
       ],
+      "evidence_hashes": {
+        "EV-005": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f"
+      },
       "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "evidence_hash_method": "direct_artifact_sha256",
+      "wp_h_artifact_refs": [
+        "ART-KN-CORPUS"
+      ],
+      "wp_h_case_refs": [],
+      "applicable_rule_ids": [],
+      "routing_receipt_refs": {},
       "status": "GAP",
       "severity": "P2",
       "disposition": "ADD_P09",
       "blocker": "Pattern assessment not yet performed; extended graph deferred to P09",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-ORC-07",
@@ -1086,12 +1863,22 @@
       "evidence_refs": [
         "EV-005"
       ],
+      "evidence_hashes": {
+        "EV-005": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f"
+      },
       "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "evidence_hash_method": "direct_artifact_sha256",
+      "wp_h_artifact_refs": [
+        "ART-KN-CORPUS"
+      ],
+      "wp_h_case_refs": [],
+      "applicable_rule_ids": [],
+      "routing_receipt_refs": {},
       "status": "GAP",
       "severity": "P2",
       "disposition": "ADD_P08_P09",
       "blocker": "No orchestration tax measurement or human-review concurrency cap",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-ORC-08",
@@ -1107,12 +1894,22 @@
       "evidence_refs": [
         "EV-005"
       ],
+      "evidence_hashes": {
+        "EV-005": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f"
+      },
       "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "evidence_hash_method": "direct_artifact_sha256",
+      "wp_h_artifact_refs": [
+        "ART-KN-CORPUS"
+      ],
+      "wp_h_case_refs": [],
+      "applicable_rule_ids": [],
+      "routing_receipt_refs": {},
       "status": "CONDITIONAL_NOT_EXERCISED",
       "severity": "P3",
       "disposition": "DEFER_TO_P09",
       "blocker": "Conditional Level 5 target; deferred pending P08 core orchestration and P09 5-criteria evaluation",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-FBK-10",
@@ -1128,12 +1925,22 @@
       "evidence_refs": [
         "EV-005"
       ],
+      "evidence_hashes": {
+        "EV-005": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f"
+      },
       "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "evidence_hash_method": "direct_artifact_sha256",
+      "wp_h_artifact_refs": [
+        "ART-KN-CORPUS"
+      ],
+      "wp_h_case_refs": [],
+      "applicable_rule_ids": [],
+      "routing_receipt_refs": {},
       "status": "GAP",
       "severity": "P2",
       "disposition": "ADD_P08",
       "blocker": "No controlled Harness meta-improvement loop implemented",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     },
     {
       "id": "H2-FBK-11",
@@ -1149,12 +1956,22 @@
       "evidence_refs": [
         "EV-005"
       ],
+      "evidence_hashes": {
+        "EV-005": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f"
+      },
       "evidence_hash": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "evidence_hash_method": "direct_artifact_sha256",
+      "wp_h_artifact_refs": [
+        "ART-KN-CORPUS"
+      ],
+      "wp_h_case_refs": [],
+      "applicable_rule_ids": [],
+      "routing_receipt_refs": {},
       "status": "GAP",
       "severity": "P2",
       "disposition": "ADD_P08_P10",
       "blocker": "No frozen experiment holdouts or anti-Goodhart promotion gates",
-      "reviewer": "AUDIT_NOT_VERIFIED (Fresh-Independent-Auditor subagent unavailable; requires fresh independent session)"
+      "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION"
     }
   ]
 }
