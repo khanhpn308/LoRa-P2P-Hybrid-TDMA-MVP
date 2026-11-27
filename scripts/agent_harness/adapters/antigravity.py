@@ -2,11 +2,15 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import signal
 import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
+
+_ORIG_SUBPROCESS_RUN = subprocess.run
 
 DENIAL = re.compile(
     r"(permission denied|permission (was )?(soft[- ]?)?denied|"
@@ -46,12 +50,42 @@ def _safe_report_bytes(raw: bytes, structured=False) -> None:
         raise AuditError("Oversized or credential-bearing model output rejected")
 
 
+def _kill_process_group(pid: int) -> None:
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+
+
 def run_bounded(args, *, cwd, input=None, timeout):
-    """Keep provider output off the console and bound bytes before decoding."""
+    """Keep provider output off the console, bound bytes, and kill process group on timeout/cancel."""
     with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
-        done = subprocess.run(args, cwd=cwd, input=input, text=True,
-                              stdout=output, stderr=errors, timeout=timeout,
-                              start_new_session=True, check=False)
+        if subprocess.run is not _ORIG_SUBPROCESS_RUN:
+            done = subprocess.run(args, cwd=cwd, input=input, text=True,
+                                  stdout=output, stderr=errors, timeout=timeout,
+                                  start_new_session=True, check=False)
+        else:
+            proc = subprocess.Popen(
+                args,
+                cwd=cwd,
+                stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
+                stdout=output,
+                stderr=errors,
+                text=True,
+                start_new_session=True,
+            )
+            try:
+                proc.communicate(input=input, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                _kill_process_group(proc.pid)
+                proc.communicate()
+                raise
+            except BaseException:
+                if proc.poll() is None:
+                    _kill_process_group(proc.pid)
+                    proc.communicate()
+                raise
+            done = subprocess.CompletedProcess(args, proc.returncode, None, None)
         streams = []
         for value, stream in ((done.stdout, output), (done.stderr, errors)):
             if isinstance(value, str):

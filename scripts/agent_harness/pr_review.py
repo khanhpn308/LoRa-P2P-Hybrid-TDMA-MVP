@@ -1262,16 +1262,30 @@ def run_auto_audit(
         prompt_file.write_text(prompt, encoding="utf-8")
 
         # Invoke Auditor with bounded retry for transient infrastructure errors
-        # Snapshot evidence_dir before Auditor runs so any read-only violation is rejected.
+        # Snapshot evidence_dir recursively before Auditor runs; symlinks fail closed.
         def _snapshot_dir(root: Path) -> dict[str, str]:
+            if root.is_symlink() or not root.is_dir():
+                raise PRReviewError("Evidence directory missing or is a symlink")
             snap: dict[str, str] = {}
-            for p in sorted(root.iterdir()):
-                if p.is_symlink():
-                    snap[p.name] = "SYMLINK"
-                elif p.is_file():
-                    snap[p.name] = hashlib.sha256(p.read_bytes()).hexdigest()
-                elif p.is_dir():
-                    snap[p.name] = "DIR"
+
+            def _walk(current: Path) -> None:
+                for p in sorted(current.iterdir(), key=lambda x: x.name):
+                    rel = p.relative_to(root).as_posix()
+                    if p.is_symlink():
+                        raise PRReviewError(
+                            f"Symlink forbidden in read-only evidence directory: {rel}"
+                        )
+                    if p.is_dir():
+                        snap[rel] = "DIR"
+                        _walk(p)
+                    elif p.is_file():
+                        snap[rel] = hashlib.sha256(p.read_bytes()).hexdigest()
+                    else:
+                        raise PRReviewError(
+                            f"Unsupported non-regular entry in evidence directory: {rel}"
+                        )
+
+            _walk(root)
             return snap
 
         batch_report = None
@@ -1294,6 +1308,8 @@ def run_auto_audit(
                         f"Auditor modified read-only evidence directory during job '{job_id}'"
                     )
                 break
+            except PRReviewError:
+                raise
             except Exception as exc:
                 if _snapshot_dir(evidence_dir) != pre_evidence_snap:
                     raise PRReviewError(
