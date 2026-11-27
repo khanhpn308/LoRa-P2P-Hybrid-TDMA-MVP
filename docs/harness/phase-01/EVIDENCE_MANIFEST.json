@@ -1,0 +1,901 @@
+{
+  "manifest_version": "1.1.0",
+  "issue": 422,
+  "phase": "P01-B",
+  "mode": "AUDIT_ONLY",
+  "audited_commit_sha": "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+  "audited_tree_sha": "d065262bdce0880113c755103fe587dbb4edffcd",
+  "candidate_fingerprint_sha256": "afb33c526b114da0146e6a57554f555d56610501d1645afeb04f0774d377207d",
+  "agents_md_blob_sha": "14f2d7335c41a2ba38f3915ec023dd037603cfb7",
+  "agents_md_sha256": "09212ed3ac8b74476f915e2e168950bdb8d2d2cf26e6dba3f8efacccc30fcbe7",
+  "plan_revision": "P01_EXECUTION_PLAN.md v0.3.0 (fdbc9a5c)",
+  "protocol_revision": "P01_INDEPENDENT_AUDIT_PROTOCOL.md v0.3.0 (fdbc9a5c)",
+  "spec_revision": "HARNESS_SPEC.md v0.2.0",
+  "master_plan_revision": "HARNESS_MASTER_PLAN.md v0.2.0",
+  "remediation_round": "PR #423 Targeted Remediation (F01-F05 + Owner GitHub Actions OWNER_WAIVED)",
+  "prior_audited_candidate_head_sha": "66e0ee959f2f3b9a22ddd378cfda7c1fcecc7713",
+  "generated_utc": "2026-11-27T19:05:00Z",
+  "ci_waiver_status": {
+    "github_actions_ci": "OWNER_WAIVED (quota exhausted; NOT CI_PASS)",
+    "local_gates_waived": false,
+    "notes": "Owner waived GitHub Actions CI due to exhausted quota; SECRET-SCAN, Mandatory G0, and local Quality Gates are NOT waived. Go CI gofmt FAIL and Go vet/test/build PASS remain recorded."
+  },
+  "capability_and_budget_matrix": {
+    "execution_mode": "AUDIT_ONLY (isolated git worktree docs/422-p01-baseline-audit)",
+    "authorized_outputs": [
+      "docs/harness/phase-01/HARNESS_BASELINE_REPORT.md",
+      "docs/harness/phase-01/HARNESS_RTM.json",
+      "docs/harness/phase-01/EVIDENCE_MANIFEST.json"
+    ],
+    "tools_authorized": [
+      "git (read-only/worktree)",
+      "python3",
+      "gh (read-only)",
+      "docker (read-only/disposable build)",
+      "gitleaks (--redact)",
+      "actionlint",
+      "node (--test)",
+      "codegraph (read-only status)"
+    ],
+    "prohibited_actions": [
+      "canonical repo edits",
+      "skill install/activation",
+      "flash/RF TX",
+      "production access",
+      "auto-merge",
+      "secret printing",
+      "unbounded retries"
+    ],
+    "timeouts": {
+      "command_default_s": 60,
+      "build_s": 120,
+      "auditor_s": 300
+    },
+    "cleanup_owner": "Coordinator (disposable /tmp/p01-idf-copy removed; /tmp/p01-evidence-422 retained outside candidate for reviewer)"
+  },
+  "limitations": [
+    "Hardware-in-the-loop (HIL), RF transmission, SX1276 timing/turnaround, and live PostgreSQL/Mosquitto E2E tests were NOT executed (NOT_VERIFIED).",
+    "GitHub Actions CI is OWNER_WAIVED due to exhausted quota (NOT CI_PASS); self-hosted runner /etc/lora-harness/provider-policy.json does not exist locally (NOT_VERIFIED).",
+    "Consumer Antigravity / Codex runtime sandbox isolation cannot be proven from repo files alone; provider-local skill internals outside repo metadata were not executed.",
+    "Raw logs are stored externally under /tmp/p01-evidence-422/ outside the candidate worktree per Issue #422 and remain unmodified.",
+    "Delta F01-F05 Independent Auditor verification pending fresh independent Auditor session (if invoke_subagent unavailable, recorded as AUDIT_NOT_VERIFIED)."
+  ],
+  "reviewer": "PENDING_DELTA_AUDITOR_VERIFICATION (prior candidate 66e0ee95 audited via Focused Independent Audit yielding F01-F05)",
+  "evidence_records": [
+    {
+      "evidence_id": "EV-001",
+      "record_type": "COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/g0_intake.json",
+      "artifact_sha256": "e18a866cb7e65f41893b7610c07896ae0e9ec300e41ae7e7007c8b21e16cce20",
+      "artifact_bytes": 11812,
+      "command_argv": [
+        "python3",
+        "scripts/agent_harness/agent_context.py",
+        "--repo",
+        "/home/khanh/projects/iot/LoRa-P2P-issue-422"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-Hybrid-TDMA-MVP",
+      "tool_version": "Python 3.12.3",
+      "inputs": [
+        "HEAD:AGENTS.md",
+        "candidate=/home/khanh/projects/iot/LoRa-P2P-issue-422"
+      ],
+      "utc_timestamp": "2026-11-27T18:31:07Z",
+      "exit_code": 0,
+      "test_scope": "G0_HOST_CONTEXT",
+      "summary": "HOST_CONTEXT_LOADED; AGENTS.md blob 14f2d7335c41a2ba38f3915ec023dd037603cfb7, sha256 09212ed3ac8b74476f915e2e168950bdb8d2d2cf26e6dba3f8efacccc30fcbe7, 10784 bytes.",
+      "notes": "Invoked from canonical trusted checkout cwd (/home/khanh/projects/iot/LoRa-P2P-Hybrid-TDMA-MVP) targeting isolated candidate worktree /home/khanh/projects/iot/LoRa-P2P-issue-422; raw output saved unmodified."
+    },
+    {
+      "evidence_id": "EV-002",
+      "record_type": "COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/baseline_fingerprint.json",
+      "artifact_sha256": "ddd2a2b3756ad95d85e8b13be75f75aa7a95dfa87c0fb30217f1672f85c92d6d",
+      "artifact_bytes": 234,
+      "command_argv": [
+        "python3",
+        "scripts/agent_harness/quality_gates.py",
+        "--repo",
+        ".",
+        "--base",
+        "fdbc9a5c1266073f84e2d4e841671e75d6690d95",
+        "--fingerprint-only"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "Python 3.12.3",
+      "inputs": [
+        "HEAD=fdbc9a5c1266073f84e2d4e841671e75d6690d95"
+      ],
+      "utc_timestamp": "2026-11-27T18:31:15Z",
+      "exit_code": 0,
+      "test_scope": "BASELINE_FINGERPRINT",
+      "summary": "Frozen candidate_sha256 afb33c526b114da0146e6a57554f555d56610501d1645afeb04f0774d377207d, changed_paths=[]"
+    },
+    {
+      "evidence_id": "EV-003",
+      "record_type": "AGGREGATE_COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/wpa_toolchains_and_instructions.txt",
+      "artifact_sha256": "1f5546c8a459daeb2f78ca8d344bffe59d3be6934e520cfe0cac09245d50ac30",
+      "artifact_bytes": 839,
+      "command_argv": [
+        "bash",
+        "-c",
+        "git/python3/go/node/npm/gh/docker/agy/codex versions + pinned version reads + wc -l -c instruction files"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "git 2.43.0, Python 3.12.3, Node v22.23.2, npm 12.0.2, gh 2.45.0, Docker 29.8.0, agy 1.5.18",
+      "inputs": [
+        "AGENTS.md",
+        ".agent-harness/",
+        ".agents/",
+        ".go-version",
+        "firmware/esp-idf-version.txt",
+        "backend-go/go.mod"
+      ],
+      "utc_timestamp": "2026-11-27T18:31:16Z",
+      "exit_code": 1,
+      "test_scope": "STATIC_INVENTORY",
+      "summary": "Compound inventory script exited 1 due to wc missing untracked .agents/teamwork/*; tracked instruction files total 424 lines / 60,900 bytes (AGENTS.md 33L/10,784B); go & codex absent from default PATH.",
+      "aggregate_exit_code": 1,
+      "subcommand_results": [
+        {
+          "subcommand": "git/python3/node/npm/gh/docker/agy --version",
+          "exit_code": 0,
+          "outcome": "PASS"
+        },
+        {
+          "subcommand": "go version",
+          "exit_code": 127,
+          "outcome": "NOT_ON_DEFAULT_PATH (logged with || true)"
+        },
+        {
+          "subcommand": "codex --version",
+          "exit_code": 127,
+          "outcome": "NOT_ON_DEFAULT_PATH (logged with || true)"
+        },
+        {
+          "subcommand": "cat .go-version / firmware/esp-idf-version.txt / grep go.mod",
+          "exit_code": 0,
+          "outcome": "PASS (1.27.3 / v6.1 / go 1.27.3)"
+        },
+        {
+          "subcommand": "wc -l -c AGENTS.md .agent-harness/... .agents/... .agents/teamwork/...",
+          "exit_code": 1,
+          "outcome": "PARTIAL_FAIL (tracked files 424L/60900B counted; .agents/teamwork/{interviewer,sentinel}/*.md absent in clean worktree)"
+        }
+      ],
+      "notes": "Outer compound bash exited 1 because the final wc invocation encountered missing .agents/teamwork/* globs. Raw file preserved unmodified."
+    },
+    {
+      "evidence_id": "EV-004",
+      "record_type": "AGGREGATE_COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/wpa_extra_inventory.txt",
+      "artifact_sha256": "9de22e563c0b4aec47674f20de0e548b955624695899368808113ee371ff6858",
+      "artifact_bytes": 3277,
+      "command_argv": [
+        "bash",
+        "-c",
+        "extra tool versions (/usr/local/go, ~/.local/bin/codex, codegraph, gitleaks, semgrep, actionlint) + contracts/ADR/skills ls"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "go 1.27.1 (host), codex-cli 0.172.0, codegraph 1.6.2, gitleaks 8.30.1, actionlint v1.7.7",
+      "inputs": [
+        "docs/adr/",
+        "contracts/",
+        "~/.codex/skills/",
+        "~/.gemini/config/"
+      ],
+      "utc_timestamp": "2026-11-27T18:31:37Z",
+      "exit_code": 0,
+      "test_scope": "STATIC_INVENTORY",
+      "summary": "Host Go is 1.27.1 vs pinned .go-version 1.27.3; codex/codegraph/gitleaks in ~/.local/bin; semgrep missing (|| true); provider skills enumerated read-only.",
+      "aggregate_exit_code": 0,
+      "subcommand_results": [
+        {
+          "subcommand": "/usr/local/go/bin/go version",
+          "exit_code": 0,
+          "outcome": "go1.27.1 (drifts from 1.27.3)"
+        },
+        {
+          "subcommand": "~/.local/bin/codex --version",
+          "exit_code": 0,
+          "outcome": "codex-cli 0.172.0"
+        },
+        {
+          "subcommand": "~/.local/bin/codegraph --version",
+          "exit_code": 0,
+          "outcome": "1.6.2"
+        },
+        {
+          "subcommand": "~/.local/bin/gitleaks version",
+          "exit_code": 0,
+          "outcome": "8.30.1"
+        },
+        {
+          "subcommand": "~/.local/bin/semgrep --version",
+          "exit_code": 127,
+          "outcome": "NOT_FOUND (masked by || true)"
+        },
+        {
+          "subcommand": "~/go/bin/actionlint --version",
+          "exit_code": 0,
+          "outcome": "v1.7.7"
+        },
+        {
+          "subcommand": "find docs/adr contracts ... & ls ~/.codex/skills ~/.gemini/config/*",
+          "exit_code": 0,
+          "outcome": "PASS"
+        }
+      ]
+    },
+    {
+      "evidence_id": "EV-005",
+      "record_type": "COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/wpa_repo_inventory.txt",
+      "artifact_sha256": "184629efa930c1ef1bcdee8273dbbccb8dd53b1d84c80337e610f5efa80fa48f",
+      "artifact_bytes": 10955,
+      "command_argv": [
+        "find",
+        "scripts",
+        "tests/agent_harness",
+        ".agents",
+        ".agent-harness",
+        ".github",
+        "docs/development",
+        "docs/hardware/sx1276",
+        "docs/adr",
+        "contracts",
+        "-maxdepth",
+        "4",
+        "-type",
+        "f"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "findutils / Docker CLI 29.8.0",
+      "inputs": [],
+      "utc_timestamp": "2026-11-27T18:31:30Z",
+      "exit_code": 0,
+      "test_scope": "STATIC_INVENTORY",
+      "summary": "Full tracked harness/scripts/tests/docs inventory and cached Docker images (espressif/idf:v6.1, golang:1.27.3-alpine, etc.)."
+    },
+    {
+      "evidence_id": "EV-006",
+      "record_type": "COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/wpb_docs_headers.txt",
+      "artifact_sha256": "2526f2ec4576e821c05b02cf175a8a9bc356dcdc49385c14f15e03eb4d1fbe7e",
+      "artifact_bytes": 20634,
+      "command_argv": [
+        "python3",
+        "-c",
+        "<scan doc titles, statuses, line/byte sizes, TDMA occurrences>"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "Python 3.12.3",
+      "inputs": [],
+      "utc_timestamp": "2026-11-27T18:33:45Z",
+      "exit_code": 0,
+      "test_scope": "STATIC_DEPENDENCY_AUDIT",
+      "summary": "Header/status/size/TDMA-hit scan across 99 docs under docs/development, docs/hardware/sx1276, docs/adr, docs/architecture, docs/verification, AGENTS.md."
+    },
+    {
+      "evidence_id": "EV-007",
+      "record_type": "COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/wpb_links_and_paths.txt",
+      "artifact_sha256": "91fad41fd6b101724b84cd7905a29fbbad90ba3ddeca721478896aef22fdf26d",
+      "artifact_bytes": 347,
+      "command_argv": [
+        "python3",
+        "-c",
+        "<relative link check + control path existence check>"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "Python 3.12.3",
+      "inputs": [],
+      "utc_timestamp": "2026-11-27T18:34:11Z",
+      "exit_code": 0,
+      "test_scope": "STATIC_LINK_AUDIT",
+      "summary": "1 broken relative link (docs/development/coding-standards.md -> ../../.github/instructions/backend.instructions.md); .github/copilot-instructions.md, .github/instructions, .codex, scripts/agent_harness/mcp_execution.py do not exist."
+    },
+    {
+      "evidence_id": "EV-008",
+      "record_type": "COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/wpd_doctor.json",
+      "artifact_sha256": "89a224eabb72fc3ee304b9c0e58f7816e4746e8782f811c93a1380911a9838b5",
+      "artifact_bytes": 3524,
+      "command_argv": [
+        "python3",
+        "scripts/harness_doctor.py",
+        "--profile",
+        "all",
+        "--json"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "Python 3.12.3",
+      "inputs": [],
+      "utc_timestamp": "2026-11-27T18:35:05Z",
+      "exit_code": 0,
+      "test_scope": "ENV_DOCTOR",
+      "summary": "harness_doctor profile=all ready=true (WARN: codex_cli not on PATH; PASS: python, git, gh, agy, docker, compose, esp_idf_pin=v6.1, esp_idf_image)."
+    },
+    {
+      "evidence_id": "EV-009",
+      "record_type": "COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/wpd_verify_structure.log",
+      "artifact_sha256": "5c0b9deb7949fd68e99b34e661e720b14641f683d1ddb45af5469ded3d46ccce",
+      "artifact_bytes": 1327,
+      "command_argv": [
+        "python3",
+        "scripts/verify_structure.py"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "Python 3.12.3",
+      "inputs": [],
+      "utc_timestamp": "2026-11-27T18:35:05Z",
+      "exit_code": 0,
+      "test_scope": "STATIC_STRUCTURE",
+      "summary": "PASS: static monorepo foundation checks (exit 0)."
+    },
+    {
+      "evidence_id": "EV-010",
+      "record_type": "COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/wpd_verify_no_secrets.log",
+      "artifact_sha256": "845569d7fc944461ef74238ae991f49a0fbdc524c901b18fb6b4d4ea61750fd9",
+      "artifact_bytes": 982,
+      "command_argv": [
+        "python3",
+        "scripts/verify_no_secrets.py"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "Python 3.12.3",
+      "inputs": [],
+      "utc_timestamp": "2026-11-27T18:35:05Z",
+      "exit_code": 1,
+      "test_scope": "STATIC_SECRET_SCAN",
+      "summary": "FAIL (exit 1) on 6 tracked files: auth/service_test.go, login/page.tsx, users/page.tsx, types/api.ts, integration.test.ts, quality_gates.py (all confirmed regex false positives)."
+    },
+    {
+      "evidence_id": "EV-011",
+      "record_type": "COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/wpd_quality_gates.json",
+      "artifact_sha256": "53ac16793f0d42432e46104ff9a85514504e06d76d594bf000d1afa1aa1f4038",
+      "artifact_bytes": 5543,
+      "command_argv": [
+        "python3",
+        "scripts/agent_harness/quality_gates.py",
+        "--repo",
+        ".",
+        "--base",
+        "fdbc9a5c1266073f84e2d4e841671e75d6690d95"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "Python 3.12.3",
+      "inputs": [],
+      "utc_timestamp": "2026-11-27T18:35:05Z",
+      "exit_code": 1,
+      "test_scope": "HARNESS_QUALITY_GATES",
+      "summary": "auto_check=BLOCKED (exit 1): SECRET-SCAN=FAIL at clients/web-dashboard/tests/integration.test.ts:31 (P0 false positive on mock response token); DIFF-CHECK=PASS."
+    },
+    {
+      "evidence_id": "EV-012",
+      "record_type": "COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/wpd_harness_unittest.log",
+      "artifact_sha256": "6753129ffb7deda003951dace81a8d95f558ab1790c96f79f71012585269b354",
+      "artifact_bytes": 70346,
+      "command_argv": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests/agent_harness",
+        "-v"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "Python 3.12.3",
+      "inputs": [
+        "tests/agent_harness/"
+      ],
+      "utc_timestamp": "2026-11-27T18:35:55Z",
+      "exit_code": 0,
+      "test_scope": "UNIT_HARNESS",
+      "summary": "Ran 416 tests in 54.210s — OK (exit 0)."
+    },
+    {
+      "evidence_id": "EV-013",
+      "record_type": "COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/wpd_secret_scan_triage.txt",
+      "artifact_sha256": "ecbb81fd47753e7d25dc2b83ac34cca6645970f122090ac66f1e6bb53d288490",
+      "artifact_bytes": 654,
+      "command_argv": [
+        "python3",
+        "-c",
+        "<line-number triage comparing verify_no_secrets.py and quality_gates.py without printing values>"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "Python 3.12.3",
+      "inputs": [],
+      "utc_timestamp": "2026-11-27T18:36:33Z",
+      "exit_code": 0,
+      "test_scope": "SECURITY_TRIAGE",
+      "summary": "Exact line triage across all 6 flagged files confirming test mocks, TS interfaces, JSX fields, and quality_gates.py regex itself."
+    },
+    {
+      "evidence_id": "EV-014",
+      "record_type": "COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/wpd_gitleaks.json",
+      "artifact_sha256": "a05cbdcc4063c3a5cc5eceebdef4f1f7e5d4adbb932b1b1bcd2ebf43bb33ebee",
+      "artifact_bytes": 5943,
+      "command_argv": [
+        "gitleaks",
+        "detect",
+        "--no-git",
+        "--source",
+        ".",
+        "--redact",
+        "--no-banner",
+        "--report-format",
+        "json",
+        "--report-path",
+        "/tmp/p01-evidence-422/wpd_gitleaks.json"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "gitleaks 8.30.1",
+      "inputs": [],
+      "utc_timestamp": "2026-11-27T18:37:25Z",
+      "exit_code": 1,
+      "test_scope": "SECURITY_SCAN",
+      "summary": "Redacted gitleaks scan: 10 generic-api-key hits across config_test.go, deploy/evidence/issue-16.md, issue-245 verification doc, test_provision_node_tool.py, interop_evidence.json (SHA-256 digests and test fixtures)."
+    },
+    {
+      "evidence_id": "EV-015",
+      "record_type": "COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/gh_runs.json",
+      "artifact_sha256": "a744dc378f535df7e01e53b04c849ff5bf5bcc3f9cf1765fd1d927e84c7d04e0",
+      "artifact_bytes": 5098,
+      "command_argv": [
+        "gh",
+        "run",
+        "list",
+        "--limit",
+        "15",
+        "--json",
+        "databaseId,workflowName,headBranch,headSha,status,conclusion,createdAt,event,url"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "gh 2.45.0",
+      "inputs": [],
+      "utc_timestamp": "2026-11-27T18:32:12Z",
+      "exit_code": 0,
+      "test_scope": "CI_METADATA",
+      "summary": "Recent CI runs showing CI - Backend Go Scaffold failure on fdbc9a5, 332e09e, and d76ce89 (PR #420). GitHub Actions subsequently marked OWNER_WAIVED for quota exhaustion."
+    },
+    {
+      "evidence_id": "EV-016",
+      "record_type": "AGGREGATE_COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/go_ci_failed_logs.txt",
+      "artifact_sha256": "578193585104d4fb9d261ce9ebcece75e3458e890de7dbb41ab44e7894d858ad",
+      "artifact_bytes": 2091,
+      "command_argv": [
+        "gh",
+        "run",
+        "view",
+        "<46049348761|46048385376|46047680659>",
+        "--log-failed"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "gh 2.45.0",
+      "inputs": [],
+      "utc_timestamp": "2026-11-27T18:32:32Z",
+      "exit_code": 0,
+      "test_scope": "CI_FAILURE_LOGS",
+      "summary": "All 3 Go CI runs failed at step 'Go formatting' (test -z \"$(gofmt -l .)\") with exit code 1 before go vet/test/build.",
+      "aggregate_exit_code": 0,
+      "subcommand_results": [
+        {
+          "subcommand": "gh run view 46049348761 --log-failed",
+          "exit_code": 0,
+          "ci_step_exit": 1,
+          "outcome": "Go formatting failed"
+        },
+        {
+          "subcommand": "gh run view 46048385376 --log-failed",
+          "exit_code": 0,
+          "ci_step_exit": 1,
+          "outcome": "Go formatting failed"
+        },
+        {
+          "subcommand": "gh run view 46047680659 --log-failed",
+          "exit_code": 0,
+          "ci_step_exit": 1,
+          "outcome": "Go formatting failed"
+        }
+      ]
+    },
+    {
+      "evidence_id": "EV-017",
+      "record_type": "AGGREGATE_COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/wpd_go_triage_detail.txt",
+      "artifact_sha256": "49bcb3abc11ed007dfd278fd7dd71337a65a50c09a14d40edcc38dc7a1349ee5",
+      "artifact_bytes": 3112,
+      "command_argv": [
+        "docker",
+        "run",
+        "--rm",
+        "-v",
+        "/home/khanh/projects/iot/LoRa-P2P-issue-422:/repo:ro",
+        "-v",
+        "/home/khanh/go/pkg/mod:/go/pkg/mod:ro",
+        "-w",
+        "/repo/backend-go",
+        "-e",
+        "GOTOOLCHAIN=local",
+        "-e",
+        "GOPROXY=off",
+        "golang:1.27.3-alpine",
+        "sh",
+        "-c",
+        "go vet ./...; go test ./...; go build -o /tmp/server ./cmd/server"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "go1.27.3 (golang:1.27.3-alpine), host gofmt 1.27.1",
+      "inputs": [
+        "backend-go/"
+      ],
+      "utc_timestamp": "2026-11-27T18:36:43Z",
+      "exit_code": 0,
+      "test_scope": "BACKEND_UNIT_BUILD_TRIAGE",
+      "summary": "gofmt -d confirms internal/presence/rf_tracker.go lines 140-145 doc-comment list indentation from 67e3bcf; inside pinned golang:1.27.3-alpine, go vet ./..., go test ./... (13 packages ok), and go build ./cmd/server all exited 0.",
+      "aggregate_exit_code": 0,
+      "subcommand_results": [
+        {
+          "subcommand": "git log -n 3 --oneline -- backend-go/internal/presence/rf_tracker.go",
+          "exit_code": 0,
+          "outcome": "67e3bcf (#400)"
+        },
+        {
+          "subcommand": "/usr/local/go/bin/gofmt -d backend-go/internal/presence/rf_tracker.go",
+          "exit_code": 0,
+          "outcome": "non-empty formatting diff on lines 140-145 (gofmt -l . non-empty)"
+        },
+        {
+          "subcommand": "go vet ./...",
+          "exit_code": 0,
+          "outcome": "PASS"
+        },
+        {
+          "subcommand": "go test ./...",
+          "exit_code": 0,
+          "outcome": "PASS (13 test packages ok; internal/auth/bcrypt has no test files)"
+        },
+        {
+          "subcommand": "go build -o /tmp/server ./cmd/server",
+          "exit_code": 0,
+          "outcome": "PASS"
+        }
+      ]
+    },
+    {
+      "evidence_id": "EV-018",
+      "record_type": "AGGREGATE_COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/wpd_idf_build.log",
+      "artifact_sha256": "1723573e48506e796cfc0acd17cdb138cc5b2bad25264e37c068fe0244f8ca5d",
+      "artifact_bytes": 6154,
+      "command_argv": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull=never",
+        "--network=none",
+        "espressif/idf:v6.1",
+        "sh",
+        "-c",
+        "idf.py --version && idf.py -B /tmp/build-$target build"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-Hybrid-TDMA-MVP",
+      "tool_version": "espressif/idf:v6.1 (sha256:81893c71bb5e570088901f21def8684c25cd2a9020281bd01b843a7655edb18c)",
+      "inputs": [
+        "firmware/gateway_master/",
+        "firmware/sensor_node/",
+        "disposable_copy=/tmp/p01-idf-copy"
+      ],
+      "utc_timestamp": "2026-11-27T18:38:34Z",
+      "exit_code": 2,
+      "test_scope": "FIRMWARE_BUILD_OFFLINE",
+      "summary": "Both disposable-copy builds (gateway_master and sensor_node) exited 2 in --network=none because espressif/mqtt (1.1.0) requires registry download when managed_components is absent.",
+      "aggregate_exit_code": 0,
+      "subcommand_results": [
+        {
+          "subcommand": "docker run espressif/idf:v6.1 (gateway_master)",
+          "exit_code": 2,
+          "outcome": "FAIL (CMake error fetching espressif/mqtt 1.1.0 under --network=none)"
+        },
+        {
+          "subcommand": "docker run espressif/idf:v6.1 (sensor_node)",
+          "exit_code": 2,
+          "outcome": "FAIL (CMake error fetching espressif/mqtt 1.1.0 under --network=none)"
+        }
+      ],
+      "notes": "Outer wrapper exited 0 after tail/rm cleanup, while both underlying idf.py builds exited 2 (recorded here as exit_code=2)."
+    },
+    {
+      "evidence_id": "EV-019",
+      "record_type": "COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/wpd_contracts.log",
+      "artifact_sha256": "55fe437b7aa98f6c7e7277f4388aa8dfe41c5e024e917fa119251319473152d3",
+      "artifact_bytes": 2708,
+      "command_argv": [
+        "python3",
+        "contracts/tests/check_contracts.py"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "Python 3.12.3",
+      "inputs": [
+        "contracts/"
+      ],
+      "utc_timestamp": "2026-11-27T18:36:56Z",
+      "exit_code": 0,
+      "test_scope": "CONTRACT_SCHEMA",
+      "summary": "PASS: 12 schemas, 40 MQTT cases, 18 WS cases, 15 REST operations (syntax/schema only)."
+    },
+    {
+      "evidence_id": "EV-020",
+      "record_type": "COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/wpd_contract_unittest.log",
+      "artifact_sha256": "2dedf3080574b0687985242703ea393c4dd8e12a1861e54817bfc10481aad417",
+      "artifact_bytes": 2582,
+      "command_argv": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests/contract",
+        "-v"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "Python 3.12.3",
+      "inputs": [
+        "tests/contract/"
+      ],
+      "utc_timestamp": "2026-11-27T18:37:26Z",
+      "exit_code": 0,
+      "test_scope": "CONTRACT_UNIT",
+      "summary": "Ran 15 tests in 0.500s — OK (exit 0)."
+    },
+    {
+      "evidence_id": "EV-021",
+      "record_type": "COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/wpd_unit_tests.log",
+      "artifact_sha256": "7e56d5bb31280d024545053edabff7054e412599344571f88259530f556cd99b",
+      "artifact_bytes": 11194,
+      "command_argv": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests/unit",
+        "-v"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "Python 3.12.3",
+      "inputs": [
+        "tests/unit/"
+      ],
+      "utc_timestamp": "2026-11-27T18:37:40Z",
+      "exit_code": 0,
+      "test_scope": "PRODUCT_UNIT",
+      "summary": "Ran 44 tests in 2.881s — OK (exit 0)."
+    },
+    {
+      "evidence_id": "EV-022",
+      "record_type": "COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/wpd_web_tests.log",
+      "artifact_sha256": "482f026cf075d64d5a14922894910656e7fe1e3952579f24556232e0bf61551c",
+      "artifact_bytes": 8363,
+      "command_argv": [
+        "node",
+        "--test",
+        "--experimental-strip-types",
+        "tests/*.test.ts"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422/clients/web-dashboard",
+      "tool_version": "Node.js v22.23.2",
+      "inputs": [
+        "clients/web-dashboard/tests/"
+      ],
+      "utc_timestamp": "2026-11-27T18:36:57Z",
+      "exit_code": 1,
+      "test_scope": "CLIENT_UNIT",
+      "summary": "api_client.test.ts (5/5) and rf_quality.test.ts PASS; integration.test.ts FAILS (ERR_MODULE_NOT_FOUND 'react') in clean worktree without node_modules."
+    },
+    {
+      "evidence_id": "EV-023",
+      "record_type": "COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/wpd_actionlint.log",
+      "artifact_sha256": "940a45bc2b1fa8ac8ccbabd8d2a17ebef253c8563fed707d66d64cac9dee3450",
+      "artifact_bytes": 930,
+      "command_argv": [
+        "actionlint",
+        ".github/workflows/*.yml"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "actionlint v1.7.7",
+      "inputs": [
+        ".github/workflows/"
+      ],
+      "utc_timestamp": "2026-11-27T18:36:56Z",
+      "exit_code": 1,
+      "test_scope": "WORKFLOW_LINT",
+      "summary": "EXIT 1: .github/workflows/harness-issue.yml:28:35 unknown runner label 'harness-isolated' (no actionlint.yaml)."
+    },
+    {
+      "evidence_id": "EV-024",
+      "record_type": "COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/wph_probes.json",
+      "artifact_sha256": "56335ccfca407ae486b8209346a021e0194e97c4e21ec88f19af7b8ce61a39f1",
+      "artifact_bytes": 19090,
+      "command_argv": [
+        "python3",
+        "/tmp/p01-evidence-422/run_wph_probes.py"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "Python 3.12.3",
+      "inputs": [
+        "scripts/agent_harness/agent_context.py",
+        "scripts/agent_harness/standards_policy.py"
+      ],
+      "utc_timestamp": "2026-11-27T18:38:34Z",
+      "exit_code": 0,
+      "test_scope": "WPH_ROUTING_PROBES",
+      "summary": "Executed H-A02/A03/A05/A06/A07/A08 positive/negative agent_context probes + 45-ID equality check (45/45 equal)."
+    },
+    {
+      "evidence_id": "EV-025",
+      "record_type": "AGGREGATE_WRAPPER_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/wpd_offline_and_orchestrators.txt",
+      "artifact_sha256": "a15c1aaa21c50815f3c3a3bbafc558108759ee82f163cd4e6bce9151796e68f2",
+      "artifact_bytes": 628,
+      "command_argv": [
+        "bash",
+        "-c",
+        "docker --network=none corpus check + (p1/cli.py || echo P1_CLI_EXIT=$?) + (run.py || echo RUN_PY_EXIT=$?)"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "Docker python:3.12-slim, Python 3.12.3",
+      "inputs": [
+        "docs/references/harness-engineering/",
+        "scripts/agent_harness/p1/cli.py",
+        "scripts/agent_harness/run.py"
+      ],
+      "utc_timestamp": "2026-11-27T18:40:58Z",
+      "exit_code": null,
+      "test_scope": "AGGREGATE_WRAPPER_OFFLINE_AND_ORCHESTRATION",
+      "summary": "Aggregate log wrapper (outer bash exited 0 only because failing subcommands used '|| echo ...'). Individual exits separated into EV-025A (0), EV-025B (2), EV-025C (2).",
+      "aggregate_exit_code": 0,
+      "subcommand_results": [
+        {
+          "evidence_id": "EV-025A",
+          "exit_code": 0,
+          "outcome": "PASS (docker --network=none corpus check)"
+        },
+        {
+          "evidence_id": "EV-025B",
+          "exit_code": 2,
+          "outcome": "BLOCKED (p1/cli.py prepare --issue 422)"
+        },
+        {
+          "evidence_id": "EV-025C",
+          "exit_code": 2,
+          "outcome": "BLOCKED (run.py --issue 422)"
+        }
+      ],
+      "notes": "Do not cite EV-025 as exit 0 for orchestrator commands; cite EV-025A/EV-025B/EV-025C individually."
+    },
+    {
+      "evidence_id": "EV-025A",
+      "record_type": "COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/wpd_offline_and_orchestrators.txt",
+      "artifact_sha256": "a15c1aaa21c50815f3c3a3bbafc558108759ee82f163cd4e6bce9151796e68f2",
+      "artifact_bytes": 628,
+      "command_argv": [
+        "docker",
+        "run",
+        "--rm",
+        "--network=none",
+        "-v",
+        "/home/khanh/projects/iot/LoRa-P2P-issue-422:/repo:ro",
+        "-v",
+        "/tmp/p01-evidence-422:/ev:ro",
+        "python:3.12-slim",
+        "python3",
+        "-c",
+        "<offline corpus pdf=0 and 248 anchor verification>"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "Docker python:3.12-slim",
+      "inputs": [
+        "docs/references/harness-engineering/"
+      ],
+      "utc_timestamp": "2026-11-27T18:40:58Z",
+      "exit_code": 0,
+      "test_scope": "OFFLINE_CORPUS_ISOLATION",
+      "summary": "PASS (exit 0): network=none, pdf_count=0, 6 knowledge files present, 248/248 anchors valid.",
+      "notes": "Sub-command 1 of wpd_offline_and_orchestrators.txt (lines 1-2)."
+    },
+    {
+      "evidence_id": "EV-025B",
+      "record_type": "COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/wpd_offline_and_orchestrators.txt",
+      "artifact_sha256": "a15c1aaa21c50815f3c3a3bbafc558108759ee82f163cd4e6bce9151796e68f2",
+      "artifact_bytes": 628,
+      "command_argv": [
+        "python3",
+        "scripts/agent_harness/p1/cli.py",
+        "prepare",
+        "--issue",
+        "422",
+        "--source",
+        ".",
+        "--expected-base-sha",
+        "fdbc9a5c1266073f84e2d4e841671e75d6690d95"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "Python 3.12.3",
+      "inputs": [
+        "scripts/agent_harness/p1/cli.py",
+        "scripts/agent_harness/scope.py"
+      ],
+      "utc_timestamp": "2026-11-27T18:40:58Z",
+      "exit_code": 2,
+      "test_scope": "ORCHESTRATION_P1_CLI_PREFLIGHT",
+      "summary": "BLOCKED (P1_CLI_EXIT=2): {\"state\": \"BLOCKED\", \"reason\": \"Malformed Issue or missing strict scope\"} due to prose line before bullet list under Target Directories in Issue #422.",
+      "notes": "Sub-command 2 of wpd_offline_and_orchestrators.txt (lines 3-5)."
+    },
+    {
+      "evidence_id": "EV-025C",
+      "record_type": "COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/wpd_offline_and_orchestrators.txt",
+      "artifact_sha256": "a15c1aaa21c50815f3c3a3bbafc558108759ee82f163cd4e6bce9151796e68f2",
+      "artifact_bytes": 628,
+      "command_argv": [
+        "python3",
+        "scripts/agent_harness/run.py",
+        "--issue",
+        "422"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "Python 3.12.3",
+      "inputs": [
+        "scripts/agent_harness/run.py",
+        "scripts/agent_harness/quality_gates.py"
+      ],
+      "utc_timestamp": "2026-11-27T18:40:58Z",
+      "exit_code": 2,
+      "test_scope": "ORCHESTRATION_RUN_PY_PREFLIGHT",
+      "summary": "BLOCKED (RUN_PY_EXIT=2): run.py preflight blocked at SECRET-SCAN ('Source secret/path scan failed').",
+      "notes": "Sub-command 3 of wpd_offline_and_orchestrators.txt (lines 6-8)."
+    },
+    {
+      "evidence_id": "EV-026",
+      "record_type": "COMMAND_RECEIPT",
+      "artifact_locator": "/tmp/p01-evidence-422/wpd_corpus_anchors.json",
+      "artifact_sha256": "e3127a8daa80bc74b51b60abec24f2b267b5a01982966a2169f4b56f9b464325",
+      "artifact_bytes": 71,
+      "command_argv": [
+        "python3",
+        "-c",
+        "<verify 248 knowledge anchors in REFERENCE_INDEX.md>"
+      ],
+      "cwd": "/home/khanh/projects/iot/LoRa-P2P-issue-422",
+      "tool_version": "Python 3.12.3",
+      "inputs": [
+        "docs/references/harness-engineering/REFERENCE_INDEX.md"
+      ],
+      "utc_timestamp": "2026-11-27T18:40:29Z",
+      "exit_code": 0,
+      "test_scope": "LOCAL_CORPUS_LINKS",
+      "summary": "248/248 knowledge anchor links in REFERENCE_INDEX.md resolve to exact headings across knowledge/01..06.md."
+    }
+  ]
+}
