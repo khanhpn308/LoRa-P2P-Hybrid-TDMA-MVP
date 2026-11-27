@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Harness P04 Per-Issue Feature State and Durable Handoff",
+  "description": "Single minimal machine-readable format (OD-02/OD-08, H2-STA-01..06). GitHub Issue owns backlog/scope; Git owns revision; SQLite Journal owns local execution/recovery; Host receipts own PASSING evidence. No absolute paths, raw logs, or credentials.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "issue",
+    "revision",
+    "source_of_truth",
+    "issue_meta",
+    "git",
+    "units",
+    "handoff"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "issue": { "type": "integer", "minimum": 1 },
+    "revision": { "type": "integer", "minimum": 1 },
+    "source_of_truth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "backlog_scope",
+        "revision",
+        "execution_journal",
+        "verification_evidence",
+        "feature_surface"
+      ],
+      "properties": {
+        "backlog_scope": { "const": "github_issue" },
+        "revision": { "const": "git" },
+        "execution_journal": { "const": "sqlite_journal" },
+        "verification_evidence": { "const": "host_receipts" },
+        "feature_surface": { "const": "one_way_export_only" }
+      }
+    },
+    "issue_meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "issue_sha256", "approved_scope"],
+      "properties": {
+        "title": { "type": "string", "maxLength": 180 },
+        "issue_sha256": { "type": "string", "pattern": "^(|[0-9a-f]{64})$" },
+        "approved_scope": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "git": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base_sha", "head_sha", "branch", "candidate_sha256"],
+      "properties": {
+        "base_sha": { "type": "string", "pattern": "^(|[0-9a-f]{40})$" },
+        "head_sha": { "type": "string", "pattern": "^(|[0-9a-f]{40})$" },
+        "branch": { "type": "string" },
+        "candidate_sha256": { "type": "string", "pattern": "^(|[0-9a-f]{64})$" }
+      }
+    },
+    "units": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "behavior",
+          "verification",
+          "dependencies",
+          "scope",
+          "state",
+          "blocker",
+          "evidence",
+          "evidence_history"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+          "behavior": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "verification": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["criteria", "commands", "definition_sha256"],
+            "properties": {
+              "criteria": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 }
+              },
+              "commands": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 }
+              },
+              "definition_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+            }
+          },
+          "dependencies": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" }
+          },
+          "scope": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "state": {
+            "type": "string",
+            "enum": ["PENDING", "ACTIVE", "BLOCKED", "PASSING", "STALE"]
+          },
+          "blocker": { "type": "string" },
+          "evidence": {
+            "type": ["object", "null"],
+            "required": [
+              "verified_by",
+              "status",
+              "exit_code",
+              "source_sha",
+              "candidate_sha256",
+              "verification_sha256",
+              "receipt_path",
+              "receipt_sha256"
+            ],
+            "properties": {
+              "verified_by": { "const": "host_verifier" },
+              "status": { "type": "string", "enum": ["VERIFIED", "PASS", "AUTO_CHECK_PASS"] },
+              "exit_code": { "const": 0 },
+              "source_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+              "candidate_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "verification_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "receipt_path": { "type": "string", "minLength": 1 },
+              "receipt_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "recorded_at": { "type": "string" }
+            }
+          },
+          "evidence_history": {
+            "type": "array",
+            "items": { "type": "object" }
+          }
+        }
+      }
+    },
+    "handoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "active_unit",
+        "completed_units",
+        "evidence_refs",
+        "blocker",
+        "next_action",
+        "decision_refs",
+        "worktree_rel",
+        "updated_at"
+      ],
+      "properties": {
+        "active_unit": { "type": ["string", "null"] },
+        "completed_units": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": { "type": "string", "minLength": 1 },
+              "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+            }
+          }
+        },
+        "blocker": { "type": "string" },
+        "next_action": { "type": "string" },
+        "decision_refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "worktree_rel": { "type": "string", "minLength": 1 },
+        "updated_at": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

@@ -142,6 +142,57 @@ class WorktreeTests(unittest.TestCase):
         self.assertFalse(p2.target.exists())
         self.assertTrue(p1.target.exists())
 
+    def test_inspect_worktree_and_cli_status_checkpoint_resume(self):
+        from p1.worktrees import inspect_worktree
+        db = self.root / "journal" / "state.sqlite"
+        (self.repo / "AGENTS.md").write_text("# Agents\n", encoding="utf-8")
+        git_cmd(self.repo, "add", "AGENTS.md")
+        git_cmd(self.repo, "commit", "-qm", "add agents")
+
+        argv_prep = ["cli.py", "prepare", "--issue", "32", "--source", str(self.repo),
+                     "--state", str(db), "--apply"]
+        with patch.object(cli, "issue_info", return_value=self.issue_data), \
+             patch.object(sys, "argv", argv_prep), contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(cli.main(), 0)
+        prep_res = json.loads(out.getvalue())
+        wt = pathlib.Path(prep_res["worktree"])
+
+        # Dirty worktree is inspected read-only without resetting files
+        (wt / "scripts" / "agent_harness" / "p1").mkdir(parents=True, exist_ok=True)
+        wip = wt / "scripts" / "agent_harness" / "p1" / "wip.py"
+        wip.write_text("x = 1\n", encoding="utf-8")
+        info = inspect_worktree(wt, expected_branch=prep_res["branch"], expected_base_sha=prep_res["source_sha"])
+        self.assertTrue(info["dirty"])
+        self.assertTrue(info["base_matches_head"])
+        self.assertTrue(wip.exists())
+
+        with self.assertRaises(WorktreeError):
+            inspect_worktree(wt, expected_branch="wrong-branch")
+
+        # Status by --issue works and includes initial checkpoint
+        argv_stat = ["cli.py", "status", "--issue", "32", "--state", str(db)]
+        with patch.object(sys, "argv", argv_stat), contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(cli.main(), 0)
+        stat_res = json.loads(out.getvalue())
+        self.assertEqual(stat_res["issue"], 32)
+        self.assertIsNotNone(stat_res["latest_checkpoint"])
+
+        # Checkpoint + resume via p1.cli
+        argv_ckpt = ["cli.py", "checkpoint", "--issue", "32", "--repo", str(wt),
+                     "--state", str(db), "--next-action", "Finish wip.py"]
+        with patch.object(sys, "argv", argv_ckpt), contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(cli.main(), 0)
+        self.assertEqual(json.loads(out.getvalue())["status"], "CHECKPOINT_SAVED")
+
+        argv_res = ["cli.py", "resume", "--issue", "32", "--repo", str(wt),
+                    "--state", str(db), "--offline"]
+        with patch.object(sys, "argv", argv_res), contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(cli.main(), 0)
+        res_data = json.loads(out.getvalue())
+        self.assertEqual(res_data["branch"], prep_res["branch"])
+        self.assertTrue(res_data["has_uncommitted_work"])
+        self.assertTrue(wip.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

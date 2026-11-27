@@ -31,6 +31,7 @@ try:
     )
     from .scope import parse_allowed_paths
     from .standards_policy import select_rules, StandardsError
+    from .feature_state import load_feature_doc, FeatureStateError
     try:
         from .adapters import antigravity
     except ImportError:
@@ -45,6 +46,7 @@ except ImportError:
     )
     from scope import parse_allowed_paths
     from standards_policy import select_rules, StandardsError
+    from feature_state import load_feature_doc, FeatureStateError
     try:
         from adapters import antigravity
     except ImportError:
@@ -1795,6 +1797,54 @@ def publish_pr_comment(
             raise PRReviewError(f"Failed to post review comment: {err.strip()}")
 
 
+def inspect_pr_feature_state(
+    candidate_repo: Path,
+    pr_data: dict[str, Any],
+    linked_issue: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Read-only inspection of versioned per-Issue feature state if present in PR."""
+    changed_feature_paths = [
+        f.get("filename", "")
+        for f in pr_data.get("files", [])
+        if re.fullmatch(r"docs/harness/features/issue-[1-9][0-9]*\.json", f.get("filename", ""))
+    ]
+    if not changed_feature_paths and linked_issue and linked_issue.get("number"):
+        candidate_rel = f"docs/harness/features/issue-{linked_issue['number']}.json"
+        if (candidate_repo / candidate_rel).is_file():
+            changed_feature_paths = [candidate_rel]
+    if not changed_feature_paths:
+        return None
+    rel = changed_feature_paths[0]
+    target = candidate_repo / rel
+    if not target.exists():
+        return {"path": rel, "status": "REMOVED"}
+    try:
+        doc = load_feature_doc(target)
+    except (FeatureStateError, OSError, ValueError, json.JSONDecodeError) as exc:
+        return {"path": rel, "status": "INVALID", "error": str(exc)[:200]}
+    head_sha = pr_data.get("head_sha", "")
+    stale_units = [
+        u["id"]
+        for u in doc["units"]
+        if u["state"] == "PASSING" and head_sha and u["evidence"]["source_sha"] != head_sha
+    ]
+    issue_mismatch = (
+        linked_issue is not None
+        and linked_issue.get("number") is not None
+        and doc["issue"] != linked_issue["number"]
+    )
+    return {
+        "path": rel,
+        "status": "INVALID" if issue_mismatch else "VALID",
+        "issue": doc["issue"],
+        "revision": doc["revision"],
+        "active_unit": doc["handoff"]["active_unit"],
+        "completed_units": doc["handoff"]["completed_units"],
+        "stale_passing_units": stale_units,
+        "issue_mismatch": issue_mismatch,
+    }
+
+
 def run_pr_review(args: argparse.Namespace) -> int:
     """Main orchestrator for read-only PR review."""
     candidate_repo = Path(args.candidate_repo).resolve()
@@ -2040,9 +2090,12 @@ def run_pr_review(args: argparse.Namespace) -> int:
         },
     }
 
-    # 7. Read CODEOWNERS
+    # 7. Read CODEOWNERS and optional versioned feature state
     codeowners_path = candidate_repo / ".github" / "CODEOWNERS"
     codeowners_content = codeowners_path.read_text(encoding="utf-8") if codeowners_path.exists() else ""
+    feature_state_summary = inspect_pr_feature_state(candidate_repo, pr_data, linked_issue)
+    if feature_state_summary is not None:
+        snapshot["feature_state"] = feature_state_summary
 
     # 8. Evaluate Policy
     evaluation = evaluate_pr_policy(

@@ -56,6 +56,42 @@ class Journal:
                 note TEXT NOT NULL DEFAULT '',
                 utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             );
+            CREATE TABLE IF NOT EXISTS feature_docs (
+                issue INTEGER PRIMARY KEY CHECK(issue > 0),
+                revision INTEGER NOT NULL CHECK(revision >= 1),
+                doc_json TEXT NOT NULL,
+                updated_by TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
+            CREATE TABLE IF NOT EXISTS feature_units (
+                issue INTEGER NOT NULL CHECK(issue > 0),
+                unit_id TEXT NOT NULL,
+                state TEXT NOT NULL CHECK(state IN ('PENDING','ACTIVE','BLOCKED','PASSING','STALE')),
+                verification_sha256 TEXT NOT NULL,
+                blocker TEXT NOT NULL DEFAULT '',
+                evidence_json TEXT,
+                updated_by TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                PRIMARY KEY (issue, unit_id)
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS active_unit_per_issue
+              ON feature_units(issue) WHERE state = 'ACTIVE';
+            CREATE TABLE IF NOT EXISTS checkpoints (
+                checkpoint_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                issue INTEGER NOT NULL CHECK(issue > 0),
+                run_id TEXT,
+                revision_sha TEXT NOT NULL,
+                candidate_sha256 TEXT NOT NULL,
+                branch TEXT NOT NULL,
+                worktree_rel TEXT NOT NULL,
+                active_unit TEXT,
+                blocker TEXT NOT NULL DEFAULT '',
+                next_action TEXT NOT NULL,
+                decision_refs_json TEXT NOT NULL DEFAULT '[]',
+                issue_sha256 TEXT NOT NULL DEFAULT '',
+                handoff_json TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
         """)
 
     def close(self) -> None:
@@ -139,3 +175,162 @@ class Journal:
                             note="Interrupted preparation: inspect git worktree list and branch")
             return True
         return False
+
+    def active_job_for_issue(self, issue: int) -> dict[str, Any] | None:
+        row = self.db.execute(
+            """SELECT * FROM jobs
+               WHERE issue=? AND state IN ('PLANNED','PREPARING','PREPARED','RECOVERY_REQUIRED','BLOCKED')
+               ORDER BY rowid DESC LIMIT 1""",
+            (issue,),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def latest_job_for_issue(self, issue: int) -> dict[str, Any] | None:
+        row = self.db.execute(
+            "SELECT * FROM jobs WHERE issue=? ORDER BY rowid DESC LIMIT 1",
+            (issue,),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def get_feature_snapshot(self, issue: int) -> dict[str, Any] | None:
+        row = self.db.execute(
+            "SELECT issue, revision, doc_json, updated_by, updated_at FROM feature_docs WHERE issue=?",
+            (issue,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "issue": row["issue"],
+            "revision": row["revision"],
+            "doc": json.loads(row["doc_json"]),
+            "updated_by": row["updated_by"],
+            "updated_at": row["updated_at"],
+        }
+
+    def save_feature_snapshot(
+        self,
+        *,
+        issue: int,
+        expected_revision: int | None,
+        revision: int,
+        doc_json: str,
+        units: list[dict[str, Any]],
+        actor: str,
+    ) -> None:
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            if expected_revision is None:
+                self.db.execute(
+                    """INSERT INTO feature_docs(issue, revision, doc_json, updated_by)
+                       VALUES (?, ?, ?, ?)""",
+                    (issue, revision, doc_json, actor),
+                )
+            else:
+                upd = self.db.execute(
+                    """UPDATE feature_docs
+                       SET revision=?, doc_json=?, updated_by=?,
+                           updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                       WHERE issue=? AND revision=?""",
+                    (revision, doc_json, actor, issue, expected_revision),
+                )
+                if upd.rowcount != 1:
+                    raise StateConflict("CAS failed: feature state revision conflict or missing issue")
+            self.db.execute("DELETE FROM feature_units WHERE issue=?", (issue,))
+            for unit in units:
+                evidence = unit.get("evidence")
+                self.db.execute(
+                    """INSERT INTO feature_units(
+                           issue, unit_id, state, verification_sha256,
+                           blocker, evidence_json, updated_by
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        issue,
+                        unit["id"],
+                        unit["state"],
+                        unit["verification"]["definition_sha256"],
+                        unit.get("blocker") or "",
+                        json.dumps(evidence) if evidence is not None else None,
+                        actor,
+                    ),
+                )
+            self.db.execute("COMMIT")
+        except sqlite3.IntegrityError as exc:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise StateConflict("Feature state constraint/WIP=1 conflict") from exc
+        except BaseException:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise
+
+    def record_checkpoint(
+        self,
+        *,
+        issue: int,
+        run_id: str | None,
+        revision_sha: str,
+        candidate_sha256: str,
+        branch: str,
+        worktree_rel: str,
+        active_unit: str | None,
+        blocker: str,
+        next_action: str,
+        decision_refs: tuple[str, ...] | list[str],
+        issue_sha256: str,
+        handoff_json: str,
+    ) -> int:
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            cur = self.db.execute(
+                """INSERT INTO checkpoints(
+                       issue, run_id, revision_sha, candidate_sha256, branch,
+                       worktree_rel, active_unit, blocker, next_action,
+                       decision_refs_json, issue_sha256, handoff_json
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    issue,
+                    run_id,
+                    revision_sha,
+                    candidate_sha256,
+                    branch,
+                    worktree_rel,
+                    active_unit,
+                    blocker,
+                    next_action,
+                    json.dumps(list(decision_refs)),
+                    issue_sha256,
+                    handoff_json,
+                ),
+            )
+            checkpoint_id = int(cur.lastrowid)
+            self.db.execute("COMMIT")
+            return checkpoint_id
+        except BaseException:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise
+
+    def latest_checkpoint(self, issue: int) -> dict[str, Any] | None:
+        row = self.db.execute(
+            "SELECT * FROM checkpoints WHERE issue=? ORDER BY checkpoint_id DESC LIMIT 1",
+            (issue,),
+        ).fetchone()
+        if row is None:
+            return None
+        data = dict(row)
+        data["decision_refs"] = json.loads(data.pop("decision_refs_json"))
+        data["handoff"] = json.loads(data.pop("handoff_json"))
+        return data
+
+    def list_checkpoints(self, issue: int) -> list[dict[str, Any]]:
+        rows = self.db.execute(
+            "SELECT * FROM checkpoints WHERE issue=? ORDER BY checkpoint_id",
+            (issue,),
+        ).fetchall()
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            data = dict(row)
+            data["decision_refs"] = json.loads(data.pop("decision_refs_json"))
+            data["handoff"] = json.loads(data.pop("handoff_json"))
+            results.append(data)
+        return results

@@ -98,11 +98,25 @@ def verify_candidate(journal: Journal, run_id: str) -> dict[str, Any]:
     except (OSError, ValueError, WorktreeError, json.JSONDecodeError) as exc:
         raise VerificationBlocked("Candidate verification failed: " + str(exc)[:200]) from exc
     # Diff and untracked source are both represented; raw secrets never enter receipt.
+    tracked_diff_sha = sha(diff.encode())
+    cand_fingerprint = sha(
+        json.dumps(
+            {
+                "base_sha": item["source_sha"],
+                "branch": item["branch"],
+                "files_sha256": hashes,
+                "tracked_diff_sha256": tracked_diff_sha,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    )
     return {
         "status": "SCOPE_SCAN_PASS_ONLY",
         "issue": item["issue"], "run_id": run_id, "base_sha": item["source_sha"],
         "branch": item["branch"], "paths": changed, "files_sha256": hashes,
-        "tracked_diff_sha256": sha(diff.encode()), "changed_file_count": len(changed),
+        "tracked_diff_sha256": tracked_diff_sha, "candidate_sha256": cand_fingerprint,
+        "changed_file_count": len(changed),
         "build": "NOT_VERIFIED", "audit": "NOT_VERIFIED",
         "hil": "NOT_VERIFIED", "rf": "NOT_VERIFIED",
     }

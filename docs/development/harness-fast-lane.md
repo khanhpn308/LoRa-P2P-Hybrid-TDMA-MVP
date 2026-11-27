@@ -44,6 +44,21 @@ Coordinator tự xử lý theo bảng dưới. Không yêu cầu một prompt d�
 
 **Không auto-block chỉ vì GitHub Actions không chạy:** theo quyết định owner, acceptance GitHub Actions là `OWNER_WAIVED`, KHÔNG được ghi `CI_PASS`. Build/unit/contract tests có bằng chứng vẫn phải chạy khi phù hợp.
 
+### Session Continuity & Feature State (P04 / OD-02 / OD-08)
+
+- **Ownership (single writer per field):** GitHub Issue owns backlog/scope/AC (`issue_sha256`, `approved_scope`); Git owns revision (`base_sha`, `head_sha`, `branch`, `candidate_sha256`); Host SQLite `Journal` owns local runs, CAS transitions, and checkpoints; Host receipts (`host_verifier`) exclusively grant `PASSING`; versioned JSON under [`docs/harness/features/schema.json`](../harness/features/schema.json) is one-way durable export/handoff only (no duplicate backlog, runtime DB, credentials, raw logs, or absolute machine paths).
+- **WIP=1 & Drift Protection:** At most one unit per Issue execution may be `ACTIVE`. A Worker cannot rewrite verification definitions or mark a unit `PASSING`. Any `source_sha`, `candidate_sha256`, or verification drift invalidates active `PASSING` state to `STALE` while preserving `evidence_history`.
+- **Session-start / Resume / Checkpoint:**
+
+```bash
+python3 scripts/agent_harness/feature_state.py session-start --issue <N> --repo <candidate> --state <host-state.sqlite>
+python3 scripts/agent_harness/feature_state.py activate --issue <N> --unit-id <UNIT_ID> --state <host-state.sqlite>
+python3 scripts/agent_harness/feature_state.py verify-unit --issue <N> --unit-id <UNIT_ID> --receipt <host-receipt.json> --state <host-state.sqlite>
+python3 scripts/agent_harness/feature_state.py checkpoint --issue <N> --repo <candidate> --state <host-state.sqlite> --next-action "..." --export docs/harness/features/issue-<N>.json
+```
+
+Equivalent `resume` and `checkpoint` wrappers are also exposed via `scripts/agent_harness/p1/cli.py`. Native AGY/Codex UI conversations cannot be mechanically intercepted by CLI alone; Coordinator instructions invoke these commands, and Host CLI enforces schema, WIP=1, CAS, authority, and non-destructive recovery whenever run. Cross-machine recovery is `NOT_VERIFIED` unless actually exercised across distinct hosts.
+
 ### Local quality gates, không thêm bước nhập lệnh
 
 Coordinator tự chạy từ trusted checkout, trước và sau Auditor:

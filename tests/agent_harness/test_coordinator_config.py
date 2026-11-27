@@ -193,6 +193,18 @@ class HarnessCoordinatorConfigTests(unittest.TestCase):
         self.assertIn("ADR-0004", auditor)
         self.assertNotIn("backend-controlled schedule", auditor)
 
+    def test_p04_session_continuity_documented_and_schema_valid(self):
+        import json
+        coord = self.coordinator_path.read_text(encoding="utf-8")
+        fast_lane = (self.repo_root / "docs" / "development" / "harness-fast-lane.md").read_text(encoding="utf-8")
+        for marker in ("feature_state.py session-start", "feature_state.py checkpoint", "WIP=1"):
+            self.assertIn(marker, coord)
+        for marker in ("feature_state.py session-start", "feature_state.py checkpoint", "WIP=1"):
+            self.assertIn(marker, fast_lane)
+        schema_path = self.repo_root / "docs" / "harness" / "features" / "schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        self.assertEqual(schema["properties"]["schema_version"]["const"], "1.0")
+
 
 if __name__ == "__main__":
     unittest.main()

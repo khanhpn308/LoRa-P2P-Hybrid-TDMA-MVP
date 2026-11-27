@@ -73,6 +73,100 @@ class JournalTests(unittest.TestCase):
             with self.assertRaises(StateConflict):
                 state.get("unknown")
 
+    def test_legacy_journal_migrates_and_enforces_sqlite_wip_and_cas(self):
+        import json
+        import sqlite3
+
+        # Simulate a pre-P04 SQLite journal containing only jobs and events.
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(self.path))
+        conn.executescript("""
+            CREATE TABLE jobs (
+                run_id TEXT PRIMARY KEY,
+                issue INTEGER NOT NULL,
+                state TEXT NOT NULL,
+                source_sha TEXT NOT NULL,
+                issue_sha TEXT NOT NULL,
+                branch TEXT NOT NULL,
+                worktree TEXT NOT NULL,
+                scope_json TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
+            CREATE TABLE events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL,
+                from_state TEXT,
+                to_state TEXT NOT NULL,
+                note TEXT NOT NULL DEFAULT '',
+                utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
+            INSERT INTO jobs(run_id, issue, state, source_sha, issue_sha, branch, worktree, scope_json)
+            VALUES ('legacyrun00000000000000000000001', 429, 'PREPARED', '0000000000000000000000000000000000000000',
+                    '1111111111111111111111111111111111111111111111111111111111111111',
+                    'feature/429-legacy', 'wt', '["scripts/agent_harness/"]');
+        """)
+        conn.commit()
+        conn.close()
+
+        with Journal(self.path) as state:
+            job = state.active_job_for_issue(429)
+            self.assertIsNotNone(job)
+            self.assertEqual(job["run_id"], "legacyrun00000000000000000000001")
+
+            units_active_two = [
+                {"id": "U1", "state": "ACTIVE", "verification": {"definition_sha256": "a" * 64}},
+                {"id": "U2", "state": "ACTIVE", "verification": {"definition_sha256": "b" * 64}},
+            ]
+            with self.assertRaises(StateConflict):
+                state.save_feature_snapshot(
+                    issue=429,
+                    expected_revision=None,
+                    revision=1,
+                    doc_json=json.dumps({"units": units_active_two}),
+                    units=units_active_two,
+                    actor="coordinator",
+                )
+
+            units_ok = [
+                {"id": "U1", "state": "ACTIVE", "verification": {"definition_sha256": "a" * 64}},
+                {"id": "U2", "state": "PENDING", "verification": {"definition_sha256": "b" * 64}},
+            ]
+            state.save_feature_snapshot(
+                issue=429,
+                expected_revision=None,
+                revision=1,
+                doc_json=json.dumps({"units": units_ok}),
+                units=units_ok,
+                actor="coordinator",
+            )
+            with self.assertRaises(StateConflict):
+                state.save_feature_snapshot(
+                    issue=429,
+                    expected_revision=99,
+                    revision=2,
+                    doc_json=json.dumps({"units": units_ok}),
+                    units=units_ok,
+                    actor="coordinator",
+                )
+
+            ckpt_id = state.record_checkpoint(
+                issue=429,
+                run_id="legacyrun00000000000000000000001",
+                revision_sha="0" * 40,
+                candidate_sha256="c" * 64,
+                branch="feature/429-legacy",
+                worktree_rel=".",
+                active_unit="U1",
+                blocker="",
+                next_action="Finish U1",
+                decision_refs=["OD-02"],
+                issue_sha256="1" * 64,
+                handoff_json=json.dumps({"active_unit": "U1", "next_action": "Finish U1"}),
+            )
+            self.assertGreaterEqual(ckpt_id, 1)
+            self.assertEqual(state.latest_checkpoint(429)["active_unit"], "U1")
+
 
 if __name__ == "__main__":
     unittest.main()
