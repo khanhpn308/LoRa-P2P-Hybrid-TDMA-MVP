@@ -1,10 +1,10 @@
 # Harness Engineering Coursebook — Reference Index
 
-> **Issue:** [#415](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/415) (`[Harness V2][P00-B]`) · **Companion:** [README.md](README.md)
+> **Issue:** [#415](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/415) (`[Harness V2][P00-B]`) · **Reconciliation:** [#417](https://github.com/khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP/issues/417) (`[Harness V2][P00-C]`) · **Companion:** [README.md](README.md)
 > **Normative SPEC:** [HARNESS_SPEC.md](../../harness/HARNESS_SPEC.md) (`v0.2.0`) · **Master Plan:** [HARNESS_MASTER_PLAN.md](../../harness/HARNESS_MASTER_PLAN.md) (`v0.2.0`)
-> **Source PDF:** `learn-harness-engineering-en.pdf` (`221` physical pages, SHA-256 `777e654c404c167020e29d0b0b4519e22c0c72bbcca383d83d873536cd012b67`)
+> **Source PDF:** [learn-harness-engineering-en.pdf](learn-harness-engineering-en.pdf) (`221` physical pages, `7,797,038` bytes, SHA-256 `777e654c404c167020e29d0b0b4519e22c0c72bbcca383d83d873536cd012b67` — currently tracked in Git; retention/redistribution status `BLOCKED` pending authorization or removal per [README.md](README.md) §4)
 
-**Page numbering convention:** Physical PDF page numbers (`1–221`, 1-based) are primary and match [HARNESS_SPEC.md](../../harness/HARNESS_SPEC.md) §2 and §4. Section-relative printed footer labels (`1/N … N/N`) are shown in parentheses for cross-checking against rendered pages. Load only the sections needed for the active task—never all 221 pages by default.
+**Page numbering convention:** Physical PDF page numbers (`1–221`, 1-based) are primary and match [HARNESS_SPEC.md](../../harness/HARNESS_SPEC.md) §2 and §4. Section-relative printed footer labels (`1/N … N/N`) are shown in parentheses for cross-checking against rendered pages. Load only the sections needed for the active task—never all 221 pages by default, and never perform bulk PDF extraction or add runtime PDF dependencies. Ordinary product execution does not require the PDF; pinned upstream Markdown routes (`walkinglabs/learn-harness-engineering` @ `fe2c4ebd2010aa877b504e141437729296c934e8`) are listed in §1 as a non-binary alternative.
 
 ---
 
