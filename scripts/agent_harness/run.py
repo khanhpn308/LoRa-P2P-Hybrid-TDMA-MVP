@@ -20,6 +20,7 @@ from agent_context import load_context, ContextGateError
 from feature_state import (
     FeatureStateError,
     session_checkpoint,
+    verify_host_gate_evidence,
     verify_unit_passing,
     validate_feature_doc,
 )
@@ -443,22 +444,25 @@ def run(args: argparse.Namespace) -> int:
                             doc = validate_feature_doc(snap["doc"])
                             unit = next((u for u in doc["units"] if u["id"] == args.unit_id), None)
                             if unit is not None:
-                                unit_receipt = {
-                                    "verified_by": "host_verifier",
-                                    "status": "AUTO_CHECK_PASS",
-                                    "exit_code": 0,
-                                    "checks_complete": True,
-                                    "source_sha": after_source["source_sha"],
-                                    "candidate_sha256": after_source["candidate_sha256"],
-                                    "verification_sha256": unit["verification"]["definition_sha256"],
-                                    "receipt_path": "checks.log",
-                                    "receipt_sha256": evidence["checks.log"],
-                                }
+                                unit_ver_sha = unit["verification"]["definition_sha256"]
+                                for entry in check_entries.values():
+                                    entry["observations"] = {
+                                        **entry.get("observations", {}),
+                                        "verification_sha256": unit_ver_sha,
+                                    }
+                                write("quality-manifest.json", gate_manifest)
+                                proof = verify_host_gate_evidence(
+                                    doc,
+                                    args.unit_id,
+                                    repo=repo,
+                                    base_sha=result["base_sha"],
+                                    evidence_dir=artifacts,
+                                    manifest_name="quality-manifest.json",
+                                )
                                 updated_doc = verify_unit_passing(
                                     doc,
                                     args.unit_id,
-                                    actor="host_verifier",
-                                    receipt=unit_receipt,
+                                    proof=proof,
                                     expected_revision=snap["revision"],
                                 )
                                 journal.save_feature_snapshot(
@@ -468,6 +472,7 @@ def run(args: argparse.Namespace) -> int:
                                     doc_json=json.dumps(updated_doc, sort_keys=True),
                                     units=updated_doc["units"],
                                     actor="host_verifier",
+                                    host_proofs={args.unit_id: proof},
                                 )
                 return finish("READY_FOR_HUMAN_REVIEW", 0,
                               "Uncommitted scoped tree; human technical review required; no PR auto-created")

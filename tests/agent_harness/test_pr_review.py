@@ -2259,6 +2259,7 @@ class PRReviewCLITests(unittest.TestCase):
 
     def test_inspect_pr_feature_state_detects_valid_stale_and_issue_mismatch(self):
         import feature_state as fs
+        from p1.state import issue_host_proof
 
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
@@ -2281,20 +2282,20 @@ class PRReviewCLITests(unittest.TestCase):
             )
             doc = fs.activate_unit(doc, "U-01")
             ver_sha = doc["units"][0]["verification"]["definition_sha256"]
-            doc = fs.verify_unit_passing(
-                doc, "U-01", actor="host_verifier",
-                receipt={
-                    "verified_by": "host_verifier",
-                    "status": "AUTO_CHECK_PASS",
-                    "exit_code": 0,
-                    "checks_complete": True,
-                    "source_sha": "1" * 40,
-                    "candidate_sha256": "a" * 64,
-                    "verification_sha256": ver_sha,
-                    "receipt_path": "evidence/checks.log",
-                    "receipt_sha256": "b" * 64,
-                },
+            proof = issue_host_proof(
+                issue=429,
+                unit_id="U-01",
+                verification_sha256=ver_sha,
+                source_sha="1" * 40,
+                candidate_sha256="a" * 64,
+                manifest_sha256="c" * 64,
+                runner_sha256="d" * 64,
+                receipt_path="evidence/checks.log",
+                receipt_sha256="b" * 64,
+                gate_rule_id="TOOLING-CHECK",
+                auto_check="AUTO_CHECK_PASS",
             )
+            doc = fs.verify_unit_passing(doc, "U-01", proof=proof)
             fs.export_feature_doc(doc, feat_dir / "issue-429.json")
 
             pr_data = {
