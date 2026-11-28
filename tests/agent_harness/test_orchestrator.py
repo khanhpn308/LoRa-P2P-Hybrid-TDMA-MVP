@@ -6,11 +6,14 @@ import contextlib
 import hashlib
 import io
 import json
+import os
 import pathlib
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -1370,6 +1373,1068 @@ class OrchestratorControlPlaneTests(unittest.TestCase):
             r2_audit = json.loads((ev_root / "round-02/auditor-report.json").read_text(encoding="utf-8"))
             self.assertEqual(r1_audit["report"]["status"], "FAIL")
             self.assertEqual(r2_audit["report"]["status"], "PASS")
+
+    def _spawn_and_kill_at_boundary(self, *, repo_path: pathlib.Path, journal_path: pathlib.Path, evidence_dir: pathlib.Path, boundary: str) -> str:
+        """Spawn a real child process, hold/advance lease to target boundary, and SIGKILL it."""
+        harness_dir = str(pathlib.Path(__file__).resolve().parents[2] / "scripts" / "agent_harness")
+        ready_file = evidence_dir.parent / f"ready_{boundary}_{time.time_ns()}.txt"
+        child_script = f"""
+import json, pathlib, sys, time
+sys.path.insert(0, {harness_dir!r})
+import orchestrator
+from feature_state import compute_candidate_snapshot
+from p1.state import Journal
+
+repo = pathlib.Path({str(repo_path)!r})
+journal_path = pathlib.Path({str(journal_path)!r})
+ev_dir = pathlib.Path({str(evidence_dir)!r})
+ev_dir.mkdir(parents=True, exist_ok=True)
+boundary = {boundary!r}
+issue_data = {{"state": "OPEN", "title": "Child Crash Fixture", "body": "## Target Directories (allowed paths)\\n- `README.md`\\n"}}
+pol = orchestrator.build_run_policy(consecutive_passes_required=1, max_rounds=3, max_wall_seconds=60)
+adm = orchestrator.admit_run(
+    repo=repo, issue=4410, journal_path=journal_path,
+    issue_data=issue_data,
+    approval={{"status": "FIXTURE_APPROVED", "approved_by": "fixture-owner"}},
+    policy=pol, check_profile="quick",
+    maker_provider="fixture", checker_provider="fixture",
+    capability_overrides={{"fixture_maker": True, "fixture_checker": True}},
+    require_isolated_worktree=False, require_protected_approval=False,
+    allow_fixture_mode=True, evidence_dir=ev_dir,
+)
+rid = adm["run"]["run_id"]
+(ev_dir / "frozen_check_plan.json").write_text(json.dumps(adm["check_plan"], indent=2, sort_keys=True), encoding="utf-8")
+d_maker = orchestrator.dispatch_role(repo=repo, journal_path=journal_path, run_id=rid, role="maker", in_flight_round=1)
+tok = d_maker["dispatch_token"]
+if boundary == "maker_dispatch":
+    pathlib.Path({str(ready_file)!r}).write_text(rid, encoding="utf-8")
+    time.sleep(60)
+orchestrator.transition_state(
+    journal_path=journal_path, run_id=rid, expected="DISPATCHED", next_state="MAKER_RUNNING",
+    actor_role="host", action="maker_started", dispatch_token=tok,
+)
+(repo / "README.md").write_text("partial dirty maker work\\n", encoding="utf-8")
+if boundary == "maker_running":
+    pathlib.Path({str(ready_file)!r}).write_text(rid, encoding="utf-8")
+    time.sleep(60)
+snap = compute_candidate_snapshot(repo, base_sha=adm["run"]["base_sha"])
+with Journal(journal_path) as j:
+    j.record_control_progress(
+        rid, expected_state="MAKER_RUNNING", actor_role="host", op="maker_completed",
+        expected_dispatch_token=tok, wall_elapsed_delta_s=10.0,
+        in_flight_round=1, candidate_sha256=snap["candidate_sha256"], last_diff_sha256=snap["diff_sha256"],
+    )
+orchestrator.transition_state(
+    journal_path=journal_path, run_id=rid, expected="MAKER_RUNNING", next_state="VERIFYING",
+    actor_role="host", action="host_verifying", dispatch_token=tok,
+)
+r1 = ev_dir / "round-01"
+r1.mkdir(parents=True, exist_ok=True)
+if boundary == "verifying":
+    # Simulate interrupted partial/corrupt evidence write
+    (r1 / "checks_summary.json").write_text('{{"truncated": true', encoding="utf-8")
+    (r1 / ".staging.tmp").write_text("partial", encoding="utf-8")
+    pathlib.Path({str(ready_file)!r}).write_text(rid, encoding="utf-8")
+    time.sleep(60)
+with Journal(journal_path) as j:
+    j.transition_control_run(
+        rid, expected="VERIFYING", next_state="REPAIR_REQUIRED", actor_role="host",
+        action="maker_verified_ready_for_checker", expected_dispatch_token=tok, clear_dispatch=True,
+        update_fields={{"candidate_sha256": snap["candidate_sha256"], "last_diff_sha256": snap["diff_sha256"]}},
+    )
+d_chk = orchestrator.dispatch_role(repo=repo, journal_path=journal_path, run_id=rid, role="checker", in_flight_round=1)
+chk_tok = d_chk["dispatch_token"]
+orchestrator.transition_state(
+    journal_path=journal_path, run_id=rid, expected="DISPATCHED", next_state="CHECKING",
+    actor_role="host", action="checker_started", dispatch_token=chk_tok,
+)
+(r1 / "audit_report.json").write_text('{{"partial_audit": ', encoding="utf-8")
+pathlib.Path({str(ready_file)!r}).write_text(rid, encoding="utf-8")
+time.sleep(60)
+"""
+        proc = subprocess.Popen([sys.executable, "-c", child_script], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            deadline = time.monotonic() + 15.0
+            while not ready_file.is_file():
+                if proc.poll() is not None:
+                    out, err = proc.communicate(timeout=5)
+                    raise AssertionError(f"Child exited early ({proc.returncode}): {out.decode()} {err.decode()}")
+                if time.monotonic() > deadline:
+                    raise AssertionError(f"Timed out waiting for child boundary {boundary}")
+                time.sleep(0.05)
+            run_id = ready_file.read_text(encoding="utf-8").strip()
+            # Verify live lease blocks concurrent reconcile/resume while child is alive!
+            with self.assertRaises(orchestrator.DuplicateDispatchError):
+                orchestrator.reconcile_run(
+                    repo=repo_path,
+                    journal_path=journal_path,
+                    run_id=run_id,
+                    evidence_dir=evidence_dir,
+                    issue_data={"state": "OPEN", "title": "Child Crash Fixture", "body": "## Target Directories (allowed paths)\n- `README.md`\n"},
+                )
+        finally:
+            if proc.poll() is None:
+                os.kill(proc.pid, signal.SIGKILL)
+            proc.wait(timeout=10)
+            if proc.stdout is not None:
+                proc.stdout.close()
+            if proc.stderr is not None:
+                proc.stderr.close()
+            if ready_file.exists():
+                ready_file.unlink()
+        return run_id
+
+    def test_p08c_kill_restart_at_maker_verification_checker_and_commit_boundaries_fresh_process(self):
+        # Ensure base repo fixture has scripts/verify_structure.py so profile="quick" check.run_checks passes
+        (self.repo / "scripts").mkdir(exist_ok=True)
+        (self.repo / "scripts" / "verify_structure.py").write_text("print('OK')\n", encoding="utf-8")
+        _git(self.repo, "add", "scripts/verify_structure.py")
+        _git(self.repo, "commit", "-qm", "add verify_structure fixture")
+
+        # 1. Maker running boundary: SIGKILL -> fresh process refuses blind Maker re-exec & preserves dirty worktree
+        r_maker = self.base_dir / "repo_maker"
+        shutil.copytree(self.repo, r_maker)
+        _git(r_maker, "checkout", "-q", "-B", "feature/4410-maker")
+        j_maker = self.base_dir / "host" / "maker.sqlite"
+        ev_maker = self.base_dir / "ev_maker"
+        rid_maker = self._spawn_and_kill_at_boundary(
+            repo_path=r_maker, journal_path=j_maker, evidence_dir=ev_maker, boundary="maker_running"
+        )
+        issue_4410 = {"state": "OPEN", "title": "Child Crash Fixture", "body": "## Target Directories (allowed paths)\n- `README.md`\n"}
+        rec_maker = orchestrator.reconcile_run(
+            repo=r_maker, journal_path=j_maker, run_id=rid_maker, evidence_dir=ev_maker, issue_data=issue_4410
+        )
+        self.assertEqual(rec_maker["status"], "BLOCKED")
+        self.assertEqual(rec_maker["recovery_reason"], "interrupted_maker_preserved")
+        self.assertFalse(rec_maker["can_resume"])
+        self.assertEqual((r_maker / "README.md").read_text(encoding="utf-8"), "partial dirty maker work\n")
+
+        # 2. Maker dispatch boundary (killed before MAKER_RUNNING): safe reconcile -> resume to READY_FOR_HUMAN_REVIEW
+        r_disp = self.base_dir / "repo_disp"
+        shutil.copytree(self.repo, r_disp)
+        _git(r_disp, "checkout", "-q", "-B", "feature/4410-disp")
+        j_disp = self.base_dir / "host" / "disp.sqlite"
+        ev_disp = self.base_dir / "ev_disp"
+        rid_disp = self._spawn_and_kill_at_boundary(
+            repo_path=r_disp, journal_path=j_disp, evidence_dir=ev_disp, boundary="maker_dispatch"
+        )
+        resumed_disp = orchestrator.run_maker_checker_loop(
+            repo=r_disp,
+            issue=4410,
+            journal_path=j_disp,
+            evidence_dir=ev_disp,
+            issue_data=issue_4410,
+            maker_fn=lambda wt, _c: ((wt / "README.md").write_text("clean resumed maker\n", encoding="utf-8"), {"changed_path": "README.md"})[1],
+            check_profile="quick",
+            allow_fixture_mode=True,
+            require_isolated_worktree=False,
+            require_protected_approval=False,
+            resume_run_id=rid_disp,
+        )
+        self.assertEqual(resumed_disp["state"], "READY_FOR_HUMAN_REVIEW")
+        self.assertFalse(resumed_disp["ready_to_merge"])
+
+        # 3. Verification boundary with interrupted partial evidence write -> quarantined, Maker NOT re-run
+        r_ver = self.base_dir / "repo_ver"
+        shutil.copytree(self.repo, r_ver)
+        _git(r_ver, "checkout", "-q", "-B", "feature/4410-ver")
+        j_ver = self.base_dir / "host" / "ver.sqlite"
+        ev_ver = self.base_dir / "ev_ver"
+        rid_ver = self._spawn_and_kill_at_boundary(
+            repo_path=r_ver, journal_path=j_ver, evidence_dir=ev_ver, boundary="verifying"
+        )
+        maker_called_on_ver_resume = {"n": 0}
+        resumed_ver = orchestrator.run_maker_checker_loop(
+            repo=r_ver,
+            issue=4410,
+            journal_path=j_ver,
+            evidence_dir=ev_ver,
+            issue_data=issue_4410,
+            maker_fn=lambda _wt, _c: (maker_called_on_ver_resume.__setitem__("n", maker_called_on_ver_resume["n"] + 1), {"changed_path": "README.md"})[1],
+            check_profile="quick",
+            allow_fixture_mode=True,
+            require_isolated_worktree=False,
+            require_protected_approval=False,
+            resume_run_id=rid_ver,
+        )
+        self.assertEqual(resumed_ver["state"], "READY_FOR_HUMAN_REVIEW")
+        self.assertEqual(maker_called_on_ver_resume["n"], 0)
+        self.assertTrue((ev_ver / "interrupted").is_dir())
+        with Journal(j_ver) as j:
+            r_ver_run = j.get_control_run(rid_ver)
+            # Persisted elapsed wall budget (10.0s flushed before kill) is preserved, never reset
+            self.assertGreaterEqual(r_ver_run["budget_consumed"]["wall_seconds"], 10.0)
+
+        # 4. Checker boundary with interrupted partial audit_report.json -> quarantined, Maker NOT re-run
+        r_chk = self.base_dir / "repo_chk"
+        shutil.copytree(self.repo, r_chk)
+        _git(r_chk, "checkout", "-q", "-B", "feature/4410-chk")
+        j_chk = self.base_dir / "host" / "chk.sqlite"
+        ev_chk = self.base_dir / "ev_chk"
+        rid_chk = self._spawn_and_kill_at_boundary(
+            repo_path=r_chk, journal_path=j_chk, evidence_dir=ev_chk, boundary="checking"
+        )
+        maker_called_on_chk_resume = {"n": 0}
+        resumed_chk = orchestrator.run_maker_checker_loop(
+            repo=r_chk,
+            issue=4410,
+            journal_path=j_chk,
+            evidence_dir=ev_chk,
+            issue_data=issue_4410,
+            maker_fn=lambda _wt, _c: (maker_called_on_chk_resume.__setitem__("n", maker_called_on_chk_resume["n"] + 1), {"changed_path": "README.md"})[1],
+            check_profile="quick",
+            allow_fixture_mode=True,
+            require_isolated_worktree=False,
+            require_protected_approval=False,
+            resume_run_id=rid_chk,
+        )
+        self.assertEqual(resumed_chk["state"], "READY_FOR_HUMAN_REVIEW")
+        self.assertEqual(maker_called_on_chk_resume["n"], 0)
+        self.assertTrue((ev_chk / "interrupted").is_dir())
+
+        # 5. Commit/checkpoint boundary between N=2 confirming passes -> resumes ONLY confirming pass
+        r_ckpt = self.base_dir / "repo_ckpt"
+        shutil.copytree(self.repo, r_ckpt)
+        _git(r_ckpt, "checkout", "-q", "-B", "feature/4410-ckpt")
+        j_ckpt = self.base_dir / "host" / "ckpt.sqlite"
+        ev_ckpt = self.base_dir / "ev_ckpt"
+        pol_n2 = orchestrator.build_run_policy(consecutive_passes_required=2, max_rounds=4, max_wall_seconds=120)
+        round_1_done = orchestrator.run_maker_checker_loop(
+            repo=r_ckpt,
+            issue=4410,
+            journal_path=j_ckpt,
+            evidence_dir=ev_ckpt,
+            issue_data=issue_4410,
+            maker_fn=lambda wt, _c: ((wt / "README.md").write_text("n2 fixed\n", encoding="utf-8"), {"changed_path": "README.md"})[1],
+            approval={"status": "FIXTURE_APPROVED", "approved_by": "fixture-owner"},
+            policy=pol_n2,
+            check_profile="quick",
+            allow_fixture_mode=True,
+            require_isolated_worktree=False,
+            require_protected_approval=False,
+            cancel_check=lambda rnd: rnd == 2,
+        )
+        self.assertEqual(round_1_done["state"], "CANCELLED")
+
+        # Now test clean REPAIR_REQUIRED checkpoint resume before cancel
+        r_ckpt2 = self.base_dir / "repo_ckpt2"
+        shutil.copytree(self.repo, r_ckpt2)
+        _git(r_ckpt2, "checkout", "-q", "-B", "feature/4410-ckpt2")
+        j_ckpt2 = self.base_dir / "host" / "ckpt2.sqlite"
+        ev_ckpt2 = self.base_dir / "ev_ckpt2"
+        adm2 = orchestrator.admit_run(
+            repo=r_ckpt2, issue=4410, journal_path=j_ckpt2, issue_data=issue_4410,
+            approval={"status": "FIXTURE_APPROVED", "approved_by": "fixture-owner"},
+            policy=pol_n2, check_profile="quick",
+            maker_provider="fixture", checker_provider="fixture",
+            capability_overrides={"fixture_maker": True, "fixture_checker": True},
+            require_isolated_worktree=False, require_protected_approval=False,
+            allow_fixture_mode=True, evidence_dir=ev_ckpt2,
+        )
+        rid2 = adm2["run"]["run_id"]
+        (ev_ckpt2 / "frozen_check_plan.json").write_text(json.dumps(adm2["check_plan"], indent=2, sort_keys=True), encoding="utf-8")
+        # Complete round 1 PASS manually via run_checks + checker -> REPAIR_REQUIRED (consecutive_passes=1)
+        d1 = orchestrator.dispatch_role(repo=r_ckpt2, journal_path=j_ckpt2, run_id=rid2, role="maker", in_flight_round=1)
+        orchestrator.transition_state(
+            journal_path=j_ckpt2, run_id=rid2, expected="DISPATCHED", next_state="MAKER_RUNNING",
+            actor_role="host", action="maker_started", dispatch_token=d1["dispatch_token"],
+        )
+        (r_ckpt2 / "README.md").write_text("n2 clean edit\n", encoding="utf-8")
+        snap2 = feature_state.compute_candidate_snapshot(r_ckpt2, base_sha=adm2["run"]["base_sha"])
+        sel2 = orchestrator.select_rules(
+            r_ckpt2,
+            list(adm2["admission"]["scope"]),
+            base=adm2["run"]["base_sha"],
+            expected_source_sha=snap2["source_sha"],
+        )
+        orchestrator.transition_state(
+            journal_path=j_ckpt2, run_id=rid2, expected="MAKER_RUNNING", next_state="VERIFYING",
+            actor_role="host", action="host_verifying", dispatch_token=d1["dispatch_token"],
+        )
+        r1_dir = ev_ckpt2 / "round-01"
+        r1_dir.mkdir(parents=True)
+        cs1 = orchestrator.run_checks(
+            r_ckpt2, base_sha=adm2["run"]["base_sha"], profile="quick",
+            evidence_dir=r1_dir, frozen_plan_path=ev_ckpt2 / "frozen_check_plan.json",
+            run_quality_gates=True, journal_path=j_ckpt2, issue=4410, run_id=rid2,
+        )
+        cs1_sha = hashlib.sha256((r1_dir / "checks_summary.json").read_bytes()).hexdigest()
+        m1_sha = hashlib.sha256((r1_dir / "manifest.json").read_bytes()).hexdigest()
+        with Journal(j_ckpt2) as j:
+            j.transition_control_run(
+                rid2, expected="VERIFYING", next_state="REPAIR_REQUIRED", actor_role="host",
+                action="maker_verified_ready_for_checker", expected_dispatch_token=d1["dispatch_token"], clear_dispatch=True,
+                update_fields={"candidate_sha256": snap2["candidate_sha256"], "last_diff_sha256": snap2["diff_sha256"]},
+            )
+        dc1 = orchestrator.dispatch_role(repo=r_ckpt2, journal_path=j_ckpt2, run_id=rid2, role="checker", in_flight_round=1)
+        orchestrator.transition_state(
+            journal_path=j_ckpt2, run_id=rid2, expected="DISPATCHED", next_state="CHECKING",
+            actor_role="host", action="checker_started", dispatch_token=dc1["dispatch_token"],
+        )
+        ev_refs1 = [{"receipt_path": "checks_summary.json", "receipt_sha256": cs1_sha}]
+        rub1 = orchestrator.build_rubric_report(decision="ACCEPT", hard_gate_passed=True, evidence_refs=ev_refs1)
+        a1_sha = orchestrator.write_immutable_json(
+            r1_dir / "audit_report.json",
+            {
+                "run_id": rid2, "round_num": 1, "source_sha": snap2["source_sha"],
+                "candidate_sha256": snap2["candidate_sha256"], "diff_sha256": snap2["diff_sha256"],
+                "selection_sha256": sel2["selection_sha256"],
+                "report": {
+                    "status": "PASS", "findings": [], "limitations": [], "reviewed_scope": ["README.md"],
+                    "selection_sha256": sel2["selection_sha256"], "rule_results": [], "rubric": rub1,
+                },
+            },
+        )
+        orchestrator.record_round_result(
+            journal_path=j_ckpt2, run_id=rid2, dispatch_token=dc1["dispatch_token"],
+            outcome="PASS", host_checks_passed=True, checker_passed=True,
+            candidate_sha256=snap2["candidate_sha256"], diff_sha256=snap2["diff_sha256"],
+            policy_sha256=adm2["policy"]["policy_sha256"], check_plan_sha256=adm2["check_plan"]["plan_sha256"],
+            selection_sha256=sel2["selection_sha256"], selected_ids=sel2["selected_ids"],
+            checks_summary_sha256=cs1_sha, manifest_sha256=m1_sha, auditor_report_sha256=a1_sha,
+            evidence_dir=ev_ckpt2,
+            evidence_refs={"round_dir": "round-01", "checks_summary": "round-01/checks_summary.json", "manifest": "round-01/manifest.json", "auditor_report": "round-01/audit_report.json"},
+            rubric=rub1, wall_elapsed_s=4.0,
+        )
+        # Resume in a fresh call -> must run confirming pass ONLY (0 Maker calls) and reach READY_FOR_HUMAN_REVIEW
+        ckpt_maker_calls = {"n": 0}
+        resumed_ckpt2 = orchestrator.run_maker_checker_loop(
+            repo=r_ckpt2,
+            issue=4410,
+            journal_path=j_ckpt2,
+            evidence_dir=ev_ckpt2,
+            issue_data=issue_4410,
+            maker_fn=lambda _wt, _c: (ckpt_maker_calls.__setitem__("n", ckpt_maker_calls["n"] + 1), {"changed_path": "README.md"})[1],
+            check_profile="quick",
+            allow_fixture_mode=True,
+            require_isolated_worktree=False,
+            require_protected_approval=False,
+            resume_run_id=rid2,
+        )
+        self.assertEqual(resumed_ckpt2["state"], "READY_FOR_HUMAN_REVIEW")
+        self.assertEqual(resumed_ckpt2["consecutive_passes"], 2)
+        self.assertEqual(ckpt_maker_calls["n"], 0)
+
+    def test_p08c_ambiguous_ownership_cancel_persisted_budget_and_stale_n_pass_rejection(self):
+        # 1. Ambiguous ownership (foreign host or missing PID) refused conservatively
+        ev_amb = self.base_dir / "ev_amb"
+        adm = self._admit(
+            policy=orchestrator.build_run_policy(consecutive_passes_required=2, max_rounds=3, max_wall_seconds=20),
+            evidence_dir=ev_amb,
+        )
+        rid = adm["run"]["run_id"]
+        d = orchestrator.dispatch_role(
+            repo=self.repo, journal_path=self.journal_path, run_id=rid, role="maker",
+            lease_owner={"pid": 999999, "start_ticks": "123", "host": "remote-worker-host"},
+        )
+        rec_amb = orchestrator.reconcile_run(
+            repo=self.repo, journal_path=self.journal_path, run_id=rid,
+            evidence_dir=ev_amb, issue_data=self.issue_data,
+        )
+        self.assertEqual(rec_amb["decision"], "REFUSED_AMBIGUOUS_OWNERSHIP")
+        self.assertFalse(rec_amb["can_resume"])
+        self.assertEqual(rec_amb["status"], "DISPATCHED")
+
+        # 2. Cancel + dead lease reconciles cleanly to CANCELLED preserving dirty worktree
+        (self.repo / "README.md").write_text("dirty user work\n", encoding="utf-8")
+        with Journal(self.journal_path) as j:
+            j.db.execute("UPDATE control_runs SET lease_owner_host='', lease_owner_pid=99999999, cancel_requested=1, cancel_reason='user cancel' WHERE run_id=?", (rid,))
+        rec_can = orchestrator.reconcile_run(
+            repo=self.repo, journal_path=self.journal_path, run_id=rid,
+            evidence_dir=ev_amb, issue_data=self.issue_data,
+        )
+        self.assertEqual(rec_can["status"], "CANCELLED")
+        self.assertFalse(rec_can["can_resume"])
+        self.assertEqual((self.repo / "README.md").read_text(encoding="utf-8"), "dirty user work\n")
+
+        # 3. Persisted elapsed wall budget exhausted before restart -> immediately ESCALATED (no fresh retry budget)
+        (self.repo / "README.md").write_text("before\n", encoding="utf-8")
+        ev_bud = self.base_dir / "ev_bud"
+        adm_b = self._admit(
+            policy=orchestrator.build_run_policy(consecutive_passes_required=1, max_rounds=3, max_wall_seconds=15),
+            evidence_dir=ev_bud,
+        )
+        rid_b = adm_b["run"]["run_id"]
+        db = orchestrator.dispatch_role(
+            repo=self.repo, journal_path=self.journal_path, run_id=rid_b, role="checker",
+            lease_owner={"pid": 99999998, "start_ticks": "1", "host": os.uname().nodename},
+        )
+        orchestrator.transition_state(
+            journal_path=self.journal_path, run_id=rid_b, expected="DISPATCHED", next_state="CHECKING",
+            actor_role="host", action="checker_started", dispatch_token=db["dispatch_token"],
+        )
+        with Journal(self.journal_path) as j:
+            j.record_control_progress(
+                rid_b, expected_state="CHECKING", actor_role="host", op="budget_tick",
+                expected_dispatch_token=db["dispatch_token"], wall_elapsed_delta_s=16.0,
+            )
+        rec_bud = orchestrator.reconcile_run(
+            repo=self.repo, journal_path=self.journal_path, run_id=rid_b,
+            evidence_dir=ev_bud, issue_data=self.issue_data,
+        )
+        self.assertEqual(rec_bud["status"], "ESCALATED")
+        self.assertEqual(rec_bud["decision"], "ESCALATED_BUDGET_EXHAUSTED")
+        self.assertFalse(rec_bud["can_resume"])
+
+        # 4. Stale N=2 pass credit rejected if candidate drifts or prior evidence is tampered
+        (self.repo / "README.md").write_text("before\n", encoding="utf-8")
+        ev_n2 = self.base_dir / "ev_n2"
+        adm_n2 = self._admit(
+            policy=orchestrator.build_run_policy(consecutive_passes_required=2, max_rounds=3, max_wall_seconds=60),
+            evidence_dir=ev_n2,
+        )
+        rid_n2 = adm_n2["run"]["run_id"]
+        r1_n2 = ev_n2 / "round-01"
+        r1_n2.mkdir(parents=True)
+        dc_n2 = orchestrator.dispatch_role(repo=self.repo, journal_path=self.journal_path, run_id=rid_n2, role="checker", in_flight_round=1)
+        orchestrator.transition_state(
+            journal_path=self.journal_path, run_id=rid_n2, expected="DISPATCHED", next_state="CHECKING",
+            actor_role="host", action="checker_started", dispatch_token=dc_n2["dispatch_token"],
+        )
+        snap_n2 = feature_state.compute_candidate_snapshot(self.repo, base_sha=adm_n2["run"]["base_sha"])
+        cs_n2_sha = orchestrator.write_immutable_json(
+            r1_n2 / "checks_summary.json",
+            {
+                "status": "PASS",
+                "run_id": rid_n2, "round_num": 1, "source_sha": snap_n2["source_sha"],
+                "candidate_sha256": snap_n2["candidate_sha256"], "diff_sha256": snap_n2["diff_sha256"],
+                "checks_complete": True, "all_passed": True,
+                "checks": [{"check_id": "verify-structure", "status": "PASS", "exit_code": 0}],
+            },
+        )
+        rub_n2 = orchestrator.build_rubric_report(
+            decision="ACCEPT", hard_gate_passed=True,
+            evidence_refs=[{"receipt_path": "checks_summary.json", "receipt_sha256": cs_n2_sha}],
+        )
+        aud_n2_sha = orchestrator.write_immutable_json(
+            r1_n2 / "audit_report.json",
+            {
+                "run_id": rid_n2, "round_num": 1, "source_sha": snap_n2["source_sha"],
+                "candidate_sha256": snap_n2["candidate_sha256"], "diff_sha256": snap_n2["diff_sha256"],
+                "selection_sha256": adm_n2["selection"]["selection_sha256"],
+                "report": {
+                    "status": "PASS", "findings": [], "limitations": [], "reviewed_scope": [],
+                    "selection_sha256": adm_n2["selection"]["selection_sha256"], "rule_results": [], "rubric": rub_n2,
+                },
+            },
+        )
+        orchestrator.record_round_result(
+            journal_path=self.journal_path, run_id=rid_n2, dispatch_token=dc_n2["dispatch_token"],
+            outcome="PASS", host_checks_passed=True, checker_passed=True,
+            candidate_sha256=snap_n2["candidate_sha256"], diff_sha256=snap_n2["diff_sha256"],
+            policy_sha256=adm_n2["policy"]["policy_sha256"], check_plan_sha256=adm_n2["check_plan"]["plan_sha256"],
+            selection_sha256=adm_n2["selection"]["selection_sha256"], selected_ids=adm_n2["selection"]["selected_ids"],
+            checks_summary_sha256=cs_n2_sha, auditor_report_sha256=aud_n2_sha,
+            evidence_dir=ev_n2,
+            evidence_refs={"round_dir": "round-01", "checks_summary": "round-01/checks_summary.json", "auditor_report": "round-01/audit_report.json"},
+            rubric=rub_n2, wall_elapsed_s=1.0,
+        )
+        (self.repo / "README.md").write_text("stale drift between passes\n", encoding="utf-8")
+        rec_n2 = orchestrator.reconcile_run(
+            repo=self.repo, journal_path=self.journal_path, run_id=rid_n2,
+            evidence_dir=ev_n2, issue_data=self.issue_data,
+        )
+        self.assertEqual(rec_n2["status"], "BLOCKED")
+        self.assertEqual(rec_n2["recovery_reason"], "confirming_pass_candidate_drift")
+        self.assertFalse(rec_n2["can_resume"])
+        self.assertEqual(rec_n2["acceptance_mode"], "FIXTURE_CONTROLLED_NOT_PRODUCTION_ACCEPTANCE")
+
+    def test_p08c_deferred_p08b_real_evidence_validation_and_post_audit_integrity(self):
+        # Real-mode run admission (codex + agy providers, non-fixture)
+        wt = self._make_linked_worktree(issue=441, suffix="real-ev")
+        self._seed_harness_files(wt)
+        wt_base = _git(wt, "rev-parse", "HEAD")
+        ev_real = self.base_dir / "ev_real"
+        adm = orchestrator.admit_run(
+            repo=wt,
+            issue=441,
+            journal_path=self.journal_path,
+            base_sha=wt_base,
+            issue_data={"state": "OPEN", "title": "Real Mode Validation", "body": "## Target Directories (allowed paths)\n- `README.md`\n"},
+            approval={"status": "SUPERVISED_ISSUE_OPEN", "isolated_pilot_attested": True},
+            policy=orchestrator.build_run_policy(consecutive_passes_required=1, max_rounds=4, max_wall_seconds=120),
+            check_profile="quick",
+            maker_provider="codex",
+            checker_provider="agy",
+            capability_overrides={"codex_path": "/bin/true", "agy_path": "/bin/true"},
+            evidence_dir=ev_real,
+        )
+        rid = adm["run"]["run_id"]
+        (ev_real / "frozen_check_plan.json").write_text(json.dumps(adm["check_plan"], indent=2, sort_keys=True), encoding="utf-8")
+        (wt / "README.md").write_text("real verified change\n", encoding="utf-8")
+        snap = feature_state.compute_candidate_snapshot(wt, base_sha=adm["run"]["base_sha"])
+
+        dc = orchestrator.dispatch_role(repo=wt, journal_path=self.journal_path, run_id=rid, role="checker")
+        orchestrator.transition_state(
+            journal_path=self.journal_path, run_id=rid, expected="DISPATCHED", next_state="CHECKING",
+            actor_role="host", action="checker_started", dispatch_token=dc["dispatch_token"],
+        )
+
+        # Build complete real round-01 evidence using actual check.run_checks
+        r1 = ev_real / "round-01"
+        r1.mkdir()
+        cs = orchestrator.run_checks(
+            wt, base_sha=adm["run"]["base_sha"], profile="quick",
+            evidence_dir=r1, frozen_plan_path=ev_real / "frozen_check_plan.json",
+            run_quality_gates=True, journal_path=self.journal_path, issue=441, run_id=rid,
+        )
+        cs_sha = hashlib.sha256((r1 / "checks_summary.json").read_bytes()).hexdigest()
+        m_sha = hashlib.sha256((r1 / "manifest.json").read_bytes()).hexdigest()
+        ev_refs = [{"receipt_path": "checks_summary.json", "receipt_sha256": cs_sha}]
+        rub = orchestrator.build_rubric_report(decision="ACCEPT", hard_gate_passed=True, evidence_refs=ev_refs)
+
+        # 1. Swapped auditor report (wrong run_id) MUST fail closed
+        swap_audit_sha = orchestrator.write_immutable_json(
+            r1 / "swapped_audit.json",
+            {"run_id": "other-run", "round_num": 1, "status": "PASS", "findings": [], "limitations": [], "rubric": rub},
+        )
+        with self.assertRaises(orchestrator.RoleAccessDenied):
+            orchestrator.record_round_result(
+                journal_path=self.journal_path, run_id=rid, dispatch_token=dc["dispatch_token"],
+                outcome="PASS", host_checks_passed=True, checker_passed=True,
+                candidate_sha256=snap["candidate_sha256"], diff_sha256=snap["diff_sha256"],
+                policy_sha256=adm["policy"]["policy_sha256"], check_plan_sha256=adm["check_plan"]["plan_sha256"],
+                selection_sha256=adm["selection"]["selection_sha256"],
+                checks_summary_sha256=cs_sha, manifest_sha256=m_sha, auditor_report_sha256=swap_audit_sha,
+                evidence_dir=ev_real,
+                evidence_refs={"round_dir": "round-01", "checks_summary": "round-01/checks_summary.json", "manifest": "round-01/manifest.json", "auditor_report": "round-01/swapped_audit.json"},
+                rubric=rub,
+            )
+
+        # 2. Missing manifest in REAL mode MUST fail closed
+        good_audit_sha = orchestrator.write_immutable_json(
+            r1 / "audit_report.json",
+            {
+                "run_id": rid, "round_num": 1, "source_sha": snap["source_sha"],
+                "candidate_sha256": snap["candidate_sha256"], "diff_sha256": snap["diff_sha256"],
+                "selection_sha256": adm["selection"]["selection_sha256"],
+                "report": {
+                    "status": "PASS", "findings": [], "limitations": [],
+                    "reviewed_scope": ["README.md"], "selection_sha256": adm["selection"]["selection_sha256"],
+                    "rule_results": [], "rubric": rub,
+                },
+            },
+        )
+        with self.assertRaises(orchestrator.RoleAccessDenied):
+            orchestrator.record_round_result(
+                journal_path=self.journal_path, run_id=rid, dispatch_token=dc["dispatch_token"],
+                outcome="PASS", host_checks_passed=True, checker_passed=True,
+                candidate_sha256=snap["candidate_sha256"], diff_sha256=snap["diff_sha256"],
+                policy_sha256=adm["policy"]["policy_sha256"], check_plan_sha256=adm["check_plan"]["plan_sha256"],
+                selection_sha256=adm["selection"]["selection_sha256"],
+                checks_summary_sha256=cs_sha, auditor_report_sha256=good_audit_sha,
+                evidence_dir=ev_real,
+                evidence_refs={"round_dir": "round-01", "checks_summary": "round-01/checks_summary.json", "auditor_report": "round-01/audit_report.json"},
+                rubric=rub,
+            )
+
+        # 3. Waived summary MUST fail closed
+        waived_cs = dict(cs, waived=True)
+        waived_sha = orchestrator.write_immutable_json(r1 / "waived_cs.json", waived_cs)
+        with self.assertRaises(orchestrator.RoleAccessDenied):
+            orchestrator.record_round_result(
+                journal_path=self.journal_path, run_id=rid, dispatch_token=dc["dispatch_token"],
+                outcome="PASS", host_checks_passed=True, checker_passed=True,
+                candidate_sha256=snap["candidate_sha256"], diff_sha256=snap["diff_sha256"],
+                policy_sha256=adm["policy"]["policy_sha256"], check_plan_sha256=adm["check_plan"]["plan_sha256"],
+                selection_sha256=adm["selection"]["selection_sha256"],
+                checks_summary_sha256=waived_sha, manifest_sha256=m_sha, auditor_report_sha256=good_audit_sha,
+                evidence_dir=ev_real,
+                evidence_refs={"round_dir": "round-01", "checks_summary": "round-01/waived_cs.json", "manifest": "round-01/manifest.json", "auditor_report": "round-01/audit_report.json"},
+                rubric=rub,
+            )
+
+        # 4. Complete real PASS evidence + post-audit-gates.json succeeds and distinguishes REAL_ACCEPTANCE_CANDIDATE
+        pag_doc = orchestrator.evaluate_quality_gates(wt, adm["run"]["base_sha"], "manifest.json", r1)
+        orchestrator.write_immutable_json(r1 / "post-audit-gates.json", pag_doc)
+        accepted = orchestrator.record_round_result(
+            journal_path=self.journal_path, run_id=rid, dispatch_token=dc["dispatch_token"],
+            outcome="PASS", host_checks_passed=True, checker_passed=True,
+            candidate_sha256=snap["candidate_sha256"], diff_sha256=snap["diff_sha256"],
+            policy_sha256=adm["policy"]["policy_sha256"], check_plan_sha256=adm["check_plan"]["plan_sha256"],
+            selection_sha256=adm["selection"]["selection_sha256"],
+            checks_summary_sha256=cs_sha, manifest_sha256=m_sha, auditor_report_sha256=good_audit_sha,
+            evidence_dir=ev_real,
+            evidence_refs={
+                "round_dir": "round-01",
+                "checks_summary": "round-01/checks_summary.json",
+                "manifest": "round-01/manifest.json",
+                "auditor_report": "round-01/audit_report.json",
+                "post_audit_gates": "round-01/post-audit-gates.json",
+            },
+            rubric=rub,
+        )
+        self.assertEqual(accepted["state"], "READY_FOR_HUMAN_REVIEW")
+        rec_ok = orchestrator.reconcile_run(
+            repo=wt, journal_path=self.journal_path, run_id=rid,
+            evidence_dir=ev_real,
+            issue_data={"state": "OPEN", "title": "Real Mode Validation", "body": "## Target Directories (allowed paths)\n- `README.md`\n"},
+        )
+        self.assertEqual(rec_ok["decision"], "TERMINAL_PRESERVED")
+        self.assertEqual(rec_ok["acceptance_mode"], "REAL_ACCEPTANCE_CANDIDATE")
+        self.assertFalse(rec_ok["ready_to_merge"])
+
+        # 5. Post-audit candidate drift MUST invalidate READY_FOR_HUMAN_REVIEW -> BLOCKED
+        (wt / "README.md").write_text("mutated after audit!\n", encoding="utf-8")
+        rec_drift = orchestrator.reconcile_run(
+            repo=wt, journal_path=self.journal_path, run_id=rid,
+            evidence_dir=ev_real,
+            issue_data={"state": "OPEN", "title": "Real Mode Validation", "body": "## Target Directories (allowed paths)\n- `README.md`\n"},
+        )
+        self.assertEqual(rec_drift["status"], "BLOCKED")
+        self.assertEqual(rec_drift["recovery_reason"], "post_audit_candidate_drift")
+
+    def test_p08c_observability_status_resume_signals_redaction_and_g0_scope_drift(self):
+        (self.repo / "scripts").mkdir(exist_ok=True)
+        (self.repo / "scripts" / "verify_structure.py").write_text("print('OK')\n", encoding="utf-8")
+        _git(self.repo, "add", "scripts/verify_structure.py")
+        _git(self.repo, "commit", "-qm", "add verify_structure fixture for obs")
+        obs_base = _git(self.repo, "rev-parse", "HEAD")
+
+        ev_obs = self.base_dir / "ev_obs"
+        res = orchestrator.run_maker_checker_loop(
+            repo=self.repo,
+            issue=437,
+            journal_path=self.journal_path,
+            evidence_dir=ev_obs,
+            issue_data=self.issue_data,
+            maker_fn=lambda wt, _c: ((wt / "README.md").write_text("obs ok\n", encoding="utf-8"), {"changed_path": "README.md"})[1],
+            approval={"status": "FIXTURE_APPROVED", "approved_by": "fixture-owner"},
+            policy=orchestrator.build_run_policy(consecutive_passes_required=1, max_rounds=2, max_wall_seconds=120),
+            base_sha=obs_base,
+            check_profile="quick",
+            allow_fixture_mode=True,
+            require_isolated_worktree=False,
+            require_protected_approval=False,
+        )
+        self.assertEqual(res["state"], "READY_FOR_HUMAN_REVIEW", res)
+        rid = res["run_id"]
+
+        # 1. p1/cli.py status, signals, resume, and orchestrator.py status/reconcile expose required fields & redact tokens
+        with patch.object(sys, "argv", ["cli.py", "status", "--run-id", rid, "--state", str(self.journal_path)]), \
+             contextlib.redirect_stdout(io.StringIO()) as out_st:
+            self.assertEqual(p1_cli.main(), 0)
+        st_doc = json.loads(out_st.getvalue())
+        for req_key in ("run_id", "round_num", "phase", "lease", "receipt_refs", "recovery_reason", "decision", "blocker", "next_action", "recent_signals"):
+            self.assertIn(req_key, st_doc)
+        self.assertFalse(st_doc["ready_to_merge"])
+        self.assertNotIn("dispatch_token", json.dumps(st_doc["lease"]))
+
+        with patch.object(sys, "argv", ["cli.py", "signals", "--issue", "437", "--run-id", rid, "--state", str(self.journal_path)]), \
+             contextlib.redirect_stdout(io.StringIO()) as out_sig:
+            self.assertEqual(p1_cli.main(), 0)
+        sig_doc = json.loads(out_sig.getvalue())
+        self.assertIn("orchestration", sig_doc)
+        self.assertEqual(sig_doc["orchestration"]["run_id"], rid)
+        self.assertIn("receipt_refs", sig_doc["orchestration"])
+        self.assertEqual(sig_doc["orchestration"]["acceptance_mode"], "FIXTURE_CONTROLLED_NOT_PRODUCTION_ACCEPTANCE")
+
+        resumed_view = feature_state.session_start(
+            issue=437, repo=self.repo, state_db=self.journal_path, offline=True,
+            issue_data={**self.issue_data, "scope": ("README.md",), "issue_sha256": hashlib.sha256(self.issue_data["body"].encode()).hexdigest()},
+        )
+        self.assertIsNotNone(resumed_view["control_run"])
+        self.assertEqual(resumed_view["control_run"]["run_id"], rid)
+        self.assertIn("receipt_refs", resumed_view["control_run"])
+        self.assertIn("lease", resumed_view["control_run"])
+
+        # 2. Scope/G0 drift on reconcile blocks cleanly and preserves worktree
+        (self.repo / "AGENTS.md").write_text("# Drifted AGENTS\n", encoding="utf-8")
+        with patch.object(sys, "argv", ["orchestrator.py", "reconcile", "--run-id", rid, "--repo", str(self.repo), "--state", str(self.journal_path), "--offline"]), \
+             contextlib.redirect_stdout(io.StringIO()) as out_rec:
+            rc_rec = orchestrator.main()
+        self.assertEqual(rc_rec, 2)
+        rec_doc = json.loads(out_rec.getvalue())
+        self.assertEqual(rec_doc["status"], "BLOCKED")
+        self.assertEqual(rec_doc["recovery_reason"], "g0_gate_failed")
+
+    def test_p08c_post_audit_gates_enforced_with_selected_rules(self):
+        # Verify _post_audit_gates_passed accepts deferred STANDARDS-CHECK only when all other selected gates PASS,
+        # and fails closed on any non-STANDARDS failure or STANDARDS FAIL/WAIVED.
+        base_doc = {
+            "auto_check": "BLOCKED",
+            "mandatory_blockers": [],
+            "standards": {"status": "NOT_VERIFIED", "selection_sha256": "a" * 64},
+            "results": [
+                {"rule_id": "SECRET-SCAN", "status": "PASS", "limitation": ""},
+                {"rule_id": "DIFF-CHECK", "status": "PASS", "limitation": ""},
+                {"rule_id": "BACKEND-CHECK", "status": "PASS", "limitation": ""},
+                {"rule_id": "STANDARDS-CHECK", "status": "NOT_VERIFIED", "limitation": "Manifest lacks standards payload"},
+                {"rule_id": "FIRMWARE-CHECK", "status": "NOT_RUN", "limitation": "Not selected by changed-file risk routing"},
+            ],
+        }
+        self.assertTrue(
+            orchestrator._post_audit_gates_passed(
+                base_doc, selected_ids=["GO-ERR-01"], expected_selection_sha256="a" * 64
+            )
+        )
+        self.assertFalse(
+            orchestrator._post_audit_gates_passed(
+                base_doc, selected_ids=(), expected_selection_sha256="a" * 64
+            )
+        )
+        bad_secret = {**base_doc, "results": [{"rule_id": "SECRET-SCAN", "status": "FAIL", "limitation": "hit"}, *base_doc["results"][1:]]}
+        self.assertFalse(
+            orchestrator._post_audit_gates_passed(
+                bad_secret, selected_ids=["GO-ERR-01"], expected_selection_sha256="a" * 64
+            )
+        )
+        bad_std = {**base_doc, "standards": {"status": "FAIL", "selection_sha256": "a" * 64}}
+        self.assertFalse(
+            orchestrator._post_audit_gates_passed(
+                bad_std, selected_ids=["GO-ERR-01"], expected_selection_sha256="a" * 64
+            )
+        )
+
+        # Verify run_maker_checker_loop writes post-audit-gates.json even when selected_ids is non-empty,
+        # so terminal reconcile_run(require_post_audit=True) succeeds cleanly.
+        wt = self._make_linked_worktree(issue=441, suffix="sel-pag")
+        self._seed_harness_files(wt)
+        wt_base = _git(wt, "rev-parse", "HEAD")
+        ev_sel = self.base_dir / "ev_sel_pag"
+        sel_hash = "b" * 64
+        stub_sel = {
+            "selected_ids": ["DOC-001"],
+            "selection_sha256": sel_hash,
+            "agent_input_sha256": "c" * 64,
+            "rules": [{"rule_id": "DOC-001", "rule_sha256": "d" * 64, "severity": "MUST"}],
+        }
+
+        def checker_with_sel(_wt, inv, _ctx):
+            rub = orchestrator.build_rubric_report(
+                decision="ACCEPT",
+                hard_gate_passed=True,
+                evidence_refs=[{"receipt_path": "checks_summary.json", "receipt_sha256": inv["checks_summary.json"]}],
+            )
+            return {
+                "status": "PASS",
+                "findings": [],
+                "limitations": [],
+                "reviewed_scope": ["README.md"],
+                "selection_sha256": sel_hash,
+                "rule_results": [
+                    {
+                        "rule_id": "DOC-001",
+                        "rule_sha256": "d" * 64,
+                        "status": "PASS",
+                        "evidence": [{"receipt_path": "checks_summary.json", "receipt_sha256": inv["checks_summary.json"]}],
+                        "reason": "Checked against receipts",
+                    }
+                ],
+                "rubric": rub,
+            }
+
+        orig_eval_qg = orchestrator.evaluate_quality_gates
+
+        def fake_eval_qg(repo_p, base_p, manifest_rel, ev_root):
+            doc = orig_eval_qg(repo_p, base_p, manifest_rel, ev_root)
+            return {**doc, "standards": {"status": "NOT_VERIFIED", "selection_sha256": sel_hash, "selected_ids": ["DOC-001"]}}
+
+        with patch.object(orchestrator, "select_rules", return_value=stub_sel), \
+             patch.object(orchestrator, "evaluate_quality_gates", side_effect=fake_eval_qg):
+            res = orchestrator.run_maker_checker_loop(
+                repo=wt,
+                issue=441,
+                journal_path=self.journal_path,
+                evidence_dir=ev_sel,
+                base_sha=wt_base,
+                issue_data={"state": "OPEN", "title": "Selected IDs PAG", "body": "## Target Directories (allowed paths)\n- `README.md`\n"},
+                maker_fn=lambda r, _c: ((r / "README.md").write_text("pag with sel\n", encoding="utf-8"), {"changed_path": "README.md"})[1],
+                checker_fn=checker_with_sel,
+                approval={"status": "SUPERVISED_ISSUE_OPEN", "isolated_pilot_attested": True},
+                policy=orchestrator.build_run_policy(consecutive_passes_required=1, max_rounds=2, max_wall_seconds=120),
+                check_profile="quick",
+                maker_provider="codex",
+                checker_provider="agy",
+                capability_overrides={"codex_path": "/bin/true", "agy_path": "/bin/true"},
+            )
+            self.assertEqual(res["state"], "READY_FOR_HUMAN_REVIEW", res)
+            self.assertIn("post_audit_gates", res["rounds"][0]["evidence_refs"])
+            self.assertTrue((ev_sel / "round-01" / "post-audit-gates.json").is_file())
+            rec = orchestrator.reconcile_run(
+                repo=wt,
+                journal_path=self.journal_path,
+                run_id=res["run_id"],
+                evidence_dir=ev_sel,
+                issue_data={"state": "OPEN", "title": "Selected IDs PAG", "body": "## Target Directories (allowed paths)\n- `README.md`\n"},
+            )
+            self.assertEqual(rec["decision"], "TERMINAL_PRESERVED")
+            self.assertEqual(rec["acceptance_mode"], "REAL_ACCEPTANCE_CANDIDATE")
+
+    def test_p08c_repeated_reconcile_persists_resume_phase_and_is_idempotent(self):
+        wt = self._make_linked_worktree(issue=4410, suffix="idemp-rec")
+        self._seed_harness_files(wt)
+        wt_base = _git(wt, "rev-parse", "HEAD")
+        ev_dir = self.base_dir / "ev_idemp_rec"
+
+        # 1. Interrupted in VERIFYING -> reconcile 1 sets & persists VERIFY_AND_CHECK;
+        #    reconcile 2 & 3 MUST keep VERIFY_AND_CHECK (never flip to MAKER!)
+        rid = self._spawn_and_kill_at_boundary(
+            repo_path=wt, journal_path=self.journal_path, evidence_dir=ev_dir, boundary="verifying"
+        )
+        rec1 = orchestrator.reconcile_run(
+            repo=wt,
+            journal_path=self.journal_path,
+            run_id=rid,
+            evidence_dir=ev_dir,
+            issue_data={"state": "OPEN", "title": "Child Crash Fixture", "body": "## Target Directories (allowed paths)\n- `README.md`\n"},
+        )
+        self.assertEqual(rec1["status"], "REPAIR_REQUIRED")
+        self.assertEqual(rec1["resume_phase"], "VERIFY_AND_CHECK")
+        self.assertEqual(rec1["decision"], "RECONCILED_RESUME_SAFE")
+        self.assertEqual(rec1["recovery_reason"], "interrupted_during_verification")
+        with Journal(self.journal_path) as j:
+            persisted = j.get_control_run(rid)
+        self.assertEqual(persisted["resume_phase"], "VERIFY_AND_CHECK")
+
+        rec2 = orchestrator.reconcile_run(
+            repo=wt,
+            journal_path=self.journal_path,
+            run_id=rid,
+            evidence_dir=ev_dir,
+            issue_data={"state": "OPEN", "title": "Child Crash Fixture", "body": "## Target Directories (allowed paths)\n- `README.md`\n"},
+        )
+        rec3 = orchestrator.reconcile_run(
+            repo=wt,
+            journal_path=self.journal_path,
+            run_id=rid,
+            evidence_dir=ev_dir,
+            issue_data={"state": "OPEN", "title": "Child Crash Fixture", "body": "## Target Directories (allowed paths)\n- `README.md`\n"},
+        )
+        for rec_n in (rec2, rec3):
+            self.assertEqual(rec_n["status"], "REPAIR_REQUIRED")
+            self.assertEqual(rec_n["resume_phase"], "VERIFY_AND_CHECK")
+            self.assertEqual(rec_n["decision"], "RECONCILED_RESUME_SAFE")
+            self.assertEqual(rec_n["recovery_reason"], "interrupted_during_verification")
+            self.assertTrue(rec_n["can_resume"])
+            self.assertGreater(rec_n["remaining_wall_seconds"], 0.0)
+
+        # CLI status/resume/signals also surface persisted resume_phase and remaining_wall_seconds
+        with patch.object(sys, "argv", ["cli.py", "resume", "--issue", "4410", "--run-id", rid, "--repo", str(wt), "--state", str(self.journal_path), "--offline"]), \
+             contextlib.redirect_stdout(io.StringIO()) as out_cli_res:
+            self.assertEqual(p1_cli.main(), 0)
+        cli_res_doc = json.loads(out_cli_res.getvalue())
+        self.assertEqual(cli_res_doc["resume_phase"], "VERIFY_AND_CHECK")
+        self.assertEqual(cli_res_doc["reconciliation"]["resume_phase"], "VERIFY_AND_CHECK")
+        self.assertEqual(cli_res_doc["control_run"]["resume_phase"], "VERIFY_AND_CHECK")
+
+        # Subsequent loop resume AFTER repeated reconciles still skips Maker (0 calls)!
+        maker_calls = {"n": 0}
+        resumed = orchestrator.run_maker_checker_loop(
+            repo=wt,
+            issue=4410,
+            journal_path=self.journal_path,
+            evidence_dir=ev_dir,
+            base_sha=wt_base,
+            issue_data={"state": "OPEN", "title": "Child Crash Fixture", "body": "## Target Directories (allowed paths)\n- `README.md`\n"},
+            maker_fn=lambda _r, _c: (maker_calls.__setitem__("n", maker_calls["n"] + 1), {"changed_path": "README.md"})[1],
+            check_profile="quick",
+            allow_fixture_mode=True,
+            require_isolated_worktree=False,
+            require_protected_approval=False,
+            resume_run_id=rid,
+        )
+        self.assertEqual(resumed["state"], "READY_FOR_HUMAN_REVIEW")
+        self.assertEqual(maker_calls["n"], 0)
+
+        # 2. Candidate drift while paused in VERIFY_AND_CHECK still blocks conservatively on repeated reconcile
+        wt_drift = self._make_linked_worktree(issue=4410, suffix="idemp-drift")
+        self._seed_harness_files(wt_drift)
+        j_drift = self.base_dir / "host" / "idemp_drift.sqlite"
+        ev_drift = self.base_dir / "ev_idemp_drift"
+        rid_d = self._spawn_and_kill_at_boundary(
+            repo_path=wt_drift, journal_path=j_drift, evidence_dir=ev_drift, boundary="checking"
+        )
+        rec_d1 = orchestrator.reconcile_run(
+            repo=wt_drift, journal_path=j_drift, run_id=rid_d, evidence_dir=ev_drift,
+            issue_data={"state": "OPEN", "title": "Child Crash Fixture", "body": "## Target Directories (allowed paths)\n- `README.md`\n"},
+        )
+        self.assertEqual(rec_d1["resume_phase"], "VERIFY_AND_CHECK")
+        (wt_drift / "README.md").write_text("tampered while paused!\n", encoding="utf-8")
+        rec_d2 = orchestrator.reconcile_run(
+            repo=wt_drift, journal_path=j_drift, run_id=rid_d, evidence_dir=ev_drift,
+            issue_data={"state": "OPEN", "title": "Child Crash Fixture", "body": "## Target Directories (allowed paths)\n- `README.md`\n"},
+        )
+        self.assertEqual(rec_d2["status"], "BLOCKED")
+        self.assertEqual(rec_d2["recovery_reason"], "candidate_drift_during_verify_or_check")
+        self.assertFalse(rec_d2["can_resume"])
+
+    def test_p08c_executable_resume_run_py_and_p1_cli_preserve_journal_policy_and_budget(self):
+        wt = self._make_linked_worktree(issue=437, suffix="exec-res")
+        self._seed_harness_files(wt)
+        wt_base = _git(wt, "rev-parse", "HEAD")
+        ev_exec = self.base_dir / "ev_exec_res"
+        frozen_policy = orchestrator.build_run_policy(
+            consecutive_passes_required=1,
+            max_rounds=2,
+            max_wall_seconds=100,
+            no_progress_threshold=2,
+        )
+        adm = orchestrator.admit_run(
+            repo=wt,
+            issue=437,
+            journal_path=self.journal_path,
+            base_sha=wt_base,
+            issue_data=self.issue_data,
+            approval={"status": "SUPERVISED_ISSUE_OPEN", "isolated_pilot_attested": True},
+            policy=frozen_policy,
+            check_profile="quick",
+            maker_provider="codex",
+            checker_provider="agy",
+            capability_overrides={"codex_path": "/bin/true", "agy_path": "/bin/true"},
+            evidence_dir=ev_exec,
+        )
+        rid = adm["run"]["run_id"]
+        (ev_exec / "frozen-check-plan.json").write_text(json.dumps(adm["check_plan"], indent=2, sort_keys=True), encoding="utf-8")
+
+        # Simulate crash during CHECKING after Maker edited README.md and consumed 37.5s wall budget
+        d_m = orchestrator.dispatch_role(repo=wt, journal_path=self.journal_path, run_id=rid, role="maker", in_flight_round=1)
+        orchestrator.transition_state(
+            journal_path=self.journal_path, run_id=rid, expected="DISPATCHED", next_state="MAKER_RUNNING",
+            actor_role="host", action="maker_started", dispatch_token=d_m["dispatch_token"],
+        )
+        (wt / "README.md").write_text("edited before crash\n", encoding="utf-8")
+        snap = feature_state.compute_candidate_snapshot(wt, base_sha=wt_base)
+        with Journal(self.journal_path) as j:
+            j.record_control_progress(
+                rid, expected_state="MAKER_RUNNING", actor_role="host", op="maker_completed",
+                expected_dispatch_token=d_m["dispatch_token"], wall_elapsed_delta_s=20.0,
+                in_flight_round=1, candidate_sha256=snap["candidate_sha256"], last_diff_sha256=snap["diff_sha256"],
+            )
+            j.transition_control_run(
+                rid, expected="MAKER_RUNNING", next_state="VERIFYING", actor_role="host",
+                action="host_verifying", expected_dispatch_token=d_m["dispatch_token"],
+            )
+            j.transition_control_run(
+                rid, expected="VERIFYING", next_state="REPAIR_REQUIRED", actor_role="host",
+                action="host_checks_passed_prepare_checker", expected_dispatch_token=d_m["dispatch_token"],
+                clear_dispatch=True,
+            )
+        d_c = orchestrator.dispatch_role(
+            repo=wt, journal_path=self.journal_path, run_id=rid, role="checker", in_flight_round=1,
+            lease_owner={"pid": 99999996, "start_ticks": "1", "host": os.uname().nodename},
+        )
+        orchestrator.transition_state(
+            journal_path=self.journal_path, run_id=rid, expected="DISPATCHED", next_state="CHECKING",
+            actor_role="host", action="checker_started", dispatch_token=d_c["dispatch_token"],
+        )
+        with Journal(self.journal_path) as j:
+            j.record_control_progress(
+                rid, expected_state="CHECKING", actor_role="host", op="checker_tick",
+                expected_dispatch_token=d_c["dispatch_token"], wall_elapsed_delta_s=17.5, in_flight_round=1,
+            )
+        r1_partial = ev_exec / "round-01"
+        r1_partial.mkdir(parents=True, exist_ok=True)
+        (r1_partial / "audit_report.json").write_text("{partial", encoding="utf-8")
+
+        # Execute executable resume via run.py with conflicting CLI policy flags (must be ignored in favor of frozen policy!)
+        def _fake_tool(cmd, cwd, timeout):
+            if cmd[0] == "gh":
+                return {"tool": "gh", "command": cmd, "exit_code": 0, "output_sha256": "0" * 64, "output_bytes": 10}, json.dumps(self.issue_data)
+            return {"tool": cmd[0], "command": cmd, "exit_code": 0, "output_sha256": "0" * 64, "output_bytes": 2}, "OK"
+
+        codex_calls = {"n": 0}
+        audit_timeouts: list[int] = []
+
+        def _fail_if_maker_called(*_args, **_kwargs):
+            codex_calls["n"] += 1
+            raise AssertionError("Maker codex.invoke must NOT execute on VERIFY_AND_CHECK resume!")
+
+        def _fake_audit(prompt, snapshot, schema, timeout, required_paths, **kwargs):
+            audit_timeouts.append(timeout)
+            ev_refs = [
+                {"receipt_path": k, "receipt_sha256": v}
+                for k, v in sorted((kwargs.get("evidence_inventory") or {}).items())
+            ]
+            return {
+                "status": "PASS",
+                "findings": [],
+                "limitations": [],
+                "reviewed_scope": ["README.md"],
+                "selection_sha256": kwargs["selection_sha256"],
+                "rule_results": [],
+                "rubric": orchestrator.build_rubric_report(
+                    decision="ACCEPT", hard_gate_passed=True, evidence_refs=ev_refs
+                ),
+            }
+
+        res_args = argparse.Namespace(
+            issue=437,
+            execute=True,
+            accept_isolated_pilot=True,
+            expected_idf_version=None,
+            toolchain_mode="container_only",
+            allow_native_fallback=False,
+            timeout=300,
+            max_repairs=9,
+            check_profile="software",
+            max_wall_seconds=9999,
+            consecutive_passes=5,
+            no_progress_threshold=9,
+            require_token_budget=False,
+            require_cost_budget=False,
+            approved_by="",
+            journal=self.journal_path,
+            feature_file=None,
+            unit_id=None,
+            trusted_definitions=None,
+            resume_run_id=rid,
+            evidence_dir=None,
+        )
+        stream = io.StringIO()
+        with patch.object(harness_run, "__file__", str(wt / "scripts/agent_harness/run.py")), \
+             patch.object(harness_run.shutil, "which", return_value="fixture-bin"), \
+             patch.object(harness_run, "tool", side_effect=_fake_tool), \
+             patch.object(harness_run.codex, "invoke", side_effect=_fail_if_maker_called), \
+             patch.object(harness_run.antigravity, "invoke", side_effect=_fake_audit), \
+             contextlib.redirect_stdout(stream):
+            rc = harness_run.run(res_args)
+        self.assertEqual(rc, 0, stream.getvalue())
+        out_manifest = pathlib.Path(stream.getvalue().strip().split(": ", 1)[1])
+        self.assertEqual(out_manifest.parent.resolve(), ev_exec.resolve())
+        doc_m = json.loads(out_manifest.read_text(encoding="utf-8"))
+        self.assertEqual(doc_m["run_id"], rid)
+        self.assertEqual(doc_m["state"], "READY_FOR_HUMAN_REVIEW")
+        self.assertEqual(doc_m["policy_sha256"], frozen_policy["policy_sha256"])
+        self.assertEqual(codex_calls["n"], 0)
+        # Auditor timeout MUST be bounded by remaining budget (<= 100 - 37.5 = 62.5s), never fresh 300s/9999s!
+        self.assertTrue(audit_timeouts and audit_timeouts[0] <= 63, audit_timeouts)
+        self.assertTrue((ev_exec / "interrupted").is_dir())
+        with Journal(self.journal_path) as j:
+            final_ctrl = j.get_control_run(rid)
+            self.assertEqual(final_ctrl["state"], "READY_FOR_HUMAN_REVIEW")
+            self.assertEqual(final_ctrl["policy"]["max_wall_seconds"], 100)
+            self.assertEqual(final_ctrl["policy"]["max_rounds"], 2)
+            self.assertGreaterEqual(final_ctrl["budget_consumed"]["wall_seconds"], 37.5)
+
+        # Verify p1/cli.py resume --execute forwards exact --resume-run-id and --journal arguments
+        with patch.object(p1_cli.subprocess, "run", return_value=argparse.Namespace(returncode=0)) as mock_sub, \
+             patch.object(
+                 sys,
+                 "argv",
+                 [
+                     "cli.py",
+                     "resume",
+                     "--issue",
+                     "437",
+                     "--run-id",
+                     rid,
+                     "--repo",
+                     str(wt),
+                     "--state",
+                     str(self.journal_path),
+                     "--execute",
+                     "--accept-isolated-pilot",
+                 ],
+             ):
+            self.assertEqual(p1_cli.main(), 0)
+        fwd_cmd = mock_sub.call_args[0][0]
+        self.assertIn("--execute", fwd_cmd)
+        self.assertIn("--accept-isolated-pilot", fwd_cmd)
+        self.assertIn("--resume-run-id", fwd_cmd)
+        self.assertIn(rid, fwd_cmd)
+        self.assertIn(str(self.journal_path), fwd_cmd)
+
 
 
 if __name__ == "__main__":

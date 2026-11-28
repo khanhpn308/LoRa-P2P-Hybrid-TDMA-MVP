@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0",
+  "phase": "P08-C",
+  "issue": 441,
+  "mode": "FIXTURE_CONTROLLED",
+  "note": "Controlled P08-C restart, reconciliation, and evidence-integrity scenarios on disposable worktrees. Cross-machine recovery and live AI provider recovery remain NOT_VERIFIED unless separately exercised.",
+  "scenarios": [
+    {
+      "id": "kill_during_maker_running_dirty_preserved",
+      "boundary": "maker",
+      "interrupted_state": "MAKER_RUNNING",
+      "expected_reconcile_decision": "BLOCKED",
+      "expected_recovery_reason": "interrupted_maker_preserved",
+      "auto_reexecute_maker": false
+    },
+    {
+      "id": "kill_during_maker_dispatch_clean_resume",
+      "boundary": "maker_dispatch",
+      "interrupted_state": "DISPATCHED",
+      "expected_reconcile_decision": "RECONCILED_RESUME_SAFE",
+      "expected_resume_phase": "MAKER",
+      "expected_terminal_state": "READY_FOR_HUMAN_REVIEW"
+    },
+    {
+      "id": "kill_during_verifying_with_partial_evidence_quarantined",
+      "boundary": "verification",
+      "interrupted_state": "VERIFYING",
+      "expected_reconcile_decision": "RECONCILED_RESUME_SAFE",
+      "expected_resume_phase": "VERIFY_AND_CHECK",
+      "auto_reexecute_maker": false,
+      "expected_terminal_state": "READY_FOR_HUMAN_REVIEW"
+    },
+    {
+      "id": "kill_during_checker_with_partial_audit_quarantined",
+      "boundary": "checker",
+      "interrupted_state": "CHECKING",
+      "expected_reconcile_decision": "RECONCILED_RESUME_SAFE",
+      "expected_resume_phase": "VERIFY_AND_CHECK",
+      "auto_reexecute_maker": false,
+      "expected_terminal_state": "READY_FOR_HUMAN_REVIEW"
+    },
+    {
+      "id": "kill_at_commit_checkpoint_between_n2_passes",
+      "boundary": "commit_checkpoint",
+      "interrupted_state": "REPAIR_REQUIRED",
+      "expected_reconcile_decision": "RESUME_SAFE",
+      "expected_resume_phase": "CONFIRMING_VERIFY_AND_CHECK",
+      "auto_reexecute_maker": false,
+      "expected_terminal_state": "READY_FOR_HUMAN_REVIEW"
+    },
+    {
+      "id": "post_audit_candidate_drift_invalidates_terminal_pass",
+      "boundary": "post_audit",
+      "interrupted_state": "READY_FOR_HUMAN_REVIEW",
+      "expected_reconcile_decision": "BLOCKED",
+      "expected_recovery_reason": "post_audit_candidate_drift"
+    }
+  ]
+}

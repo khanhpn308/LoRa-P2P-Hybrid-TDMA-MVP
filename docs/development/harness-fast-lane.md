@@ -58,7 +58,7 @@ python3 scripts/agent_harness/feature_state.py checkpoint --issue <N> --repo <ca
 python3 scripts/agent_harness/feature_state.py session-close --issue <N> --repo <candidate> --state <host-state.sqlite> --evidence-dir <host-evidence-dir> --next-action "..."
 ```
 
-Equivalent `resume`, `checkpoint`, `close`, and `signals` wrappers are also exposed via `scripts/agent_harness/p1/cli.py`. Native AGY/Codex UI conversations cannot be mechanically intercepted by CLI alone; Coordinator instructions invoke these commands, and Host CLI enforces schema, WIP=1, CAS, authority, and non-destructive recovery whenever run. Cross-machine recovery is `NOT_VERIFIED` unless actually exercised across distinct hosts.
+Equivalent `resume`, `checkpoint`, `close`, `status`, `reconcile`, and `signals` wrappers are also exposed via `scripts/agent_harness/p1/cli.py` and `scripts/agent_harness/orchestrator.py` (P08-C transactional CAS restart reconciliation, interrupted-round artifact quarantine, and deferred real-evidence/post-audit provenance validation, distinguishing `FIXTURE_CONTROLLED_NOT_PRODUCTION_ACCEPTANCE` from `REAL_ACCEPTANCE_CANDIDATE`). Native AGY/Codex UI conversations cannot be mechanically intercepted by CLI alone; Coordinator instructions invoke these commands, and Host CLI enforces schema, WIP=1, CAS, authority, and non-destructive recovery whenever run. Cross-machine and live-provider recovery remain `NOT_VERIFIED` unless actually exercised across distinct hosts/providers.
 
 ### Observability, Failure Attribution & Clean Handoff (P06 / H2-FBK-06 / H2-GOV-03)
 

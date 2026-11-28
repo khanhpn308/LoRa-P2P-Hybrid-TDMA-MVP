@@ -10,9 +10,11 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import os
 import pathlib
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import uuid
@@ -26,9 +28,9 @@ if __package__ in (None, ""):
 try:
     from .adapters.antigravity import AuditError, RUBRIC_DIMENSIONS, check_report as check_audit_report, validate_rubric
     from .agent_context import ContextGateError, load_context
-    from .check import freeze_checks, run_checks
+    from .check import freeze_checks, plan_checks, run_checks
     from .feature_state import compute_candidate_snapshot
-    from .observability import ObservabilityError, redact_data, redact_text, record_process_signal
+    from .observability import ObservabilityError, contains_secret, redact_data, redact_text, record_process_signal
     from .p1.process import ProcessBlocked, execute_checked
     from .p1.state import Journal, StateConflict
     from .p1.worktrees import WorktreeError, inspect_worktree
@@ -39,9 +41,9 @@ try:
 except ImportError:
     from adapters.antigravity import AuditError, RUBRIC_DIMENSIONS, check_report as check_audit_report, validate_rubric
     from agent_context import ContextGateError, load_context
-    from check import freeze_checks, run_checks
+    from check import freeze_checks, plan_checks, run_checks
     from feature_state import compute_candidate_snapshot
-    from observability import ObservabilityError, redact_data, redact_text, record_process_signal
+    from observability import ObservabilityError, contains_secret, redact_data, redact_text, record_process_signal
     from p1.process import ProcessBlocked, execute_checked
     from p1.state import Journal, StateConflict
     from p1.worktrees import WorktreeError, inspect_worktree
@@ -311,15 +313,101 @@ def _validate_safe_rel_path(rel_path: str) -> pathlib.PurePosixPath:
 
 
 def write_immutable_artifact(path: pathlib.Path, data: bytes) -> str:
-    """Write a single-write immutable (0o444) artifact; fail closed on overwrite or symlink."""
+    """Atomically write a single-write immutable (0o444) artifact; fail closed on overwrite or symlink."""
     _reject_symlink_ancestors(path.parent)
     if path.is_symlink() or path.exists():
         raise ControlPlaneError(f"Refusing to overwrite immutable evidence artifact: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
     _reject_symlink_ancestors(path.parent)
-    path.write_bytes(data)
-    path.chmod(0o444)
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    if tmp_path.is_symlink() or tmp_path.exists():
+        raise ControlPlaneError(f"Unexpected staging file for immutable artifact: {tmp_path}")
+    try:
+        with open(tmp_path, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        tmp_path.chmod(0o444)
+        os.replace(tmp_path, path)
+    except BaseException:
+        if tmp_path.exists() and not tmp_path.is_symlink():
+            try:
+                tmp_path.chmod(0o600)
+                tmp_path.unlink()
+            except OSError:
+                pass
+        raise
     return hashlib.sha256(data).hexdigest()
+
+
+def current_process_identity() -> dict[str, Any]:
+    """Capture current Host process identity (PID, /proc starttime ticks, hostname)."""
+    pid = os.getpid()
+    start_ticks = ""
+    stat_path = pathlib.Path(f"/proc/{pid}/stat")
+    try:
+        if stat_path.is_file():
+            raw = stat_path.read_text(encoding="utf-8", errors="replace")
+            rparen = raw.rfind(")")
+            if rparen != -1:
+                parts = raw[rparen + 2 :].split()
+                if len(parts) > 19:
+                    start_ticks = parts[19]
+    except OSError:
+        start_ticks = ""
+    return {
+        "pid": pid,
+        "start_ticks": start_ticks,
+        "host": socket.gethostname(),
+    }
+
+
+def assess_process_liveness(
+    owner_pid: int | None,
+    owner_start_ticks: str = "",
+    owner_host: str = "",
+) -> dict[str, str]:
+    """Conservatively classify lease owner as LIVE, DEAD, or AMBIGUOUS."""
+    if owner_pid is None or type(owner_pid) is not int or owner_pid <= 0:
+        return {"status": "AMBIGUOUS", "reason": "Lease missing valid owner PID"}
+    cur_host = socket.gethostname()
+    if owner_host and owner_host != cur_host:
+        return {"status": "AMBIGUOUS", "reason": f"Lease owned by another host ({owner_host} != {cur_host})"}
+
+    proc_dir = pathlib.Path("/proc")
+    if proc_dir.is_dir():
+        stat_path = proc_dir / str(owner_pid) / "stat"
+        try:
+            raw = stat_path.read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            return {"status": "DEAD", "reason": f"Process {owner_pid} no longer exists"}
+        except PermissionError:
+            return {"status": "AMBIGUOUS", "reason": f"Cannot inspect /proc/{owner_pid}/stat"}
+        except OSError as exc:
+            return {"status": "AMBIGUOUS", "reason": f"Failed reading /proc/{owner_pid}/stat: {exc}"}
+        rparen = raw.rfind(")")
+        if rparen == -1:
+            return {"status": "AMBIGUOUS", "reason": f"Malformed /proc/{owner_pid}/stat"}
+        parts = raw[rparen + 2 :].split()
+        if len(parts) <= 19:
+            return {"status": "AMBIGUOUS", "reason": f"Truncated /proc/{owner_pid}/stat"}
+        proc_state = parts[0]
+        actual_ticks = parts[19]
+        if proc_state == "Z":
+            return {"status": "DEAD", "reason": f"Process {owner_pid} is zombie"}
+        if not owner_start_ticks:
+            return {"status": "AMBIGUOUS", "reason": f"Process {owner_pid} alive without start_ticks identity"}
+        if actual_ticks != owner_start_ticks:
+            return {"status": "DEAD", "reason": f"PID {owner_pid} reused; original lease process exited"}
+        return {"status": "LIVE", "reason": f"Process {owner_pid} verified alive with matching start_ticks"}
+
+    try:
+        os.kill(owner_pid, 0)
+    except ProcessLookupError:
+        return {"status": "DEAD", "reason": f"Process {owner_pid} not found"}
+    except PermissionError:
+        return {"status": "AMBIGUOUS", "reason": f"Permission denied probing PID {owner_pid}"}
+    return {"status": "AMBIGUOUS", "reason": f"Process {owner_pid} alive without /proc identity verification"}
 
 
 def write_immutable_json(
@@ -652,6 +740,7 @@ def _validate_approval(
         "touches_protected": touches_protected,
         "human_merge_approval_required": True,
         "fixture_mode": bool(allow_fixture_mode),
+        "isolated_pilot_attested": bool(approval.get("isolated_pilot_attested", False)),
     }
 
 
@@ -675,6 +764,7 @@ def admit_run(
     require_executable_capabilities: bool = True,
     allow_fixture_mode: bool = False,
     requested_rule_ids: list[str] | tuple[str, ...] = (),
+    evidence_dir: pathlib.Path | None = None,
 ) -> dict[str, Any]:
     """Admit a single scoped Issue run into the P08-A control plane (fail closed)."""
     authorize_role_action("orchestrator", "admit_run")
@@ -688,6 +778,15 @@ def admit_run(
     root = repo.resolve(strict=True)
     if journal_path.resolve().is_relative_to(root):
         raise AdmissionError("Host Journal must reside outside candidate worktree")
+    ev_dir_str = ""
+    if evidence_dir is not None:
+        if evidence_dir.is_symlink() or evidence_dir.parent.is_symlink():
+            raise AdmissionError("Evidence directory must not be a symlink")
+        evidence_dir.mkdir(parents=True, exist_ok=True)
+        ev_resolved = evidence_dir.resolve(strict=True)
+        if ev_resolved.is_relative_to(root):
+            raise AdmissionError("Host evidence directory must reside outside candidate worktree")
+        ev_dir_str = str(ev_resolved)
 
     try:
         g0 = load_context(root)
@@ -801,6 +900,8 @@ def admit_run(
             policy_sha256=frozen_policy["policy_sha256"],
             policy=frozen_policy,
             admission=admission_record,
+            evidence_dir=ev_dir_str,
+            frozen_plan=check_plan,
             sequential_only=bool(frozen_policy["sequential_only"]),
             actor_role="host",
         )
@@ -917,6 +1018,8 @@ def dispatch_role(
     role: str,
     requested_by: str = "orchestrator",
     elapsed_wall_seconds: float = 0.0,
+    lease_owner: dict[str, Any] | None = None,
+    in_flight_round: int | None = None,
 ) -> dict[str, Any]:
     """Acquire an exclusive single-active dispatch lease for Maker or Checker."""
     authorize_role_action(requested_by, "request_dispatch")
@@ -971,6 +1074,7 @@ def dispatch_role(
         _verify_budget_before_dispatch(journal, run, elapsed_wall_seconds=elapsed_wall_seconds)
 
         token = uuid.uuid4().hex
+        owner = lease_owner if lease_owner is not None else current_process_identity()
         try:
             updated = journal.acquire_dispatch(
                 run_id,
@@ -978,7 +1082,16 @@ def dispatch_role(
                 role=role,
                 actor_role="host",
                 dispatch_token=token,
-                detail={"requested_by": requested_by, "target_role": role},
+                detail={
+                    "requested_by": requested_by,
+                    "target_role": role,
+                    "lease_owner_pid": owner.get("pid"),
+                    "lease_owner_host": str(owner.get("host", "")),
+                },
+                lease_owner_pid=owner.get("pid"),
+                lease_owner_start_ticks=str(owner.get("start_ticks", "")),
+                lease_owner_host=str(owner.get("host", "")),
+                in_flight_round=in_flight_round,
             )
         except StateConflict as exc:
             raise DuplicateDispatchError(str(exc)) from exc
@@ -996,8 +1109,14 @@ def dispatch_role(
         source_sha=updated["source_sha"],
         candidate_sha256=updated["candidate_sha256"],
         exit_code=0,
-        finding=f"Dispatched {role} (seq={updated['dispatch_seq']})",
-        evidence_ref={"run_id": run_id, "dispatch_seq": updated["dispatch_seq"]},
+        finding=f"Dispatched {role} (seq={updated['dispatch_seq']}, round={updated['in_flight_round']})",
+        evidence_ref={
+            "run_id": run_id,
+            "dispatch_seq": updated["dispatch_seq"],
+            "round_num": updated["in_flight_round"],
+            "phase": updated["state"],
+            "lease_pid": updated["lease_owner_pid"],
+        },
     )
     return updated
 
@@ -1029,6 +1148,414 @@ def transition_state(
             clear_dispatch=clear_dispatch,
             detail=detail,
         )
+
+
+def is_fixture_control_run(run: dict[str, Any]) -> bool:
+    """Distinguish controlled fixture runs from real candidate acceptance runs."""
+    admission = run.get("admission") or {}
+    approval = admission.get("approval") or {}
+    caps = admission.get("capabilities") or {}
+    return bool(
+        approval.get("fixture_mode")
+        or caps.get("maker_provider") == "fixture"
+        or caps.get("checker_provider") == "fixture"
+    )
+
+
+def _resolve_round_receipt_bytes(
+    evidence_dir: pathlib.Path,
+    round_dir_rel: str,
+    receipt_path: str,
+) -> tuple[bytes, str]:
+    """Resolve a receipt path inside round_dir or evidence_dir safely without symlinks."""
+    _validate_safe_rel_path(receipt_path)
+    candidates: list[str] = []
+    if round_dir_rel:
+        _validate_safe_rel_path(round_dir_rel)
+        prefix = round_dir_rel.rstrip("/") + "/"
+        if receipt_path.startswith(prefix):
+            candidates.append(receipt_path)
+        else:
+            candidates.append(f"{round_dir_rel.rstrip('/')}/{receipt_path}")
+    candidates.append(receipt_path)
+    last_exc: Exception | None = None
+    for cand in candidates:
+        try:
+            return _read_safe_evidence_bytes(evidence_dir, cand), cand
+        except RoleAccessDenied as exc:
+            last_exc = exc
+    raise RoleAccessDenied(str(last_exc or f"Missing receipt artifact: {receipt_path}"))
+
+
+def _check_not_waived(obj: dict[str, Any], label: str) -> None:
+    obs = obj.get("observations") if isinstance(obj.get("observations"), dict) else {}
+    for flag in ("waived", "owner_waived", "commit_only", "skipped"):
+        if obj.get(flag) or obs.get(flag):
+            raise RoleAccessDenied(f"Waived, skipped, or commit-only {label} cannot pass acceptance")
+
+
+def _post_audit_gates_passed(
+    pag_doc: dict[str, Any],
+    *,
+    selected_ids: list[str] | tuple[str, ...] = (),
+    expected_selection_sha256: str = "",
+) -> bool:
+    if not isinstance(pag_doc, dict):
+        return False
+    if pag_doc.get("auto_check") == "AUTO_CHECK_PASS":
+        return True
+    if not selected_ids:
+        return False
+    if pag_doc.get("mandatory_blockers"):
+        return False
+    results = pag_doc.get("results") or []
+    if not isinstance(results, list) or not results:
+        return False
+    for r in results:
+        if not isinstance(r, dict):
+            return False
+        rid = str(r.get("rule_id", ""))
+        rstatus = str(r.get("status", ""))
+        if rid == "STANDARDS-CHECK":
+            if rstatus in ("FAIL", "WAIVED_WITH_REASON"):
+                return False
+            continue
+        if rstatus == "PASS":
+            continue
+        if rstatus == "NOT_RUN" and r.get("limitation") == "Not selected by changed-file risk routing":
+            continue
+        return False
+    std_block = pag_doc.get("standards") if isinstance(pag_doc.get("standards"), dict) else {}
+    if std_block.get("status") in ("FAIL", "WAIVED_WITH_REASON"):
+        return False
+    if expected_selection_sha256 and std_block.get("selection_sha256") not in (None, expected_selection_sha256):
+        return False
+    return True
+
+
+def verify_round_evidence(
+    *,
+    run: dict[str, Any],
+    evidence_dir: pathlib.Path | None,
+    evidence_refs: dict[str, str],
+    candidate_sha256: str,
+    diff_sha256: str,
+    policy_sha256: str,
+    check_plan_sha256: str,
+    selection_sha256: str,
+    selected_ids: list[str] | tuple[str, ...] = (),
+    checks_summary_sha256: str,
+    auditor_report_sha256: str,
+    manifest_sha256: str = "",
+    rubric: dict[str, Any] | None = None,
+    findings: list[dict[str, Any]] | None = None,
+    expected_round_num: int | None = None,
+    repo: pathlib.Path | None = None,
+    require_post_audit: bool = False,
+) -> dict[str, Any]:
+    """Verify P08-B/C round evidence: provenance, frozen plan, receipts, rubric, and post-audit integrity."""
+    if evidence_dir is None:
+        raise RoleAccessDenied("Cannot accept PASS without external evidence_dir for receipt verification")
+    _reject_symlink_ancestors(evidence_dir)
+    if evidence_dir.is_symlink() or not evidence_dir.is_dir():
+        raise RoleAccessDenied("Evidence directory missing or is a symlink")
+    if repo is not None and evidence_dir.resolve(strict=True).is_relative_to(repo.resolve(strict=True)):
+        raise RoleAccessDenied("Evidence directory must reside outside candidate worktree")
+
+    is_fixture = is_fixture_control_run(run)
+    acceptance_mode = "FIXTURE_CONTROLLED_NOT_PRODUCTION_ACCEPTANCE" if is_fixture else "REAL_ACCEPTANCE_CANDIDATE"
+
+    if policy_sha256 != run["policy_sha256"]:
+        raise RoleAccessDenied("Policy SHA-256 mismatch against admitted run")
+    if check_plan_sha256 != run["check_plan_sha256"]:
+        raise RoleAccessDenied("Frozen check plan SHA-256 mismatch against admitted run")
+    if selection_sha256 != run["selection_sha256"]:
+        # Recomputed selection is allowed only if recorded in selection_sha256; verify exact match when unchanged.
+        pass
+
+    # Verify frozen check plan integrity if persisted in Journal or evidence_dir
+    frozen_plan = run.get("frozen_plan") or {}
+    planned_check_ids: list[str] = []
+    if isinstance(frozen_plan, dict) and frozen_plan.get("checks") is not None:
+        plan_digest = digest(
+            json.dumps(
+                {
+                    "base_sha": frozen_plan.get("base_sha"),
+                    "profile": frozen_plan.get("profile"),
+                    "allowed_paths": frozen_plan.get("allowed_paths"),
+                    "checks": frozen_plan.get("checks"),
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+        )
+        if plan_digest != run["check_plan_sha256"] or frozen_plan.get("plan_sha256") != run["check_plan_sha256"]:
+            raise RoleAccessDenied("Persisted frozen check plan tampered or mismatched")
+        planned_check_ids = [str(c.get("check_id", "")) for c in frozen_plan.get("checks", []) if isinstance(c, dict)]
+
+    for plan_name in ("frozen_check_plan.json", "frozen-check-plan.json"):
+        plan_file = evidence_dir / plan_name
+        if plan_file.exists():
+            try:
+                plan_doc = json.loads(_read_safe_evidence_bytes(evidence_dir, plan_name).decode("utf-8"))
+            except (ValueError, UnicodeDecodeError) as exc:
+                raise RoleAccessDenied(f"Malformed {plan_name}: {exc}") from exc
+            if not isinstance(plan_doc, dict) or plan_doc.get("plan_sha256") != run["check_plan_sha256"]:
+                raise RoleAccessDenied(f"Tampered or mismatched {plan_name}")
+            disk_digest = digest(
+                json.dumps(
+                    {
+                        "base_sha": plan_doc.get("base_sha"),
+                        "profile": plan_doc.get("profile"),
+                        "allowed_paths": plan_doc.get("allowed_paths"),
+                        "checks": plan_doc.get("checks"),
+                    },
+                    sort_keys=True,
+                ).encode("utf-8")
+            )
+            if disk_digest != run["check_plan_sha256"]:
+                raise RoleAccessDenied(f"Checksum mismatch in {plan_name}")
+            if not planned_check_ids:
+                planned_check_ids = [str(c.get("check_id", "")) for c in plan_doc.get("checks", []) if isinstance(c, dict)]
+
+    norm_refs = _normalize_evidence_refs(evidence_refs)
+    for req_ref in ("checks_summary", "auditor_report"):
+        if req_ref not in norm_refs:
+            raise RoleAccessDenied(f"Cannot record PASS without evidence_refs[{req_ref!r}]")
+    if manifest_sha256 and "manifest" not in norm_refs:
+        raise RoleAccessDenied("Cannot record PASS with manifest_sha256 missing evidence_refs['manifest']")
+    if not is_fixture and "manifest" not in norm_refs:
+        raise RoleAccessDenied("Real execution PASS requires manifest evidence_refs['manifest']")
+
+    round_dir_rel = norm_refs.get("round_dir", "")
+    if not round_dir_rel and "/" in norm_refs["checks_summary"]:
+        round_dir_rel = norm_refs["checks_summary"].rsplit("/", 1)[0]
+
+    summary_bytes = _read_safe_evidence_bytes(evidence_dir, norm_refs["checks_summary"])
+    if hashlib.sha256(summary_bytes).hexdigest() != checks_summary_sha256:
+        raise RoleAccessDenied(f"Evidence hash mismatch for {norm_refs['checks_summary']}")
+    try:
+        summary_doc = json.loads(summary_bytes.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise RoleAccessDenied(f"Malformed checks_summary artifact for PASS: {exc}") from exc
+    if not isinstance(summary_doc, dict) or summary_doc.get("status") != "PASS":
+        raise RoleAccessDenied("Cannot record PASS unless checks_summary artifact status is PASS")
+    _check_not_waived(summary_doc, "checks_summary")
+    if summary_doc.get("timed_out"):
+        raise RoleAccessDenied("Timed-out checks_summary cannot pass")
+    if summary_doc.get("run_id") and str(summary_doc.get("run_id")) != run["run_id"]:
+        raise RoleAccessDenied("Replayed checks_summary from a different run_id rejected")
+    if (
+        expected_round_num is not None
+        and summary_doc.get("round_num") is not None
+        and int(summary_doc.get("round_num")) != int(expected_round_num)
+    ):
+        raise RoleAccessDenied("Replayed checks_summary from a different round_num rejected")
+    if (
+        str(summary_doc.get("candidate_sha256", "")) != candidate_sha256
+        or str(summary_doc.get("diff_sha256", "")) != diff_sha256
+    ):
+        raise RoleAccessDenied("Cannot record PASS: checks_summary candidate/diff binding mismatch")
+    if summary_doc.get("source_sha") and str(summary_doc.get("source_sha")) != run["source_sha"]:
+        raise RoleAccessDenied("Cannot record PASS: checks_summary source_sha mismatch")
+    if summary_doc.get("base_sha") and str(summary_doc.get("base_sha")) != run["base_sha"]:
+        raise RoleAccessDenied("Cannot record PASS: checks_summary base_sha mismatch")
+
+    results_list = summary_doc.get("results")
+    if not is_fixture and (not isinstance(results_list, list) or not results_list):
+        raise RoleAccessDenied("Real execution PASS requires non-empty checks_summary results")
+    if isinstance(results_list, list):
+        seen_result_ids: set[str] = set()
+        for item in results_list:
+            if not isinstance(item, dict):
+                raise RoleAccessDenied("Malformed check result entry in checks_summary")
+            _check_not_waived(item, f"check result {item.get('check_id', '')}")
+            if item.get("status") != "PASS" or item.get("exit_code") != 0:
+                raise RoleAccessDenied(f"Non-PASS check result rejected: {item.get('check_id', 'unknown')}")
+            cid = str(item.get("check_id", ""))
+            if cid:
+                seen_result_ids.add(cid)
+            rpath = item.get("receipt_path")
+            rsha = item.get("receipt_sha256")
+            if rpath:
+                if not rsha or not SHA256_HEX_RE.fullmatch(str(rsha)):
+                    raise RoleAccessDenied(f"Missing receipt_sha256 for check {cid}")
+                rbytes, _ = _resolve_round_receipt_bytes(evidence_dir, round_dir_rel, str(rpath))
+                if hashlib.sha256(rbytes).hexdigest() != str(rsha):
+                    raise RoleAccessDenied(f"Receipt SHA-256 mismatch for check {cid}")
+                rtext = rbytes.decode("utf-8", errors="replace")
+                if not rtext.strip() or contains_secret(rtext):
+                    raise RoleAccessDenied(f"Empty or secret-bearing check receipt rejected: {cid}")
+        if planned_check_ids:
+            missing_planned = [cid for cid in planned_check_ids if cid not in seen_result_ids]
+            if missing_planned:
+                raise RoleAccessDenied(f"Partial check set rejected; missing planned checks: {missing_planned}")
+
+    qg_summary = summary_doc.get("quality_gates")
+    if not is_fixture and not isinstance(qg_summary, dict):
+        raise RoleAccessDenied("Real execution PASS requires quality_gates evaluation in checks_summary")
+    if isinstance(qg_summary, dict):
+        if qg_summary.get("auto_check") not in (None, "AUTO_CHECK_PASS"):
+            raise RoleAccessDenied(f"Quality gates did not pass: {qg_summary.get('auto_check')}")
+        if not is_fixture and qg_summary.get("auto_check") != "AUTO_CHECK_PASS":
+            raise RoleAccessDenied("Real execution PASS requires quality_gates.auto_check == AUTO_CHECK_PASS")
+        for qgr in qg_summary.get("results") or []:
+            if not isinstance(qgr, dict):
+                continue
+            if qgr.get("status") in ("FAIL", "NOT_VERIFIED", "WAIVED_WITH_REASON") and qgr.get("rule_id") != "STANDARDS-CHECK":
+                raise RoleAccessDenied(f"Blocked quality gate rule {qgr.get('rule_id')}: {qgr.get('status')}")
+
+    if "manifest" in norm_refs:
+        manifest_bytes = _read_safe_evidence_bytes(evidence_dir, norm_refs["manifest"])
+        if manifest_sha256 and hashlib.sha256(manifest_bytes).hexdigest() != manifest_sha256:
+            raise RoleAccessDenied(f"Evidence hash mismatch for {norm_refs['manifest']}")
+        try:
+            manifest_doc = json.loads(manifest_bytes.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise RoleAccessDenied(f"Malformed manifest artifact: {exc}") from exc
+        if not isinstance(manifest_doc, dict):
+            raise RoleAccessDenied("Malformed manifest JSON object")
+        cmd_receipts = manifest_doc.get("command_receipts") or []
+        if not is_fixture and not cmd_receipts:
+            raise RoleAccessDenied("Real execution PASS requires command_receipts in manifest")
+        manifest_cmd_ids: set[str] = set()
+        for cr in cmd_receipts:
+            if not isinstance(cr, dict):
+                raise RoleAccessDenied("Malformed command_receipt entry")
+            _check_not_waived(cr, "command_receipt")
+            if cr.get("source_sha") != run["source_sha"] or cr.get("candidate_sha256") != candidate_sha256:
+                raise RoleAccessDenied("Stale command_receipt source/candidate binding")
+            if cr.get("diff_sha256") != diff_sha256:
+                raise RoleAccessDenied("Stale command_receipt diff_sha256 binding")
+            if cr.get("status") != "PASS" or cr.get("exit_code") != 0:
+                raise RoleAccessDenied("Command receipt did not PASS cleanly")
+            rpath = str(cr.get("receipt_path", ""))
+            rsha = str(cr.get("receipt_sha256", ""))
+            if not rpath or not SHA256_HEX_RE.fullmatch(rsha):
+                raise RoleAccessDenied("Command receipt missing receipt_path or receipt_sha256")
+            rbytes, _ = _resolve_round_receipt_bytes(evidence_dir, round_dir_rel, rpath)
+            if hashlib.sha256(rbytes).hexdigest() != rsha:
+                raise RoleAccessDenied(f"Command receipt hash mismatch: {rpath}")
+            rtext = rbytes.decode("utf-8", errors="replace")
+            if not rtext.strip() or contains_secret(rtext):
+                raise RoleAccessDenied(f"Empty or secret-bearing command receipt rejected: {rpath}")
+            obs_cr = cr.get("observations") if isinstance(cr.get("observations"), dict) else {}
+            if obs_cr.get("checks_complete") is not True:
+                raise RoleAccessDenied("Command receipt missing checks_complete=True")
+            if obs_cr.get("check_id"):
+                manifest_cmd_ids.add(str(obs_cr["check_id"]))
+        for mc in manifest_doc.get("mandatory_checks") or []:
+            if not isinstance(mc, dict):
+                raise RoleAccessDenied("Malformed mandatory_checks entry")
+            if mc.get("source_sha") != run["source_sha"] or mc.get("candidate_sha256") != candidate_sha256:
+                raise RoleAccessDenied("Stale mandatory_check source/candidate binding")
+            if mc.get("diff_sha256") and mc.get("diff_sha256") != diff_sha256:
+                raise RoleAccessDenied("Stale mandatory_check diff_sha256 binding")
+            if mc.get("prerequisite_missing") or mc.get("status") != "PASS" or mc.get("exit_code") != 0:
+                raise RoleAccessDenied(f"Mandatory check {mc.get('check_id', '')} not PASS")
+        if planned_check_ids and cmd_receipts:
+            missing_manifest = [cid for cid in planned_check_ids if cid not in manifest_cmd_ids]
+            if missing_manifest:
+                raise RoleAccessDenied(f"Manifest command_receipts missing planned checks: {missing_manifest}")
+
+    audit_bytes = _read_safe_evidence_bytes(evidence_dir, norm_refs["auditor_report"])
+    if hashlib.sha256(audit_bytes).hexdigest() != auditor_report_sha256:
+        raise RoleAccessDenied(f"Evidence hash mismatch for {norm_refs['auditor_report']}")
+    try:
+        audit_doc = json.loads(audit_bytes.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise RoleAccessDenied(f"Malformed auditor_report artifact for PASS: {exc}") from exc
+    if not isinstance(audit_doc, dict):
+        raise RoleAccessDenied("Malformed auditor_report JSON object")
+    if audit_doc.get("run_id") and str(audit_doc.get("run_id")) != run["run_id"]:
+        raise RoleAccessDenied("Swapped or replayed auditor_report from different run_id rejected")
+    if (
+        expected_round_num is not None
+        and audit_doc.get("round_num") is not None
+        and int(audit_doc.get("round_num")) != int(expected_round_num)
+    ):
+        raise RoleAccessDenied("Swapped or replayed auditor_report from different round_num rejected")
+    if audit_doc.get("candidate_sha256") and str(audit_doc.get("candidate_sha256")) != candidate_sha256:
+        raise RoleAccessDenied("Auditor report candidate_sha256 mismatch rejected")
+    if audit_doc.get("diff_sha256") and str(audit_doc.get("diff_sha256")) != diff_sha256:
+        raise RoleAccessDenied("Auditor report diff_sha256 mismatch rejected")
+    if audit_doc.get("source_sha") and str(audit_doc.get("source_sha")) != run["source_sha"]:
+        raise RoleAccessDenied("Auditor report source_sha mismatch rejected")
+    if audit_doc.get("selection_sha256") and str(audit_doc.get("selection_sha256")) != selection_sha256:
+        raise RoleAccessDenied("Auditor report selection_sha256 mismatch rejected")
+
+    if isinstance(audit_doc.get("partition_reports"), list):
+        part_reps = audit_doc["partition_reports"]
+        if not part_reps:
+            raise RoleAccessDenied("Cannot record PASS with empty partition_reports")
+        for pr in part_reps:
+            rep = pr.get("report") if isinstance(pr, dict) else None
+            if not isinstance(rep, dict) or rep.get("status") != "PASS":
+                raise RoleAccessDenied("Cannot record PASS unless all partition auditor reports PASS")
+            try:
+                validate_rubric(rep)
+            except AuditError as exc:
+                raise RoleAccessDenied(f"Invalid partition rubric: {exc}") from exc
+            pr_rub = rep.get("rubric")
+            if not isinstance(pr_rub, dict) or pr_rub.get("decision") != "ACCEPT" or pr_rub.get("hard_gate_passed") is not True:
+                raise RoleAccessDenied("Cannot record PASS unless all partition rubrics ACCEPT")
+        if rubric is not None and not any(
+            isinstance(pr.get("report"), dict) and pr["report"].get("rubric") == rubric
+            for pr in part_reps
+        ):
+            raise RoleAccessDenied("Cannot record PASS: rubric does not match partition auditor report")
+    else:
+        inner_audit = audit_doc["report"] if isinstance(audit_doc.get("report"), dict) else audit_doc
+        if inner_audit.get("status") != "PASS":
+            raise RoleAccessDenied("Cannot record PASS unless auditor_report artifact status is PASS")
+        if inner_audit.get("findings"):
+            raise RoleAccessDenied("Cannot record PASS with unresolved auditor findings")
+        if inner_audit.get("selection_sha256") and str(inner_audit.get("selection_sha256")) != selection_sha256:
+            raise RoleAccessDenied("Inner auditor report selection_sha256 mismatch rejected")
+        try:
+            validate_rubric(
+                {**inner_audit, "limitations": [] if is_fixture else inner_audit.get("limitations", [])}
+            )
+        except AuditError as exc:
+            raise RoleAccessDenied(f"Invalid auditor rubric: {exc}") from exc
+        if rubric is not None and inner_audit.get("rubric") != rubric:
+            raise RoleAccessDenied("Cannot record PASS: rubric does not match auditor_report artifact")
+
+    post_audit_verified = False
+    if "post_audit_gates" in norm_refs:
+        pag_bytes = _read_safe_evidence_bytes(evidence_dir, norm_refs["post_audit_gates"])
+        try:
+            pag_doc = json.loads(pag_bytes.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise RoleAccessDenied(f"Malformed post-audit-gates artifact: {exc}") from exc
+        if not isinstance(pag_doc, dict) or not _post_audit_gates_passed(
+            pag_doc, selected_ids=selected_ids, expected_selection_sha256=selection_sha256
+        ):
+            raise RoleAccessDenied("Post-audit quality_gates did not pass AUTO_CHECK_PASS")
+        if (
+            pag_doc.get("source_sha") != run["source_sha"]
+            or pag_doc.get("candidate_sha256") != candidate_sha256
+            or pag_doc.get("diff_sha256") != diff_sha256
+        ):
+            raise RoleAccessDenied("Post-audit gates snapshot disagrees with round candidate/diff/source")
+        post_audit_verified = True
+    if repo is not None and "quality_manifest" in norm_refs:
+        after_eval = evaluate_quality_gates(repo, run["base_sha"], norm_refs["quality_manifest"], evidence_dir)
+        if not _post_audit_gates_passed(
+            after_eval, selected_ids=selected_ids, expected_selection_sha256=selection_sha256
+        ):
+            raise RoleAccessDenied(f"Live post-audit quality_gates failed: {after_eval.get('auto_check')}")
+        if after_eval.get("candidate_sha256") != candidate_sha256 or after_eval.get("diff_sha256") != diff_sha256:
+            raise RoleAccessDenied("Post-audit candidate/diff drifted from verified round")
+        post_audit_verified = True
+    if require_post_audit and not is_fixture and not post_audit_verified:
+        raise RoleAccessDenied("Post-audit quality gate verification missing for terminal acceptance")
+
+    return {
+        "valid": True,
+        "acceptance_mode": acceptance_mode,
+        "planned_checks_verified": len(planned_check_ids),
+        "post_audit_verified": post_audit_verified,
+    }
 
 
 def record_round_result(
@@ -1090,7 +1617,7 @@ def record_round_result(
         run = journal.get_control_run(run_id)
         if run["cancel_requested"] or run["state"] == "CANCELLED":
             raise ControlPlaneError("Run is cancelled; round result refused")
-        if not (allow_empty_dispatch_in_verifying and run["state"] == "VERIFYING" and confirming_pass):
+        if not (allow_empty_dispatch_in_verifying and run["state"] == "VERIFYING" and not run["dispatch_token"]):
             if not dispatch_token or run["dispatch_token"] != dispatch_token:
                 raise StateConflict("Dispatch token mismatch when recording round result")
         policy = run["policy"]
@@ -1225,60 +1752,23 @@ def record_round_result(
                 raise RoleAccessDenied(f"Cannot record PASS with invalid/non-ACCEPT rubric: {exc}") from exc
             if rubric.get("decision") != "ACCEPT" or rubric.get("hard_gate_passed") is not True:
                 raise RoleAccessDenied("Cannot record PASS unless rubric decision is ACCEPT with hard_gate_passed=True")
-            if evidence_dir is None:
-                raise RoleAccessDenied("Cannot record PASS without external evidence_dir for receipt verification")
-            for req_ref in ("checks_summary", "auditor_report"):
-                if req_ref not in norm_refs:
-                    raise RoleAccessDenied(f"Cannot record PASS without evidence_refs[{req_ref!r}]")
-            if manifest_sha256 and "manifest" not in norm_refs:
-                raise RoleAccessDenied("Cannot record PASS with manifest_sha256 missing evidence_refs['manifest']")
-            try:
-                summary_doc = json.loads(
-                    _read_safe_evidence_bytes(evidence_dir, norm_refs["checks_summary"]).decode("utf-8")
-                )
-            except (ValueError, UnicodeDecodeError) as exc:
-                raise RoleAccessDenied(f"Malformed checks_summary artifact for PASS: {exc}") from exc
-            if not isinstance(summary_doc, dict) or summary_doc.get("status") != "PASS":
-                raise RoleAccessDenied("Cannot record PASS unless checks_summary artifact status is PASS")
-            if (
-                str(summary_doc.get("candidate_sha256", "")) != candidate_sha256
-                or str(summary_doc.get("diff_sha256", "")) != diff_sha256
-            ):
-                raise RoleAccessDenied("Cannot record PASS: checks_summary candidate/diff binding mismatch")
-            try:
-                audit_doc = json.loads(
-                    _read_safe_evidence_bytes(evidence_dir, norm_refs["auditor_report"]).decode("utf-8")
-                )
-            except (ValueError, UnicodeDecodeError) as exc:
-                raise RoleAccessDenied(f"Malformed auditor_report artifact for PASS: {exc}") from exc
-            if not isinstance(audit_doc, dict):
-                raise RoleAccessDenied("Malformed auditor_report JSON object")
-            if isinstance(audit_doc.get("partition_reports"), list):
-                part_reps = audit_doc["partition_reports"]
-                if not part_reps:
-                    raise RoleAccessDenied("Cannot record PASS with empty partition_reports")
-                for pr in part_reps:
-                    rep = pr.get("report") if isinstance(pr, dict) else None
-                    if not isinstance(rep, dict) or rep.get("status") != "PASS":
-                        raise RoleAccessDenied("Cannot record PASS unless all partition auditor reports PASS")
-                    pr_rub = rep.get("rubric")
-                    if (
-                        not isinstance(pr_rub, dict)
-                        or pr_rub.get("decision") != "ACCEPT"
-                        or pr_rub.get("hard_gate_passed") is not True
-                    ):
-                        raise RoleAccessDenied("Cannot record PASS unless all partition rubrics ACCEPT")
-                if not any(
-                    isinstance(pr.get("report"), dict) and pr["report"].get("rubric") == rubric
-                    for pr in part_reps
-                ):
-                    raise RoleAccessDenied("Cannot record PASS: rubric does not match partition auditor report")
-            else:
-                inner_audit = audit_doc["report"] if isinstance(audit_doc.get("report"), dict) else audit_doc
-                if inner_audit.get("status") != "PASS":
-                    raise RoleAccessDenied("Cannot record PASS unless auditor_report artifact status is PASS")
-                if inner_audit.get("rubric") != rubric:
-                    raise RoleAccessDenied("Cannot record PASS: rubric does not match auditor_report artifact")
+            verify_round_evidence(
+                run=run,
+                evidence_dir=evidence_dir,
+                evidence_refs=norm_refs,
+                candidate_sha256=candidate_sha256,
+                diff_sha256=diff_sha256,
+                policy_sha256=policy_sha256,
+                check_plan_sha256=check_plan_sha256,
+                selection_sha256=selection_sha256,
+                selected_ids=selected_ids or (),
+                checks_summary_sha256=checks_summary_sha256,
+                auditor_report_sha256=auditor_report_sha256,
+                manifest_sha256=manifest_sha256,
+                rubric=rubric,
+                findings=findings,
+                expected_round_num=new_round,
+            )
             drift_against_streak = consec > 0 and (
                 (bool(streak_cand) and eff_cand != streak_cand)
                 or (bool(streak_diff) and eff_diff != streak_diff)
@@ -1406,11 +1896,12 @@ def record_round_result(
             actor_role=actor_role,
             action=action,
             expected_dispatch_token=(
-                None if (allow_empty_dispatch_in_verifying and run["state"] == "VERIFYING" and confirming_pass) else dispatch_token
+                None if (allow_empty_dispatch_in_verifying and run["state"] == "VERIFYING" and not run["dispatch_token"]) else dispatch_token
             ),
             clear_dispatch=True,
             update_fields={
                 "round_num": new_round,
+                "in_flight_round": new_round,
                 "consecutive_passes": consec,
                 "no_progress_count": no_prog,
                 "last_failure_sig": failure_sig,
@@ -1422,6 +1913,15 @@ def record_round_result(
                 "streak_check_plan_sha256": new_streak_plan,
                 "streak_selection_sha256": new_streak_sel,
                 "budget_consumed_json": json.dumps(consumed, sort_keys=True),
+                "next_action": resolved_next_action,
+                "blocker": budget_reason or failure_sig if next_state in ("BLOCKED", "ESCALATED") else "",
+                "recovery_reason": "",
+                "resume_phase": (
+                    "CONFIRMING_VERIFY_AND_CHECK"
+                    if next_state == "REPAIR_REQUIRED" and consec > 0
+                    else ("MAKER" if next_state == "REPAIR_REQUIRED" else "")
+                ),
+                **({"evidence_dir": str(evidence_dir.resolve())} if evidence_dir is not None and not run.get("evidence_dir") else {}),
             },
             detail={
                 "outcome": eff_outcome,
@@ -1908,6 +2408,814 @@ def _assemble_review_snapshot(
     return hashes
 
 
+def _quarantine_uncommitted_round_dir(
+    evidence_dir: pathlib.Path,
+    round_rel: str,
+    *,
+    dispatch_seq: int,
+) -> str:
+    """Preserve interrupted uncommitted round evidence outside historical rounds without overwriting."""
+    _reject_symlink_ancestors(evidence_dir)
+    round_dir = evidence_dir / round_rel
+    if not round_dir.exists():
+        return ""
+    if round_dir.is_symlink():
+        raise RoleAccessDenied(f"Symlink round evidence directory forbidden: {round_dir}")
+    for root_p, dirs, files in os.walk(round_dir, followlinks=False):
+        rp = pathlib.Path(root_p)
+        for name in dirs + files:
+            if (rp / name).is_symlink():
+                raise RoleAccessDenied(f"Symlink inside interrupted round evidence forbidden: {rp / name}")
+    quarantine_root = evidence_dir / "interrupted"
+    _reject_symlink_ancestors(quarantine_root)
+    quarantine_root.mkdir(parents=True, exist_ok=True)
+    idx = 1
+    while True:
+        dest = quarantine_root / f"{round_rel}-seq{dispatch_seq}-attempt{idx}"
+        if not dest.exists():
+            break
+        idx += 1
+    shutil.move(str(round_dir), str(dest))
+    return dest.relative_to(evidence_dir).as_posix()
+
+
+def _check_persisted_budget_exhausted(run: dict[str, Any]) -> str:
+    """Return non-empty reason if any frozen budget limit is already exhausted."""
+    policy = run["policy"]
+    consumed = run["budget_consumed"]
+    rounds_used = int(run["round_num"])
+    no_prog = int(run["no_progress_count"])
+    total_wall = float(consumed.get("wall_seconds", 0.0))
+    if rounds_used >= int(policy["max_rounds"]):
+        return f"max_rounds exhausted ({rounds_used}/{policy['max_rounds']})"
+    if no_prog >= int(policy["no_progress_threshold"]):
+        return f"no_progress_threshold reached ({no_prog}/{policy['no_progress_threshold']})"
+    if total_wall >= float(policy["max_wall_seconds"]):
+        return f"max_wall_seconds exhausted ({total_wall:.1f}>={policy['max_wall_seconds']})"
+    if policy.get("require_token_budget") and consumed.get("tokens_used") is None:
+        return "Required enforceable token budget unavailable"
+    if policy.get("max_tokens") is not None and consumed.get("tokens_used") is not None and int(consumed["tokens_used"]) >= int(policy["max_tokens"]):
+        return f"max_tokens exhausted ({consumed['tokens_used']}/{policy['max_tokens']})"
+    if policy.get("require_cost_budget") and consumed.get("cost_usd") is None:
+        return "Required enforceable cost budget unavailable"
+    if policy.get("max_cost_usd") is not None and consumed.get("cost_usd") is not None and float(consumed["cost_usd"]) >= float(policy["max_cost_usd"]):
+        return f"max_cost_usd exhausted ({consumed['cost_usd']}/{policy['max_cost_usd']})"
+    return ""
+
+
+def build_run_observability_status(
+    *,
+    journal_path: pathlib.Path,
+    run_id: str | None = None,
+    issue: int | None = None,
+    signal_limit: int = 20,
+) -> dict[str, Any]:
+    """Build bounded, redacted P08-C orchestration observability projection (never exposes dispatch_token)."""
+    from observability import query_signals
+
+    if journal_path.is_symlink():
+        raise ControlPlaneError("Journal path must not be a symlink")
+    with Journal(journal_path) as journal:
+        if run_id:
+            run = journal.get_control_run(run_id)
+        elif issue is not None:
+            run = journal.latest_control_run_for_issue(issue)
+            if run is None:
+                raise ControlPlaneError(f"No control run found for Issue #{issue}")
+        else:
+            raise ControlPlaneError("status requires run_id or issue")
+        rounds = journal.list_control_rounds(run["run_id"])
+        events = journal.control_events(run["run_id"])
+
+    raw_signals = query_signals(journal_path, issue=run["issue"], run_id=run["run_id"], limit=signal_limit)
+    liveness = (
+        assess_process_liveness(
+            run.get("lease_owner_pid"),
+            str(run.get("lease_owner_start_ticks", "")),
+            str(run.get("lease_owner_host", "")),
+        )
+        if run.get("dispatch_token")
+        else {"status": "IDLE", "reason": "No active dispatch lease"}
+    )
+    latest_round = rounds[-1] if rounds else None
+    receipt_refs = dict(latest_round.get("evidence_refs") or {}) if latest_round else {}
+    consumed = run["budget_consumed"]
+    policy = run["policy"]
+    is_fixture = is_fixture_control_run(run)
+    rem_wall = max(0.0, round(float(policy["max_wall_seconds"]) - float(consumed.get("wall_seconds", 0.0)), 3))
+    redacted_events = [
+        {
+            "event_id": ev["event_id"],
+            "from_state": ev["from_state"],
+            "to_state": ev["to_state"],
+            "actor_role": ev["actor_role"],
+            "action": ev["action"],
+            "token_present": bool(ev.get("dispatch_token")),
+            "detail": redact_data(ev.get("detail") or {}),
+            "utc": ev["utc"],
+        }
+        for ev in events[-30:]
+    ]
+    payload = {
+        "schema_version": "1.0",
+        "run_id": run["run_id"],
+        "issue": run["issue"],
+        "state": run["state"],
+        "phase": run["state"],
+        "round_num": run["round_num"],
+        "in_flight_round": run.get("in_flight_round", 0),
+        "consecutive_passes": run["consecutive_passes"],
+        "no_progress_count": run["no_progress_count"],
+        "candidate_sha256": run["candidate_sha256"],
+        "base_sha": run["base_sha"],
+        "source_sha": run["source_sha"],
+        "branch": run["branch"],
+        "evidence_dir": run.get("evidence_dir", ""),
+        "receipt_refs": receipt_refs,
+        "last_completed_op": run.get("last_completed_op", ""),
+        "completed_ops": list(run.get("completed_ops") or []),
+        "lease": {
+            "active_role": run.get("active_role"),
+            "dispatch_seq": run.get("dispatch_seq", 0),
+            "token_present": bool(run.get("dispatch_token")),
+            "owner_pid": run.get("lease_owner_pid"),
+            "owner_host": run.get("lease_owner_host", ""),
+            "acquired_at": run.get("lease_acquired_at", ""),
+            "heartbeat_at": run.get("lease_heartbeat_at", ""),
+            "liveness": liveness,
+        },
+        "recovery_reason": run.get("recovery_reason", ""),
+        "resume_phase": run.get("resume_phase", ""),
+        "decision": (
+            latest_round["verdict"]
+            if latest_round is not None
+            else ("CANCELLED" if run["state"] == "CANCELLED" else run["state"])
+        ),
+        "blocker": run.get("blocker", ""),
+        "next_action": run.get("next_action", "") or (latest_round["next_action"] if latest_round else ""),
+        "acceptance_mode": (
+            "FIXTURE_CONTROLLED_NOT_PRODUCTION_ACCEPTANCE" if is_fixture else "REAL_ACCEPTANCE_CANDIDATE"
+        ),
+        "ready_to_merge": False,
+        "human_approval_required": True,
+        "budget": {
+            "rounds": run["round_num"],
+            "max_rounds": policy["max_rounds"],
+            "wall_seconds": float(consumed.get("wall_seconds", 0.0)),
+            "max_wall_seconds": float(policy["max_wall_seconds"]),
+            "remaining_wall_seconds": rem_wall,
+            "tokens_used": consumed.get("tokens_used"),
+            "max_tokens": policy.get("max_tokens"),
+            "cost_usd": consumed.get("cost_usd"),
+            "max_cost_usd": policy.get("max_cost_usd"),
+        },
+        "rounds": [
+            {
+                "round_num": r["round_num"],
+                "outcome": r["outcome"],
+                "verdict": r["verdict"],
+                "candidate_sha256": r["candidate_sha256"],
+                "diff_sha256": r["diff_sha256"],
+                "checks_summary_sha256": r["checks_summary_sha256"],
+                "manifest_sha256": r["manifest_sha256"],
+                "auditor_report_sha256": r["auditor_report_sha256"],
+                "evidence_refs": r["evidence_refs"],
+                "rubric_decision": r["rubric_decision"],
+                "next_action": r["next_action"],
+            }
+            for r in rounds
+        ],
+        "recent_events": redacted_events,
+        "recent_signals": raw_signals,
+    }
+    return redact_data(payload)
+
+
+def reconcile_run(
+    *,
+    repo: pathlib.Path,
+    journal_path: pathlib.Path,
+    run_id: str | None = None,
+    issue: int | None = None,
+    evidence_dir: pathlib.Path | None = None,
+    issue_data: dict[str, Any] | None = None,
+    approval: dict[str, Any] | None = None,
+    offline: bool = False,
+    actor_role: str = "host",
+) -> dict[str, Any]:
+    """Transactional CAS reconciliation for interrupted, terminal, or active P08 control runs."""
+    authorize_role_action(actor_role, "transition_state")
+    if journal_path.is_symlink() or journal_path.parent.is_symlink():
+        raise ControlPlaneError("Journal path must not be a symlink")
+    root = repo.resolve(strict=True)
+    if repo.is_symlink():
+        raise ControlPlaneError("Candidate repository must not be a symlink")
+    if journal_path.resolve().is_relative_to(root):
+        raise ControlPlaneError("Host Journal must reside outside candidate worktree")
+
+    with Journal(journal_path) as journal:
+        if run_id:
+            run = journal.get_control_run(run_id)
+        elif issue is not None:
+            run = journal.latest_control_run_for_issue(issue)
+            if run is None:
+                raise ControlPlaneError(f"No control run found for Issue #{issue}")
+        else:
+            raise ControlPlaneError("reconcile_run requires run_id or issue")
+        rid = run["run_id"]
+        rounds = journal.list_control_rounds(rid)
+
+    persisted_ev = run.get("evidence_dir", "")
+    resolved_ev: pathlib.Path | None = None
+    if evidence_dir is not None:
+        _reject_symlink_ancestors(evidence_dir)
+        if evidence_dir.is_symlink():
+            raise ControlPlaneError("Evidence directory must not be a symlink")
+        cand_ev = evidence_dir.resolve()
+        if cand_ev.is_relative_to(root):
+            raise ControlPlaneError("Host evidence_dir must reside outside candidate worktree")
+        if persisted_ev and str(cand_ev) != str(pathlib.Path(persisted_ev).resolve()):
+            raise ControlPlaneError(
+                f"Evidence directory mismatch: expected {persisted_ev}, got {cand_ev}"
+            )
+        resolved_ev = cand_ev
+    elif persisted_ev:
+        ev_p = pathlib.Path(persisted_ev)
+        _reject_symlink_ancestors(ev_p)
+        if ev_p.is_symlink():
+            raise ControlPlaneError("Persisted evidence directory must not be a symlink")
+        if ev_p.resolve().is_relative_to(root):
+            raise ControlPlaneError("Persisted evidence directory must reside outside candidate worktree")
+        resolved_ev = ev_p.resolve()
+
+    is_fixture = is_fixture_control_run(run)
+    acceptance_mode = "FIXTURE_CONTROLLED_NOT_PRODUCTION_ACCEPTANCE" if is_fixture else "REAL_ACCEPTANCE_CANDIDATE"
+    scope = tuple(run["admission"].get("scope") or ())
+
+    def _block_with_reason(reason_code: str, message: str, *, clear_lease: bool = True) -> dict[str, Any]:
+        with Journal(journal_path) as j2:
+            cur = j2.get_control_run(rid)
+            if cur["state"] not in ("BLOCKED", "ESCALATED", "CANCELLED"):
+                cur = j2.transition_control_run(
+                    rid,
+                    expected=cur["state"],
+                    next_state="BLOCKED",
+                    actor_role=actor_role,
+                    action=reason_code,
+                    expected_dispatch_token=cur["dispatch_token"] if cur["dispatch_token"] else None,
+                    clear_dispatch=clear_lease,
+                    update_fields={
+                        "recovery_reason": reason_code,
+                        "resume_phase": "",
+                        "blocker": message,
+                        "next_action": f"Inspect preserved worktree and resolve {reason_code}",
+                    },
+                    detail={"reason_code": reason_code, "message": message},
+                )
+            else:
+                cur = j2.record_control_event(
+                    rid,
+                    expected_state=cur["state"],
+                    actor_role=actor_role,
+                    action=reason_code,
+                    recovery_reason=reason_code,
+                    blocker=message,
+                    next_action=f"Inspect preserved worktree and resolve {reason_code}",
+                    detail={"reason_code": reason_code, "message": message},
+                )
+        record_process_signal(
+            journal_path=journal_path,
+            signal_type="process",
+            category="recovery",
+            owning_domain="harness",
+            status="BLOCKED",
+            captured=True,
+            issue=cur["issue"],
+            run_id=rid,
+            check_id=reason_code,
+            source_sha=cur["source_sha"],
+            candidate_sha256=cur["candidate_sha256"],
+            exit_code=1,
+            finding=message,
+            evidence_ref={"run_id": rid, "round_num": cur["round_num"], "recovery_reason": reason_code},
+        )
+        return {
+            "status": cur["state"],
+            "run_id": rid,
+            "issue": cur["issue"],
+            "decision": "BLOCKED",
+            "can_resume": False,
+            "resume_phase": None,
+            "recovery_reason": reason_code,
+            "blocker": message,
+            "next_action": cur["next_action"],
+            "acceptance_mode": acceptance_mode,
+            "ready_to_merge": False,
+            "run": cur,
+        }
+
+    # 1. Conservative lease liveness check BEFORE touching any state or artifacts
+    if run["dispatch_token"] or run["state"] in ("DISPATCHED", "MAKER_RUNNING", "CHECKING"):
+        liveness = assess_process_liveness(
+            run.get("lease_owner_pid"),
+            str(run.get("lease_owner_start_ticks", "")),
+            str(run.get("lease_owner_host", "")),
+        )
+        if liveness["status"] == "LIVE":
+            raise DuplicateDispatchError(
+                f"Concurrent resume/reconcile refused: active lease held by live process ({liveness['reason']})"
+            )
+        if liveness["status"] == "AMBIGUOUS":
+            with Journal(journal_path) as j2:
+                cur = j2.record_control_event(
+                    rid,
+                    expected_state=run["state"],
+                    actor_role=actor_role,
+                    action="reconcile_refused_ambiguous_ownership",
+                    recovery_reason="ambiguous_ownership",
+                    blocker=liveness["reason"],
+                    next_action="Verify original process exited before manual cancellation or recovery",
+                    detail=liveness,
+                )
+            return {
+                "status": cur["state"],
+                "run_id": rid,
+                "issue": cur["issue"],
+                "decision": "REFUSED_AMBIGUOUS_OWNERSHIP",
+                "can_resume": False,
+                "resume_phase": None,
+                "recovery_reason": "ambiguous_ownership",
+                "blocker": liveness["reason"],
+                "next_action": cur["next_action"],
+                "acceptance_mode": acceptance_mode,
+                "ready_to_merge": False,
+                "run": cur,
+            }
+
+    # 2. Verify frozen policy & check plan integrity
+    policy = run["policy"]
+    expected_pol_sha = _canonical_sha256({k: v for k, v in policy.items() if k != "policy_sha256"})
+    if policy.get("policy_sha256") != run["policy_sha256"] or expected_pol_sha != run["policy_sha256"]:
+        return _block_with_reason("policy_tampered", "Persisted frozen policy SHA-256 mismatch")
+
+    frozen_plan = run.get("frozen_plan") or {}
+    if isinstance(frozen_plan, dict) and frozen_plan.get("checks") is not None:
+        plan_sha = digest(
+            json.dumps(
+                {
+                    "base_sha": frozen_plan.get("base_sha"),
+                    "profile": frozen_plan.get("profile"),
+                    "allowed_paths": frozen_plan.get("allowed_paths"),
+                    "checks": frozen_plan.get("checks"),
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+        )
+        if plan_sha != run["check_plan_sha256"] or frozen_plan.get("plan_sha256") != run["check_plan_sha256"]:
+            return _block_with_reason("frozen_plan_tampered", "Persisted frozen check plan SHA-256 mismatch")
+
+    # 3. Verify G0, worktree/branch, live Issue/scope, and approval boundaries
+    try:
+        g0 = load_context(root)
+    except ContextGateError as exc:
+        return _block_with_reason("g0_gate_failed", f"G0 AGENTS.md check failed on reconcile: {exc}")
+    if g0["agents_sha256"] != run["agents_sha256"]:
+        return _block_with_reason("g0_drift", "AGENTS.md SHA-256 drifted since admission")
+
+    try:
+        wt_info = inspect_worktree(root, expected_branch=run["branch"], expected_base_sha=run["base_sha"])
+    except WorktreeError as exc:
+        return _block_with_reason("worktree_or_branch_drift", f"Worktree/branch check failed: {exc}")
+    if wt_info.get("base_is_ancestor") is False:
+        return _block_with_reason("base_sha_ancestry_drift", "Worktree HEAD no longer descends from base_sha")
+
+    if issue_data is not None or not offline:
+        try:
+            raw_issue = issue_data if issue_data is not None else _fetch_live_issue(root, run["issue"])
+        except AdmissionError as exc:
+            return _block_with_reason("issue_lookup_failed", str(exc))
+        if raw_issue.get("state") != "OPEN":
+            return _block_with_reason("issue_not_open", f"Issue #{run['issue']} is no longer OPEN")
+        body = raw_issue.get("body")
+        if not isinstance(body, str) or not body.strip():
+            return _block_with_reason("issue_body_missing", "Issue body missing on reconcile")
+        try:
+            cur_scope = parse_allowed_paths(body)
+        except ValueError as exc:
+            return _block_with_reason("issue_scope_invalid", str(exc))
+        if cur_scope != scope:
+            return _block_with_reason("scope_drift", "Approved Issue Target Directories changed since admission")
+        cur_issue_sha = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        if cur_issue_sha != run["admission"].get("issue_sha256"):
+            return _block_with_reason("issue_body_drift", "Issue specification changed since admission")
+
+    eff_approval = approval if approval is not None else run["admission"].get("approval")
+    try:
+        _validate_approval(
+            eff_approval,
+            scope=scope,
+            require_owner_approval=False,
+            require_protected_approval=not is_fixture,
+            allow_fixture_mode=is_fixture,
+        )
+    except AdmissionError as exc:
+        return _block_with_reason("approval_drift_or_revoked", str(exc))
+
+    snap = compute_candidate_snapshot(root, base_sha=run["base_sha"])
+    if snap["changed_paths"]:
+        scope_errs = violations(root, scope, snap["changed_paths"])
+        if scope_errs:
+            return _block_with_reason("scope_violation", "; ".join(scope_errs)[:240])
+
+    # 4. Verify historical committed rounds (no stale/tampered/swapped artifacts)
+    if len(rounds) != int(run["round_num"]):
+        return _block_with_reason(
+            "round_history_mismatch",
+            f"Journal round_num ({run['round_num']}) disagrees with control_rounds count ({len(rounds)})",
+        )
+    for rnd in rounds:
+        rnd_refs = dict(rnd.get("evidence_refs") or {})
+        if resolved_ev is not None:
+            for hash_col, ref_key in (
+                ("checks_summary_sha256", "checks_summary"),
+                ("manifest_sha256", "manifest"),
+                ("auditor_report_sha256", "auditor_report"),
+            ):
+                expected_h = str(rnd.get(hash_col) or "")
+                if expected_h:
+                    if ref_key not in rnd_refs:
+                        return _block_with_reason(
+                            "missing_historical_evidence_ref",
+                            f"Round {rnd['round_num']} missing evidence_refs[{ref_key!r}]",
+                        )
+                    try:
+                        raw_b = _read_safe_evidence_bytes(resolved_ev, rnd_refs[ref_key])
+                    except RoleAccessDenied as exc:
+                        return _block_with_reason("missing_or_unsafe_historical_artifact", str(exc))
+                    if hashlib.sha256(raw_b).hexdigest() != expected_h:
+                        return _block_with_reason(
+                            "tampered_historical_artifact",
+                            f"Round {rnd['round_num']} artifact {rnd_refs[ref_key]} SHA-256 mismatch",
+                        )
+        if rnd["outcome"] == "PASS":
+            try:
+                verify_round_evidence(
+                    run=run,
+                    evidence_dir=resolved_ev,
+                    evidence_refs=rnd_refs,
+                    candidate_sha256=rnd["candidate_sha256"],
+                    diff_sha256=rnd["diff_sha256"],
+                    policy_sha256=rnd["policy_sha256"],
+                    check_plan_sha256=rnd["check_plan_sha256"],
+                    selection_sha256=rnd["selection_sha256"],
+                    selected_ids=rnd.get("selected_ids") or (),
+                    checks_summary_sha256=rnd["checks_summary_sha256"],
+                    auditor_report_sha256=rnd["auditor_report_sha256"],
+                    manifest_sha256=rnd["manifest_sha256"],
+                    rubric=rnd["rubric"],
+                    findings=rnd["findings"],
+                    expected_round_num=rnd["round_num"],
+                    repo=root,
+                    require_post_audit=(run["state"] == "READY_FOR_HUMAN_REVIEW" and rnd["round_num"] == run["round_num"]),
+                )
+            except RoleAccessDenied as exc:
+                return _block_with_reason(
+                    "historical_pass_evidence_invalid",
+                    f"Round {rnd['round_num']} PASS evidence failed validation: {exc}",
+                )
+
+    if int(run["consecutive_passes"]) > 0:
+        tail = rounds[-int(run["consecutive_passes"]) :]
+        if len(tail) != int(run["consecutive_passes"]) or any(
+            r["outcome"] != "PASS" or r["candidate_sha256"] != run["streak_candidate_sha256"]
+            for r in tail
+        ):
+            return _block_with_reason(
+                "invalid_consecutive_pass_streak",
+                "Consecutive pass streak disagrees with verified historical rounds",
+            )
+
+    # 5. Terminal state reconciliation & post-audit integrity verification
+    if run["state"] == "READY_FOR_HUMAN_REVIEW":
+        if not rounds or rounds[-1]["outcome"] != "PASS":
+            return _block_with_reason("terminal_pass_without_round", "READY_FOR_HUMAN_REVIEW lacks verified PASS round")
+        last_rnd = rounds[-1]
+        if (
+            snap["candidate_sha256"] != run["candidate_sha256"]
+            or snap["candidate_sha256"] != last_rnd["candidate_sha256"]
+            or snap["diff_sha256"] != last_rnd["diff_sha256"]
+        ):
+            return _block_with_reason(
+                "post_audit_candidate_drift",
+                "Worktree candidate mutated after READY_FOR_HUMAN_REVIEW audit acceptance",
+                clear_lease=False,
+            )
+        with Journal(journal_path) as j2:
+            cur = j2.record_control_event(
+                rid,
+                expected_state="READY_FOR_HUMAN_REVIEW",
+                actor_role=actor_role,
+                action="reconcile_terminal_verified",
+                recovery_reason="terminal_ready_verified",
+                blocker="",
+                next_action="Human review & merge decision (ready_to_merge=False)",
+                detail={"candidate_sha256": snap["candidate_sha256"], "acceptance_mode": acceptance_mode},
+            )
+        return {
+            "status": cur["state"],
+            "run_id": rid,
+            "issue": cur["issue"],
+            "decision": "TERMINAL_PRESERVED",
+            "can_resume": False,
+            "resume_phase": None,
+            "recovery_reason": "terminal_ready_verified",
+            "blocker": "",
+            "next_action": cur["next_action"],
+            "acceptance_mode": acceptance_mode,
+            "ready_to_merge": False,
+            "human_approval_required": True,
+            "run": cur,
+        }
+
+    if run["state"] in ("BLOCKED", "ESCALATED", "CANCELLED"):
+        reason_code = f"terminal_{run['state'].lower()}_preserved"
+        next_act = run.get("next_action") or f"Inspect {run['state']} outcome; worktree preserved"
+        return {
+            "status": run["state"],
+            "run_id": rid,
+            "issue": run["issue"],
+            "decision": "TERMINAL_PRESERVED",
+            "can_resume": False,
+            "resume_phase": None,
+            "recovery_reason": reason_code,
+            "blocker": run.get("blocker") or run.get("cancel_reason") or run.get("last_failure_sig", ""),
+            "next_action": next_act,
+            "acceptance_mode": acceptance_mode,
+            "ready_to_merge": False,
+            "run": run,
+        }
+
+    # 6. Pending cancellation must cancel cleanly without reset
+    if run["cancel_requested"]:
+        with Journal(journal_path) as j2:
+            cur = j2.request_control_cancel(rid, actor_role=actor_role, reason=run.get("cancel_reason") or "Cancelled")
+        return {
+            "status": cur["state"],
+            "run_id": rid,
+            "issue": cur["issue"],
+            "decision": "TERMINAL_PRESERVED",
+            "can_resume": False,
+            "resume_phase": None,
+            "recovery_reason": "cancelled_by_operator",
+            "blocker": cur.get("cancel_reason", ""),
+            "next_action": "Run cancelled; worktree preserved without reset",
+            "acceptance_mode": acceptance_mode,
+            "ready_to_merge": False,
+            "run": cur,
+        }
+
+    # 7. Persisted budget exhaustion check (never grant fresh retry budget)
+    budget_err = _check_persisted_budget_exhausted(run)
+    if budget_err:
+        with Journal(journal_path) as j2:
+            cur = j2.transition_control_run(
+                rid,
+                expected=run["state"],
+                next_state="ESCALATED",
+                actor_role=actor_role,
+                action="reconcile_budget_exhausted",
+                expected_dispatch_token=run["dispatch_token"] if run["dispatch_token"] else None,
+                clear_dispatch=True,
+                update_fields={
+                    "recovery_reason": "budget_exhausted",
+                    "resume_phase": "",
+                    "blocker": budget_err,
+                    "next_action": "Budget exhausted across restarts; escalate to Owner",
+                },
+                detail={"reason": budget_err},
+            )
+        return {
+            "status": cur["state"],
+            "run_id": rid,
+            "issue": cur["issue"],
+            "decision": "ESCALATED_BUDGET_EXHAUSTED",
+            "can_resume": False,
+            "resume_phase": None,
+            "recovery_reason": "budget_exhausted",
+            "blocker": budget_err,
+            "next_action": cur["next_action"],
+            "acceptance_mode": acceptance_mode,
+            "ready_to_merge": False,
+            "run": cur,
+        }
+
+    # 8. Boundary-specific reconciliation
+    state = run["state"]
+    if state == "MAKER_RUNNING":
+        # Never blindly re-execute Maker after crash during MAKER_RUNNING!
+        return _block_with_reason(
+            "interrupted_maker_preserved",
+            "Run interrupted during MAKER_RUNNING; refusing blind Maker re-execution; dirty worktree preserved",
+        )
+
+    if state == "DISPATCHED" and run.get("active_role") == "maker":
+        if snap["candidate_sha256"] != run["candidate_sha256"]:
+            return _block_with_reason(
+                "unexpected_candidate_drift",
+                "Candidate changed while Maker lease was DISPATCHED before MAKER_RUNNING",
+            )
+        with Journal(journal_path) as j2:
+            cur = j2.transition_control_run(
+                rid,
+                expected="DISPATCHED",
+                next_state="REPAIR_REQUIRED",
+                actor_role=actor_role,
+                action="reconcile_interrupted_maker_dispatch",
+                expected_dispatch_token=run["dispatch_token"],
+                clear_dispatch=True,
+                update_fields={
+                    "recovery_reason": "interrupted_before_maker_start",
+                    "resume_phase": "MAKER",
+                    "blocker": "",
+                    "next_action": f"Safe to dispatch Maker for round {int(run['round_num']) + 1}",
+                },
+                detail={"cleared_dispatch_seq": run["dispatch_seq"]},
+            )
+        return {
+            "status": cur["state"],
+            "run_id": rid,
+            "issue": cur["issue"],
+            "decision": "RECONCILED_RESUME_SAFE",
+            "can_resume": True,
+            "resume_phase": "MAKER",
+            "recovery_reason": "interrupted_before_maker_start",
+            "blocker": "",
+            "next_action": cur["next_action"],
+            "remaining_wall_seconds": round(max(0.0, remaining_wall_seconds(cur)), 3),
+            "budget_consumed": cur["budget_consumed"],
+            "acceptance_mode": acceptance_mode,
+            "ready_to_merge": False,
+            "run": cur,
+        }
+
+    if state in ("VERIFYING", "CHECKING") or (state == "DISPATCHED" and run.get("active_role") == "checker"):
+        if snap["candidate_sha256"] != run["candidate_sha256"]:
+            return _block_with_reason(
+                "candidate_drift_during_verify_or_check",
+                f"Candidate mutated while run was interrupted in {state}",
+            )
+        quarantined = ""
+        inflight_rel = f"round-{int(run['round_num']) + 1:02d}"
+        if resolved_ev is not None:
+            quarantined = _quarantine_uncommitted_round_dir(
+                resolved_ev, inflight_rel, dispatch_seq=int(run["dispatch_seq"])
+            )
+        rec_reason = (
+            "interrupted_during_verification"
+            if state == "VERIFYING"
+            else "interrupted_during_checker"
+        )
+        resume_phase = "CONFIRMING_VERIFY_AND_CHECK" if int(run["consecutive_passes"]) > 0 else "VERIFY_AND_CHECK"
+        next_act = f"Re-run idempotent Host verification & independent Checker for round {int(run['round_num']) + 1} (no Maker re-execution)"
+        with Journal(journal_path) as j2:
+            cur = j2.transition_control_run(
+                rid,
+                expected=state,
+                next_state="REPAIR_REQUIRED",
+                actor_role=actor_role,
+                action="reconcile_interrupted_verify_or_check",
+                expected_dispatch_token=run["dispatch_token"] if run["dispatch_token"] else None,
+                clear_dispatch=True,
+                update_fields={
+                    "recovery_reason": rec_reason,
+                    "resume_phase": resume_phase,
+                    "blocker": "",
+                    "next_action": next_act,
+                },
+                detail={"quarantined_dir": quarantined, "previous_state": state, "resume_phase": resume_phase},
+            )
+        record_process_signal(
+            journal_path=journal_path,
+            signal_type="process",
+            category="recovery",
+            owning_domain="harness",
+            status="PASS",
+            captured=True,
+            issue=cur["issue"],
+            run_id=rid,
+            check_id=rec_reason,
+            source_sha=cur["source_sha"],
+            candidate_sha256=cur["candidate_sha256"],
+            exit_code=0,
+            finding=next_act,
+            evidence_ref={"run_id": rid, "quarantined_dir": quarantined, "resume_phase": resume_phase},
+        )
+        return {
+            "status": cur["state"],
+            "run_id": rid,
+            "issue": cur["issue"],
+            "decision": "RECONCILED_RESUME_SAFE",
+            "can_resume": True,
+            "resume_phase": resume_phase,
+            "quarantined_dir": quarantined,
+            "recovery_reason": rec_reason,
+            "blocker": "",
+            "next_action": next_act,
+            "remaining_wall_seconds": round(max(0.0, remaining_wall_seconds(cur)), 3),
+            "budget_consumed": cur["budget_consumed"],
+            "acceptance_mode": acceptance_mode,
+            "ready_to_merge": False,
+            "run": cur,
+        }
+
+    # State is ADMITTED or REPAIR_REQUIRED with no active dispatch lease:
+    # Preserve previously reconciled resume_phase idempotently across repeated calls!
+    persisted_phase = str(run.get("resume_phase") or "")
+    if int(run["consecutive_passes"]) > 0 or persisted_phase == "CONFIRMING_VERIFY_AND_CHECK":
+        if int(run["consecutive_passes"]) > 0 and (
+            snap["candidate_sha256"] != run["streak_candidate_sha256"]
+            or snap["diff_sha256"] != run["streak_diff_sha256"]
+        ):
+            return _block_with_reason(
+                "confirming_pass_candidate_drift",
+                "Candidate drifted between confirming passes before restart",
+            )
+        if snap["candidate_sha256"] != run["candidate_sha256"]:
+            return _block_with_reason(
+                "confirming_pass_candidate_drift",
+                "Candidate drifted from persisted checkpoint before restart",
+            )
+        resume_phase = "CONFIRMING_VERIFY_AND_CHECK"
+        prev_reason = str(run.get("recovery_reason") or "")
+        if prev_reason in ("interrupted_during_verification", "interrupted_during_checker"):
+            rec_reason = prev_reason
+            decision = "RECONCILED_RESUME_SAFE"
+            next_act = str(run.get("next_action") or "") or (
+                f"Re-run idempotent Host verification & independent Checker for round {int(run['round_num']) + 1} (no Maker re-execution)"
+            )
+        else:
+            rec_reason = "clean_checkpoint_resume"
+            decision = "RESUME_SAFE"
+            next_act = f"Run confirming Host verification & independent Checker for round {int(run['round_num']) + 1}"
+    elif persisted_phase == "VERIFY_AND_CHECK":
+        if snap["candidate_sha256"] != run["candidate_sha256"]:
+            return _block_with_reason(
+                "candidate_drift_during_verify_or_check",
+                "Candidate mutated while run was paused for VERIFY_AND_CHECK reconciliation",
+            )
+        resume_phase = "VERIFY_AND_CHECK"
+        rec_reason = str(run.get("recovery_reason") or "") or "interrupted_during_verification"
+        decision = "RECONCILED_RESUME_SAFE"
+        next_act = str(run.get("next_action") or "") or (
+            f"Re-run idempotent Host verification & independent Checker for round {int(run['round_num']) + 1} (no Maker re-execution)"
+        )
+    else:
+        if snap["candidate_sha256"] != run["candidate_sha256"]:
+            return _block_with_reason(
+                "unexpected_candidate_drift",
+                "Candidate drifted from last persisted checkpoint",
+            )
+        resume_phase = "MAKER"
+        prev_reason = str(run.get("recovery_reason") or "")
+        if prev_reason == "interrupted_before_maker_start":
+            rec_reason = prev_reason
+            decision = "RECONCILED_RESUME_SAFE"
+            next_act = str(run.get("next_action") or "") or f"Safe to dispatch Maker for round {int(run['round_num']) + 1}"
+        else:
+            rec_reason = "clean_checkpoint_resume"
+            decision = "RESUME_SAFE"
+            next_act = f"Dispatch Maker for round {int(run['round_num']) + 1}"
+
+    with Journal(journal_path) as j2:
+        cur = j2.record_control_event(
+            rid,
+            expected_state=state,
+            actor_role=actor_role,
+            action="reconcile_clean_resume",
+            recovery_reason=rec_reason,
+            resume_phase=resume_phase,
+            blocker="",
+            next_action=next_act,
+            detail={"resume_phase": resume_phase, "round_num": run["round_num"], "decision": decision},
+        )
+    return {
+        "status": cur["state"],
+        "run_id": rid,
+        "issue": cur["issue"],
+        "decision": decision,
+        "can_resume": True,
+        "resume_phase": resume_phase,
+        "recovery_reason": rec_reason,
+        "blocker": "",
+        "next_action": next_act,
+        "remaining_wall_seconds": round(max(0.0, remaining_wall_seconds(cur)), 3),
+        "budget_consumed": cur["budget_consumed"],
+        "acceptance_mode": acceptance_mode,
+        "ready_to_merge": False,
+        "run": cur,
+    }
+
+
 def run_maker_checker_loop(
     *,
     repo: pathlib.Path,
@@ -1933,8 +3241,9 @@ def run_maker_checker_loop(
     cancel_check: Callable[[int], bool] | None = None,
     monotonic_fn: Callable[[], float] | None = None,
     requested_timeout: int = 300,
+    resume_run_id: str | None = None,
 ) -> dict[str, Any]:
-    """Execute P08-B multi-round Maker -> Host verification -> independent Checker loop."""
+    """Execute P08-B/C multi-round Maker -> Host verification -> independent Checker loop with restart resume."""
     import time as _time
 
     clock = monotonic_fn or _time.monotonic
@@ -1942,40 +3251,120 @@ def run_maker_checker_loop(
     if evidence_dir.is_symlink() or evidence_dir.resolve().is_relative_to(root):
         raise AdmissionError("Evidence directory must reside outside candidate worktree and not be a symlink")
     evidence_dir.mkdir(parents=True, exist_ok=True)
-
-    admitted = admit_run(
-        repo=root,
-        issue=issue,
-        journal_path=journal_path,
-        base_sha=base_sha,
-        issue_data=issue_data,
-        approval=approval,
-        policy=policy or build_run_policy(consecutive_passes_required=1, max_rounds=1, max_wall_seconds=300),
-        check_profile=check_profile,
-        maker_provider=maker_provider,
-        checker_provider=checker_provider,
-        capability_overrides=capability_overrides,
-        require_isolated_worktree=require_isolated_worktree,
-        require_protected_approval=require_protected_approval,
-        require_executable_capabilities=require_executable_capabilities,
-        allow_fixture_mode=allow_fixture_mode,
-        requested_rule_ids=requested_rule_ids,
-    )
-    run_id = admitted["run"]["run_id"]
-    scope = tuple(admitted["admission"]["scope"])
     frozen_plan_path = evidence_dir / "frozen_check_plan.json"
-    frozen_plan_path.write_text(json.dumps(admitted["check_plan"], indent=2, sort_keys=True), encoding="utf-8")
-    (evidence_dir / "admission.json").write_text(json.dumps(redact_data(admitted["admission"]), indent=2, sort_keys=True), encoding="utf-8")
-    (evidence_dir / "policy.json").write_text(json.dumps(admitted["policy"], indent=2, sort_keys=True), encoding="utf-8")
 
+    resume_phase: str | None = None
     feedback_findings: list[dict[str, Any]] = []
     feedback_summary = ""
-    repair_scope: list[str] = list(scope)
-    last_round_run = admitted["run"]
-    selection = admitted["selection"]
+
+    if resume_run_id is not None:
+        rec = reconcile_run(
+            repo=root,
+            journal_path=journal_path,
+            run_id=resume_run_id,
+            evidence_dir=evidence_dir,
+            issue_data=issue_data,
+            approval=approval,
+            offline=(issue_data is not None),
+        )
+        run_id = rec["run_id"]
+        if not rec["can_resume"]:
+            with Journal(journal_path) as journal:
+                events = journal.control_events(run_id)
+                rounds = journal.list_control_rounds(run_id)
+                cur = journal.get_control_run(run_id)
+            return {
+                "run_id": run_id,
+                "issue": cur["issue"],
+                "state": cur["state"],
+                "round_num": cur["round_num"],
+                "consecutive_passes": cur["consecutive_passes"],
+                "no_progress_count": cur["no_progress_count"],
+                "ready_to_merge": False,
+                "human_approval_required": True,
+                "policy_sha256": cur["policy_sha256"],
+                "owner_approval_status": cur["policy"]["owner_approval_status"],
+                "candidate_sha256": cur["candidate_sha256"],
+                "recovery_reason": rec.get("recovery_reason", ""),
+                "decision": rec.get("decision", ""),
+                "blocker": rec.get("blocker", ""),
+                "next_action": rec.get("next_action", ""),
+                "reconciliation": rec,
+                "rounds": rounds,
+                "events": events,
+                "isolation_disclosure": ROLE_ISOLATION_DISCLOSURE,
+                "mode": "FIXTURE_CONTROLLED" if is_fixture_control_run(cur) else "REAL_EXECUTION",
+            }
+        cur_rec_run = rec["run"]
+        g0 = load_context(root)
+        scope = tuple(cur_rec_run["admission"]["scope"])
+        check_plan = cur_rec_run.get("frozen_plan") or {}
+        if not check_plan and frozen_plan_path.is_file():
+            check_plan = json.loads(frozen_plan_path.read_text(encoding="utf-8"))
+        if not check_plan:
+            check_plan = freeze_checks(
+                root, allowed_paths=scope, base_sha=cur_rec_run["base_sha"], profile=check_profile
+            )
+        if not frozen_plan_path.is_file():
+            frozen_plan_path.write_text(json.dumps(check_plan, indent=2, sort_keys=True), encoding="utf-8")
+        selection = select_rules(
+            root,
+            list(scope),
+            requested_ids=list(requested_rule_ids),
+            base=cur_rec_run["base_sha"],
+            expected_source_sha=g0["source_sha"],
+        )
+        admitted = {
+            "run": cur_rec_run,
+            "g0": {k: g0[k] for k in ("status", "source_sha", "git_blob_sha", "agents_sha256", "agents_bytes")},
+            "check_plan": check_plan,
+            "selection": selection,
+            "capabilities": cur_rec_run["admission"].get("capabilities", {}),
+            "policy": cur_rec_run["policy"],
+            "admission": cur_rec_run["admission"],
+        }
+        last_round_run = cur_rec_run
+        repair_scope = list(scope)
+        with Journal(journal_path) as journal:
+            prev_rounds = journal.list_control_rounds(run_id)
+        if prev_rounds:
+            last_rnd = prev_rounds[-1]
+            feedback_findings = list(last_rnd.get("findings") or [])
+            repair_scope = list(last_rnd.get("repair_scope") or scope)
+            feedback_summary = last_rnd.get("next_action", "")
+        resume_phase = rec.get("resume_phase")
+    else:
+        admitted = admit_run(
+            repo=root,
+            issue=issue,
+            journal_path=journal_path,
+            base_sha=base_sha,
+            issue_data=issue_data,
+            approval=approval,
+            policy=policy or build_run_policy(consecutive_passes_required=1, max_rounds=1, max_wall_seconds=300),
+            check_profile=check_profile,
+            maker_provider=maker_provider,
+            checker_provider=checker_provider,
+            capability_overrides=capability_overrides,
+            require_isolated_worktree=require_isolated_worktree,
+            require_protected_approval=require_protected_approval,
+            require_executable_capabilities=require_executable_capabilities,
+            allow_fixture_mode=allow_fixture_mode,
+            requested_rule_ids=requested_rule_ids,
+            evidence_dir=evidence_dir,
+        )
+        run_id = admitted["run"]["run_id"]
+        scope = tuple(admitted["admission"]["scope"])
+        frozen_plan_path.write_text(json.dumps(admitted["check_plan"], indent=2, sort_keys=True), encoding="utf-8")
+        (evidence_dir / "admission.json").write_text(json.dumps(redact_data(admitted["admission"]), indent=2, sort_keys=True), encoding="utf-8")
+        (evidence_dir / "policy.json").write_text(json.dumps(admitted["policy"], indent=2, sort_keys=True), encoding="utf-8")
+        repair_scope = list(scope)
+        last_round_run = admitted["run"]
+        selection = admitted["selection"]
 
     while True:
         round_started = clock()
+        last_flushed = round_started
         with Journal(journal_path) as journal:
             cur_run = journal.get_control_run(run_id)
         if cur_run["state"] in ("READY_FOR_HUMAN_REVIEW", "BLOCKED", "ESCALATED", "CANCELLED"):
@@ -2008,6 +3397,8 @@ def run_maker_checker_loop(
             break
 
         confirming_pass = int(cur_run["consecutive_passes"]) > 0
+        skip_maker_on_resume = resume_phase == "VERIFY_AND_CHECK"
+        resume_phase = None
         next_round_num = int(cur_run["round_num"]) + 1
         round_rel = f"round-{next_round_num:02d}"
         round_ev = evidence_dir / round_rel
@@ -2021,9 +3412,27 @@ def run_maker_checker_loop(
         tokens_this_round: int | None = None
         cost_this_round: float | None = None
 
-        if not confirming_pass:
+        if skip_maker_on_resume:
+            write_immutable_json(round_ev / "selected_rules.json", selection)
+            round_refs["selected_rules"] = f"{round_rel}/selected_rules.json"
+            snap = compute_candidate_snapshot(root, base_sha=admitted["run"]["base_sha"])
+            transition_state(
+                journal_path=journal_path,
+                run_id=run_id,
+                expected="REPAIR_REQUIRED",
+                next_state="VERIFYING",
+                actor_role="host",
+                action="resume_host_verifying",
+            )
+        elif not confirming_pass:
             try:
-                maker_run = dispatch_role(repo=root, journal_path=journal_path, run_id=run_id, role="maker")
+                maker_run = dispatch_role(
+                    repo=root,
+                    journal_path=journal_path,
+                    run_id=run_id,
+                    role="maker",
+                    in_flight_round=next_round_num,
+                )
             except (BudgetExhaustedError, ControlPlaneError):
                 with Journal(journal_path) as journal:
                     last_round_run = journal.get_control_run(run_id)
@@ -2059,6 +3468,25 @@ def run_maker_checker_loop(
                 authorize_role_action("maker", "edit_candidate", target_path=changed_path, repo=root, approved_scope=scope)
 
             snap = compute_candidate_snapshot(root, base_sha=admitted["run"]["base_sha"])
+            now_after_maker = clock()
+            with Journal(journal_path) as journal:
+                journal.record_control_progress(
+                    run_id,
+                    expected_state="MAKER_RUNNING",
+                    actor_role="host",
+                    op="maker_completed",
+                    expected_dispatch_token=maker_token,
+                    wall_elapsed_delta_s=max(0.0, now_after_maker - last_flushed),
+                    tokens_delta=tokens_this_round,
+                    cost_delta=cost_this_round,
+                    in_flight_round=next_round_num,
+                    candidate_sha256=snap["candidate_sha256"],
+                    last_diff_sha256=snap["diff_sha256"],
+                )
+            last_flushed = now_after_maker
+            tokens_this_round = None
+            cost_this_round = None
+
             if snap["changed_paths"]:
                 errs = violations(root, scope, snap["changed_paths"])
                 if errs:
@@ -2086,9 +3514,7 @@ def run_maker_checker_loop(
                         maker_dispatched=True,
                         confirming_pass=False,
                         failure_sig="scope_violation",
-                        wall_elapsed_s=max(0.0, clock() - round_started),
-                        tokens_used=tokens_this_round,
-                        cost_used=cost_this_round,
+                        wall_elapsed_s=max(0.0, clock() - last_flushed),
                     )
                     break
 
@@ -2126,9 +3552,7 @@ def run_maker_checker_loop(
                     maker_dispatched=True,
                     confirming_pass=False,
                     failure_sig="newly_applicable_rules",
-                    wall_elapsed_s=max(0.0, clock() - round_started),
-                    tokens_used=tokens_this_round,
-                    cost_used=cost_this_round,
+                    wall_elapsed_s=max(0.0, clock() - last_flushed),
                 )
                 feedback_summary = "Host detected newly applicable rules; re-inspect and repair in scope."
                 feedback_findings = []
@@ -2205,7 +3629,7 @@ def run_maker_checker_loop(
                 journal_path=journal_path,
                 run_id=run_id,
                 dispatch_token=maker_token,
-                allow_empty_dispatch_in_verifying=confirming_pass,
+                allow_empty_dispatch_in_verifying=True,
                 outcome="TIMEOUT",
                 verdict="TIMEOUT",
                 host_checks_passed=False,
@@ -2223,7 +3647,7 @@ def run_maker_checker_loop(
                 maker_dispatched=maker_dispatched,
                 confirming_pass=confirming_pass,
                 failure_sig="wall_budget_exhausted_before_verify",
-                wall_elapsed_s=max(0.0, clock() - round_started),
+                wall_elapsed_s=max(0.0, clock() - last_flushed),
                 tokens_used=tokens_this_round,
                 cost_used=cost_this_round,
             )
@@ -2246,9 +3670,12 @@ def run_maker_checker_loop(
                 run_id=run_id,
             )
 
-        summary_bytes = json.dumps(checks_summary, indent=2, sort_keys=True).encode("utf-8")
         summary_path = round_ev / "checks_summary.json"
         if not summary_path.is_file():
+            enriched_summary = dict(checks_summary)
+            enriched_summary.setdefault("run_id", run_id)
+            enriched_summary.setdefault("round_num", next_round_num)
+            summary_bytes = json.dumps(enriched_summary, indent=2, sort_keys=True).encode("utf-8")
             write_immutable_artifact(summary_path, summary_bytes)
         freeze_round_directory_files(round_ev)
         checks_summary_sha = hashlib.sha256(summary_path.read_bytes()).hexdigest()
@@ -2260,6 +3687,21 @@ def run_maker_checker_loop(
         evidence_inv = {"checks_summary.json": checks_summary_sha}
         if manifest_sha:
             evidence_inv["manifest.json"] = manifest_sha
+
+        now_after_checks = clock()
+        with Journal(journal_path) as journal:
+            journal.record_control_progress(
+                run_id,
+                expected_state="VERIFYING",
+                actor_role="host",
+                op="checks_completed",
+                expected_dispatch_token=maker_token if maker_dispatched else None,
+                wall_elapsed_delta_s=max(0.0, now_after_checks - last_flushed),
+                in_flight_round=next_round_num,
+                candidate_sha256=snap["candidate_sha256"],
+                last_diff_sha256=snap["diff_sha256"],
+            )
+        last_flushed = now_after_checks
 
         planned_ids = [str(c["check_id"]) for c in admitted["check_plan"]["checks"]]
         pre_cls = classify_round_outcome(
@@ -2278,7 +3720,7 @@ def run_maker_checker_loop(
                     journal_path=journal_path,
                     run_id=run_id,
                     dispatch_token=maker_token,
-                    allow_empty_dispatch_in_verifying=confirming_pass,
+                    allow_empty_dispatch_in_verifying=True,
                     outcome=pre_cls["outcome"],
                     verdict=pre_cls["verdict"],
                     host_checks_passed=pre_cls["host_checks_passed"],
@@ -2299,7 +3741,7 @@ def run_maker_checker_loop(
                     maker_dispatched=maker_dispatched,
                     confirming_pass=confirming_pass,
                     failure_sig=pre_cls["failure_sig"],
-                    wall_elapsed_s=max(0.0, clock() - round_started),
+                    wall_elapsed_s=max(0.0, clock() - last_flushed),
                     tokens_used=tokens_this_round,
                     cost_used=cost_this_round,
                 )
@@ -2329,7 +3771,13 @@ def run_maker_checker_loop(
 
         # 3. Independent Checker Phase on frozen read-only snapshot
         try:
-            checker_run = dispatch_role(repo=root, journal_path=journal_path, run_id=run_id, role="checker")
+            checker_run = dispatch_role(
+                repo=root,
+                journal_path=journal_path,
+                run_id=run_id,
+                role="checker",
+                in_flight_round=next_round_num,
+            )
         except (BudgetExhaustedError, ControlPlaneError):
             with Journal(journal_path) as journal:
                 last_round_run = journal.get_control_run(run_id)
@@ -2436,7 +3884,7 @@ def run_maker_checker_loop(
                 maker_dispatched=maker_dispatched,
                 confirming_pass=confirming_pass,
                 failure_sig="wall_budget_exhausted_before_checker",
-                wall_elapsed_s=max(0.0, clock() - round_started),
+                wall_elapsed_s=max(0.0, clock() - last_flushed),
                 tokens_used=tokens_this_round,
                 cost_used=cost_this_round,
             )
@@ -2444,7 +3892,20 @@ def run_maker_checker_loop(
         except (AuditError, ContextGateError, ValueError) as exc:
             integrity_err = f"audit_validation_failed:{exc}"
 
-        audit_bytes = json.dumps(audit_report or {"error": integrity_err}, indent=2, sort_keys=True).encode("utf-8")
+        audit_payload = (
+            {
+                "run_id": run_id,
+                "round_num": next_round_num,
+                "source_sha": snap["source_sha"],
+                "candidate_sha256": snap["candidate_sha256"],
+                "diff_sha256": snap["diff_sha256"],
+                "selection_sha256": selection["selection_sha256"],
+                "report": audit_report,
+            }
+            if audit_report is not None
+            else {"run_id": run_id, "round_num": next_round_num, "error": integrity_err}
+        )
+        audit_bytes = json.dumps(audit_payload, indent=2, sort_keys=True).encode("utf-8")
         audit_sha = write_immutable_artifact(round_ev / "audit_report.json", audit_bytes)
         round_refs["auditor_report"] = f"{round_rel}/audit_report.json"
 
@@ -2459,6 +3920,23 @@ def run_maker_checker_loop(
             evidence_inventory=evidence_inv,
             integrity_error=integrity_err,
         )
+        if final_cls["outcome"] == "PASS" and manifest_path_round.is_file():
+            after_qg = evaluate_quality_gates(root, admitted["run"]["base_sha"], "manifest.json", round_ev)
+            write_immutable_json(round_ev / "post-audit-gates.json", after_qg)
+            round_refs["post_audit_gates"] = f"{round_rel}/post-audit-gates.json"
+            if not _post_audit_gates_passed(
+                after_qg,
+                selected_ids=selection.get("selected_ids") or (),
+                expected_selection_sha256=selection["selection_sha256"],
+            ):
+                final_cls = {
+                    **final_cls,
+                    "outcome": "BLOCK",
+                    "verdict": "BLOCK",
+                    "host_checks_passed": False,
+                    "failure_sig": "post_audit_gates_failed",
+                    "next_action": "Post-audit quality_gates failed; do not accept",
+                }
         findings_list = list((audit_report or {}).get("findings") or [])
         try:
             last_round_run = record_round_result(
@@ -2488,7 +3966,7 @@ def run_maker_checker_loop(
                 maker_dispatched=maker_dispatched,
                 confirming_pass=confirming_pass,
                 failure_sig=final_cls["failure_sig"],
-                wall_elapsed_s=max(0.0, clock() - round_started),
+                wall_elapsed_s=max(0.0, clock() - last_flushed),
                 tokens_used=tokens_this_round,
                 cost_used=cost_this_round,
             )
@@ -3031,6 +4509,14 @@ def main(argv: list[str] | None = None) -> int:
     p_st.add_argument("--issue", type=int, default=None)
     p_st.add_argument("--state", type=pathlib.Path, required=True)
 
+    p_rec = sub.add_parser("reconcile", help="Reconcile interrupted or terminal control-plane run with CAS")
+    p_rec.add_argument("--run-id", default=None)
+    p_rec.add_argument("--issue", type=int, default=None)
+    p_rec.add_argument("--repo", type=pathlib.Path, default=pathlib.Path.cwd())
+    p_rec.add_argument("--state", type=pathlib.Path, required=True)
+    p_rec.add_argument("--evidence-dir", type=pathlib.Path, default=None)
+    p_rec.add_argument("--offline", action="store_true")
+
     p_can = sub.add_parser("cancel", help="Cancel an active control-plane run without destructive reset")
     p_can.add_argument("--run-id", required=True)
     p_can.add_argument("--state", type=pathlib.Path, required=True)
@@ -3090,19 +4576,29 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "status":
+            obs_status = build_run_observability_status(
+                journal_path=args.state,
+                run_id=args.run_id,
+                issue=args.issue,
+            )
             with Journal(args.state) as journal:
-                if args.run_id:
-                    run = journal.get_control_run(args.run_id)
-                elif args.issue is not None:
-                    run = journal.latest_control_run_for_issue(args.issue)
-                    if run is None:
-                        raise ControlPlaneError(f"No control run found for Issue #{args.issue}")
-                else:
-                    raise ControlPlaneError("status requires --run-id or --issue")
-                events = journal.control_events(run["run_id"])
-                rounds = journal.list_control_rounds(run["run_id"])
-            print(json.dumps({"run": run, "rounds": rounds, "events": events}, indent=2, sort_keys=True))
+                run = journal.get_control_run(obs_status["run_id"])
+                events = journal.control_events(obs_status["run_id"])
+                rounds = journal.list_control_rounds(obs_status["run_id"])
+            print(json.dumps({**obs_status, "run": redact_data(run), "rounds": rounds, "events": events}, indent=2, sort_keys=True))
             return 0
+
+        if args.command == "reconcile":
+            res = reconcile_run(
+                repo=args.repo,
+                journal_path=args.state,
+                run_id=args.run_id,
+                issue=args.issue,
+                evidence_dir=args.evidence_dir,
+                offline=args.offline,
+            )
+            print(json.dumps(redact_data(res), indent=2, sort_keys=True))
+            return 2 if res["status"] in ("BLOCKED", "ESCALATED") or res["decision"] == "REFUSED_AMBIGUOUS_OWNERSHIP" else 0
 
         if args.command == "cancel":
             res = cancel_run(

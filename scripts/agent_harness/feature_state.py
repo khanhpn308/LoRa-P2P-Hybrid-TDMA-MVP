@@ -1336,6 +1336,7 @@ def session_start(
     loaded_revision: int | None = None
     from_journal = False
     control_run: dict[str, Any] | None = None
+    control_rounds: list[dict[str, Any]] = []
     if state_db is not None and state_db.exists():
         with Journal(state_db) as journal:
             job = journal.active_job_for_issue(issue) or journal.latest_job_for_issue(issue)
@@ -1349,6 +1350,8 @@ def session_start(
                 from_journal = True
             checkpoint = journal.latest_checkpoint(issue)
             control_run = journal.latest_control_run_for_issue(issue)
+            if control_run is not None:
+                control_rounds = journal.list_control_rounds(control_run["run_id"])
 
     default_export = root / "docs" / "harness" / "features" / f"issue-{issue}.json"
     source_file = feature_file if feature_file is not None else (default_export if default_export.is_file() else None)
@@ -1500,6 +1503,65 @@ def session_start(
             "latest_failure": diag.get("latest_failure"),
         }
 
+    latest_ctrl_round = control_rounds[-1] if control_rounds else None
+    control_run_summary = None
+    if control_run is not None:
+        ctrl_state = control_run["state"]
+        ctrl_receipt_refs = dict(latest_ctrl_round.get("evidence_refs") or {}) if latest_ctrl_round else {}
+        ctrl_decision = (
+            latest_ctrl_round["verdict"]
+            if latest_ctrl_round is not None
+            else ("CANCELLED" if ctrl_state == "CANCELLED" else ctrl_state)
+        )
+        ctrl_blocker = control_run.get("blocker", "")
+        ctrl_next = control_run.get("next_action", "") or (
+            latest_ctrl_round["next_action"] if latest_ctrl_round else ""
+        )
+        ctrl_rec_reason = control_run.get("recovery_reason", "")
+        if ctrl_state in ("DISPATCHED", "MAKER_RUNNING", "VERIFYING", "CHECKING"):
+            ctrl_rec_reason = ctrl_rec_reason or f"active_or_interrupted_in_{ctrl_state.lower()}"
+            if status not in ("BLOCKED", "RECOVERY_REQUIRED"):
+                status = "RECOVERY_REQUIRED"
+                next_action = f"Run Host reconcile for control run {control_run['run_id']} ({ctrl_state}) before resuming"
+        elif ctrl_state in ("BLOCKED", "ESCALATED") and status not in ("BLOCKED", "RECOVERY_REQUIRED"):
+            blocker = blocker or ctrl_blocker or control_run.get("last_failure_sig", "")
+            next_action = ctrl_next or next_action
+        ctrl_policy = control_run.get("policy") if isinstance(control_run.get("policy"), dict) else {}
+        ctrl_consumed = control_run.get("budget_consumed") if isinstance(control_run.get("budget_consumed"), dict) else {}
+        ctrl_rem_wall = max(
+            0.0,
+            round(float(ctrl_policy.get("max_wall_seconds", 0.0)) - float(ctrl_consumed.get("wall_seconds", 0.0)), 3),
+        )
+        control_run_summary = {
+            "run_id": control_run["run_id"],
+            "state": ctrl_state,
+            "phase": ctrl_state,
+            "resume_phase": control_run.get("resume_phase", ""),
+            "round_num": control_run["round_num"],
+            "in_flight_round": control_run.get("in_flight_round", 0),
+            "policy_sha256": control_run["policy_sha256"],
+            "owner_approval_status": ctrl_policy.get("owner_approval_status"),
+            "cancel_requested": control_run["cancel_requested"],
+            "evidence_dir": control_run.get("evidence_dir", ""),
+            "receipt_refs": ctrl_receipt_refs,
+            "last_completed_op": control_run.get("last_completed_op", ""),
+            "lease": {
+                "active_role": control_run.get("active_role"),
+                "dispatch_seq": control_run.get("dispatch_seq", 0),
+                "token_present": bool(control_run.get("dispatch_token")),
+                "owner_pid": control_run.get("lease_owner_pid"),
+                "owner_host": control_run.get("lease_owner_host", ""),
+                "acquired_at": control_run.get("lease_acquired_at", ""),
+                "heartbeat_at": control_run.get("lease_heartbeat_at", ""),
+            },
+            "recovery_reason": ctrl_rec_reason,
+            "decision": ctrl_decision,
+            "blocker": ctrl_blocker,
+            "next_action": ctrl_next,
+            "budget_consumed": ctrl_consumed,
+            "remaining_wall_seconds": ctrl_rem_wall,
+        }
+
     return {
         "status": status,
         "issue": issue,
@@ -1518,18 +1580,7 @@ def session_start(
         "decision_refs": stored_doc["handoff"]["decision_refs"] if stored_doc else list(DEFAULT_DECISION_REFS),
         "last_checkpoint_id": checkpoint["checkpoint_id"] if checkpoint else None,
         "saved_checkpoint": saved_checkpoint,
-        "control_run": (
-            {
-                "run_id": control_run["run_id"],
-                "state": control_run["state"],
-                "round_num": control_run["round_num"],
-                "policy_sha256": control_run["policy_sha256"],
-                "owner_approval_status": control_run["policy"].get("owner_approval_status"),
-                "cancel_requested": control_run["cancel_requested"],
-            }
-            if control_run is not None
-            else None
-        ),
+        "control_run": control_run_summary,
         "observability": obs_summary,
         "next_action": next_action,
     }

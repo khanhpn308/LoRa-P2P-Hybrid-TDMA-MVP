@@ -158,8 +158,23 @@ def _extract_create_tables(sql: str) -> list[tuple[str, list[str]]]:
     return results
 
 
+def _is_shallow_repo(repo_root: pathlib.Path) -> bool:
+    try:
+        proc = subprocess.run(
+            ["git", "--no-optional-locks", "-C", str(repo_root), "rev-parse", "--is-shallow-repository"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        return proc.returncode == 0 and proc.stdout.strip().lower() == "true"
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def _git_last_commit_for_migrations(repo_root: pathlib.Path) -> str:
     try:
+        shallow = _is_shallow_repo(repo_root)
         proc = subprocess.run(
             [
                 "git",
@@ -180,7 +195,20 @@ def _git_last_commit_for_migrations(repo_root: pathlib.Path) -> str:
             check=False,
         )
         if proc.returncode == 0 and proc.stdout.strip():
-            return proc.stdout.strip()
+            commit = proc.stdout.strip()
+            if shallow:
+                # In a shallow clone, a graft commit with zero parents reflects history truncation,
+                # not the true commit that modified migrations. Never invent or misattribute it.
+                parents = subprocess.run(
+                    ["git", "--no-optional-locks", "-C", str(repo_root), "rev-list", "--parents", "-n", "1", commit],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+                if parents.returncode == 0 and len(parents.stdout.strip().split()) <= 1:
+                    return "SHALLOW_CHECKOUT_NO_FULL_HISTORY"
+            return commit
     except (OSError, subprocess.SubprocessError):
         pass
     return "UNCOMMITTED_OR_NO_HISTORY"
@@ -389,7 +417,7 @@ def render_db_schema(repo: pathlib.Path) -> str:
         "## Provenance & Freshness",
         "",
         f"- **Generated from:** `backend-go/migrations/*.up.sql` + `backend-go/Dockerfile` (`/app/migrate.sh`)",
-        f"- **Migrations source commit:** `{info['migrations_source_commit']}`",
+        "- **Provenance mode:** Content-addressed from migration SQL and runner sources (shallow-checkout-reproducible)",
         f"- **Migrations tree SHA-256:** `{info['migrations_tree_sha256']}`",
         "- **Generation command:** `python3 scripts/agent_harness/advanced_pack.py generate-db-schema --repo . --output docs/generated/db-schema.md`",
         "- **Freshness check command:** `python3 scripts/agent_harness/advanced_pack.py check-db-schema --repo . --schema docs/generated/db-schema.md`",

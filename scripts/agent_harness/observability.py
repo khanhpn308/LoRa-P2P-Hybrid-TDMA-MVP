@@ -923,7 +923,30 @@ def run_golden_journey(
 
     src_root = _reject_symlink_path(source_repo, label="source_repo").resolve(strict=True)
     temp_root = pathlib.Path(tempfile.mkdtemp(prefix="lora-p06-journey-")).resolve()
+    prev_path = os.environ.get("PATH")
+    prev_gh_cfg = os.environ.get("GH_CONFIG_DIR")
     try:
+        # Provide hermetic runner prerequisites outside cand when executing on headless CI runners
+        # without interactive AI CLIs or user GitHub auth config, without weakening harness_doctor gates.
+        if not shutil.which("codex") and not shutil.which("agy"):
+            fixture_bin = temp_root / "fixture_bin"
+            fixture_bin.mkdir(mode=0o700, parents=True)
+            stub_codex = fixture_bin / "codex"
+            stub_codex.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            stub_codex.chmod(0o700)
+            os.environ["PATH"] = f"{fixture_bin}{os.pathsep}{prev_path or ''}"
+
+        gh_cfg_base = (
+            pathlib.Path(prev_gh_cfg).expanduser()
+            if prev_gh_cfg
+            else pathlib.Path.home() / ".config" / "gh"
+        )
+        if not (os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or (gh_cfg_base / "hosts.yml").is_file()):
+            fixture_gh = temp_root / "fixture_gh"
+            fixture_gh.mkdir(mode=0o700, parents=True)
+            (fixture_gh / "hosts.yml").write_text("github.com:\n    user: fixture-runner\n", encoding="utf-8")
+            os.environ["GH_CONFIG_DIR"] = str(fixture_gh)
+
         cand = temp_root / "candidate"
         cand.mkdir(parents=True)
         _git(cand, "init", "-q")
@@ -1181,6 +1204,14 @@ def run_golden_journey(
             "hil_rf": "NOT_VERIFIED",
         }
     finally:
+        if prev_path is None:
+            os.environ.pop("PATH", None)
+        else:
+            os.environ["PATH"] = prev_path
+        if prev_gh_cfg is None:
+            os.environ.pop("GH_CONFIG_DIR", None)
+        else:
+            os.environ["GH_CONFIG_DIR"] = prev_gh_cfg
         shutil.rmtree(temp_root, ignore_errors=True)
 
 
