@@ -301,6 +301,135 @@ class JournalTests(unittest.TestCase):
             with self.assertRaises(StateConflict):
                 verify_host_proof(proof_missing_td, issue=429, unit=unit_u1)
 
+    def test_p08b_control_rounds_persistence_and_legacy_streak_migration(self):
+        import json
+        import sqlite3
+
+        # Simulate a P08-A journal without streak_* columns or control_rounds table.
+        legacy_db = pathlib.Path(self.temp.name) / "legacy_p08a" / "state.sqlite"
+        legacy_db.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(legacy_db))
+        conn.executescript("""
+            CREATE TABLE control_runs (
+                run_id TEXT PRIMARY KEY,
+                issue INTEGER NOT NULL CHECK(issue > 0),
+                state TEXT NOT NULL,
+                active_role TEXT,
+                dispatch_seq INTEGER NOT NULL DEFAULT 0,
+                dispatch_token TEXT NOT NULL DEFAULT '',
+                round_num INTEGER NOT NULL DEFAULT 0,
+                consecutive_passes INTEGER NOT NULL DEFAULT 0,
+                no_progress_count INTEGER NOT NULL DEFAULT 0,
+                last_failure_sig TEXT NOT NULL DEFAULT '',
+                last_diff_sha256 TEXT NOT NULL DEFAULT '',
+                source_sha TEXT NOT NULL,
+                base_sha TEXT NOT NULL,
+                candidate_sha256 TEXT NOT NULL,
+                branch TEXT NOT NULL,
+                worktree TEXT NOT NULL,
+                agents_sha256 TEXT NOT NULL,
+                selection_sha256 TEXT NOT NULL,
+                check_plan_sha256 TEXT NOT NULL,
+                policy_sha256 TEXT NOT NULL,
+                policy_json TEXT NOT NULL,
+                admission_json TEXT NOT NULL,
+                budget_consumed_json TEXT NOT NULL,
+                cancel_requested INTEGER NOT NULL DEFAULT 0,
+                cancel_reason TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
+            CREATE TABLE control_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL,
+                from_state TEXT,
+                to_state TEXT NOT NULL,
+                actor_role TEXT NOT NULL,
+                action TEXT NOT NULL,
+                dispatch_token TEXT NOT NULL DEFAULT '',
+                detail_json TEXT NOT NULL DEFAULT '{}',
+                utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
+        """)
+        conn.commit()
+        conn.close()
+
+        with Journal(legacy_db) as state:
+            cols = {r["name"] for r in state.db.execute("PRAGMA table_info(control_runs)").fetchall()}
+            self.assertIn("streak_candidate_sha256", cols)
+            self.assertIn("streak_policy_sha256", cols)
+            run = state.create_control_run(
+                run_id="run-p08b-mig",
+                issue=439,
+                source_sha="0" * 40,
+                base_sha="0" * 40,
+                candidate_sha256="1" * 64,
+                branch="feature/439-mig",
+                worktree="/tmp/wt",
+                agents_sha256="2" * 64,
+                selection_sha256="3" * 64,
+                check_plan_sha256="4" * 64,
+                policy_sha256="5" * 64,
+                policy={"consecutive_passes_required": 2, "max_rounds": 3},
+                admission={"issue": 439},
+            )
+            self.assertEqual(run["state"], "ADMITTED")
+            d1 = state.acquire_dispatch(
+                "run-p08b-mig", expected_state="ADMITTED", role="checker", actor_role="host", dispatch_token="tok-1"
+            )
+            self.assertEqual(d1["state"], "DISPATCHED")
+            state.transition_control_run(
+                "run-p08b-mig", expected="DISPATCHED", next_state="CHECKING", actor_role="host",
+                action="checker_started", expected_dispatch_token="tok-1",
+            )
+            upd = state.transition_control_run(
+                "run-p08b-mig", expected="CHECKING", next_state="REPAIR_REQUIRED", actor_role="host",
+                action="await_next_consecutive_pass", expected_dispatch_token="tok-1", clear_dispatch=True,
+                update_fields={
+                    "round_num": 1,
+                    "consecutive_passes": 1,
+                    "streak_candidate_sha256": "1" * 64,
+                    "streak_policy_sha256": "5" * 64,
+                },
+                round_record={
+                    "round_num": 1,
+                    "maker_dispatched": False,
+                    "confirming_pass": False,
+                    "outcome": "PASS",
+                    "verdict": "ACCEPT",
+                    "candidate_sha256": "1" * 64,
+                    "policy_sha256": "5" * 64,
+                    "evidence_refs": {
+                        "round_dir": "round-01",
+                        "checks_summary": "round-01/checks_summary.json",
+                        "auditor_report": "round-01/audit_report.json",
+                    },
+                    "host_checks_passed": True,
+                    "checker_passed": True,
+                    "rubric_decision": "ACCEPT",
+                    "rubric_total_score": 12,
+                    "rubric_hard_gate_passed": True,
+                    "findings": [],
+                    "repair_scope": [],
+                    "next_action": "Confirming pass",
+                    "consecutive_passes": 1,
+                },
+            )
+            self.assertEqual(upd["streak_candidate_sha256"], "1" * 64)
+            # Confirming pass transition REPAIR_REQUIRED -> VERIFYING is allowed
+            ver = state.transition_control_run(
+                "run-p08b-mig", expected="REPAIR_REQUIRED", next_state="VERIFYING", actor_role="host",
+                action="confirming_host_verifying",
+            )
+            self.assertEqual(ver["state"], "VERIFYING")
+            rounds = state.list_control_rounds("run-p08b-mig")
+            self.assertEqual(len(rounds), 1)
+            self.assertEqual(rounds[0]["verdict"], "ACCEPT")
+            self.assertEqual(rounds[0]["rubric_total_score"], 12)
+            self.assertEqual(rounds[0]["evidence_refs"]["checks_summary"], "round-01/checks_summary.json")
+            self.assertEqual(rounds[0]["evidence_refs"]["auditor_report"], "round-01/audit_report.json")
+            self.assertEqual(json.loads(json.dumps(rounds[0]["findings"])), [])
+
 
 if __name__ == "__main__":
     unittest.main()

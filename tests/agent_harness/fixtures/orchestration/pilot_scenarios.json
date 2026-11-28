@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0",
+  "phase": "P08-B",
+  "issue": 439,
+  "mode": "FIXTURE_CONTROLLED",
+  "note": "Controlled fixture pilot scenarios for deterministic P08-B Maker-Checker verification. Does not substitute for live independent provider evaluation or human rubric calibration (NOT_VERIFIED).",
+  "scenarios": [
+    {
+      "id": "seeded_fail_repair_accept",
+      "description": "Seeded Host check failure -> REVISE -> targeted Maker repair -> actual check.py reverify -> Checker ACCEPT -> READY_FOR_HUMAN_REVIEW",
+      "consecutive_passes_required": 1,
+      "max_rounds": 3,
+      "expected_terminal_state": "READY_FOR_HUMAN_REVIEW",
+      "expected_rounds": 2
+    },
+    {
+      "id": "checker_revise_then_n2_same_candidate_accept",
+      "description": "Checker REVISE -> targeted Maker repair -> N=2 consecutive passes on same immutable candidate without Maker edit in confirming round",
+      "consecutive_passes_required": 2,
+      "max_rounds": 4,
+      "expected_terminal_state": "READY_FOR_HUMAN_REVIEW",
+      "expected_rounds": 3
+    },
+    {
+      "id": "repeated_failure_no_progress_escalated",
+      "description": "Repeated identical Host check failure reaches no_progress_threshold=2 and escalates safely",
+      "consecutive_passes_required": 1,
+      "max_rounds": 5,
+      "no_progress_threshold": 2,
+      "expected_terminal_state": "ESCALATED",
+      "expected_rounds": 2
+    },
+    {
+      "id": "hard_gate_impossible_scope_blocked",
+      "description": "Checker finding outside approved Issue scope and hard_gate_passed=false routes directly to BLOCKED",
+      "consecutive_passes_required": 1,
+      "max_rounds": 3,
+      "expected_terminal_state": "BLOCKED",
+      "expected_rounds": 1
+    },
+    {
+      "id": "cancellation_preserves_work",
+      "description": "Cancellation before dispatch transitions to CANCELLED, preserves uncommitted worktree changes, and blocks subsequent dispatch",
+      "consecutive_passes_required": 1,
+      "max_rounds": 2,
+      "expected_terminal_state": "CANCELLED",
+      "expected_rounds": 0
+    }
+  ]
+}

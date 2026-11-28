@@ -540,7 +540,7 @@ def _check_prerequisite(
     return False, "UNKNOWN_PREREQ", f"Unknown prerequisite {prereq!r}"
 
 
-def _run_bounded_check(cmd: list[str], cwd: pathlib.Path, timeout: int) -> tuple[int, str]:
+def _run_bounded_check(cmd: list[str], cwd: pathlib.Path, timeout: int | float) -> tuple[int, str]:
     env = dict(os.environ)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     with tempfile.TemporaryFile() as out_f:
@@ -595,6 +595,7 @@ def run_checks(
     allow_bench: bool = False,
     bench_auth: pathlib.Path | None = None,
     timeout: int = 300,
+    max_total_seconds: float | None = None,
     run_quality_gates: bool = True,
     journal_path: pathlib.Path | None = None,
     issue: int | None = None,
@@ -675,6 +676,8 @@ def run_checks(
     gate_priority: dict[str, int] = {}
     overall_failed = False
     prereq_blocked = False
+    timed_out = False
+    deadline = (time.monotonic() + float(max_total_seconds)) if max_total_seconds is not None else None
 
     def _record_gate(gate_rule_id: str, receipt_obj: dict[str, Any], prio: int) -> None:
         # Precedence: FAIL (3) > NOT_VERIFIED / NOT_RUN / prerequisite_missing (2) > PASS (1)
@@ -760,7 +763,21 @@ def run_checks(
 
         started_at = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         started = time.monotonic()
-        rc, output = _run_bounded_check(spec.command, cwd, timeout)
+        effective_timeout: int | float = timeout
+        if deadline is not None:
+            rem = deadline - started
+            if rem <= 0:
+                timed_out = True
+                rc, output = 124, f"[check.py] Remaining wall budget exhausted before starting {spec.check_id}\n"
+            else:
+                effective_timeout = min(float(timeout), rem)
+                rc, output = _run_bounded_check(spec.command, cwd, effective_timeout)
+                if rc == 124 and "Timed out after" in output:
+                    timed_out = True
+        else:
+            rc, output = _run_bounded_check(spec.command, cwd, effective_timeout)
+            if rc == 124 and "Timed out after" in output:
+                timed_out = True
         duration_s = round(time.monotonic() - started, 3)
         ended_at = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -899,6 +916,7 @@ def run_checks(
         "evidence_dir": str(ev_root),
         "manifest_path": str(manifest_path),
         "checks_executed": len(check_results),
+        "timed_out": timed_out,
         "results": check_results,
         "quality_gates": {
             "auto_check": qg_report.get("auto_check") if qg_report else "NOT_RUN",
