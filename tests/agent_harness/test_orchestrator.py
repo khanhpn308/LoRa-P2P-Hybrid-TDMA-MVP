@@ -84,6 +84,22 @@ class OrchestratorControlPlaneTests(unittest.TestCase):
         kwargs.update(overrides)
         return orchestrator.admit_run(**kwargs)
 
+    def _make_linked_worktree(self, *, issue: int = 437, suffix: str = "wt") -> pathlib.Path:
+        wt_path = self.base_dir / f"linked-{issue}-{suffix}"
+        branch = f"feature/{issue}-{suffix}"
+        _git(self.repo, "worktree", "add", "-b", branch, str(wt_path), self.base_sha)
+        return wt_path
+
+    def _seed_harness_files(self, repo_path: pathlib.Path) -> None:
+        (repo_path / ".agent-harness").mkdir(exist_ok=True)
+        (repo_path / ".agent-harness" / "worker.md").write_text("Worker rules\n", encoding="utf-8")
+        (repo_path / ".agent-harness" / "auditor.md").write_text("Auditor rules\n", encoding="utf-8")
+        (repo_path / "scripts" / "agent_harness" / "adapters").mkdir(parents=True, exist_ok=True)
+        (repo_path / "scripts" / "agent_harness" / "adapters" / "audit.schema.json").write_text("{}\n", encoding="utf-8")
+        (repo_path / "scripts" / "verify_structure.py").write_text("print('OK')\n", encoding="utf-8")
+        _git(repo_path, "add", ".")
+        _git(repo_path, "commit", "-qm", "harness fixture files")
+
     def test_admission_happy_path_and_frozen_policy_pending_approval(self):
         res = self._admit()
         run = res["run"]
@@ -416,9 +432,10 @@ class OrchestratorControlPlaneTests(unittest.TestCase):
             self.assertEqual(p1_cli.main(), 2)
         self.assertEqual(json.loads(out.getvalue())["state"], "BLOCKED")
 
-        # Admit via p1/cli.py with supervised attestation and resume via feature_state
+        # Admit via p1/cli.py with real linked worktree and supervised attestation
+        wt = self._make_linked_worktree(issue=437, suffix="cli")
         argv_ok = [
-            "cli.py", "admit", "--issue", "437", "--repo", str(self.repo),
+            "cli.py", "admit", "--issue", "437", "--repo", str(wt),
             "--state", str(self.journal_path), "--base-sha", self.base_sha,
             "--supervised-issue-open", "--maker-provider", "native_supervised", "--checker-provider", "native_subagent",
         ]
@@ -430,7 +447,7 @@ class OrchestratorControlPlaneTests(unittest.TestCase):
         run_id = admitted["run"]["run_id"]
 
         resumed = feature_state.session_start(
-            issue=437, repo=self.repo, state_db=self.journal_path, offline=True
+            issue=437, repo=wt, state_db=self.journal_path, offline=True
         )
         self.assertIsNotNone(resumed["control_run"])
         self.assertEqual(resumed["control_run"]["run_id"], run_id)
@@ -439,21 +456,15 @@ class OrchestratorControlPlaneTests(unittest.TestCase):
         # Cancel via p1/cli.py
         argv_can = [
             "cli.py", "cancel", "--run-id", run_id,
-            "--source", str(self.repo), "--state", str(self.journal_path),
+            "--source", str(wt), "--state", str(self.journal_path),
         ]
         with patch.object(sys, "argv", argv_can), contextlib.redirect_stdout(io.StringIO()) as out:
             self.assertEqual(p1_cli.main(), 0)
         self.assertEqual(json.loads(out.getvalue())["state"], "CANCELLED")
 
     def test_run_py_with_journal_persists_control_run_and_rejects_unavailable_token_budget(self):
-        (self.repo / ".agent-harness").mkdir(exist_ok=True)
-        (self.repo / ".agent-harness" / "worker.md").write_text("Worker rules\n", encoding="utf-8")
-        (self.repo / ".agent-harness" / "auditor.md").write_text("Auditor rules\n", encoding="utf-8")
-        (self.repo / "scripts" / "agent_harness" / "adapters").mkdir(parents=True, exist_ok=True)
-        (self.repo / "scripts" / "agent_harness" / "adapters" / "audit.schema.json").write_text("{}\n", encoding="utf-8")
-        (self.repo / "scripts" / "verify_structure.py").write_text("print('OK')\n", encoding="utf-8")
-        _git(self.repo, "add", ".")
-        _git(self.repo, "commit", "-qm", "harness fixture files")
+        wt = self._make_linked_worktree(issue=437, suffix="run")
+        self._seed_harness_files(wt)
 
         def _fake_tool(cmd, cwd, timeout):
             if cmd[0] == "gh":
@@ -461,7 +472,7 @@ class OrchestratorControlPlaneTests(unittest.TestCase):
             return {"tool": cmd[0], "command": cmd, "exit_code": 0, "output_sha256": "0" * 64, "output_bytes": 2}, "OK"
 
         def _fake_worker(prompt, repo, timeout, **kwargs):
-            (self.repo / "README.md").write_text("updated via run.py\n", encoding="utf-8")
+            (wt / "README.md").write_text("updated via run.py\n", encoding="utf-8")
             return {
                 "exit_code": 0,
                 "stdout_bytes": 0,
@@ -507,7 +518,7 @@ class OrchestratorControlPlaneTests(unittest.TestCase):
             trusted_definitions=None,
         )
         stream = io.StringIO()
-        with patch.object(harness_run, "__file__", str(self.repo / "scripts/agent_harness/run.py")), \
+        with patch.object(harness_run, "__file__", str(wt / "scripts/agent_harness/run.py")), \
              patch.object(harness_run.shutil, "which", return_value="fixture-bin"), \
              patch.object(harness_run, "tool", side_effect=_fake_tool), \
              patch.object(harness_run.codex, "invoke", side_effect=_fake_worker), \
@@ -527,10 +538,10 @@ class OrchestratorControlPlaneTests(unittest.TestCase):
             self.assertEqual(ctrl["round_num"], 1)
 
         # Requiring unmeasurable token budget fails closed
-        _git(self.repo, "checkout", "--", "README.md")
+        _git(wt, "checkout", "--", "README.md")
         args_tok = argparse.Namespace(**{**vars(args), "require_token_budget": True})
         stream2 = io.StringIO()
-        with patch.object(harness_run, "__file__", str(self.repo / "scripts/agent_harness/run.py")), \
+        with patch.object(harness_run, "__file__", str(wt / "scripts/agent_harness/run.py")), \
              patch.object(harness_run.shutil, "which", return_value="fixture-bin"), \
              patch.object(harness_run, "tool", side_effect=_fake_tool), \
              contextlib.redirect_stdout(stream2):
@@ -539,6 +550,244 @@ class OrchestratorControlPlaneTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, manifest_path2.parent)
         self.assertEqual(rc2, 2)
         self.assertEqual(json.loads(manifest_path2.read_text(encoding="utf-8"))["state"], "BLOCKED")
+
+    def test_real_execution_enforces_isolated_worktree_and_protected_owner_approval(self):
+        # 1. Primary checkout (not a linked git worktree) and FIXTURE_APPROVED fail closed by default
+        with self.assertRaises(orchestrator.AdmissionError):
+            orchestrator.admit_run(
+                repo=self.repo,
+                issue=437,
+                journal_path=self.journal_path,
+                base_sha=self.base_sha,
+                issue_data=self.issue_data,
+                approval=self.approval,
+                maker_provider="fixture",
+                checker_provider="fixture",
+                capability_overrides={"fixture_maker": True, "fixture_checker": True},
+            )
+        wt = self._make_linked_worktree(issue=437, suffix="prot")
+        with self.assertRaises(orchestrator.AdmissionError):
+            orchestrator.admit_run(
+                repo=wt,
+                issue=437,
+                journal_path=self.journal_path,
+                base_sha=self.base_sha,
+                issue_data=self.issue_data,
+                approval={"status": "FIXTURE_APPROVED", "approved_by": "fixture-owner"},
+                maker_provider="fixture",
+                checker_provider="fixture",
+                capability_overrides={"fixture_maker": True, "fixture_checker": True},
+            )
+        # 2. Protected scope without Owner approval fails closed on admit_run & run.py
+        protected_issue = {
+            "state": "OPEN",
+            "title": "Protected contract edit",
+            "body": "## Target Directories (allowed paths)\n- `contracts/radio-mac/spec.md`\n",
+        }
+        with self.assertRaises(orchestrator.AdmissionError):
+            orchestrator.admit_run(
+                repo=wt,
+                issue=437,
+                journal_path=self.journal_path,
+                base_sha=self.base_sha,
+                issue_data=protected_issue,
+                approval=self.approval,
+                maker_provider="fixture",
+                checker_provider="fixture",
+                capability_overrides={"fixture_maker": True, "fixture_checker": True},
+            )
+
+        self._seed_harness_files(self.repo)
+        self._seed_harness_files(wt)
+
+        def _fake_tool_prot(cmd, cwd, timeout):
+            if cmd[0] == "gh":
+                return {"tool": "gh", "command": cmd, "exit_code": 0, "output_sha256": "0" * 64, "output_bytes": 10}, json.dumps(protected_issue)
+            return {"tool": cmd[0], "command": cmd, "exit_code": 0, "output_sha256": "0" * 64, "output_bytes": 2}, "OK"
+
+        # run.py on primary checkout fails closed
+        args_base = argparse.Namespace(
+            issue=437, execute=True, accept_isolated_pilot=True,
+            expected_idf_version=None, toolchain_mode="container_only", allow_native_fallback=False,
+            timeout=30, max_repairs=0, max_wall_seconds=300, consecutive_passes=1,
+            no_progress_threshold=2, require_token_budget=False, require_cost_budget=False,
+            approved_by="", journal=self.journal_path, feature_file=None, unit_id=None, trusted_definitions=None,
+        )
+        s_primary = io.StringIO()
+        with patch.object(harness_run, "__file__", str(self.repo / "scripts/agent_harness/run.py")), \
+             patch.object(harness_run.shutil, "which", return_value="fixture-bin"), \
+             patch.object(harness_run, "tool", side_effect=lambda c, w, t: ({"tool": "gh", "command": c, "exit_code": 0, "output_sha256": "0"*64, "output_bytes": 10}, json.dumps(self.issue_data))), \
+             contextlib.redirect_stdout(s_primary):
+            rc_p = harness_run.run(args_base)
+        p_manifest = pathlib.Path(s_primary.getvalue().strip().split(": ", 1)[1])
+        self.addCleanup(shutil.rmtree, p_manifest.parent)
+        self.assertEqual(rc_p, 2)
+        self.assertEqual(json.loads(p_manifest.read_text(encoding="utf-8"))["state"], "BLOCKED")
+
+        # run.py on protected scope without --approved-by fails closed
+        s_prot = io.StringIO()
+        with patch.object(harness_run, "__file__", str(wt / "scripts/agent_harness/run.py")), \
+             patch.object(harness_run.shutil, "which", return_value="fixture-bin"), \
+             patch.object(harness_run, "tool", side_effect=_fake_tool_prot), \
+             contextlib.redirect_stdout(s_prot):
+            rc_prot = harness_run.run(args_base)
+        prot_manifest = pathlib.Path(s_prot.getvalue().strip().split(": ", 1)[1])
+        self.addCleanup(shutil.rmtree, prot_manifest.parent)
+        self.assertEqual(rc_prot, 2)
+        self.assertEqual(json.loads(prot_manifest.read_text(encoding="utf-8"))["state"], "BLOCKED")
+
+    def test_run_py_obeys_record_round_result_consecutive_passes_and_escalation(self):
+        wt = self._make_linked_worktree(issue=437, suffix="consec")
+        self._seed_harness_files(wt)
+        worker_round = {"n": 0}
+
+        def _fake_tool(cmd, cwd, timeout):
+            if cmd[0] == "gh":
+                return {"tool": "gh", "command": cmd, "exit_code": 0, "output_sha256": "0" * 64, "output_bytes": 10}, json.dumps(self.issue_data)
+            return {"tool": cmd[0], "command": cmd, "exit_code": 0, "output_sha256": "0" * 64, "output_bytes": 2}, "OK"
+
+        def _fake_worker(prompt, repo, timeout, **kwargs):
+            if "Read-only final Worker report" not in prompt:
+                worker_round["n"] += 1
+                (wt / "README.md").write_text(f"pass edit {worker_round['n']}\n", encoding="utf-8")
+            return {
+                "exit_code": 0, "stdout_bytes": 0, "stderr_bytes": 0,
+                "report": {
+                    "status": "PASS", "findings": [], "limitations": [],
+                    "reviewed_scope": ["README.md"], "selection_sha256": kwargs["selection_sha256"], "rule_results": [],
+                },
+            }
+
+        def _fake_audit(prompt, snapshot, schema, timeout, required_paths, **kwargs):
+            return {
+                "status": "PASS", "findings": [], "limitations": [],
+                "reviewed_scope": ["README.md"], "selection_sha256": kwargs["selection_sha256"], "rule_results": [],
+            }
+
+        # Case A: consecutive_passes=2 with max_repairs=1 (max_rounds=2) must run 2 rounds before READY_FOR_HUMAN_REVIEW
+        args_2 = argparse.Namespace(
+            issue=437, execute=True, accept_isolated_pilot=True,
+            expected_idf_version=None, toolchain_mode="container_only", allow_native_fallback=False,
+            timeout=30, max_repairs=1, max_wall_seconds=300, consecutive_passes=2,
+            no_progress_threshold=3, require_token_budget=False, require_cost_budget=False,
+            approved_by="", journal=self.journal_path, feature_file=None, unit_id=None, trusted_definitions=None,
+        )
+        s1 = io.StringIO()
+        with patch.object(harness_run, "__file__", str(wt / "scripts/agent_harness/run.py")), \
+             patch.object(harness_run.shutil, "which", return_value="fixture-bin"), \
+             patch.object(harness_run, "tool", side_effect=_fake_tool), \
+             patch.object(harness_run.codex, "invoke", side_effect=_fake_worker), \
+             patch.object(harness_run.antigravity, "invoke", side_effect=_fake_audit), \
+             contextlib.redirect_stdout(s1):
+            rc1 = harness_run.run(args_2)
+        m1_path = pathlib.Path(s1.getvalue().strip().split(": ", 1)[1])
+        self.addCleanup(shutil.rmtree, m1_path.parent)
+        self.assertEqual(rc1, 0)
+        self.assertEqual(worker_round["n"], 2)
+        m1 = json.loads(m1_path.read_text(encoding="utf-8"))
+        self.assertEqual(m1["state"], "READY_FOR_HUMAN_REVIEW")
+        with Journal(self.journal_path) as journal:
+            c1 = journal.get_control_run(m1["run_id"])
+            self.assertEqual(c1["state"], "READY_FOR_HUMAN_REVIEW")
+            self.assertEqual(c1["consecutive_passes"], 2)
+
+        # Case B: if record_round_result transitions to ESCALATED, run.py must NOT return READY_FOR_HUMAN_REVIEW
+        _git(wt, "checkout", "--", "README.md")
+        args_1 = argparse.Namespace(**{**vars(args_2), "max_repairs": 0, "consecutive_passes": 1})
+        orig_rec = harness_run.record_round_result
+
+        def _force_escalated(**kwargs):
+            with Journal(kwargs["journal_path"]) as journal:
+                return journal.transition_control_run(
+                    kwargs["run_id"],
+                    expected="CHECKING",
+                    next_state="ESCALATED",
+                    actor_role="host",
+                    action="forced_escalation_test",
+                    expected_dispatch_token=kwargs["dispatch_token"],
+                    clear_dispatch=True,
+                )
+
+        s2 = io.StringIO()
+        with patch.object(harness_run, "__file__", str(wt / "scripts/agent_harness/run.py")), \
+             patch.object(harness_run.shutil, "which", return_value="fixture-bin"), \
+             patch.object(harness_run, "tool", side_effect=_fake_tool), \
+             patch.object(harness_run.codex, "invoke", side_effect=_fake_worker), \
+             patch.object(harness_run.antigravity, "invoke", side_effect=_fake_audit), \
+             patch.object(harness_run, "record_round_result", side_effect=_force_escalated), \
+             contextlib.redirect_stdout(s2):
+            rc2 = harness_run.run(args_1)
+        m2_path = pathlib.Path(s2.getvalue().strip().split(": ", 1)[1])
+        self.addCleanup(shutil.rmtree, m2_path.parent)
+        self.assertEqual(rc2, 5)
+        self.assertEqual(json.loads(m2_path.read_text(encoding="utf-8"))["state"], "ESCALATED")
+        del orig_rec
+
+    def test_run_py_wall_time_budget_does_not_double_count_across_rounds(self):
+        wt = self._make_linked_worktree(issue=437, suffix="wall")
+        self._seed_harness_files(wt)
+        clock = {"t": 0.0}
+
+        def _fake_monotonic() -> float:
+            return clock["t"]
+
+        def _fake_tool(cmd, cwd, timeout):
+            if cmd[0] == "gh":
+                return {"tool": "gh", "command": cmd, "exit_code": 0, "output_sha256": "0" * 64, "output_bytes": 10}, json.dumps(self.issue_data)
+            return {"tool": cmd[0], "command": cmd, "exit_code": 0, "output_sha256": "0" * 64, "output_bytes": 2}, "OK"
+
+        round_num = {"n": 0}
+
+        def _fake_worker(prompt, repo, timeout, **kwargs):
+            if "Read-only final Worker report" not in prompt:
+                round_num["n"] += 1
+                (wt / "README.md").write_text(f"wall edit {round_num['n']}\n", encoding="utf-8")
+            return {
+                "exit_code": 0, "stdout_bytes": 0, "stderr_bytes": 0,
+                "report": {
+                    "status": "PASS", "findings": [], "limitations": [],
+                    "reviewed_scope": ["README.md"], "selection_sha256": kwargs["selection_sha256"], "rule_results": [],
+                },
+            }
+
+        def _fake_audit(prompt, snapshot, schema, timeout, required_paths, **kwargs):
+            # Advance clock by 10s per round: 3 rounds = 30s total (not 10+20+30=60s!)
+            clock["t"] += 10.0
+            status = "FAIL" if round_num["n"] < 3 else "PASS"
+            return {
+                "status": status,
+                "findings": [] if status == "PASS" else [{"severity": "MEDIUM", "file": "README.md", "line": 1, "rule": "TEST", "explanation": f"r{round_num['n']}", "fix": "retry"}],
+                "limitations": [],
+                "reviewed_scope": ["README.md"],
+                "selection_sha256": kwargs["selection_sha256"],
+                "rule_results": [],
+            }
+
+        args = argparse.Namespace(
+            issue=437, execute=True, accept_isolated_pilot=True,
+            expected_idf_version=None, toolchain_mode="container_only", allow_native_fallback=False,
+            timeout=30, max_repairs=2, max_wall_seconds=35, consecutive_passes=1,
+            no_progress_threshold=5, require_token_budget=False, require_cost_budget=False,
+            approved_by="", journal=self.journal_path, feature_file=None, unit_id=None, trusted_definitions=None,
+        )
+        stream = io.StringIO()
+        with patch.object(harness_run, "__file__", str(wt / "scripts/agent_harness/run.py")), \
+             patch.object(harness_run.shutil, "which", return_value="fixture-bin"), \
+             patch.object(harness_run.time, "monotonic", side_effect=_fake_monotonic), \
+             patch.object(harness_run, "tool", side_effect=_fake_tool), \
+             patch.object(harness_run.codex, "invoke", side_effect=_fake_worker), \
+             patch.object(harness_run.antigravity, "invoke", side_effect=_fake_audit), \
+             contextlib.redirect_stdout(stream):
+            rc = harness_run.run(args)
+        manifest_path = pathlib.Path(stream.getvalue().strip().split(": ", 1)[1])
+        self.addCleanup(shutil.rmtree, manifest_path.parent)
+        self.assertEqual(rc, 0)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(manifest["state"], "READY_FOR_HUMAN_REVIEW")
+        with Journal(self.journal_path) as journal:
+            ctrl = journal.get_control_run(manifest["run_id"])
+            self.assertEqual(ctrl["round_num"], 3)
+            self.assertAlmostEqual(ctrl["budget_consumed"]["wall_seconds"], 30.0, places=3)
 
 
 if __name__ == "__main__":

@@ -58,6 +58,7 @@ PROTECTED_PATH_PREFIXES = (
     "docs/adr/",
     "firmware/components/sx1276_driver/",
     ".agent-harness/",
+    ".agents/",
     "AGENTS.md",
 )
 
@@ -493,12 +494,41 @@ def _fetch_live_issue(repo: pathlib.Path, issue: int) -> dict[str, Any]:
     return data
 
 
+def _is_linked_git_worktree(repo: pathlib.Path) -> bool:
+    """Return True only when repo is an isolated linked worktree (git-dir != git-common-dir)."""
+    try:
+        p_dir = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--git-dir"],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=15,
+        )
+        p_common = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--git-common-dir"],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise AdmissionError("Cannot verify git worktree isolation") from exc
+    if p_dir.returncode or p_common.returncode:
+        raise AdmissionError("Cannot inspect git-dir / git-common-dir")
+    git_dir = pathlib.Path(p_dir.stdout.strip())
+    common_dir = pathlib.Path(p_common.stdout.strip())
+    if not git_dir.is_absolute():
+        git_dir = (repo / git_dir).resolve()
+    else:
+        git_dir = git_dir.resolve()
+    if not common_dir.is_absolute():
+        common_dir = (repo / common_dir).resolve()
+    else:
+        common_dir = common_dir.resolve()
+    return git_dir != common_dir
+
+
 def _validate_approval(
     approval: dict[str, Any] | None,
     *,
     scope: tuple[str, ...],
     require_owner_approval: bool,
     require_protected_approval: bool,
+    allow_fixture_mode: bool = False,
 ) -> dict[str, Any]:
     if not isinstance(approval, dict):
         raise AdmissionError("Missing explicit admission approval")
@@ -515,13 +545,17 @@ def _validate_approval(
     if status == "SUPERVISED_ISSUE_OPEN":
         if not approval.get("isolated_pilot_attested", False):
             raise AdmissionError("Supervised Issue execution requires isolated_pilot_attested=True")
-    elif not has_owner_approval and status != "FIXTURE_APPROVED":
+    elif status == "FIXTURE_APPROVED":
+        if not allow_fixture_mode:
+            raise AdmissionError("FIXTURE_APPROVED is restricted to explicit fixture mode")
+    elif not has_owner_approval:
         raise AdmissionError(f"Unsupported admission approval status: {status!r}")
     return {
         "status": status,
         "approved_by": approved_by,
         "touches_protected": touches_protected,
         "human_merge_approval_required": True,
+        "fixture_mode": bool(allow_fixture_mode),
     }
 
 
@@ -541,8 +575,9 @@ def admit_run(
     capability_overrides: dict[str, Any] | None = None,
     require_isolated_worktree: bool = True,
     require_owner_approval: bool = False,
-    require_protected_approval: bool = False,
+    require_protected_approval: bool = True,
     require_executable_capabilities: bool = True,
+    allow_fixture_mode: bool = False,
     requested_rule_ids: list[str] | tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Admit a single scoped Issue run into the P08-A control plane (fail closed)."""
@@ -580,6 +615,7 @@ def admit_run(
         scope=scope,
         require_owner_approval=require_owner_approval,
         require_protected_approval=require_protected_approval,
+        allow_fixture_mode=allow_fixture_mode,
     )
 
     try:
@@ -590,6 +626,9 @@ def admit_run(
     branch_match = BRANCH_ISSUE_RE.fullmatch(branch)
     if not branch or branch == "main" or branch_match is None or int(branch_match.group(1)) != issue:
         raise AdmissionError(f"Branch {branch!r} must be a dedicated Issue #{issue} branch (never main)")
+    if require_isolated_worktree and not allow_fixture_mode:
+        if not _is_linked_git_worktree(root):
+            raise AdmissionError("Isolated linked git worktree required; primary checkout is forbidden")
     if require_isolated_worktree and base_sha is not None and wt_info["base_is_ancestor"] is False:
         raise AdmissionError("Worktree HEAD does not descend from approved base_sha")
 
@@ -1131,6 +1170,8 @@ def run_controlled_dispatch(
         checker_provider="fixture",
         capability_overrides={"fixture_maker": True, "fixture_checker": True},
         require_isolated_worktree=False,
+        require_protected_approval=False,
+        allow_fixture_mode=True,
     )
     run_id = admitted["run"]["run_id"]
     scope = tuple(admitted["admission"]["scope"])

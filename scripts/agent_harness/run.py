@@ -28,7 +28,9 @@ from feature_state import (
 from observability import ObservabilityError, redact_data, redact_text, record_process_signal
 from orchestrator import (
     ROLE_ISOLATION_DISCLOSURE,
+    BudgetExhaustedError,
     ControlPlaneError,
+    _is_protected_path,
     admit_run,
     authorize_role_action,
     build_run_policy,
@@ -227,8 +229,10 @@ def run(args: argparse.Namespace) -> int:
         write("control-policy.json", run_policy)
         result["policy_sha256"] = run_policy["policy_sha256"]
         result["owner_approval_status"] = run_policy["owner_approval_status"]
+        approved_by = str(getattr(args, "approved_by", "") or "").strip()
+        if any(_is_protected_path(p) for p in scope) and not approved_by:
+            return finish("BLOCKED", 2, "Protected path scope requires explicit Owner approval (--approved-by)")
         if getattr(args, "journal", None) is not None:
-            approved_by = str(getattr(args, "approved_by", "") or "").strip()
             approval_doc = (
                 {"status": "OWNER_APPROVED", "approved_by": approved_by, "isolated_pilot_attested": True}
                 if approved_by
@@ -243,8 +247,10 @@ def run(args: argparse.Namespace) -> int:
                 issue_data=issue,
                 approval=approval_doc,
                 policy=run_policy,
-                require_isolated_worktree=False,
+                require_isolated_worktree=True,
+                require_protected_approval=True,
                 require_executable_capabilities=False,
+                allow_fixture_mode=False,
                 capability_overrides={
                     "codex_path": shutil.which("codex"),
                     "agy_path": shutil.which("agy"),
@@ -262,8 +268,23 @@ def run(args: argparse.Namespace) -> int:
         schema = repo / "scripts" / "agent_harness" / "adapters" / "audit.schema.json"
         feedback = ""
         last_diff = None
+        local_consecutive_passes = 0
         for iteration in range(args.max_repairs + 1):
-            if (time.monotonic() - started_monotonic) > float(run_policy["max_wall_seconds"]):
+            round_started_monotonic = time.monotonic()
+            if (round_started_monotonic - started_monotonic) > float(run_policy["max_wall_seconds"]):
+                if control_admitted and getattr(args, "journal", None) is not None:
+                    with Journal(args.journal) as journal:
+                        cur = journal.get_control_run(run_id)
+                        if cur["state"] not in ("ESCALATED", "BLOCKED", "CANCELLED", "READY_FOR_HUMAN_REVIEW"):
+                            journal.transition_control_run(
+                                run_id,
+                                expected=cur["state"],
+                                next_state="ESCALATED",
+                                actor_role="host",
+                                action="wall_time_budget_exhausted",
+                                clear_dispatch=True,
+                            )
+                    return finish("ESCALATED", 4, "Frozen wall-time budget exhausted")
                 return finish("BLOCKED", 4, "Frozen wall-time budget exhausted")
             if load_context(repo) != agent_context:
                 raise GateError("Required AGENTS.md context drift before Worker")
@@ -276,7 +297,7 @@ def run(args: argparse.Namespace) -> int:
                     journal_path=args.journal,
                     run_id=run_id,
                     role="maker",
-                    elapsed_wall_seconds=time.monotonic() - started_monotonic,
+                    elapsed_wall_seconds=time.monotonic() - round_started_monotonic,
                 )
                 active_dispatch_token = dispatched["dispatch_token"]
                 transition_state(
@@ -336,27 +357,43 @@ def run(args: argparse.Namespace) -> int:
             diff_hash = digest(diff.encode())
             if diff_hash == last_diff:
                 if control_admitted and getattr(args, "journal", None) is not None and active_dispatch_token:
-                    try:
-                        record_round_result(
-                            journal_path=args.journal,
-                            run_id=run_id,
-                            dispatch_token=active_dispatch_token,
-                            outcome="REVISE",
-                            host_checks_passed=False,
-                            checker_passed=False,
-                            diff_sha256=diff_hash,
-                            failure_sig="identical_diff",
-                            wall_elapsed_s=time.monotonic() - started_monotonic,
-                        )
-                    except ControlPlaneError:
-                        pass
+                    round_outcome = record_round_result(
+                        journal_path=args.journal,
+                        run_id=run_id,
+                        dispatch_token=active_dispatch_token,
+                        outcome="REVISE",
+                        host_checks_passed=False,
+                        checker_passed=False,
+                        diff_sha256=diff_hash,
+                        failure_sig="identical_diff",
+                        wall_elapsed_s=time.monotonic() - round_started_monotonic,
+                    )
+                    active_dispatch_token = ""
+                    if round_outcome["state"] in ("ESCALATED", "BLOCKED"):
+                        return finish(round_outcome["state"], 4, "Worker repeated identical diff; control-plane stopped")
                 return finish("STALLED", 4, "Worker repeated identical diff")
             last_diff = diff_hash
             refreshed = select_rules(repo, scope, base=result["base_sha"],
                                      expected_source_sha=agent_context["source_sha"])
             if refreshed["agent_input_sha256"] != selection["agent_input_sha256"]:
                 result["events"].append({"stage": "rules-recomputed", "selected_ids": refreshed["selected_ids"]})
-                if iteration == args.max_repairs:
+                if control_admitted and getattr(args, "journal", None) is not None and active_dispatch_token:
+                    round_outcome = record_round_result(
+                        journal_path=args.journal,
+                        run_id=run_id,
+                        dispatch_token=active_dispatch_token,
+                        outcome="REVISE",
+                        host_checks_passed=False,
+                        checker_passed=False,
+                        diff_sha256=diff_hash,
+                        failure_sig="newly_applicable_rules",
+                        wall_elapsed_s=time.monotonic() - round_started_monotonic,
+                    )
+                    active_dispatch_token = ""
+                    if iteration == args.max_repairs or round_outcome["state"] in ("ESCALATED", "BLOCKED"):
+                        final_st = round_outcome["state"] if round_outcome["state"] in ("ESCALATED", "BLOCKED") else "BLOCKED"
+                        return finish(final_st, 4, "Newly applicable rules require injection and focused Worker repair")
+                elif iteration == args.max_repairs:
                     return finish("BLOCKED", 4, "Newly applicable rules require injection and focused Worker repair")
                 feedback = "Host found newly applicable rules. Reinspect and repair only affected allowed paths."
                 continue
@@ -403,7 +440,7 @@ def run(args: argparse.Namespace) -> int:
             (artifacts / "checks.log").write_text("\n".join(combined), encoding="utf-8")
             if failed is not None:
                 if control_admitted and getattr(args, "journal", None) is not None and active_dispatch_token:
-                    record_round_result(
+                    round_outcome = record_round_result(
                         journal_path=args.journal,
                         run_id=run_id,
                         dispatch_token=active_dispatch_token,
@@ -412,9 +449,11 @@ def run(args: argparse.Namespace) -> int:
                         checker_passed=False,
                         diff_sha256=diff_hash,
                         failure_sig="host_checks_failed",
-                        wall_elapsed_s=time.monotonic() - started_monotonic,
+                        wall_elapsed_s=time.monotonic() - round_started_monotonic,
                     )
                     active_dispatch_token = ""
+                    if round_outcome["state"] in ("ESCALATED", "BLOCKED"):
+                        return finish(round_outcome["state"], 4, "A deterministic check failed; control-plane stopped")
                 if iteration == args.max_repairs:
                     return finish("CHECKS_FAILED", 4, "A deterministic check failed")
                 feedback = "Host verification failed. Repair relevant allowed paths.\n" + failed[-2400:]
@@ -527,7 +566,7 @@ def run(args: argparse.Namespace) -> int:
                     journal_path=args.journal,
                     run_id=run_id,
                     role="checker",
-                    elapsed_wall_seconds=time.monotonic() - started_monotonic,
+                    elapsed_wall_seconds=time.monotonic() - round_started_monotonic,
                 )
                 active_dispatch_token = dispatched_chk["dispatch_token"]
                 transition_state(
@@ -619,9 +658,8 @@ def run(args: argparse.Namespace) -> int:
             result["review"] = review
             result["auto_checks"] = after["auto_check"]
             if review["status"] == "PASS" and after["auto_check"] == "AUTO_CHECK_PASS":
-                result["audit"] = "AUDIT_PASS_SOFTWARE_ONLY"
                 if control_admitted and getattr(args, "journal", None) is not None and active_dispatch_token:
-                    record_round_result(
+                    round_outcome = record_round_result(
                         journal_path=args.journal,
                         run_id=run_id,
                         dispatch_token=active_dispatch_token,
@@ -629,9 +667,29 @@ def run(args: argparse.Namespace) -> int:
                         host_checks_passed=True,
                         checker_passed=True,
                         diff_sha256=diff_hash,
-                        wall_elapsed_s=time.monotonic() - started_monotonic,
+                        wall_elapsed_s=time.monotonic() - round_started_monotonic,
                     )
                     active_dispatch_token = ""
+                    with Journal(args.journal) as journal:
+                        journal_state = journal.get_control_run(run_id)["state"]
+                    if journal_state != round_outcome["state"] or journal_state in ("ESCALATED", "BLOCKED"):
+                        final_st = journal_state if journal_state in ("ESCALATED", "BLOCKED") else "BLOCKED"
+                        return finish(final_st, 5, "Control-plane did not reach READY_FOR_HUMAN_REVIEW")
+                    if journal_state == "REPAIR_REQUIRED":
+                        if iteration == args.max_repairs:
+                            return finish("BLOCKED", 5, "Required consecutive passes not reached")
+                        feedback = "Consecutive pass policy requires an additional verified round."
+                        continue
+                    if journal_state != "READY_FOR_HUMAN_REVIEW":
+                        return finish("BLOCKED", 5, f"Unexpected control-plane state: {journal_state}")
+                else:
+                    local_consecutive_passes += 1
+                    if local_consecutive_passes < int(run_policy["consecutive_passes_required"]):
+                        if iteration == args.max_repairs:
+                            return finish("ESCALATED", 5, "Required consecutive passes not reached")
+                        feedback = "Consecutive pass policy requires an additional verified round."
+                        continue
+                result["audit"] = "AUDIT_PASS_SOFTWARE_ONLY"
                 if getattr(args, "journal", None) is not None and getattr(args, "unit_id", None):
                     with Journal(args.journal) as journal:
                         snap = journal.get_feature_snapshot(args.issue)
@@ -675,7 +733,7 @@ def run(args: argparse.Namespace) -> int:
                 return finish("READY_FOR_HUMAN_REVIEW", 0,
                               "Uncommitted scoped tree; human technical review required; no PR auto-created")
             if control_admitted and getattr(args, "journal", None) is not None and active_dispatch_token:
-                record_round_result(
+                round_outcome = record_round_result(
                     journal_path=args.journal,
                     run_id=run_id,
                     dispatch_token=active_dispatch_token,
@@ -684,9 +742,11 @@ def run(args: argparse.Namespace) -> int:
                     checker_passed=False,
                     diff_sha256=diff_hash,
                     failure_sig=f"audit_{review['status']}",
-                    wall_elapsed_s=time.monotonic() - started_monotonic,
+                    wall_elapsed_s=time.monotonic() - round_started_monotonic,
                 )
                 active_dispatch_token = ""
+                if round_outcome["state"] in ("ESCALATED", "BLOCKED"):
+                    return finish(round_outcome["state"], 5, "Control-plane stopped after audit review")
             if iteration == args.max_repairs:
                 return finish("AUDIT_FAILED", 5, "Review or per-ID Host gates remain incomplete")
             feedback = "Resolve only these findings: " + json.dumps(review["findings"])[:2400]
@@ -703,6 +763,8 @@ def run(args: argparse.Namespace) -> int:
             except (ControlPlaneError, StateConflict, OSError):
                 pass
         return finish("CANCELLED", 130, "Run cancelled by operator; uncommitted changes preserved")
+    except BudgetExhaustedError as exc:
+        return finish("ESCALATED", 4, "Control-plane budget exhausted: " + str(exc))
     except (OSError, ValueError, KeyError, TypeError, ContextGateError, ToolchainError,
             GateError, ControlPlaneError, StateConflict, codex.WorkerError, subprocess.SubprocessError) as exc:
         return finish("BLOCKED", 2, "Host source, rules, checks or provider verification failed: " + type(exc).__name__)
