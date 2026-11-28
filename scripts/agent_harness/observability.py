@@ -31,6 +31,8 @@ try:
         MAX_QUERY_LIMIT,
         MAX_SIGNAL_ROWS,
         StateConflict,
+        _SENSITIVE_KEY_RE,
+        _is_safe_placeholder,
         _redact_signal_text,
     )
     from .quality_gates import digest, secret_line
@@ -42,6 +44,8 @@ except ImportError:
         MAX_QUERY_LIMIT,
         MAX_SIGNAL_ROWS,
         StateConflict,
+        _SENSITIVE_KEY_RE,
+        _is_safe_placeholder,
         _redact_signal_text,
     )
     from quality_gates import digest, secret_line
@@ -197,18 +201,39 @@ def redact_text(text: str, *, max_bytes: int = DEFAULT_EXCERPT_BYTES) -> tuple[s
     return redacted, was_redacted, was_truncated
 
 
-def redact_data(obj: Any, *, max_string_bytes: int = DEFAULT_EXCERPT_BYTES) -> Any:
-    """Recursively redact and bound nested JSON-serializable values."""
+def redact_data(
+    obj: Any,
+    *,
+    max_string_bytes: int = DEFAULT_EXCERPT_BYTES,
+    sensitive_context: bool = False,
+) -> Any:
+    """Recursively redact JSON data by both key and value, including nested credentials."""
     if isinstance(obj, str):
+        if sensitive_context and not _is_safe_placeholder(obj):
+            return "[REDACTED]"
         sanitized, _, _ = redact_text(obj, max_bytes=max_string_bytes)
         return sanitized
+    if isinstance(obj, (int, float)) and not isinstance(obj, bool):
+        if sensitive_context:
+            return "[REDACTED]"
+        return obj
     if isinstance(obj, list):
-        return [redact_data(item, max_string_bytes=max_string_bytes) for item in obj[:200]]
+        return [
+            redact_data(item, max_string_bytes=max_string_bytes, sensitive_context=sensitive_context)
+            for item in obj[:200]
+        ]
     if isinstance(obj, dict):
-        return {
-            str(k): redact_data(v, max_string_bytes=max_string_bytes)
-            for k, v in list(obj.items())[:100]
-        }
+        out: dict[str, Any] = {}
+        for k, v in list(obj.items())[:100]:
+            raw_key = str(k)
+            safe_key, _, _ = redact_text(raw_key, max_bytes=max_string_bytes)
+            child_sensitive = sensitive_context or (_SENSITIVE_KEY_RE.search(raw_key) is not None)
+            out[safe_key] = redact_data(
+                v,
+                max_string_bytes=max_string_bytes,
+                sensitive_context=child_sensitive,
+            )
+        return out
     return obj
 
 
@@ -637,6 +662,32 @@ def write_owner_marker(
     return marker
 
 
+def _validate_owner_marker(
+    marker_path: pathlib.Path,
+    *,
+    target: pathlib.Path,
+    owner_issue: int | None,
+    owner_run_id: str | None,
+) -> dict[str, Any]:
+    if marker_path.is_symlink() or not marker_path.is_file():
+        raise CleanupError(f"Refusing cleanup without valid non-symlink {OWNER_MARKER_NAME}: {target}")
+    marker = _safe_read_json(marker_path)
+    if (
+        not isinstance(marker, dict)
+        or marker.get("owner") != "lora-harness"
+        or type(marker.get("issue")) is not int
+        or marker["issue"] <= 0
+        or not isinstance(marker.get("run_id"), str)
+        or not marker["run_id"].strip()
+    ):
+        raise CleanupError(f"Invalid ownership marker for {target}")
+    if owner_issue is not None and marker.get("issue") != owner_issue:
+        raise CleanupError(f"Cleanup issue ownership mismatch in {target}")
+    if owner_run_id is not None and marker.get("run_id") != owner_run_id:
+        raise CleanupError(f"Cleanup run_id ownership mismatch in {target}")
+    return marker
+
+
 def cleanup_owned_artifacts(
     owned_paths: list[pathlib.Path],
     *,
@@ -649,7 +700,8 @@ def cleanup_owned_artifacts(
     """Safely, idempotently, and non-destructively remove only explicitly owned temp artifacts.
 
     Refuses symlinks, candidate repo paths, paths outside allowed_temp_roots,
-    protected review evidence, and directories lacking matching ownership.
+    protected review evidence, and any directory or file (including .tmp) lacking
+    valid matching ownership metadata.
     """
     if not allowed_temp_roots:
         raise CleanupError("cleanup requires explicit allowed_temp_roots")
@@ -691,16 +743,12 @@ def cleanup_owned_artifacts(
 
         if target.is_dir():
             _assert_no_nested_symlinks(target)
-            marker_path = target / OWNER_MARKER_NAME
-            if not marker_path.is_file():
-                raise CleanupError(f"Refusing cleanup of directory without {OWNER_MARKER_NAME}: {target}")
-            marker = _safe_read_json(marker_path)
-            if not isinstance(marker, dict) or marker.get("owner") != "lora-harness":
-                raise CleanupError(f"Invalid ownership marker in {target}")
-            if owner_issue is not None and marker.get("issue") != owner_issue:
-                raise CleanupError(f"Cleanup issue ownership mismatch in {target}")
-            if owner_run_id is not None and marker.get("run_id") != owner_run_id:
-                raise CleanupError(f"Cleanup run_id ownership mismatch in {target}")
+            _validate_owner_marker(
+                target / OWNER_MARKER_NAME,
+                target=target,
+                owner_issue=owner_issue,
+                owner_run_id=owner_run_id,
+            )
             for root_dir, _, files in os.walk(target, followlinks=False):
                 for fname in files:
                     fpath = (pathlib.Path(root_dir) / fname).resolve()
@@ -709,14 +757,16 @@ def cleanup_owned_artifacts(
             shutil.rmtree(target)
             removed.append(str(target))
         elif target.is_file():
-            if not (target.name.endswith(".tmp") or (target.parent / OWNER_MARKER_NAME).is_file()):
-                raise CleanupError(f"Refusing cleanup of unowned non-tmp file: {target}")
-            if (target.parent / OWNER_MARKER_NAME).is_file():
-                marker = _safe_read_json(target.parent / OWNER_MARKER_NAME)
-                if owner_issue is not None and marker.get("issue") != owner_issue:
-                    raise CleanupError(f"Cleanup parent issue mismatch for {target}")
-                if owner_run_id is not None and marker.get("run_id") != owner_run_id:
-                    raise CleanupError(f"Cleanup parent run_id mismatch for {target}")
+            if target.name == OWNER_MARKER_NAME:
+                raise CleanupError(f"Refusing standalone deletion of ownership marker: {target}")
+            if target.parent in resolved_roots:
+                raise CleanupError(f"Refusing cleanup of file directly under temp root without owned subdir: {target}")
+            _validate_owner_marker(
+                target.parent / OWNER_MARKER_NAME,
+                target=target,
+                owner_issue=owner_issue,
+                owner_run_id=owner_run_id,
+            )
             target.unlink()
             removed.append(str(target))
         else:

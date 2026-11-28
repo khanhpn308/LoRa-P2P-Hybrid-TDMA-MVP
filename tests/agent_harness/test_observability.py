@@ -132,6 +132,68 @@ class ObservabilityAndHandoffTests(unittest.TestCase):
         self.assertEqual(vs_sig["status"], "FAIL")
         self.assertNotIn("ghp_1234567890abcdef1234567890abcdef1234", json.dumps(sigs))
 
+    def test_json_key_value_and_nested_credential_redaction(self) -> None:
+        payload = {
+            "password": "plain_pw_no_prefix",
+            "input_tokens": 40599,
+            "metadata": {
+                "api_key": "raw_api_key_value",
+                "credentials": {
+                    "username": "gw-a",
+                    "passcode": "nested_secret_value",
+                    "pin": 9876,
+                    "placeholder": "$MQTT_PASSWORD",
+                },
+                "auth": [
+                    {"token": "nested_list_token_abc", "template": "REPLACE_ME"},
+                ],
+                "notes": "connect postgres://dbuser:nested_dsn_pw@db.local:5432/app",
+                "ghp_1234567890abcdef1234567890abcdef1234": "key_was_secret",
+            },
+        }
+        redacted = obs.redact_data(payload)
+        serialized = json.dumps(redacted)
+        for secret in (
+            "plain_pw_no_prefix",
+            "raw_api_key_value",
+            "nested_secret_value",
+            "9876",
+            "nested_list_token_abc",
+            "nested_dsn_pw",
+            "ghp_1234567890abcdef1234567890abcdef1234",
+        ):
+            self.assertNotIn(secret, serialized)
+        self.assertEqual(redacted["password"], "[REDACTED]")
+        self.assertEqual(redacted["input_tokens"], 40599)
+        self.assertEqual(redacted["metadata"]["api_key"], "[REDACTED]")
+        self.assertEqual(redacted["metadata"]["credentials"]["placeholder"], "$MQTT_PASSWORD")
+        self.assertEqual(redacted["metadata"]["auth"][0]["template"], "REPLACE_ME")
+
+        with Journal(self.journal_path) as j:
+            j.record_signal(
+                signal_type="process",
+                category="check",
+                owning_domain="harness",
+                status="FAIL",
+                issue=433,
+                check_id="nested-json-test",
+                evidence_ref=payload,
+            )
+            rows = j.query_signals(issue=433, limit=5)
+        db_serialized = json.dumps(rows)
+        for secret in (
+            "plain_pw_no_prefix",
+            "raw_api_key_value",
+            "nested_secret_value",
+            "9876",
+            "nested_list_token_abc",
+            "nested_dsn_pw",
+            "ghp_1234567890abcdef1234567890abcdef1234",
+        ):
+            self.assertNotIn(secret, db_serialized)
+        self.assertEqual(rows[0]["evidence_ref"]["input_tokens"], 40599)
+        self.assertEqual(rows[0]["evidence_ref"]["password"], "[REDACTED]")
+
     def test_truncation_retention_and_immutable_checkpoint_preservation(self) -> None:
         long_text = "A" * 6000
         bounded, _, truncated = obs.redact_text(long_text, max_bytes=512)
@@ -261,6 +323,7 @@ class ObservabilityAndHandoffTests(unittest.TestCase):
         scratch_dir = self.host_dir / "scratch-run"
         obs.write_owner_marker(scratch_dir, issue=433, run_id="run-abc")
         (scratch_dir / "debug.log").write_text("temp scratch", encoding="utf-8")
+        obs.write_owner_marker(ev_dir, issue=433, run_id="run-abc")
         tmp_file = ev_dir / "staging.tmp"
         tmp_file.write_text("temp", encoding="utf-8")
 
@@ -319,13 +382,44 @@ class ObservabilityAndHandoffTests(unittest.TestCase):
         unowned_dir = self.host_dir / "unowned"
         unowned_dir.mkdir()
         (unowned_dir / "file.txt").write_text("keep", encoding="utf-8")
+        unowned_sub_tmp = unowned_dir / "foreign.tmp"
+        unowned_sub_tmp.write_text("keep tmp", encoding="utf-8")
         with self.assertRaises(obs.CleanupError):
             obs.cleanup_owned_artifacts([unowned_dir], allowed_temp_roots=[self.host_dir], repo=self.repo)
+        with self.assertRaises(obs.CleanupError):
+            obs.cleanup_owned_artifacts([unowned_sub_tmp], allowed_temp_roots=[self.host_dir], repo=self.repo)
+        self.assertTrue(unowned_sub_tmp.is_file())
+
+        orphan_root_tmp = self.host_dir / "orphan.tmp"
+        orphan_root_tmp.write_text("keep root tmp", encoding="utf-8")
+        with self.assertRaises(obs.CleanupError):
+            obs.cleanup_owned_artifacts([orphan_root_tmp], allowed_temp_roots=[self.host_dir], repo=self.repo)
+        self.assertTrue(orphan_root_tmp.is_file())
 
         wrong_owner_dir = self.host_dir / "other-issue"
         obs.write_owner_marker(wrong_owner_dir, issue=999, run_id="other-run")
+        wrong_owner_tmp = wrong_owner_dir / "other.tmp"
+        wrong_owner_tmp.write_text("other issue tmp", encoding="utf-8")
         with self.assertRaises(obs.CleanupError):
             obs.cleanup_owned_artifacts([wrong_owner_dir], allowed_temp_roots=[self.host_dir], repo=self.repo, owner_issue=433)
+        with self.assertRaises(obs.CleanupError):
+            obs.cleanup_owned_artifacts([wrong_owner_tmp], allowed_temp_roots=[self.host_dir], repo=self.repo, owner_issue=433)
+        self.assertTrue(wrong_owner_tmp.is_file())
+
+        owned_dir = self.host_dir / "owned-433"
+        owned_marker = obs.write_owner_marker(owned_dir, issue=433, run_id="r433")
+        with self.assertRaises(obs.CleanupError):
+            obs.cleanup_owned_artifacts([owned_marker], allowed_temp_roots=[self.host_dir], repo=self.repo, owner_issue=433, owner_run_id="r433")
+        self.assertTrue(owned_marker.is_file())
+
+        sym_marker_dir = self.host_dir / "sym-marker-dir"
+        sym_marker_dir.mkdir()
+        (sym_marker_dir / obs.OWNER_MARKER_NAME).symlink_to(owned_marker)
+        sym_marker_tmp = sym_marker_dir / "sneaky.tmp"
+        sym_marker_tmp.write_text("keep", encoding="utf-8")
+        with self.assertRaises(obs.CleanupError):
+            obs.cleanup_owned_artifacts([sym_marker_tmp], allowed_temp_roots=[self.host_dir], repo=self.repo, owner_issue=433)
+        self.assertTrue(sym_marker_tmp.is_file())
 
         sym_target = self.host_dir / "sym-dir"
         sym_target.symlink_to(unowned_dir)

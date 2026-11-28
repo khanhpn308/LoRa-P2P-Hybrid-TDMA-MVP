@@ -30,6 +30,21 @@ _URL_CRED_RE = re.compile(r"((?:postgres(?:ql)?|mqtts?|https?|redis)://[^:\s/@]+
 _KV_SECRET_RE = re.compile(
     r"""(?im)(\b(?:POSTGRES_PASSWORD|MQTT_PASSWORD|password|passwd|api[_-]?key|access[_-]?token|auth[_-]?token|secret|private[_-]?key|authorization)\b\s*[:=]\s*)(["']?)([^"'\s\r\n#]+)\2"""
 )
+_SENSITIVE_KEY_RE = re.compile(
+    r"(?i)(?:^|[_\-.])("
+    r"pass(?:word|wd)?|pwd|secret(?:[_\-.]?key)?|"
+    r"(?:api|access|private|signing|encryption|session|master|auth)[_\-.]?key|"
+    r"client[_\-.]?secret|auth(?:orization)?|bearer|"
+    r"(?:access|refresh|id|auth|csrf|session)?[_\-.]?token|"
+    r"jwt|cookie|set[_\-.]?cookie|credentials?|k[_\-.]?join|"
+    r"connection[_\-.]?string|dsn"
+    r")(?:$|[_\-.])"
+)
+_SAFE_PLACEHOLDER_PREFIXES = ("$", "REPLACE_", "<", "[REDACTED")
+
+
+def _is_safe_placeholder(value: str) -> bool:
+    return not value or value.startswith(_SAFE_PLACEHOLDER_PREFIXES)
 
 
 def _redact_signal_text(value: str, *, max_chars: int = MAX_EXCERPT_CHARS) -> str:
@@ -45,7 +60,7 @@ def _redact_signal_text(value: str, *, max_chars: int = MAX_EXCERPT_CHARS) -> st
 
     def _kv_sub(match: re.Match[str]) -> str:
         prefix, quote, secret_val = match.group(1), match.group(2), match.group(3)
-        if secret_val.startswith(("$", "REPLACE_", "<", "[REDACTED")):
+        if _is_safe_placeholder(secret_val):
             return match.group(0)
         return f"{prefix}{quote}[REDACTED]{quote}"
 
@@ -57,16 +72,37 @@ def _redact_signal_text(value: str, *, max_chars: int = MAX_EXCERPT_CHARS) -> st
     return text
 
 
-def _redact_json_value(obj: Any, *, max_chars: int = MAX_FINDING_CHARS) -> Any:
+def _redact_json_value(
+    obj: Any,
+    *,
+    max_chars: int = MAX_FINDING_CHARS,
+    sensitive_context: bool = False,
+) -> Any:
     if isinstance(obj, str):
+        if sensitive_context and not _is_safe_placeholder(obj):
+            return "[REDACTED]"
         return _redact_signal_text(obj, max_chars=max_chars)
+    if isinstance(obj, (int, float)) and not isinstance(obj, bool):
+        if sensitive_context:
+            return "[REDACTED]"
+        return obj
     if isinstance(obj, list):
-        return [_redact_json_value(item, max_chars=max_chars) for item in obj[:100]]
+        return [
+            _redact_json_value(item, max_chars=max_chars, sensitive_context=sensitive_context)
+            for item in obj[:100]
+        ]
     if isinstance(obj, dict):
-        return {
-            str(k): _redact_json_value(v, max_chars=max_chars)
-            for k, v in list(obj.items())[:50]
-        }
+        out: dict[str, Any] = {}
+        for k, v in list(obj.items())[:50]:
+            raw_key = str(k)
+            safe_key = _redact_signal_text(raw_key, max_chars=max_chars)
+            child_sensitive = sensitive_context or (_SENSITIVE_KEY_RE.search(raw_key) is not None)
+            out[safe_key] = _redact_json_value(
+                v,
+                max_chars=max_chars,
+                sensitive_context=child_sensitive,
+            )
+        return out
     return obj
 
 _PROCESS_SEAL = os.urandom(32)
