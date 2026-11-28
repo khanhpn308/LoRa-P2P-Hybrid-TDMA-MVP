@@ -17,7 +17,14 @@ from p1.state import Journal, StateConflict
 from p1.worktrees import WorktreeError, make_plan, prepare, git
 from scope import parse_allowed_paths
 from feature_state import session_start, session_checkpoint, session_close, FeatureStateError
-from observability import ObservabilityError, diagnose_failures, query_signals
+from observability import ObservabilityError, diagnose_failures, query_signals, redact_data
+from orchestrator import (
+    ControlPlaneError,
+    admit_run,
+    build_run_policy,
+    cancel_run,
+    probe_role_capabilities,
+)
 
 REPO = "khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP"
 
@@ -110,12 +117,37 @@ def main() -> int:
     sig_p.add_argument("--state", type=Path, default=None)
     sig_p.add_argument("--limit", type=int, default=50)
     sig_p.add_argument("--diagnose", action="store_true")
+    adm_p = sub.add_parser("admit", help="P08-A control-plane admission with frozen policy")
+    adm_p.add_argument("--issue", type=int, required=True)
+    adm_p.add_argument("--repo", type=Path, default=Path.cwd())
+    adm_p.add_argument("--state", type=Path, default=None)
+    adm_p.add_argument("--base-sha", default=None)
+    adm_p.add_argument("--approved-by", default="")
+    adm_p.add_argument("--supervised-issue-open", action="store_true")
+    adm_p.add_argument("--max-rounds", type=int, default=1)
+    adm_p.add_argument("--consecutive-passes", type=int, default=1)
+    adm_p.add_argument("--max-wall-seconds", type=int, default=1800)
+    adm_p.add_argument("--no-progress-threshold", type=int, default=2)
+    adm_p.add_argument("--require-token-budget", action="store_true")
+    adm_p.add_argument("--require-cost-budget", action="store_true")
+    adm_p.add_argument("--maker-provider", default="auto")
+    adm_p.add_argument("--checker-provider", default="auto")
+    can_p = sub.add_parser("cancel", help="Cancel active P08-A control-plane run safely")
+    can_p.add_argument("--run-id", required=True)
+    can_p.add_argument("--source", type=Path, default=Path.cwd())
+    can_p.add_argument("--state", type=Path, default=None)
+    can_p.add_argument("--requested-by", default="owner")
+    can_p.add_argument("--reason", default="Cancelled by operator")
+    cap_p = sub.add_parser("capabilities", help="Probe role/provider capabilities")
+    cap_p.add_argument("--source", type=Path, default=Path.cwd())
+    cap_p.add_argument("--maker-provider", default="auto")
+    cap_p.add_argument("--checker-provider", default="auto")
     args = parser.parse_args()
     if getattr(args, "issue", None) is not None and args.issue < 1:
         parser.error("Issue must be positive")
     os.umask(0o077)
     source = (getattr(args, "source", None) or getattr(args, "repo", None) or Path.cwd()).resolve()
-    state = args.state or (source.parent / ".lora-p1-state" / "state.sqlite")
+    state = getattr(args, "state", None) or (source.parent / ".lora-p1-state" / "state.sqlite")
     try:
         if args.command == "prepare":
             data = plan_payload(source, args.issue, run_id=uuid.uuid4().hex)
@@ -218,6 +250,54 @@ def main() -> int:
                 res = {"count": len(sigs), "signals": sigs}
             print(json.dumps(res, indent=2))
             return 0
+        if args.command == "capabilities":
+            res = probe_role_capabilities(
+                maker_provider=args.maker_provider,
+                checker_provider=args.checker_provider,
+                require_executable=False,
+            )
+            print(json.dumps(res, indent=2, sort_keys=True))
+            return 0
+        if args.command == "admit":
+            approval = (
+                {"status": "OWNER_APPROVED", "approved_by": args.approved_by, "isolated_pilot_attested": True}
+                if args.approved_by.strip()
+                else (
+                    {"status": "SUPERVISED_ISSUE_OPEN", "isolated_pilot_attested": True}
+                    if args.supervised_issue_open
+                    else None
+                )
+            )
+            pol = build_run_policy(
+                consecutive_passes_required=args.consecutive_passes,
+                max_rounds=args.max_rounds,
+                max_wall_seconds=args.max_wall_seconds,
+                no_progress_threshold=args.no_progress_threshold,
+                require_token_budget=args.require_token_budget,
+                require_cost_budget=args.require_cost_budget,
+                approved_by=args.approved_by,
+            )
+            res = admit_run(
+                repo=args.repo,
+                issue=args.issue,
+                journal_path=state,
+                base_sha=args.base_sha,
+                approval=approval,
+                policy=pol,
+                maker_provider=args.maker_provider,
+                checker_provider=args.checker_provider,
+            )
+            print(json.dumps(redact_data(res), indent=2, sort_keys=True))
+            return 0
+        if args.command == "cancel":
+            res = cancel_run(
+                journal_path=state,
+                run_id=args.run_id,
+                requested_by=args.requested_by,
+                reason=args.reason,
+            )
+            print(json.dumps(res, indent=2, sort_keys=True))
+            return 0
         with Journal(state) as journal:
             if args.command == "recover":
                 changed = journal.detect_interruption(args.run_id)
@@ -234,13 +314,27 @@ def main() -> int:
             else:
                 raise PreflightError("status requires --run-id or --issue")
             ckpt_row = journal.latest_checkpoint(item["issue"])
-            print(json.dumps({"run_id": item["run_id"], "issue": item["issue"],
-                              "state": item["state"], "source_sha": item["source_sha"],
-                              "branch": item["branch"], "worktree": item["worktree"],
-                              "history": journal.events(item["run_id"]),
-                              "latest_checkpoint": ckpt_row["handoff"] if ckpt_row else None}, indent=2))
+            ctrl_row = journal.latest_control_run_for_issue(item["issue"])
+            out_payload = {
+                "run_id": item["run_id"],
+                "issue": item["issue"],
+                "state": item["state"],
+                "source_sha": item["source_sha"],
+                "branch": item["branch"],
+                "worktree": item["worktree"],
+                "history": journal.events(item["run_id"]),
+                "latest_checkpoint": ckpt_row["handoff"] if ckpt_row else None,
+            }
+            if ctrl_row is not None:
+                out_payload["control_run"] = {
+                    "run_id": ctrl_row["run_id"],
+                    "state": ctrl_row["state"],
+                    "round_num": ctrl_row["round_num"],
+                    "policy_sha256": ctrl_row["policy_sha256"],
+                }
+            print(json.dumps(out_payload, indent=2))
             return 0
-    except (OSError, PreflightError, WorktreeError, StateConflict, FeatureStateError, ObservabilityError, subprocess.SubprocessError) as exc:
+    except (OSError, PreflightError, WorktreeError, StateConflict, FeatureStateError, ObservabilityError, ControlPlaneError, subprocess.SubprocessError) as exc:
         print(json.dumps({"state": "BLOCKED", "reason": str(exc)[:240]}))
         return 2
 

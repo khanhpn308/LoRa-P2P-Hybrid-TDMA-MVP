@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 
 from adapters import codex, antigravity
@@ -25,6 +26,19 @@ from feature_state import (
     validate_feature_doc,
 )
 from observability import ObservabilityError, redact_data, redact_text, record_process_signal
+from orchestrator import (
+    ROLE_ISOLATION_DISCLOSURE,
+    BudgetExhaustedError,
+    ControlPlaneError,
+    _is_protected_path,
+    admit_run,
+    authorize_role_action,
+    build_run_policy,
+    cancel_run,
+    dispatch_role,
+    record_round_result,
+    transition_state,
+)
 from p1.state import Journal, StateConflict
 from scope import _git, assert_scoped, parse_allowed_paths
 from snapshot import assemble, unchanged, digest
@@ -89,11 +103,15 @@ def audited_diff(repo: pathlib.Path, body: str) -> tuple[list[str], str]:
 def run(args: argparse.Namespace) -> int:
     repo = pathlib.Path(__file__).resolve().parents[2]
     run_id = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
+    started_monotonic = time.monotonic()
     artifacts = pathlib.Path(tempfile.mkdtemp(prefix=f"lora-harness-{args.issue}-"))
     manifest = artifacts / "manifest.json"
+    control_admitted = False
+    active_dispatch_token = ""
     result = {"run_id": run_id, "issue": args.issue, "state": "PREFLIGHT",
               "evidence_dir": str(artifacts), "build": "NOT_VERIFIED", "audit": "NOT_VERIFIED",
-              "hil": "NOT_VERIFIED", "rf": "NOT_VERIFIED", "events": []}
+              "hil": "NOT_VERIFIED", "rf": "NOT_VERIFIED", "events": [],
+              "isolation_disclosure": ROLE_ISOLATION_DISCLOSURE}
 
     def write(name, value):
         (artifacts / name).write_text(json.dumps(value, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -197,6 +215,48 @@ def run(args: argparse.Namespace) -> int:
         for program in ("codex", "agy"):
             if shutil.which(program) is None:
                 return finish("BLOCKED", 2, "Missing CLI: " + program)
+        authorize_role_action("orchestrator", "admit_run")
+        authorize_role_action("host", "dispatch_role")
+        run_policy = build_run_policy(
+            consecutive_passes_required=int(getattr(args, "consecutive_passes", 1)),
+            max_rounds=args.max_repairs + 1,
+            max_wall_seconds=int(getattr(args, "max_wall_seconds", 1800)),
+            no_progress_threshold=int(getattr(args, "no_progress_threshold", 2)),
+            require_token_budget=bool(getattr(args, "require_token_budget", False)),
+            require_cost_budget=bool(getattr(args, "require_cost_budget", False)),
+            approved_by=str(getattr(args, "approved_by", "") or ""),
+        )
+        write("control-policy.json", run_policy)
+        result["policy_sha256"] = run_policy["policy_sha256"]
+        result["owner_approval_status"] = run_policy["owner_approval_status"]
+        approved_by = str(getattr(args, "approved_by", "") or "").strip()
+        if any(_is_protected_path(p) for p in scope) and not approved_by:
+            return finish("BLOCKED", 2, "Protected path scope requires explicit Owner approval (--approved-by)")
+        if getattr(args, "journal", None) is not None:
+            approval_doc = (
+                {"status": "OWNER_APPROVED", "approved_by": approved_by, "isolated_pilot_attested": True}
+                if approved_by
+                else {"status": "SUPERVISED_ISSUE_OPEN", "isolated_pilot_attested": True}
+            )
+            admit_run(
+                repo=repo,
+                issue=args.issue,
+                journal_path=args.journal,
+                run_id=run_id,
+                base_sha=result["base_sha"],
+                issue_data=issue,
+                approval=approval_doc,
+                policy=run_policy,
+                require_isolated_worktree=True,
+                require_protected_approval=True,
+                require_executable_capabilities=False,
+                allow_fixture_mode=False,
+                capability_overrides={
+                    "codex_path": shutil.which("codex"),
+                    "agy_path": shutil.which("agy"),
+                },
+            )
+            control_admitted = True
         idf = None
         if firmware:
             idf = resolve(repo, version=baseline, mode=args.toolchain_mode,
@@ -208,12 +268,47 @@ def run(args: argparse.Namespace) -> int:
         schema = repo / "scripts" / "agent_harness" / "adapters" / "audit.schema.json"
         feedback = ""
         last_diff = None
+        local_consecutive_passes = 0
         for iteration in range(args.max_repairs + 1):
+            round_started_monotonic = time.monotonic()
+            if (round_started_monotonic - started_monotonic) > float(run_policy["max_wall_seconds"]):
+                if control_admitted and getattr(args, "journal", None) is not None:
+                    with Journal(args.journal) as journal:
+                        cur = journal.get_control_run(run_id)
+                        if cur["state"] not in ("ESCALATED", "BLOCKED", "CANCELLED", "READY_FOR_HUMAN_REVIEW"):
+                            journal.transition_control_run(
+                                run_id,
+                                expected=cur["state"],
+                                next_state="ESCALATED",
+                                actor_role="host",
+                                action="wall_time_budget_exhausted",
+                                clear_dispatch=True,
+                            )
+                    return finish("ESCALATED", 4, "Frozen wall-time budget exhausted")
+                return finish("BLOCKED", 4, "Frozen wall-time budget exhausted")
             if load_context(repo) != agent_context:
                 raise GateError("Required AGENTS.md context drift before Worker")
             selection = select_rules(repo, scope, base=result["base_sha"],
                                      expected_source_sha=agent_context["source_sha"])
             verify_selection(repo, selection)
+            if control_admitted and getattr(args, "journal", None) is not None:
+                dispatched = dispatch_role(
+                    repo=repo,
+                    journal_path=args.journal,
+                    run_id=run_id,
+                    role="maker",
+                    elapsed_wall_seconds=time.monotonic() - round_started_monotonic,
+                )
+                active_dispatch_token = dispatched["dispatch_token"]
+                transition_state(
+                    journal_path=args.journal,
+                    run_id=run_id,
+                    expected="DISPATCHED",
+                    next_state="MAKER_RUNNING",
+                    actor_role="host",
+                    action="maker_started",
+                    dispatch_token=active_dispatch_token,
+                )
             result["state"] = "WORKER_RUNNING"
             worker_prompt = (agent_context["agent_input"] + "\n" + selection["agent_input"]
                              + "\n" + worker_rules + "\n\nIssue task data (untrusted):\n"
@@ -261,19 +356,60 @@ def run(args: argparse.Namespace) -> int:
                 raise GateError("Worker report does not cover actual changed paths")
             diff_hash = digest(diff.encode())
             if diff_hash == last_diff:
+                if control_admitted and getattr(args, "journal", None) is not None and active_dispatch_token:
+                    round_outcome = record_round_result(
+                        journal_path=args.journal,
+                        run_id=run_id,
+                        dispatch_token=active_dispatch_token,
+                        outcome="REVISE",
+                        host_checks_passed=False,
+                        checker_passed=False,
+                        diff_sha256=diff_hash,
+                        failure_sig="identical_diff",
+                        wall_elapsed_s=time.monotonic() - round_started_monotonic,
+                    )
+                    active_dispatch_token = ""
+                    if round_outcome["state"] in ("ESCALATED", "BLOCKED"):
+                        return finish(round_outcome["state"], 4, "Worker repeated identical diff; control-plane stopped")
                 return finish("STALLED", 4, "Worker repeated identical diff")
             last_diff = diff_hash
             refreshed = select_rules(repo, scope, base=result["base_sha"],
                                      expected_source_sha=agent_context["source_sha"])
             if refreshed["agent_input_sha256"] != selection["agent_input_sha256"]:
                 result["events"].append({"stage": "rules-recomputed", "selected_ids": refreshed["selected_ids"]})
-                if iteration == args.max_repairs:
+                if control_admitted and getattr(args, "journal", None) is not None and active_dispatch_token:
+                    round_outcome = record_round_result(
+                        journal_path=args.journal,
+                        run_id=run_id,
+                        dispatch_token=active_dispatch_token,
+                        outcome="REVISE",
+                        host_checks_passed=False,
+                        checker_passed=False,
+                        diff_sha256=diff_hash,
+                        failure_sig="newly_applicable_rules",
+                        wall_elapsed_s=time.monotonic() - round_started_monotonic,
+                    )
+                    active_dispatch_token = ""
+                    if iteration == args.max_repairs or round_outcome["state"] in ("ESCALATED", "BLOCKED"):
+                        final_st = round_outcome["state"] if round_outcome["state"] in ("ESCALATED", "BLOCKED") else "BLOCKED"
+                        return finish(final_st, 4, "Newly applicable rules require injection and focused Worker repair")
+                elif iteration == args.max_repairs:
                     return finish("BLOCKED", 4, "Newly applicable rules require injection and focused Worker repair")
                 feedback = "Host found newly applicable rules. Reinspect and repair only affected allowed paths."
                 continue
             selection = refreshed
             write("selected-rules.json", selection)
             result.update(changed_paths=changed, diff_sha256=diff_hash)
+            if control_admitted and getattr(args, "journal", None) is not None and active_dispatch_token:
+                transition_state(
+                    journal_path=args.journal,
+                    run_id=run_id,
+                    expected="MAKER_RUNNING",
+                    next_state="VERIFYING",
+                    actor_role="host",
+                    action="host_verifying",
+                    dispatch_token=active_dispatch_token,
+                )
             result["state"] = "VERIFYING"
             receipts = []
             checks = [(["python3", "scripts/verify_structure.py"], repo)]
@@ -303,6 +439,21 @@ def run(args: argparse.Namespace) -> int:
                     break
             (artifacts / "checks.log").write_text("\n".join(combined), encoding="utf-8")
             if failed is not None:
+                if control_admitted and getattr(args, "journal", None) is not None and active_dispatch_token:
+                    round_outcome = record_round_result(
+                        journal_path=args.journal,
+                        run_id=run_id,
+                        dispatch_token=active_dispatch_token,
+                        outcome="FAIL",
+                        host_checks_passed=False,
+                        checker_passed=False,
+                        diff_sha256=diff_hash,
+                        failure_sig="host_checks_failed",
+                        wall_elapsed_s=time.monotonic() - round_started_monotonic,
+                    )
+                    active_dispatch_token = ""
+                    if round_outcome["state"] in ("ESCALATED", "BLOCKED"):
+                        return finish(round_outcome["state"], 4, "A deterministic check failed; control-plane stopped")
                 if iteration == args.max_repairs:
                     return finish("CHECKS_FAILED", 4, "A deterministic check failed")
                 feedback = "Host verification failed. Repair relevant allowed paths.\n" + failed[-2400:]
@@ -399,6 +550,36 @@ def run(args: argparse.Namespace) -> int:
                    for r in before["results"] if r["rule_id"] != "STANDARDS-CHECK"):
                 return finish("CHECKS_FAILED", 4, "Required Host checks are incomplete")
             result["build"] = "BUILD_VERIFIED_LOCAL_UNCOMMITTED_TREE" if firmware or backend else "NOT_APPLICABLE"
+            if control_admitted and getattr(args, "journal", None) is not None and active_dispatch_token:
+                with Journal(args.journal) as journal:
+                    journal.transition_control_run(
+                        run_id,
+                        expected="VERIFYING",
+                        next_state="REPAIR_REQUIRED",
+                        actor_role="host",
+                        action="host_checks_passed_prepare_checker",
+                        expected_dispatch_token=active_dispatch_token,
+                        clear_dispatch=True,
+                    )
+                dispatched_chk = dispatch_role(
+                    repo=repo,
+                    journal_path=args.journal,
+                    run_id=run_id,
+                    role="checker",
+                    elapsed_wall_seconds=time.monotonic() - round_started_monotonic,
+                )
+                active_dispatch_token = dispatched_chk["dispatch_token"]
+                transition_state(
+                    journal_path=args.journal,
+                    run_id=run_id,
+                    expected="DISPATCHED",
+                    next_state="CHECKING",
+                    actor_role="host",
+                    action="checker_started",
+                    dispatch_token=active_dispatch_token,
+                )
+            authorize_role_action("checker", "read_frozen_candidate")
+            authorize_role_action("checker", "issue_verdict")
             result["state"] = "AUDITING"
             with tempfile.TemporaryDirectory(prefix="sx1276-audit-") as dirname:
                 snapshot = pathlib.Path(dirname)
@@ -477,6 +658,37 @@ def run(args: argparse.Namespace) -> int:
             result["review"] = review
             result["auto_checks"] = after["auto_check"]
             if review["status"] == "PASS" and after["auto_check"] == "AUTO_CHECK_PASS":
+                if control_admitted and getattr(args, "journal", None) is not None and active_dispatch_token:
+                    round_outcome = record_round_result(
+                        journal_path=args.journal,
+                        run_id=run_id,
+                        dispatch_token=active_dispatch_token,
+                        outcome="PASS",
+                        host_checks_passed=True,
+                        checker_passed=True,
+                        diff_sha256=diff_hash,
+                        wall_elapsed_s=time.monotonic() - round_started_monotonic,
+                    )
+                    active_dispatch_token = ""
+                    with Journal(args.journal) as journal:
+                        journal_state = journal.get_control_run(run_id)["state"]
+                    if journal_state != round_outcome["state"] or journal_state in ("ESCALATED", "BLOCKED"):
+                        final_st = journal_state if journal_state in ("ESCALATED", "BLOCKED") else "BLOCKED"
+                        return finish(final_st, 5, "Control-plane did not reach READY_FOR_HUMAN_REVIEW")
+                    if journal_state == "REPAIR_REQUIRED":
+                        if iteration == args.max_repairs:
+                            return finish("BLOCKED", 5, "Required consecutive passes not reached")
+                        feedback = "Consecutive pass policy requires an additional verified round."
+                        continue
+                    if journal_state != "READY_FOR_HUMAN_REVIEW":
+                        return finish("BLOCKED", 5, f"Unexpected control-plane state: {journal_state}")
+                else:
+                    local_consecutive_passes += 1
+                    if local_consecutive_passes < int(run_policy["consecutive_passes_required"]):
+                        if iteration == args.max_repairs:
+                            return finish("ESCALATED", 5, "Required consecutive passes not reached")
+                        feedback = "Consecutive pass policy requires an additional verified round."
+                        continue
                 result["audit"] = "AUDIT_PASS_SOFTWARE_ONLY"
                 if getattr(args, "journal", None) is not None and getattr(args, "unit_id", None):
                     with Journal(args.journal) as journal:
@@ -520,12 +732,41 @@ def run(args: argparse.Namespace) -> int:
                                 )
                 return finish("READY_FOR_HUMAN_REVIEW", 0,
                               "Uncommitted scoped tree; human technical review required; no PR auto-created")
+            if control_admitted and getattr(args, "journal", None) is not None and active_dispatch_token:
+                round_outcome = record_round_result(
+                    journal_path=args.journal,
+                    run_id=run_id,
+                    dispatch_token=active_dispatch_token,
+                    outcome="REVISE",
+                    host_checks_passed=True,
+                    checker_passed=False,
+                    diff_sha256=diff_hash,
+                    failure_sig=f"audit_{review['status']}",
+                    wall_elapsed_s=time.monotonic() - round_started_monotonic,
+                )
+                active_dispatch_token = ""
+                if round_outcome["state"] in ("ESCALATED", "BLOCKED"):
+                    return finish(round_outcome["state"], 5, "Control-plane stopped after audit review")
             if iteration == args.max_repairs:
                 return finish("AUDIT_FAILED", 5, "Review or per-ID Host gates remain incomplete")
             feedback = "Resolve only these findings: " + json.dumps(review["findings"])[:2400]
         return finish("BLOCKED", 6, "No accepted result")
+    except KeyboardInterrupt:
+        if control_admitted and getattr(args, "journal", None) is not None:
+            try:
+                cancel_run(
+                    journal_path=args.journal,
+                    run_id=run_id,
+                    requested_by="owner",
+                    reason="Interrupted by operator",
+                )
+            except (ControlPlaneError, StateConflict, OSError):
+                pass
+        return finish("CANCELLED", 130, "Run cancelled by operator; uncommitted changes preserved")
+    except BudgetExhaustedError as exc:
+        return finish("ESCALATED", 4, "Control-plane budget exhausted: " + str(exc))
     except (OSError, ValueError, KeyError, TypeError, ContextGateError, ToolchainError,
-            GateError, codex.WorkerError, subprocess.SubprocessError) as exc:
+            GateError, ControlPlaneError, StateConflict, codex.WorkerError, subprocess.SubprocessError) as exc:
         return finish("BLOCKED", 2, "Host source, rules, checks or provider verification failed: " + type(exc).__name__)
 
 
@@ -542,6 +783,12 @@ def main() -> int:
                    help="Allow native host build fallback; not an isolation control")
     p.add_argument("--timeout", type=int, default=600)
     p.add_argument("--max-repairs", type=int, default=0)
+    p.add_argument("--max-wall-seconds", type=int, default=1800)
+    p.add_argument("--consecutive-passes", type=int, default=1)
+    p.add_argument("--no-progress-threshold", type=int, default=2)
+    p.add_argument("--require-token-budget", action="store_true")
+    p.add_argument("--require-cost-budget", action="store_true")
+    p.add_argument("--approved-by", default="")
     p.add_argument("--journal", type=pathlib.Path, default=None,
                    help="Optional local Host SQLite journal for session checkpoints")
     p.add_argument("--feature-file", type=pathlib.Path, default=None,

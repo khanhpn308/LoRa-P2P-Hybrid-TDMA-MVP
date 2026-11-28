@@ -294,6 +294,39 @@ STATES = frozenset({
     "BLOCKED", "CANCELLED",
 })
 
+CONTROL_STATES = frozenset({
+    "ADMITTED",
+    "DISPATCHED",
+    "MAKER_RUNNING",
+    "VERIFYING",
+    "CHECKING",
+    "REPAIR_REQUIRED",
+    "READY_FOR_HUMAN_REVIEW",
+    "BLOCKED",
+    "ESCALATED",
+    "CANCELLED",
+})
+ACTIVE_CONTROL_STATES = frozenset({
+    "ADMITTED",
+    "DISPATCHED",
+    "MAKER_RUNNING",
+    "VERIFYING",
+    "CHECKING",
+    "REPAIR_REQUIRED",
+})
+CONTROL_TRANSITIONS: dict[str, frozenset[str]] = {
+    "ADMITTED": frozenset({"DISPATCHED", "CANCELLED", "BLOCKED", "ESCALATED"}),
+    "DISPATCHED": frozenset({"MAKER_RUNNING", "VERIFYING", "CHECKING", "REPAIR_REQUIRED", "CANCELLED", "BLOCKED", "ESCALATED"}),
+    "MAKER_RUNNING": frozenset({"VERIFYING", "REPAIR_REQUIRED", "CANCELLED", "BLOCKED", "ESCALATED"}),
+    "VERIFYING": frozenset({"CHECKING", "REPAIR_REQUIRED", "CANCELLED", "BLOCKED", "ESCALATED"}),
+    "CHECKING": frozenset({"READY_FOR_HUMAN_REVIEW", "REPAIR_REQUIRED", "CANCELLED", "BLOCKED", "ESCALATED"}),
+    "REPAIR_REQUIRED": frozenset({"DISPATCHED", "CANCELLED", "BLOCKED", "ESCALATED"}),
+    "READY_FOR_HUMAN_REVIEW": frozenset({"CANCELLED"}),
+    "BLOCKED": frozenset({"CANCELLED"}),
+    "ESCALATED": frozenset({"CANCELLED"}),
+    "CANCELLED": frozenset(),
+}
+
 
 class StateConflict(RuntimeError):
     """State did not match a compare-and-swap request."""
@@ -396,6 +429,49 @@ class Journal:
             );
             CREATE INDEX IF NOT EXISTS idx_signals_issue_id
               ON signals(issue, signal_id);
+            CREATE TABLE IF NOT EXISTS control_runs (
+                run_id TEXT PRIMARY KEY,
+                issue INTEGER NOT NULL CHECK(issue > 0),
+                state TEXT NOT NULL,
+                active_role TEXT,
+                dispatch_seq INTEGER NOT NULL DEFAULT 0,
+                dispatch_token TEXT NOT NULL DEFAULT '',
+                round_num INTEGER NOT NULL DEFAULT 0,
+                consecutive_passes INTEGER NOT NULL DEFAULT 0,
+                no_progress_count INTEGER NOT NULL DEFAULT 0,
+                last_failure_sig TEXT NOT NULL DEFAULT '',
+                last_diff_sha256 TEXT NOT NULL DEFAULT '',
+                source_sha TEXT NOT NULL,
+                base_sha TEXT NOT NULL,
+                candidate_sha256 TEXT NOT NULL,
+                branch TEXT NOT NULL,
+                worktree TEXT NOT NULL,
+                agents_sha256 TEXT NOT NULL,
+                selection_sha256 TEXT NOT NULL,
+                check_plan_sha256 TEXT NOT NULL,
+                policy_sha256 TEXT NOT NULL,
+                policy_json TEXT NOT NULL,
+                admission_json TEXT NOT NULL,
+                budget_consumed_json TEXT NOT NULL,
+                cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK(cancel_requested IN (0, 1)),
+                cancel_reason TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS active_control_run_per_issue
+              ON control_runs(issue) WHERE state IN (
+                'ADMITTED','DISPATCHED','MAKER_RUNNING','VERIFYING','CHECKING','REPAIR_REQUIRED');
+            CREATE TABLE IF NOT EXISTS control_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL REFERENCES control_runs(run_id),
+                from_state TEXT,
+                to_state TEXT NOT NULL,
+                actor_role TEXT NOT NULL,
+                action TEXT NOT NULL,
+                dispatch_token TEXT NOT NULL DEFAULT '',
+                detail_json TEXT NOT NULL DEFAULT '{}',
+                utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
         """)
 
     def close(self) -> None:
@@ -984,3 +1060,307 @@ class Journal:
             if self.db.in_transaction:
                 self.db.execute("ROLLBACK")
             raise
+
+    @staticmethod
+    def _decode_control_run(row: sqlite3.Row) -> dict[str, Any]:
+        data = dict(row)
+        data["policy"] = json.loads(data.pop("policy_json"))
+        data["admission"] = json.loads(data.pop("admission_json"))
+        data["budget_consumed"] = json.loads(data.pop("budget_consumed_json"))
+        data["cancel_requested"] = bool(data["cancel_requested"])
+        return data
+
+    def create_control_run(
+        self,
+        *,
+        run_id: str,
+        issue: int,
+        source_sha: str,
+        base_sha: str,
+        candidate_sha256: str,
+        branch: str,
+        worktree: str,
+        agents_sha256: str,
+        selection_sha256: str,
+        check_plan_sha256: str,
+        policy_sha256: str,
+        policy: dict[str, Any],
+        admission: dict[str, Any],
+        sequential_only: bool = True,
+        actor_role: str = "host",
+    ) -> dict[str, Any]:
+        safe_policy = _redact_json_value(policy, max_chars=MAX_FINDING_CHARS)
+        safe_admission = _redact_json_value(admission, max_chars=MAX_FINDING_CHARS)
+        initial_budget = {
+            "rounds": 0,
+            "wall_seconds": 0.0,
+            "no_progress_count": 0,
+            "consecutive_passes": 0,
+            "tokens_used": None,
+            "cost_usd": None,
+        }
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            if sequential_only:
+                active = self.db.execute(
+                    """SELECT run_id, issue, state FROM control_runs
+                       WHERE state IN ('ADMITTED','DISPATCHED','MAKER_RUNNING','VERIFYING','CHECKING','REPAIR_REQUIRED')
+                       LIMIT 1"""
+                ).fetchone()
+                if active is not None:
+                    raise StateConflict(
+                        f"Sequential WIP=1 violation: control run {active['run_id']} "
+                        f"(Issue #{active['issue']}, state={active['state']}) is active"
+                    )
+            self.db.execute(
+                """INSERT INTO control_runs(
+                       run_id, issue, state, active_role, dispatch_seq, dispatch_token,
+                       round_num, consecutive_passes, no_progress_count,
+                       last_failure_sig, last_diff_sha256,
+                       source_sha, base_sha, candidate_sha256, branch, worktree,
+                       agents_sha256, selection_sha256, check_plan_sha256, policy_sha256,
+                       policy_json, admission_json, budget_consumed_json
+                   ) VALUES (?, ?, 'ADMITTED', NULL, 0, '', 0, 0, 0, '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    run_id,
+                    issue,
+                    source_sha,
+                    base_sha,
+                    candidate_sha256,
+                    branch,
+                    worktree,
+                    agents_sha256,
+                    selection_sha256,
+                    check_plan_sha256,
+                    policy_sha256,
+                    json.dumps(safe_policy, sort_keys=True),
+                    json.dumps(safe_admission, sort_keys=True),
+                    json.dumps(initial_budget, sort_keys=True),
+                ),
+            )
+            self.db.execute(
+                """INSERT INTO control_events(
+                       run_id, from_state, to_state, actor_role, action, dispatch_token, detail_json
+                   ) VALUES (?, NULL, 'ADMITTED', ?, 'admit_run', '', ?)""",
+                (
+                    run_id,
+                    actor_role,
+                    json.dumps({"policy_sha256": policy_sha256, "selection_sha256": selection_sha256}, sort_keys=True),
+                ),
+            )
+            self.db.execute("COMMIT")
+            return self.get_control_run(run_id)
+        except sqlite3.IntegrityError as exc:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise StateConflict("Control run already exists or active WIP=1 Issue conflict") from exc
+        except BaseException:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise
+
+    def get_control_run(self, run_id: str) -> dict[str, Any]:
+        row = self.db.execute("SELECT * FROM control_runs WHERE run_id=?", (run_id,)).fetchone()
+        if row is None:
+            raise StateConflict(f"Unknown control run ID: {run_id}")
+        return self._decode_control_run(row)
+
+    def active_control_runs(self, *, issue: int | None = None) -> list[dict[str, Any]]:
+        if issue is not None:
+            rows = self.db.execute(
+                """SELECT * FROM control_runs
+                   WHERE issue=? AND state IN ('ADMITTED','DISPATCHED','MAKER_RUNNING','VERIFYING','CHECKING','REPAIR_REQUIRED')
+                   ORDER BY rowid DESC""",
+                (issue,),
+            ).fetchall()
+        else:
+            rows = self.db.execute(
+                """SELECT * FROM control_runs
+                   WHERE state IN ('ADMITTED','DISPATCHED','MAKER_RUNNING','VERIFYING','CHECKING','REPAIR_REQUIRED')
+                   ORDER BY rowid DESC"""
+            ).fetchall()
+        return [self._decode_control_run(r) for r in rows]
+
+    def latest_control_run_for_issue(self, issue: int) -> dict[str, Any] | None:
+        row = self.db.execute(
+            "SELECT * FROM control_runs WHERE issue=? ORDER BY rowid DESC LIMIT 1",
+            (issue,),
+        ).fetchone()
+        return self._decode_control_run(row) if row is not None else None
+
+    def control_events(self, run_id: str) -> list[dict[str, Any]]:
+        self.get_control_run(run_id)
+        rows = self.db.execute(
+            "SELECT * FROM control_events WHERE run_id=? ORDER BY event_id",
+            (run_id,),
+        ).fetchall()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            d = dict(r)
+            d["detail"] = json.loads(d.pop("detail_json"))
+            out.append(d)
+        return out
+
+    def acquire_dispatch(
+        self,
+        run_id: str,
+        *,
+        expected_state: str,
+        role: str,
+        actor_role: str,
+        dispatch_token: str,
+        detail: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if expected_state not in ("ADMITTED", "REPAIR_REQUIRED"):
+            raise StateConflict(f"Cannot dispatch from state {expected_state!r}")
+        if not dispatch_token:
+            raise StateConflict("Dispatch token is required")
+        safe_detail = _redact_json_value(detail or {}, max_chars=MAX_FINDING_CHARS)
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            row = self.db.execute("SELECT * FROM control_runs WHERE run_id=?", (run_id,)).fetchone()
+            if row is None:
+                raise StateConflict(f"Unknown control run ID: {run_id}")
+            if row["cancel_requested"]:
+                raise StateConflict("Cannot dispatch after cancellation was requested")
+            if row["dispatch_token"]:
+                raise StateConflict(
+                    f"Duplicate dispatch blocked: active token {row['dispatch_token']} for role {row['active_role']}"
+                )
+            if row["state"] != expected_state:
+                raise StateConflict(
+                    f"CAS failed on dispatch: expected {expected_state}, actual {row['state']}"
+                )
+            new_seq = int(row["dispatch_seq"]) + 1
+            upd = self.db.execute(
+                """UPDATE control_runs
+                   SET state='DISPATCHED', active_role=?, dispatch_seq=?, dispatch_token=?,
+                       updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                   WHERE run_id=? AND state=? AND dispatch_token='' AND cancel_requested=0""",
+                (role, new_seq, dispatch_token, run_id, expected_state),
+            )
+            if upd.rowcount != 1:
+                raise StateConflict("CAS failed while acquiring dispatch lease")
+            self.db.execute(
+                """INSERT INTO control_events(
+                       run_id, from_state, to_state, actor_role, action, dispatch_token, detail_json
+                   ) VALUES (?, ?, 'DISPATCHED', ?, 'dispatch_role', ?, ?)""",
+                (run_id, expected_state, actor_role, dispatch_token, json.dumps(safe_detail, sort_keys=True)),
+            )
+            self.db.execute("COMMIT")
+            return self.get_control_run(run_id)
+        except BaseException:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise
+
+    def transition_control_run(
+        self,
+        run_id: str,
+        *,
+        expected: str,
+        next_state: str,
+        actor_role: str,
+        action: str,
+        expected_dispatch_token: str | None = None,
+        clear_dispatch: bool = False,
+        update_fields: dict[str, Any] | None = None,
+        detail: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if expected not in CONTROL_STATES or next_state not in CONTROL_STATES:
+            raise StateConflict("Unknown control-plane lifecycle state")
+        if next_state not in CONTROL_TRANSITIONS.get(expected, frozenset()):
+            raise StateConflict(f"Forbidden control-plane transition: {expected} -> {next_state}")
+        allowed_cols = frozenset({
+            "active_role",
+            "round_num",
+            "consecutive_passes",
+            "no_progress_count",
+            "last_failure_sig",
+            "last_diff_sha256",
+            "candidate_sha256",
+            "budget_consumed_json",
+            "cancel_requested",
+            "cancel_reason",
+        })
+        updates = dict(update_fields or {})
+        unknown_cols = set(updates) - allowed_cols
+        if unknown_cols:
+            raise StateConflict(f"Unsupported control_runs columns: {sorted(unknown_cols)}")
+        if clear_dispatch:
+            updates["dispatch_token"] = ""
+            updates["active_role"] = None
+        safe_detail = _redact_json_value(detail or {}, max_chars=MAX_FINDING_CHARS)
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            row = self.db.execute("SELECT * FROM control_runs WHERE run_id=?", (run_id,)).fetchone()
+            if row is None:
+                raise StateConflict(f"Unknown control run ID: {run_id}")
+            if row["state"] != expected:
+                raise StateConflict(
+                    f"CAS failed: expected state {expected}, actual {row['state']}"
+                )
+            if expected_dispatch_token is not None and row["dispatch_token"] != expected_dispatch_token:
+                raise StateConflict("Dispatch token mismatch on control-plane transition")
+            set_clauses = ["state=?", "updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')"]
+            params: list[Any] = [next_state]
+            for col, val in updates.items():
+                if col in ("last_failure_sig", "cancel_reason") and isinstance(val, str):
+                    val = _redact_signal_text(val, max_chars=MAX_FINDING_CHARS)
+                set_clauses.append(f"{col}=?")
+                params.append(val)
+            params.extend([run_id, expected])
+            where_sql = "run_id=? AND state=?"
+            if expected_dispatch_token is not None:
+                where_sql += " AND dispatch_token=?"
+                params.append(expected_dispatch_token)
+            upd = self.db.execute(
+                f"UPDATE control_runs SET {', '.join(set_clauses)} WHERE {where_sql}",
+                tuple(params),
+            )
+            if upd.rowcount != 1:
+                raise StateConflict("CAS failed while transitioning control run")
+            self.db.execute(
+                """INSERT INTO control_events(
+                       run_id, from_state, to_state, actor_role, action, dispatch_token, detail_json
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    run_id,
+                    expected,
+                    next_state,
+                    actor_role,
+                    action,
+                    expected_dispatch_token if expected_dispatch_token is not None else row["dispatch_token"],
+                    json.dumps(safe_detail, sort_keys=True),
+                ),
+            )
+            self.db.execute("COMMIT")
+            return self.get_control_run(run_id)
+        except BaseException:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise
+
+    def request_control_cancel(
+        self,
+        run_id: str,
+        *,
+        actor_role: str,
+        reason: str = "Cancelled by operator",
+    ) -> dict[str, Any]:
+        run = self.get_control_run(run_id)
+        if run["state"] == "CANCELLED":
+            return run
+        return self.transition_control_run(
+            run_id,
+            expected=run["state"],
+            next_state="CANCELLED",
+            actor_role=actor_role,
+            action="cancel_run",
+            clear_dispatch=True,
+            update_fields={
+                "cancel_requested": 1,
+                "cancel_reason": _redact_signal_text(reason, max_chars=MAX_FINDING_CHARS),
+            },
+            detail={"reason": _redact_signal_text(reason, max_chars=MAX_FINDING_CHARS)},
+        )
