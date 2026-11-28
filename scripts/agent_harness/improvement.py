@@ -32,13 +32,13 @@ try:
     from .observability import diagnose_failures, record_process_signal, redact_data, redact_text
     from .orchestrator import RoleAccessDenied, authorize_role_action
     from .p1.state import Journal, StateConflict
-    from .quality_gates import evaluate as evaluate_quality_gates, inventory as inventory_repo, secret_line
+    from .quality_gates import REGISTRY as QG_REGISTRY, evaluate as evaluate_quality_gates, secret_line
     from .scope import violations as scope_violations
 except ImportError:
     from observability import diagnose_failures, record_process_signal, redact_data, redact_text
     from orchestrator import RoleAccessDenied, authorize_role_action
     from p1.state import Journal, StateConflict
-    from quality_gates import evaluate as evaluate_quality_gates, inventory as inventory_repo, secret_line
+    from quality_gates import REGISTRY as QG_REGISTRY, evaluate as evaluate_quality_gates, secret_line
     from scope import violations as scope_violations
 
 SCHEMA_VERSION = "1.0"
@@ -328,7 +328,43 @@ def build_experiment_plan(
     eff_holdout = dict(holdout_spec or {})
     eff_neg = dict(negative_controls_spec or _default_negative_controls_spec())
     eff_workload = dict(workload_spec or {})
-    eff_checks = dict(checks_spec or {"commands": [], "run_quality_gates": True})
+    eff_checks = dict(checks_spec if checks_spec is not None else {"commands": [], "run_quality_gates": True})
+
+    # Validate frozen holdout case IDs (non-empty, unique) when holdout cases are declared.
+    raw_holdout_cases = eff_holdout.get("cases", [])
+    if not isinstance(raw_holdout_cases, list):
+        raise ProtocolError("holdout_spec['cases'] must be a list")
+    seen_holdout_ids: set[str] = set()
+    for hc in raw_holdout_cases:
+        if not isinstance(hc, dict):
+            raise ProtocolError("Each frozen holdout case must be a dict")
+        hcid = str(hc.get("id", "")).strip()
+        if not hcid:
+            raise ProtocolError("Each frozen holdout case must declare a non-empty 'id'")
+        if hcid in seen_holdout_ids:
+            raise ProtocolError(f"Duplicate frozen holdout case id: {hcid!r}")
+        seen_holdout_ids.add(hcid)
+
+    # Enforce strict separation between REPRESENTATIVE_TASK and fixture quality-gate exceptions.
+    raw_run_qg = eff_checks.get("run_quality_gates", True)
+    if not isinstance(raw_run_qg, bool):
+        raise ProtocolError("checks_spec['run_quality_gates'] must be a boolean")
+    raw_cmds = eff_checks.get("commands", [])
+    if not isinstance(raw_cmds, list):
+        raise ProtocolError("checks_spec['commands'] must be a list")
+    for cmd in raw_cmds:
+        if not isinstance(cmd, (list, tuple)) or not cmd or not all(isinstance(arg, str) and arg for arg in cmd):
+            raise ProtocolError("Each command in checks_spec['commands'] must be a non-empty list of strings")
+    if mode == "REPRESENTATIVE_TASK":
+        if raw_run_qg is not True:
+            raise ProtocolError("REPRESENTATIVE_TASK cannot bypass mandatory quality gates (run_quality_gates=False forbidden)")
+        if eff_checks.get("fixture_exception") or eff_checks.get("fixture_quality_gate_exempt"):
+            raise ProtocolError("REPRESENTATIVE_TASK cannot declare fixture quality-gate exceptions")
+        if not raw_cmds:
+            raise ProtocolError("REPRESENTATIVE_TASK requires at least one required check command in checks_spec['commands']")
+    elif raw_run_qg is False:
+        eff_checks["fixture_exception"] = True
+        eff_checks.setdefault("fixture_exception_reason", "CONTROLLED_FIXTURE_ONLY")
     eff_env = dict(
         matched_env
         or {
@@ -703,28 +739,88 @@ def evaluate_workspace(
     protected_hits = [p for p in changed_paths if _is_protected_experiment_path(p)] if role == "candidate" else []
     tampering_detected = bool(out_of_scope or protected_hits)
 
-    # Hard gates: run real quality_gates on the workspace when enabled (unless explicitly fixture-scoped).
+    # Hard gates: REPRESENTATIVE_TASK cannot bypass quality gates; fixture exceptions are strictly separated.
+    is_fixture = (plan.get("mode") == "CONTROLLED_FIXTURE")
     checks_spec = plan.get("checks_spec", {})
-    run_qg = bool(checks_spec.get("run_quality_gates", True))
-    gate_result: dict[str, Any] = {"status": "NOT_RUN", "auto_check": "NOT_RUN"}
-    hard_gates_passed = True
-    if run_qg:
-        qg = evaluate_quality_gates(workspace, baseline_rev)
+    run_qg = checks_spec.get("run_quality_gates", True)
+    gate_result: dict[str, Any] = {
+        "status": "NOT_RUN",
+        "auto_check": "NOT_RUN",
+        "fixture_exception": False,
+        "selected_rules": [],
+    }
+    if not is_fixture and run_qg is not True:
+        hard_gates_passed = False
+        gate_result = {
+            "auto_check": "BLOCKED",
+            "status": "BYPASS_FORBIDDEN",
+            "fixture_exception": False,
+            "selected_rules": [],
+            "built_in_scan_status": "NOT_RUN",
+            "diff_check_status": "NOT_RUN",
+        }
+    elif is_fixture and run_qg is False:
+        hard_gates_passed = True
+        gate_result = {
+            "auto_check": "FIXTURE_EXEMPT",
+            "status": "FIXTURE_EXEMPT",
+            "fixture_exception": True,
+            "fixture_exception_reason": str(checks_spec.get("fixture_exception_reason") or "CONTROLLED_FIXTURE_ONLY"),
+            "selected_rules": [],
+            "built_in_scan_status": "FIXTURE_EXEMPT",
+            "diff_check_status": "FIXTURE_EXEMPT",
+        }
+    else:
+        hard_gates_passed = True
+        qg_manifest = checks_spec.get("quality_gate_manifest")
+        qg_ev_dir = checks_spec.get("quality_gate_evidence_dir")
+        qg_ev_root = pathlib.Path(qg_ev_dir).resolve() if qg_ev_dir else None
+        qg = evaluate_quality_gates(
+            workspace,
+            baseline_rev,
+            manifest=qg_manifest,
+            evidence_root=qg_ev_root,
+        )
         by_rule = {r.get("rule_id"): r for r in qg.get("results", []) if isinstance(r, dict)}
+        selected_risks = set(qg.get("risks", []))
+        selected_rules = sorted(
+            (
+                {"rule_id": str(r["rule_id"]), "status": str(r["status"])}
+                for r in qg.get("results", [])
+                if isinstance(r, dict)
+                and r.get("rule_id") in QG_REGISTRY
+                and QG_REGISTRY[r["rule_id"]][1] in selected_risks
+            ),
+            key=lambda item: item["rule_id"],
+        )
         sec_status = by_rule.get("SECRET-SCAN", {}).get("status", "NOT_VERIFIED")
         diff_status = by_rule.get("DIFF-CHECK", {}).get("status", "NOT_VERIFIED")
+        auto_check_val = str(qg.get("auto_check", "BLOCKED"))
         gate_result = {
-            "auto_check": qg.get("auto_check"),
+            "auto_check": auto_check_val,
+            "status": "PASS" if auto_check_val == "AUTO_CHECK_PASS" else "FAIL",
+            "fixture_exception": False,
+            "selected_rules": selected_rules,
             "built_in_scan_status": sec_status,
             "diff_check_status": diff_status,
         }
-        if sec_status != "PASS" or diff_status != "PASS":
+        if (
+            auto_check_val != "AUTO_CHECK_PASS"
+            or not selected_rules
+            or any(item["status"] != "PASS" for item in selected_rules)
+            or sec_status != "PASS"
+            or diff_status != "PASS"
+        ):
             hard_gates_passed = False
 
     commands_Spec = list(checks_spec.get("commands", []))
     rep_runs: list[dict[str, Any]] = []
     metric_samples: dict[str, list[float]] = {}
     all_mandatory_passed = hard_gates_passed and not tampering_detected
+    required_checks_passed = hard_gates_passed and not tampering_detected
+    if not is_fixture and not commands_Spec:
+        required_checks_passed = False
+        all_mandatory_passed = False
     metric_gaming_detected = False
 
     for rep in range(1, repetitions + 1):
@@ -789,7 +885,12 @@ def evaluate_workspace(
 
         rep_elapsed = round(time.monotonic() - rep_start, 4)
         budget_state["wall_seconds"] = round(float(budget_state.get("wall_seconds", 0.0)) + rep_elapsed, 4)
-        if not rep_passed:
+        cmds_complete_and_ok = (len(rep_cmd_receipts) == len(commands_Spec)) and all(
+            c.get("exit_code") == 0 and not c.get("timed_out") for c in rep_cmd_receipts
+        )
+        if not cmds_complete_and_ok:
+            required_checks_passed = False
+        if not rep_passed or not cmds_complete_and_ok:
             all_mandatory_passed = False
 
         metric_samples.setdefault("mandatory_checks_passed", []).append(1.0 if rep_passed else 0.0)
@@ -798,7 +899,7 @@ def evaluate_workspace(
         rep_runs.append(
             {
                 "repetition": rep,
-                "passed": rep_passed,
+                "passed": rep_passed and cmds_complete_and_ok,
                 "elapsed_s": rep_elapsed,
                 "commands": rep_cmd_receipts,
             }
@@ -806,10 +907,15 @@ def evaluate_workspace(
 
     _verify_frozen_plan_integrity(plan)
 
+    if len(rep_runs) != repetitions:
+        required_checks_passed = False
+        all_mandatory_passed = False
+
     metrics_summary: dict[str, Any] = {}
     for mk, vals in sorted(metric_samples.items()):
         metrics_summary[mk] = round(sum(vals) / len(vals), 6) if vals else 0.0
 
+    final_mandatory_ok = all_mandatory_passed and required_checks_passed and not budget_state.get("budget_exhausted", False)
     return {
         "schema_version": SCHEMA_VERSION,
         "experiment_id": plan["experiment_id"],
@@ -828,7 +934,10 @@ def evaluate_workspace(
         "metric_gaming_detected": metric_gaming_detected,
         "hard_gates": gate_result,
         "hard_gates_passed": hard_gates_passed,
-        "mandatory_checks_passed": all_mandatory_passed and not budget_state.get("budget_exhausted", False),
+        "fixture_quality_gate_exempt": bool(is_fixture and run_qg is False),
+        "required_checks_count": len(commands_Spec),
+        "required_checks_passed": bool(required_checks_passed and not budget_state.get("budget_exhausted", False)),
+        "mandatory_checks_passed": final_mandatory_ok,
         "repetitions": rep_runs,
         "metrics": metrics_summary,
     }
@@ -842,13 +951,14 @@ def evaluate_holdout(
     budget_state: dict[str, Any],
     holdout_fn: Callable[[pathlib.Path, dict[str, Any]], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Run independent held-out evaluation never exposed to Maker."""
+    """Run independent held-out evaluation never exposed to Maker, enforcing exact frozen ID match."""
     authorize_role_action("checker", "audit_experiment")
     _verify_frozen_plan_integrity(plan)
 
     holdout_spec = plan.get("holdout_spec", {})
-    cases = list(holdout_spec.get("cases", []))
-    if not cases and holdout_fn is None:
+    raw_cases = holdout_spec.get("cases", [])
+    cases = list(raw_cases) if isinstance(raw_cases, list) else []
+    if not cases:
         return {
             "schema_version": SCHEMA_VERSION,
             "experiment_id": plan["experiment_id"],
@@ -856,25 +966,104 @@ def evaluate_holdout(
             "plan_sha256": plan["plan_sha256"],
             "holdout_sha256": plan["holdout_sha256"],
             "status": "MISSING_FAIL",
+            "error_code": "HOLDOUT_CASES_MISSING",
+            "frozen_case_ids": [],
+            "executed_case_ids": [],
+            "missing_case_ids": [],
+            "duplicate_case_ids": [],
+            "unexpected_case_ids": [],
+            "unexecuted_case_ids": [],
+            "id_match_exact": False,
             "cases_total": 0,
             "cases_passed": 0,
             "regression": True,
             "results": [],
         }
 
+    frozen_ids: list[str] = []
+    seen_frozen: set[str] = set()
+    invalid_frozen = False
+    for case in cases:
+        if not isinstance(case, dict):
+            invalid_frozen = True
+            frozen_ids.append("")
+            continue
+        cid = str(case.get("id", "")).strip()
+        if not cid or cid in seen_frozen:
+            invalid_frozen = True
+        seen_frozen.add(cid)
+        frozen_ids.append(cid)
+
+    if invalid_frozen:
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "experiment_id": plan["experiment_id"],
+            "baseline_revision": plan["baseline_revision"],
+            "plan_sha256": plan["plan_sha256"],
+            "holdout_sha256": plan["holdout_sha256"],
+            "status": "FAIL",
+            "error_code": "INVALID_FROZEN_HOLDOUT_IDS",
+            "frozen_case_ids": frozen_ids,
+            "executed_case_ids": [],
+            "missing_case_ids": [],
+            "duplicate_case_ids": [c for c in frozen_ids if frozen_ids.count(c) > 1],
+            "unexpected_case_ids": [],
+            "unexecuted_case_ids": frozen_ids,
+            "id_match_exact": False,
+            "cases_total": len(cases),
+            "cases_passed": 0,
+            "regression": True,
+            "results": [],
+        }
+
+    fn_by_id: dict[str, list[dict[str, Any]]] = {}
+    unexpected_case_ids: list[str] = []
+    duplicate_case_ids: list[str] = []
+    malformed_fn = False
+    if holdout_fn is not None:
+        fn_res = holdout_fn(workspace, plan)
+        if not isinstance(fn_res, dict) or not isinstance(fn_res.get("cases"), list):
+            malformed_fn = True
+        else:
+            for item in fn_res["cases"]:
+                if not isinstance(item, dict):
+                    malformed_fn = True
+                    continue
+                cid = str(item.get("case_id") if "case_id" in item else item.get("id", "")).strip()
+                if not cid:
+                    unexpected_case_ids.append("<EMPTY>")
+                    continue
+                if cid not in seen_frozen:
+                    unexpected_case_ids.append(cid)
+                    continue
+                fn_by_id.setdefault(cid, []).append(item)
+                if len(fn_by_id[cid]) > 1 and cid not in duplicate_case_ids:
+                    duplicate_case_ids.append(cid)
+
     results: list[dict[str, Any]] = []
+    executed_case_ids: list[str] = []
+    missing_case_ids: list[str] = []
+    unexecuted_case_ids: list[str] = []
     passed_count = 0
     max_wall = float(plan["budget"]["max_wall_seconds"])
 
     for idx, case in enumerate(cases):
-        rem = max_wall - float(budget_state.get("wall_seconds", 0.0))
-        if rem <= 0:
-            budget_state["budget_exhausted"] = True
-            budget_state["exhaustion_reason"] = "Wall-time budget exhausted before holdout check"
-            results.append({"case_id": case.get("id", f"holdout-{idx}"), "passed": False, "reason": "BUDGET_EXHAUSTED"})
-            continue
+        cid = frozen_ids[idx]
         cmd = case.get("command")
         if cmd:
+            if cid in fn_by_id:
+                if cid not in duplicate_case_ids:
+                    duplicate_case_ids.append(cid)
+                unexecuted_case_ids.append(cid)
+                results.append({"case_id": cid, "executed": False, "passed": False, "reason": "DUPLICATE_CASE_EXECUTION"})
+                continue
+            rem = max_wall - float(budget_state.get("wall_seconds", 0.0))
+            if rem <= 0:
+                budget_state["budget_exhausted"] = True
+                budget_state["exhaustion_reason"] = "Wall-time budget exhausted before holdout check"
+                unexecuted_case_ids.append(cid)
+                results.append({"case_id": cid, "executed": False, "passed": False, "reason": "BUDGET_EXHAUSTED"})
+                continue
             rec = _run_bounded_command(
                 list(cmd),
                 cwd=workspace,
@@ -882,63 +1071,129 @@ def evaluate_holdout(
                 timeout_s=rem,
             )
             budget_state["wall_seconds"] = round(float(budget_state.get("wall_seconds", 0.0)) + rec["duration_s"], 4)
-            ok = rec["exit_code"] == 0 and not rec["timed_out"]
-            if ok:
-                passed_count += 1
-            results.append(
-                {
-                    "case_id": str(case.get("id", f"holdout-{idx}")),
-                    "passed": ok,
-                    "exit_code": rec["exit_code"],
-                    "log_path": rec["log_path"],
-                    "log_sha256": rec["log_sha256"],
-                }
-            )
-        elif holdout_fn is None:
-            results.append(
-                {
-                    "case_id": str(case.get("id", f"holdout-{idx}")),
-                    "passed": False,
-                    "reason": "NO_EXECUTABLE_HOLDOUT_RUNNER",
-                }
-            )
-
-    if holdout_fn is not None:
-        fn_res = holdout_fn(workspace, plan)
-        fn_cases = list(fn_res.get("cases", []))
-        if fn_cases:
-            for item in fn_cases:
-                ok = bool(item.get("passed"))
+            if rec["timed_out"]:
+                budget_state["budget_exhausted"] = True
+                budget_state["exhaustion_reason"] = f"Holdout case {cid} timed out after {rec['duration_s']}s"
+                unexecuted_case_ids.append(cid)
+                results.append(
+                    {
+                        "case_id": cid,
+                        "executed": False,
+                        "passed": False,
+                        "exit_code": rec["exit_code"],
+                        "log_path": rec["log_path"],
+                        "log_sha256": rec["log_sha256"],
+                        "reason": "TIMED_OUT",
+                    }
+                )
+            else:
+                ok = rec["exit_code"] == 0
+                executed_case_ids.append(cid)
                 if ok:
                     passed_count += 1
                 results.append(
                     {
-                        "case_id": str(item.get("case_id", "holdout-fn")),
+                        "case_id": cid,
+                        "executed": True,
                         "passed": ok,
-                        "reason": str(item.get("reason", "")),
+                        "exit_code": rec["exit_code"],
+                        "log_path": rec["log_path"],
+                        "log_sha256": rec["log_sha256"],
                     }
                 )
         else:
-            ok = bool(fn_res.get("passed"))
-            total_fn = len(cases) or 1
-            if ok:
-                passed_count += total_fn
-            results.append({"case_id": "holdout-fn", "passed": ok, "reason": str(fn_res.get("reason", ""))})
+            if holdout_fn is None:
+                unexecuted_case_ids.append(cid)
+                results.append({"case_id": cid, "executed": False, "passed": False, "reason": "NO_EXECUTABLE_HOLDOUT_RUNNER"})
+            elif cid not in fn_by_id:
+                missing_case_ids.append(cid)
+                unexecuted_case_ids.append(cid)
+                results.append({"case_id": cid, "executed": False, "passed": False, "reason": "CASE_NOT_EXECUTED"})
+            elif len(fn_by_id[cid]) > 1:
+                unexecuted_case_ids.append(cid)
+                results.append({"case_id": cid, "executed": False, "passed": False, "reason": "DUPLICATE_CASE_EXECUTION"})
+            else:
+                item = fn_by_id[cid][0]
+                was_executed = item.get("executed", True)
+                raw_passed = item.get("passed")
+                if was_executed is not True:
+                    unexecuted_case_ids.append(cid)
+                    results.append(
+                        {
+                            "case_id": cid,
+                            "executed": False,
+                            "passed": False,
+                            "reason": str(item.get("reason") or "CASE_NOT_EXECUTED"),
+                        }
+                    )
+                elif not isinstance(raw_passed, bool):
+                    unexecuted_case_ids.append(cid)
+                    results.append(
+                        {
+                            "case_id": cid,
+                            "executed": False,
+                            "passed": False,
+                            "reason": "INVALID_BOOLEAN_PASSED",
+                        }
+                    )
+                else:
+                    executed_case_ids.append(cid)
+                    if raw_passed:
+                        passed_count += 1
+                    results.append(
+                        {
+                            "case_id": cid,
+                            "executed": True,
+                            "passed": raw_passed,
+                            "reason": str(item.get("reason", "")),
+                        }
+                    )
 
-    total = len(results)
-    all_ok = total > 0 and passed_count == total
-    return {
+    id_match_exact = (
+        not malformed_fn
+        and not missing_case_ids
+        and not duplicate_case_ids
+        and not unexpected_case_ids
+        and not unexecuted_case_ids
+        and len(executed_case_ids) == len(frozen_ids)
+        and set(executed_case_ids) == seen_frozen
+    )
+    all_ok = id_match_exact and len(results) == len(frozen_ids) and passed_count == len(frozen_ids)
+    error_code = ""
+    if not all_ok:
+        if duplicate_case_ids:
+            error_code = "HOLDOUT_DUPLICATE_CASE_IDS"
+        elif unexpected_case_ids or malformed_fn:
+            error_code = "HOLDOUT_UNEXPECTED_OR_MALFORMED_CASE_IDS"
+        elif missing_case_ids:
+            error_code = "HOLDOUT_MISSING_CASE_IDS"
+        elif unexecuted_case_ids:
+            error_code = "HOLDOUT_UNEXECUTED_CASE"
+        else:
+            error_code = "HOLDOUT_CASE_FAILED"
+
+    out: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "experiment_id": plan["experiment_id"],
         "baseline_revision": plan["baseline_revision"],
         "plan_sha256": plan["plan_sha256"],
         "holdout_sha256": plan["holdout_sha256"],
         "status": "PASS" if all_ok else "FAIL",
-        "cases_total": total,
+        "frozen_case_ids": frozen_ids,
+        "executed_case_ids": executed_case_ids,
+        "missing_case_ids": missing_case_ids,
+        "duplicate_case_ids": duplicate_case_ids,
+        "unexpected_case_ids": unexpected_case_ids,
+        "unexecuted_case_ids": unexecuted_case_ids,
+        "id_match_exact": id_match_exact,
+        "cases_total": len(frozen_ids),
         "cases_passed": passed_count,
         "regression": not all_ok,
         "results": results,
     }
+    if error_code:
+        out["error_code"] = error_code
+    return out
 
 
 def evaluate_negative_controls(
@@ -1121,6 +1376,36 @@ def decide_experiment(
             "Candidate failed mandatory hard gates or required checks",
         )
 
+    if plan.get("mode") == "REPRESENTATIVE_TASK":
+        checks_spec = plan.get("checks_spec", {})
+        if checks_spec.get("run_quality_gates") is not True or candidate_eval.get("fixture_quality_gate_exempt"):
+            return _reject(
+                "QUALITY_GATE_BYPASS_FORBIDDEN",
+                "REPRESENTATIVE_TASK cannot bypass mandatory quality gates",
+            )
+        hard_gates = candidate_eval.get("hard_gates", {})
+        selected_rules = hard_gates.get("selected_rules", [])
+        if (
+            hard_gates.get("auto_check") != "AUTO_CHECK_PASS"
+            or not isinstance(selected_rules, list)
+            or not selected_rules
+            or any(not isinstance(item, dict) or item.get("status") != "PASS" for item in selected_rules)
+        ):
+            return _reject(
+                "HARD_GATE_OR_MANDATORY_CHECK_FAILED",
+                "REPRESENTATIVE_TASK requires AUTO_CHECK_PASS across all selected mandatory quality gates",
+            )
+        req_cmds = list(checks_spec.get("commands", []))
+        if (
+            not req_cmds
+            or candidate_eval.get("required_checks_passed") is not True
+            or len(candidate_eval.get("repetitions", [])) != int(plan.get("repetitions", 1))
+        ):
+            return _reject(
+                "REQUIRED_CHECKS_FAILED_OR_MISSING",
+                "REPRESENTATIVE_TASK requires all configured required checks to execute and pass across all repetitions",
+            )
+
     # Zero-tolerance non-regression check on mandatory non-regression metrics.
     for m_name in plan.get("non_regression_metrics", []):
         bv = base_metrics.get(m_name)
@@ -1133,6 +1418,33 @@ def decide_experiment(
 
     if holdout_eval.get("status") != "PASS" or holdout_eval.get("regression"):
         return _reject("HOLDOUT_FAILED_OR_MISSING", f"Holdout status: {holdout_eval.get('status')}")
+
+    frozen_holdout_cases = plan.get("holdout_spec", {}).get("cases", [])
+    frozen_holdout_ids = [
+        str(c.get("id", "")).strip() for c in frozen_holdout_cases if isinstance(c, dict)
+    ]
+    ho_results = holdout_eval.get("results", [])
+    ho_result_ids = [str(r.get("case_id", "")).strip() for r in ho_results if isinstance(r, dict)]
+    ho_exec_ids = [str(x).strip() for x in holdout_eval.get("executed_case_ids", [])]
+    if (
+        not frozen_holdout_ids
+        or any(not cid for cid in frozen_holdout_ids)
+        or len(set(frozen_holdout_ids)) != len(frozen_holdout_ids)
+        or holdout_eval.get("id_match_exact") is not True
+        or bool(holdout_eval.get("missing_case_ids"))
+        or bool(holdout_eval.get("duplicate_case_ids"))
+        or bool(holdout_eval.get("unexpected_case_ids"))
+        or bool(holdout_eval.get("unexecuted_case_ids"))
+        or len(ho_exec_ids) != len(frozen_holdout_ids)
+        or set(ho_exec_ids) != set(frozen_holdout_ids)
+        or len(ho_results) != len(frozen_holdout_ids)
+        or set(ho_result_ids) != set(frozen_holdout_ids)
+        or any(not isinstance(r, dict) or r.get("executed") is not True or r.get("passed") is not True for r in ho_results)
+    ):
+        return _reject(
+            "HOLDOUT_CASE_ID_MISMATCH_OR_UNEXECUTED",
+            "Executed holdout case IDs do not exactly match frozen holdout cases",
+        )
 
     if negative_controls.get("status") != "PASS":
         return _reject(

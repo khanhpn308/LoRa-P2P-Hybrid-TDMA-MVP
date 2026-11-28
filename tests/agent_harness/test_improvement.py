@@ -239,7 +239,10 @@ class ImprovementProtocolTests(unittest.TestCase):
             mode="REPRESENTATIVE_TASK",
             threshold_approval={"status": "OWNER_APPROVED", "approved_by": "owner:khanhpn308"},
             holdout_spec={"cases": [{"id": "HO-1"}]},
-            checks_spec={"commands": [], "run_quality_gates": True},
+            checks_spec={
+                "commands": [[sys.executable, "-c", "import pathlib; assert pathlib.Path('docs/routing_note.md').is_file()"]],
+                "run_quality_gates": True,
+            },
         )
         imp.run_improvement_experiment(
             source_repo=self.repo,
@@ -279,7 +282,10 @@ class ImprovementProtocolTests(unittest.TestCase):
             mode="CONTROLLED_FIXTURE",
             budget=imp.ExperimentBudget(max_wall_seconds=30.0, max_rounds=1, max_tokens=1000, require_token_budget=True),
             holdout_spec={"cases": [{"id": "HO-1"}]},
-            checks_spec={"commands": [], "run_quality_gates": True},
+            checks_spec={
+                "commands": [[sys.executable, "-c", "import pathlib; assert pathlib.Path('docs/routing_note.md').is_file()"]],
+                "run_quality_gates": True,
+            },
         )
         res_meter = imp.run_improvement_experiment(
             source_repo=self.repo,
@@ -342,7 +348,10 @@ class ImprovementProtocolTests(unittest.TestCase):
             allowed_paths=("docs/routing_note.md",),
             mode="CONTROLLED_FIXTURE",
             holdout_spec={"cases": [{"id": "HO-1"}]},
-            checks_spec={"commands": [], "run_quality_gates": True},
+            checks_spec={
+                "commands": [[sys.executable, "-c", "import pathlib; assert pathlib.Path('docs/routing_note.md').is_file()"]],
+                "run_quality_gates": True,
+            },
         )
 
         def _gaming_maker(ws: pathlib.Path, _mv: dict) -> dict:
@@ -380,7 +389,10 @@ class ImprovementProtocolTests(unittest.TestCase):
             mode="REPRESENTATIVE_TASK",
             threshold_approval={"status": "PENDING_OWNER_APPROVAL"},
             holdout_spec={"cases": [{"id": "HO-1"}]},
-            checks_spec={"commands": [], "run_quality_gates": True},
+            checks_spec={
+                "commands": [[sys.executable, "-c", "import pathlib; assert pathlib.Path('docs/routing_note.md').is_file()"]],
+                "run_quality_gates": True,
+            },
         )
         res_pending = imp.run_improvement_experiment(
             source_repo=self.repo,
@@ -428,7 +440,10 @@ class ImprovementProtocolTests(unittest.TestCase):
             allowed_paths=("docs/routing_note.md",),
             mode="CONTROLLED_FIXTURE",
             holdout_spec={"cases": [{"id": "HO-1"}]},
-            checks_spec={"commands": [], "run_quality_gates": True},
+            checks_spec={
+                "commands": [[sys.executable, "-c", "import pathlib; assert pathlib.Path('docs/routing_note.md').is_file()"]],
+                "run_quality_gates": True,
+            },
         )
         imp.run_improvement_experiment(
             source_repo=self.repo,
@@ -543,7 +558,10 @@ class ImprovementProtocolTests(unittest.TestCase):
             allowed_paths=("docs/routing_note.md",),
             mode="CONTROLLED_FIXTURE",
             holdout_spec={"cases": [{"id": "HO-1"}]},
-            checks_spec={"commands": [], "run_quality_gates": True},
+            checks_spec={
+                "commands": [[sys.executable, "-c", "import pathlib; assert pathlib.Path('docs/routing_note.md').is_file()"]],
+                "run_quality_gates": True,
+            },
         )
         res_nc = imp.run_improvement_experiment(
             source_repo=self.repo,
@@ -561,6 +579,277 @@ class ImprovementProtocolTests(unittest.TestCase):
         )
         self.assertEqual(res_nc["decision_record"]["decision"], "REJECT")
         self.assertEqual(res_nc["decision_record"]["reason_code"], "NEGATIVE_CONTROL_FAILED")
+
+    def test_representative_task_forbids_quality_gate_bypass_and_requires_real_checks(self):
+        req_cmd = [sys.executable, "-c", "import pathlib; assert pathlib.Path('docs/routing_note.md').is_file()"]
+
+        # 1. REPRESENTATIVE_TASK cannot set run_quality_gates=False, fixture_exception=True, or empty commands
+        with self.assertRaises(imp.ProtocolError):
+            imp.build_experiment_plan(
+                experiment_id="EXP-REP-BYPASS-01",
+                hypothesis="Attempt to bypass quality gates",
+                one_change_summary="Update docs/routing_note.md",
+                attributed_subsystem="instructions",
+                attributed_failure={},
+                target_metric="instruction_snr",
+                direction="higher_is_better",
+                min_delta=0.1,
+                baseline_revision=self.base_sha,
+                allowed_paths=("docs/routing_note.md",),
+                mode="REPRESENTATIVE_TASK",
+                threshold_approval={"status": "OWNER_APPROVED", "approved_by": "owner:khanhpn308"},
+                holdout_spec={"cases": [{"id": "HO-1"}]},
+                checks_spec={"commands": [req_cmd], "run_quality_gates": False},
+            )
+        with self.assertRaises(imp.ProtocolError):
+            imp.build_experiment_plan(
+                experiment_id="EXP-REP-BYPASS-02",
+                hypothesis="Attempt fixture_exception in representative task",
+                one_change_summary="Update docs/routing_note.md",
+                attributed_subsystem="instructions",
+                attributed_failure={},
+                target_metric="instruction_snr",
+                direction="higher_is_better",
+                min_delta=0.1,
+                baseline_revision=self.base_sha,
+                allowed_paths=("docs/routing_note.md",),
+                mode="REPRESENTATIVE_TASK",
+                threshold_approval={"status": "OWNER_APPROVED", "approved_by": "owner:khanhpn308"},
+                holdout_spec={"cases": [{"id": "HO-1"}]},
+                checks_spec={"commands": [req_cmd], "run_quality_gates": True, "fixture_exception": True},
+            )
+        with self.assertRaises(imp.ProtocolError):
+            imp.build_experiment_plan(
+                experiment_id="EXP-REP-NOCMD-03",
+                hypothesis="Attempt empty required commands in representative task",
+                one_change_summary="Update docs/routing_note.md",
+                attributed_subsystem="instructions",
+                attributed_failure={},
+                target_metric="instruction_snr",
+                direction="higher_is_better",
+                min_delta=0.1,
+                baseline_revision=self.base_sha,
+                allowed_paths=("docs/routing_note.md",),
+                mode="REPRESENTATIVE_TASK",
+                threshold_approval={"status": "OWNER_APPROVED", "approved_by": "owner:khanhpn308"},
+                holdout_spec={"cases": [{"id": "HO-1"}]},
+                checks_spec={"commands": [], "run_quality_gates": True},
+            )
+
+        # 2. Direct crafted plan bypassing build_experiment_plan with run_quality_gates=False -> REJECT
+        crafted = imp.build_experiment_plan(
+            experiment_id="EXP-REP-CRAFTED-04",
+            hypothesis="Crafted bypass rejected by evaluator and decide_experiment",
+            one_change_summary="Update docs/routing_note.md",
+            attributed_subsystem="instructions",
+            attributed_failure={},
+            target_metric="instruction_snr",
+            direction="higher_is_better",
+            min_delta=0.1,
+            baseline_revision=self.base_sha,
+            allowed_paths=("docs/routing_note.md",),
+            mode="CONTROLLED_FIXTURE",
+            holdout_spec={"cases": [{"id": "HO-1"}]},
+            checks_spec={"commands": [req_cmd], "run_quality_gates": False},
+        )
+        self.assertTrue(crafted["checks_spec"].get("fixture_exception"))
+        crafted["mode"] = "REPRESENTATIVE_TASK"
+        crafted["threshold_approval"] = {"status": "OWNER_APPROVED", "approved_by": "owner:khanhpn308"}
+        res_crafted = imp.run_improvement_experiment(
+            source_repo=self.repo,
+            journal_path=self.journal,
+            evidence_dir=self.ev_dir,
+            workspace_root=self.ws_root,
+            plan=crafted,
+            maker_fn=lambda ws, _mv: ((ws / "docs" / "routing_note.md").write_text("# Routing\n- Focused\n", encoding="utf-8") and {}) or {},
+            evaluator_fn=lambda ws, _p, _r: {
+                "mandatory_passed": True,
+                "metrics": {"instruction_snr": 0.9 if "Focused" in (ws / "docs" / "routing_note.md").read_text(encoding="utf-8") else 0.5},
+            },
+            holdout_fn=lambda _ws, _p: {"cases": [{"case_id": "HO-1", "passed": True}]},
+        )
+        self.assertEqual(res_crafted["decision_record"]["decision"], "REJECT")
+        self.assertEqual(res_crafted["decision_record"]["reason_code"], "HARD_GATE_OR_MANDATORY_CHECK_FAILED")
+
+        # 3. REPRESENTATIVE_TASK modifying a script path where TOOLING-CHECK is NOT_RUN (auto_check=BLOCKED) -> REJECT
+        (self.repo / "scripts").mkdir(exist_ok=True)
+        (self.repo / "scripts" / "helper.py").write_text("VAL = 1\n", encoding="utf-8")
+        subprocess.run(["git", "add", "scripts/helper.py"], cwd=self.repo, check=True, capture_output=True, timeout=15)
+        subprocess.run(["git", "commit", "-qm", "add helper"], cwd=self.repo, check=True, capture_output=True, timeout=15)
+        helper_base = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=self.repo, check=True, capture_output=True, text=True, timeout=15
+        ).stdout.strip()
+
+        plan_blocked_qg = imp.build_experiment_plan(
+            experiment_id="EXP-REP-BLOCKED-QG",
+            hypothesis="Script change without TOOLING-CHECK receipt must block KEEP",
+            one_change_summary="Update scripts/helper.py",
+            attributed_subsystem="tooling",
+            attributed_failure={},
+            target_metric="instruction_snr",
+            direction="higher_is_better",
+            min_delta=0.1,
+            baseline_revision=helper_base,
+            allowed_paths=("scripts/helper.py",),
+            mode="REPRESENTATIVE_TASK",
+            threshold_approval={"status": "OWNER_APPROVED", "approved_by": "owner:khanhpn308"},
+            holdout_spec={"cases": [{"id": "HO-1"}]},
+            checks_spec={"commands": [[sys.executable, "-c", "import pathlib; assert pathlib.Path('scripts/helper.py').is_file()"]], "run_quality_gates": True},
+        )
+        res_blocked_qg = imp.run_improvement_experiment(
+            source_repo=self.repo,
+            journal_path=self.journal,
+            evidence_dir=self.ev_dir,
+            workspace_root=self.ws_root,
+            plan=plan_blocked_qg,
+            maker_fn=lambda ws, _mv: ((ws / "scripts" / "helper.py").write_text("VAL = 2\n", encoding="utf-8") and {}) or {},
+            evaluator_fn=lambda ws, _p, _r: {
+                "mandatory_passed": True,
+                "metrics": {"instruction_snr": 0.9 if "VAL = 2" in (ws / "scripts" / "helper.py").read_text(encoding="utf-8") else 0.5},
+            },
+            holdout_fn=lambda _ws, _p: {"cases": [{"case_id": "HO-1", "passed": True}]},
+        )
+        self.assertEqual(res_blocked_qg["decision_record"]["decision"], "REJECT")
+        self.assertEqual(res_blocked_qg["decision_record"]["reason_code"], "HARD_GATE_OR_MANDATORY_CHECK_FAILED")
+
+        # 4. REPRESENTATIVE_TASK failing required command check -> REJECT
+        plan_fail_cmd = imp.build_experiment_plan(
+            experiment_id="EXP-REP-FAILCMD",
+            hypothesis="Failing required command must block KEEP",
+            one_change_summary="Update docs/routing_note.md",
+            attributed_subsystem="instructions",
+            attributed_failure={},
+            target_metric="instruction_snr",
+            direction="higher_is_better",
+            min_delta=0.1,
+            baseline_revision=helper_base,
+            allowed_paths=("docs/routing_note.md",),
+            mode="REPRESENTATIVE_TASK",
+            threshold_approval={"status": "OWNER_APPROVED", "approved_by": "owner:khanhpn308"},
+            holdout_spec={"cases": [{"id": "HO-1"}]},
+            checks_spec={"commands": [[sys.executable, "-c", "import pathlib, sys; sys.exit(0 if 'Focused' not in pathlib.Path('docs/routing_note.md').read_text() else 1)"]], "run_quality_gates": True},
+        )
+        res_fail_cmd = imp.run_improvement_experiment(
+            source_repo=self.repo,
+            journal_path=self.journal,
+            evidence_dir=self.ev_dir,
+            workspace_root=self.ws_root,
+            plan=plan_fail_cmd,
+            maker_fn=lambda ws, _mv: ((ws / "docs" / "routing_note.md").write_text("# Routing\n- Focused\n", encoding="utf-8") and {}) or {},
+            evaluator_fn=lambda ws, _p, _r: {
+                "mandatory_passed": True,
+                "metrics": {"instruction_snr": 0.9 if "Focused" in (ws / "docs" / "routing_note.md").read_text(encoding="utf-8") else 0.5},
+            },
+            holdout_fn=lambda _ws, _p: {"cases": [{"case_id": "HO-1", "passed": True}]},
+        )
+        self.assertEqual(res_fail_cmd["decision_record"]["decision"], "REJECT")
+        self.assertEqual(res_fail_cmd["decision_record"]["reason_code"], "HARD_GATE_OR_MANDATORY_CHECK_FAILED")
+
+    def test_holdout_exact_frozen_vs_executed_case_id_matching(self):
+        # 1. Duplicate or empty frozen holdout case IDs rejected in build_experiment_plan
+        with self.assertRaises(imp.ProtocolError):
+            imp.build_experiment_plan(
+                experiment_id="EXP-HO-DUP-FROZEN",
+                hypothesis="Duplicate frozen holdout ID rejected",
+                one_change_summary="Update docs/routing_note.md",
+                attributed_subsystem="instructions",
+                attributed_failure={},
+                target_metric="instruction_snr",
+                direction="higher_is_better",
+                min_delta=0.1,
+                baseline_revision=self.base_sha,
+                allowed_paths=("docs/routing_note.md",),
+                holdout_spec={"cases": [{"id": "HO-1"}, {"id": "HO-1"}]},
+            )
+        with self.assertRaises(imp.ProtocolError):
+            imp.build_experiment_plan(
+                experiment_id="EXP-HO-EMPTY-FROZEN",
+                hypothesis="Empty frozen holdout ID rejected",
+                one_change_summary="Update docs/routing_note.md",
+                attributed_subsystem="instructions",
+                attributed_failure={},
+                target_metric="instruction_snr",
+                direction="higher_is_better",
+                min_delta=0.1,
+                baseline_revision=self.base_sha,
+                allowed_paths=("docs/routing_note.md",),
+                holdout_spec={"cases": [{"id": ""}]},
+            )
+
+        # Helper to run controlled fixture with custom holdout_fn against frozen ["HO-1", "HO-2"]
+        def _run_with_holdout(exp_id: str, holdout_fn):
+            plan = imp.build_experiment_plan(
+                experiment_id=exp_id,
+                hypothesis="Verify exact holdout ID matching",
+                one_change_summary="Update docs/routing_note.md",
+                attributed_subsystem="instructions",
+                attributed_failure={},
+                target_metric="instruction_snr",
+                direction="higher_is_better",
+                min_delta=0.1,
+                baseline_revision=self.base_sha,
+                allowed_paths=("docs/routing_note.md",),
+                mode="CONTROLLED_FIXTURE",
+                holdout_spec={"cases": [{"id": "HO-1"}, {"id": "HO-2"}]},
+                checks_spec={"commands": [], "run_quality_gates": True},
+            )
+            return imp.run_improvement_experiment(
+                source_repo=self.repo,
+                journal_path=self.journal,
+                evidence_dir=self.ev_dir,
+                workspace_root=self.ws_root,
+                plan=plan,
+                maker_fn=lambda ws, _mv: ((ws / "docs" / "routing_note.md").write_text("# Routing\n- Focused\n", encoding="utf-8") and {}) or {},
+                evaluator_fn=lambda ws, _p, _r: {
+                    "mandatory_passed": True,
+                    "metrics": {"instruction_snr": 0.9 if "Focused" in (ws / "docs" / "routing_note.md").read_text(encoding="utf-8") else 0.5},
+                },
+                holdout_fn=holdout_fn,
+            )
+
+        # Missing case ID ("HO-2" omitted)
+        res_missing = _run_with_holdout(
+            "EXP-HO-MISSING",
+            lambda _ws, _p: {"cases": [{"case_id": "HO-1", "passed": True}]},
+        )
+        self.assertEqual(res_missing["decision_record"]["decision"], "REJECT")
+        self.assertEqual(res_missing["decision_record"]["reason_code"], "HOLDOUT_FAILED_OR_MISSING")
+
+        # Duplicate executed case ID ("HO-1" repeated twice, "HO-2" omitted)
+        res_dup = _run_with_holdout(
+            "EXP-HO-DUP-EXEC",
+            lambda _ws, _p: {"cases": [{"case_id": "HO-1", "passed": True}, {"case_id": "HO-1", "passed": True}]},
+        )
+        self.assertEqual(res_dup["decision_record"]["decision"], "REJECT")
+        self.assertEqual(res_dup["decision_record"]["reason_code"], "HOLDOUT_FAILED_OR_MISSING")
+
+        # Wrong / unexpected case ID
+        res_wrong = _run_with_holdout(
+            "EXP-HO-WRONG",
+            lambda _ws, _p: {"cases": [{"case_id": "HO-1", "passed": True}, {"case_id": "HO-FAKE", "passed": True}]},
+        )
+        self.assertEqual(res_wrong["decision_record"]["decision"], "REJECT")
+        self.assertEqual(res_wrong["decision_record"]["reason_code"], "HOLDOUT_FAILED_OR_MISSING")
+
+        # Unexecuted case (executed=False)
+        res_unexec = _run_with_holdout(
+            "EXP-HO-UNEXEC",
+            lambda _ws, _p: {"cases": [{"case_id": "HO-1", "passed": True}, {"case_id": "HO-2", "executed": False, "passed": True}]},
+        )
+        self.assertEqual(res_unexec["decision_record"]["decision"], "REJECT")
+        self.assertEqual(res_unexec["decision_record"]["reason_code"], "HOLDOUT_FAILED_OR_MISSING")
+
+        # Bare {"passed": True} without per-case entries
+        res_bare = _run_with_holdout("EXP-HO-BARE", lambda _ws, _p: {"passed": True})
+        self.assertEqual(res_bare["decision_record"]["decision"], "REJECT")
+        self.assertEqual(res_bare["decision_record"]["reason_code"], "HOLDOUT_FAILED_OR_MISSING")
+
+        # Exact match (even in reverse order) -> KEEP
+        res_exact = _run_with_holdout(
+            "EXP-HO-EXACT",
+            lambda _ws, _p: {"cases": [{"case_id": "HO-2", "passed": True}, {"case_id": "HO-1", "passed": True}]},
+        )
+        self.assertEqual(res_exact["decision_record"]["decision"], "KEEP")
 
 
 if __name__ == "__main__":
