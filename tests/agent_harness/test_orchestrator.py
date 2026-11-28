@@ -2161,6 +2161,280 @@ time.sleep(60)
             self.assertEqual(rec["decision"], "TERMINAL_PRESERVED")
             self.assertEqual(rec["acceptance_mode"], "REAL_ACCEPTANCE_CANDIDATE")
 
+    def test_p08c_repeated_reconcile_persists_resume_phase_and_is_idempotent(self):
+        wt = self._make_linked_worktree(issue=4410, suffix="idemp-rec")
+        self._seed_harness_files(wt)
+        wt_base = _git(wt, "rev-parse", "HEAD")
+        ev_dir = self.base_dir / "ev_idemp_rec"
+
+        # 1. Interrupted in VERIFYING -> reconcile 1 sets & persists VERIFY_AND_CHECK;
+        #    reconcile 2 & 3 MUST keep VERIFY_AND_CHECK (never flip to MAKER!)
+        rid = self._spawn_and_kill_at_boundary(
+            repo_path=wt, journal_path=self.journal_path, evidence_dir=ev_dir, boundary="verifying"
+        )
+        rec1 = orchestrator.reconcile_run(
+            repo=wt,
+            journal_path=self.journal_path,
+            run_id=rid,
+            evidence_dir=ev_dir,
+            issue_data={"state": "OPEN", "title": "Child Crash Fixture", "body": "## Target Directories (allowed paths)\n- `README.md`\n"},
+        )
+        self.assertEqual(rec1["status"], "REPAIR_REQUIRED")
+        self.assertEqual(rec1["resume_phase"], "VERIFY_AND_CHECK")
+        self.assertEqual(rec1["decision"], "RECONCILED_RESUME_SAFE")
+        self.assertEqual(rec1["recovery_reason"], "interrupted_during_verification")
+        with Journal(self.journal_path) as j:
+            persisted = j.get_control_run(rid)
+        self.assertEqual(persisted["resume_phase"], "VERIFY_AND_CHECK")
+
+        rec2 = orchestrator.reconcile_run(
+            repo=wt,
+            journal_path=self.journal_path,
+            run_id=rid,
+            evidence_dir=ev_dir,
+            issue_data={"state": "OPEN", "title": "Child Crash Fixture", "body": "## Target Directories (allowed paths)\n- `README.md`\n"},
+        )
+        rec3 = orchestrator.reconcile_run(
+            repo=wt,
+            journal_path=self.journal_path,
+            run_id=rid,
+            evidence_dir=ev_dir,
+            issue_data={"state": "OPEN", "title": "Child Crash Fixture", "body": "## Target Directories (allowed paths)\n- `README.md`\n"},
+        )
+        for rec_n in (rec2, rec3):
+            self.assertEqual(rec_n["status"], "REPAIR_REQUIRED")
+            self.assertEqual(rec_n["resume_phase"], "VERIFY_AND_CHECK")
+            self.assertEqual(rec_n["decision"], "RECONCILED_RESUME_SAFE")
+            self.assertEqual(rec_n["recovery_reason"], "interrupted_during_verification")
+            self.assertTrue(rec_n["can_resume"])
+            self.assertGreater(rec_n["remaining_wall_seconds"], 0.0)
+
+        # CLI status/resume/signals also surface persisted resume_phase and remaining_wall_seconds
+        with patch.object(sys, "argv", ["cli.py", "resume", "--issue", "4410", "--run-id", rid, "--repo", str(wt), "--state", str(self.journal_path), "--offline"]), \
+             contextlib.redirect_stdout(io.StringIO()) as out_cli_res:
+            self.assertEqual(p1_cli.main(), 0)
+        cli_res_doc = json.loads(out_cli_res.getvalue())
+        self.assertEqual(cli_res_doc["resume_phase"], "VERIFY_AND_CHECK")
+        self.assertEqual(cli_res_doc["reconciliation"]["resume_phase"], "VERIFY_AND_CHECK")
+        self.assertEqual(cli_res_doc["control_run"]["resume_phase"], "VERIFY_AND_CHECK")
+
+        # Subsequent loop resume AFTER repeated reconciles still skips Maker (0 calls)!
+        maker_calls = {"n": 0}
+        resumed = orchestrator.run_maker_checker_loop(
+            repo=wt,
+            issue=4410,
+            journal_path=self.journal_path,
+            evidence_dir=ev_dir,
+            base_sha=wt_base,
+            issue_data={"state": "OPEN", "title": "Child Crash Fixture", "body": "## Target Directories (allowed paths)\n- `README.md`\n"},
+            maker_fn=lambda _r, _c: (maker_calls.__setitem__("n", maker_calls["n"] + 1), {"changed_path": "README.md"})[1],
+            check_profile="quick",
+            allow_fixture_mode=True,
+            require_isolated_worktree=False,
+            require_protected_approval=False,
+            resume_run_id=rid,
+        )
+        self.assertEqual(resumed["state"], "READY_FOR_HUMAN_REVIEW")
+        self.assertEqual(maker_calls["n"], 0)
+
+        # 2. Candidate drift while paused in VERIFY_AND_CHECK still blocks conservatively on repeated reconcile
+        wt_drift = self._make_linked_worktree(issue=4410, suffix="idemp-drift")
+        self._seed_harness_files(wt_drift)
+        j_drift = self.base_dir / "host" / "idemp_drift.sqlite"
+        ev_drift = self.base_dir / "ev_idemp_drift"
+        rid_d = self._spawn_and_kill_at_boundary(
+            repo_path=wt_drift, journal_path=j_drift, evidence_dir=ev_drift, boundary="checking"
+        )
+        rec_d1 = orchestrator.reconcile_run(
+            repo=wt_drift, journal_path=j_drift, run_id=rid_d, evidence_dir=ev_drift,
+            issue_data={"state": "OPEN", "title": "Child Crash Fixture", "body": "## Target Directories (allowed paths)\n- `README.md`\n"},
+        )
+        self.assertEqual(rec_d1["resume_phase"], "VERIFY_AND_CHECK")
+        (wt_drift / "README.md").write_text("tampered while paused!\n", encoding="utf-8")
+        rec_d2 = orchestrator.reconcile_run(
+            repo=wt_drift, journal_path=j_drift, run_id=rid_d, evidence_dir=ev_drift,
+            issue_data={"state": "OPEN", "title": "Child Crash Fixture", "body": "## Target Directories (allowed paths)\n- `README.md`\n"},
+        )
+        self.assertEqual(rec_d2["status"], "BLOCKED")
+        self.assertEqual(rec_d2["recovery_reason"], "candidate_drift_during_verify_or_check")
+        self.assertFalse(rec_d2["can_resume"])
+
+    def test_p08c_executable_resume_run_py_and_p1_cli_preserve_journal_policy_and_budget(self):
+        wt = self._make_linked_worktree(issue=437, suffix="exec-res")
+        self._seed_harness_files(wt)
+        wt_base = _git(wt, "rev-parse", "HEAD")
+        ev_exec = self.base_dir / "ev_exec_res"
+        frozen_policy = orchestrator.build_run_policy(
+            consecutive_passes_required=1,
+            max_rounds=2,
+            max_wall_seconds=100,
+            no_progress_threshold=2,
+        )
+        adm = orchestrator.admit_run(
+            repo=wt,
+            issue=437,
+            journal_path=self.journal_path,
+            base_sha=wt_base,
+            issue_data=self.issue_data,
+            approval={"status": "SUPERVISED_ISSUE_OPEN", "isolated_pilot_attested": True},
+            policy=frozen_policy,
+            check_profile="quick",
+            maker_provider="codex",
+            checker_provider="agy",
+            capability_overrides={"codex_path": "/bin/true", "agy_path": "/bin/true"},
+            evidence_dir=ev_exec,
+        )
+        rid = adm["run"]["run_id"]
+        (ev_exec / "frozen-check-plan.json").write_text(json.dumps(adm["check_plan"], indent=2, sort_keys=True), encoding="utf-8")
+
+        # Simulate crash during CHECKING after Maker edited README.md and consumed 37.5s wall budget
+        d_m = orchestrator.dispatch_role(repo=wt, journal_path=self.journal_path, run_id=rid, role="maker", in_flight_round=1)
+        orchestrator.transition_state(
+            journal_path=self.journal_path, run_id=rid, expected="DISPATCHED", next_state="MAKER_RUNNING",
+            actor_role="host", action="maker_started", dispatch_token=d_m["dispatch_token"],
+        )
+        (wt / "README.md").write_text("edited before crash\n", encoding="utf-8")
+        snap = feature_state.compute_candidate_snapshot(wt, base_sha=wt_base)
+        with Journal(self.journal_path) as j:
+            j.record_control_progress(
+                rid, expected_state="MAKER_RUNNING", actor_role="host", op="maker_completed",
+                expected_dispatch_token=d_m["dispatch_token"], wall_elapsed_delta_s=20.0,
+                in_flight_round=1, candidate_sha256=snap["candidate_sha256"], last_diff_sha256=snap["diff_sha256"],
+            )
+            j.transition_control_run(
+                rid, expected="MAKER_RUNNING", next_state="VERIFYING", actor_role="host",
+                action="host_verifying", expected_dispatch_token=d_m["dispatch_token"],
+            )
+            j.transition_control_run(
+                rid, expected="VERIFYING", next_state="REPAIR_REQUIRED", actor_role="host",
+                action="host_checks_passed_prepare_checker", expected_dispatch_token=d_m["dispatch_token"],
+                clear_dispatch=True,
+            )
+        d_c = orchestrator.dispatch_role(
+            repo=wt, journal_path=self.journal_path, run_id=rid, role="checker", in_flight_round=1,
+            lease_owner={"pid": 99999996, "start_ticks": "1", "host": os.uname().nodename},
+        )
+        orchestrator.transition_state(
+            journal_path=self.journal_path, run_id=rid, expected="DISPATCHED", next_state="CHECKING",
+            actor_role="host", action="checker_started", dispatch_token=d_c["dispatch_token"],
+        )
+        with Journal(self.journal_path) as j:
+            j.record_control_progress(
+                rid, expected_state="CHECKING", actor_role="host", op="checker_tick",
+                expected_dispatch_token=d_c["dispatch_token"], wall_elapsed_delta_s=17.5, in_flight_round=1,
+            )
+        r1_partial = ev_exec / "round-01"
+        r1_partial.mkdir(parents=True, exist_ok=True)
+        (r1_partial / "audit_report.json").write_text("{partial", encoding="utf-8")
+
+        # Execute executable resume via run.py with conflicting CLI policy flags (must be ignored in favor of frozen policy!)
+        def _fake_tool(cmd, cwd, timeout):
+            if cmd[0] == "gh":
+                return {"tool": "gh", "command": cmd, "exit_code": 0, "output_sha256": "0" * 64, "output_bytes": 10}, json.dumps(self.issue_data)
+            return {"tool": cmd[0], "command": cmd, "exit_code": 0, "output_sha256": "0" * 64, "output_bytes": 2}, "OK"
+
+        codex_calls = {"n": 0}
+        audit_timeouts: list[int] = []
+
+        def _fail_if_maker_called(*_args, **_kwargs):
+            codex_calls["n"] += 1
+            raise AssertionError("Maker codex.invoke must NOT execute on VERIFY_AND_CHECK resume!")
+
+        def _fake_audit(prompt, snapshot, schema, timeout, required_paths, **kwargs):
+            audit_timeouts.append(timeout)
+            ev_refs = [
+                {"receipt_path": k, "receipt_sha256": v}
+                for k, v in sorted((kwargs.get("evidence_inventory") or {}).items())
+            ]
+            return {
+                "status": "PASS",
+                "findings": [],
+                "limitations": [],
+                "reviewed_scope": ["README.md"],
+                "selection_sha256": kwargs["selection_sha256"],
+                "rule_results": [],
+                "rubric": orchestrator.build_rubric_report(
+                    decision="ACCEPT", hard_gate_passed=True, evidence_refs=ev_refs
+                ),
+            }
+
+        res_args = argparse.Namespace(
+            issue=437,
+            execute=True,
+            accept_isolated_pilot=True,
+            expected_idf_version=None,
+            toolchain_mode="container_only",
+            allow_native_fallback=False,
+            timeout=300,
+            max_repairs=9,
+            check_profile="software",
+            max_wall_seconds=9999,
+            consecutive_passes=5,
+            no_progress_threshold=9,
+            require_token_budget=False,
+            require_cost_budget=False,
+            approved_by="",
+            journal=self.journal_path,
+            feature_file=None,
+            unit_id=None,
+            trusted_definitions=None,
+            resume_run_id=rid,
+            evidence_dir=None,
+        )
+        stream = io.StringIO()
+        with patch.object(harness_run, "__file__", str(wt / "scripts/agent_harness/run.py")), \
+             patch.object(harness_run.shutil, "which", return_value="fixture-bin"), \
+             patch.object(harness_run, "tool", side_effect=_fake_tool), \
+             patch.object(harness_run.codex, "invoke", side_effect=_fail_if_maker_called), \
+             patch.object(harness_run.antigravity, "invoke", side_effect=_fake_audit), \
+             contextlib.redirect_stdout(stream):
+            rc = harness_run.run(res_args)
+        self.assertEqual(rc, 0, stream.getvalue())
+        out_manifest = pathlib.Path(stream.getvalue().strip().split(": ", 1)[1])
+        self.assertEqual(out_manifest.parent.resolve(), ev_exec.resolve())
+        doc_m = json.loads(out_manifest.read_text(encoding="utf-8"))
+        self.assertEqual(doc_m["run_id"], rid)
+        self.assertEqual(doc_m["state"], "READY_FOR_HUMAN_REVIEW")
+        self.assertEqual(doc_m["policy_sha256"], frozen_policy["policy_sha256"])
+        self.assertEqual(codex_calls["n"], 0)
+        # Auditor timeout MUST be bounded by remaining budget (<= 100 - 37.5 = 62.5s), never fresh 300s/9999s!
+        self.assertTrue(audit_timeouts and audit_timeouts[0] <= 63, audit_timeouts)
+        self.assertTrue((ev_exec / "interrupted").is_dir())
+        with Journal(self.journal_path) as j:
+            final_ctrl = j.get_control_run(rid)
+            self.assertEqual(final_ctrl["state"], "READY_FOR_HUMAN_REVIEW")
+            self.assertEqual(final_ctrl["policy"]["max_wall_seconds"], 100)
+            self.assertEqual(final_ctrl["policy"]["max_rounds"], 2)
+            self.assertGreaterEqual(final_ctrl["budget_consumed"]["wall_seconds"], 37.5)
+
+        # Verify p1/cli.py resume --execute forwards exact --resume-run-id and --journal arguments
+        with patch.object(p1_cli.subprocess, "run", return_value=argparse.Namespace(returncode=0)) as mock_sub, \
+             patch.object(
+                 sys,
+                 "argv",
+                 [
+                     "cli.py",
+                     "resume",
+                     "--issue",
+                     "437",
+                     "--run-id",
+                     rid,
+                     "--repo",
+                     str(wt),
+                     "--state",
+                     str(self.journal_path),
+                     "--execute",
+                     "--accept-isolated-pilot",
+                 ],
+             ):
+            self.assertEqual(p1_cli.main(), 0)
+        fwd_cmd = mock_sub.call_args[0][0]
+        self.assertIn("--execute", fwd_cmd)
+        self.assertIn("--accept-isolated-pilot", fwd_cmd)
+        self.assertIn("--resume-run-id", fwd_cmd)
+        self.assertIn(rid, fwd_cmd)
+        self.assertIn(str(self.journal_path), fwd_cmd)
+
 
 
 if __name__ == "__main__":

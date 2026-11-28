@@ -89,10 +89,17 @@ def main() -> int:
     recover.add_argument("--state", type=Path, default=None)
     resume = sub.add_parser("resume")
     resume.add_argument("--issue", type=int, required=True)
+    resume.add_argument("--run-id", default=None)
     resume.add_argument("--repo", type=Path, default=Path.cwd())
     resume.add_argument("--state", type=Path, default=None)
+    resume.add_argument("--evidence-dir", type=Path, default=None)
     resume.add_argument("--feature-file", type=Path, default=None)
     resume.add_argument("--offline", action="store_true")
+    resume.add_argument("--execute", action="store_true", help="Execute resumed control run via run.py")
+    resume.add_argument("--accept-isolated-pilot", action="store_true",
+                        help="Operator attests environment isolation for executable resume")
+    resume.add_argument("--approved-by", default="")
+    resume.add_argument("--timeout", type=int, default=600)
     ckpt = sub.add_parser("checkpoint")
     ckpt.add_argument("--issue", type=int, required=True)
     ckpt.add_argument("--repo", type=Path, default=Path.cwd())
@@ -210,6 +217,35 @@ def main() -> int:
                 print(json.dumps(preview, indent=2))
                 return 0
         if args.command == "resume":
+            if getattr(args, "execute", False):
+                if not getattr(args, "accept_isolated_pilot", False):
+                    print(json.dumps({"state": "BLOCKED", "reason": "Executable resume requires --accept-isolated-pilot"}))
+                    return 2
+                target_run_id = args.run_id
+                if not target_run_id:
+                    with Journal(state) as journal:
+                        latest = journal.latest_control_run_for_issue(args.issue)
+                    if latest is None:
+                        raise ControlPlaneError(f"No control run found for Issue #{args.issue}")
+                    target_run_id = latest["run_id"]
+                cmd = [
+                    sys.executable,
+                    str(Path(__file__).resolve().parents[1] / "run.py"),
+                    "--issue", str(args.issue),
+                    "--execute",
+                    "--accept-isolated-pilot",
+                    "--journal", str(state),
+                    "--resume-run-id", str(target_run_id),
+                    "--timeout", str(getattr(args, "timeout", 600)),
+                ]
+                if args.evidence_dir is not None:
+                    cmd.extend(["--evidence-dir", str(args.evidence_dir)])
+                if getattr(args, "approved_by", ""):
+                    cmd.extend(["--approved-by", args.approved_by])
+                if args.feature_file is not None:
+                    cmd.extend(["--feature-file", str(args.feature_file)])
+                done = subprocess.run(cmd, cwd=args.repo, check=False)
+                return done.returncode
             res = session_start(
                 issue=args.issue,
                 repo=args.repo,
@@ -217,8 +253,22 @@ def main() -> int:
                 feature_file=args.feature_file,
                 offline=args.offline,
             )
-            print(json.dumps(res, indent=2))
-            return 2 if res["status"] in ("BLOCKED", "RECOVERY_REQUIRED") else 0
+            blocked_resume = res["status"] in ("BLOCKED", "RECOVERY_REQUIRED")
+            if args.run_id:
+                rec = reconcile_run(
+                    repo=args.repo,
+                    journal_path=state,
+                    run_id=args.run_id,
+                    evidence_dir=args.evidence_dir,
+                    offline=args.offline,
+                )
+                res["reconciliation"] = redact_data(rec)
+                res["resume_phase"] = rec.get("resume_phase")
+                res["remaining_wall_seconds"] = rec.get("remaining_wall_seconds")
+                if not rec.get("can_resume") and rec.get("status") not in ("READY_FOR_HUMAN_REVIEW",):
+                    blocked_resume = True
+            print(json.dumps(redact_data(res), indent=2))
+            return 2 if blocked_resume else 0
         if args.command == "checkpoint":
             res = session_checkpoint(
                 issue=args.issue,
@@ -270,6 +320,7 @@ def main() -> int:
                             "issue": obs_st["issue"],
                             "state": obs_st["state"],
                             "phase": obs_st["phase"],
+                            "resume_phase": obs_st.get("resume_phase", ""),
                             "round_num": obs_st["round_num"],
                             "in_flight_round": obs_st["in_flight_round"],
                             "lease": obs_st["lease"],

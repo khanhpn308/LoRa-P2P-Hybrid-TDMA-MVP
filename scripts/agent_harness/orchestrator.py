@@ -1916,6 +1916,11 @@ def record_round_result(
                 "next_action": resolved_next_action,
                 "blocker": budget_reason or failure_sig if next_state in ("BLOCKED", "ESCALATED") else "",
                 "recovery_reason": "",
+                "resume_phase": (
+                    "CONFIRMING_VERIFY_AND_CHECK"
+                    if next_state == "REPAIR_REQUIRED" and consec > 0
+                    else ("MAKER" if next_state == "REPAIR_REQUIRED" else "")
+                ),
                 **({"evidence_dir": str(evidence_dir.resolve())} if evidence_dir is not None and not run.get("evidence_dir") else {}),
             },
             detail={
@@ -2540,6 +2545,7 @@ def build_run_observability_status(
             "liveness": liveness,
         },
         "recovery_reason": run.get("recovery_reason", ""),
+        "resume_phase": run.get("resume_phase", ""),
         "decision": (
             latest_round["verdict"]
             if latest_round is not None
@@ -2660,6 +2666,7 @@ def reconcile_run(
                     clear_dispatch=clear_lease,
                     update_fields={
                         "recovery_reason": reason_code,
+                        "resume_phase": "",
                         "blocker": message,
                         "next_action": f"Inspect preserved worktree and resolve {reason_code}",
                     },
@@ -2981,6 +2988,7 @@ def reconcile_run(
                 clear_dispatch=True,
                 update_fields={
                     "recovery_reason": "budget_exhausted",
+                    "resume_phase": "",
                     "blocker": budget_err,
                     "next_action": "Budget exhausted across restarts; escalate to Owner",
                 },
@@ -3027,6 +3035,7 @@ def reconcile_run(
                 clear_dispatch=True,
                 update_fields={
                     "recovery_reason": "interrupted_before_maker_start",
+                    "resume_phase": "MAKER",
                     "blocker": "",
                     "next_action": f"Safe to dispatch Maker for round {int(run['round_num']) + 1}",
                 },
@@ -3042,6 +3051,8 @@ def reconcile_run(
             "recovery_reason": "interrupted_before_maker_start",
             "blocker": "",
             "next_action": cur["next_action"],
+            "remaining_wall_seconds": round(max(0.0, remaining_wall_seconds(cur)), 3),
+            "budget_consumed": cur["budget_consumed"],
             "acceptance_mode": acceptance_mode,
             "ready_to_merge": False,
             "run": cur,
@@ -3077,10 +3088,11 @@ def reconcile_run(
                 clear_dispatch=True,
                 update_fields={
                     "recovery_reason": rec_reason,
+                    "resume_phase": resume_phase,
                     "blocker": "",
                     "next_action": next_act,
                 },
-                detail={"quarantined_dir": quarantined, "previous_state": state},
+                detail={"quarantined_dir": quarantined, "previous_state": state, "resume_phase": resume_phase},
             )
         record_process_signal(
             journal_path=journal_path,
@@ -3109,14 +3121,18 @@ def reconcile_run(
             "recovery_reason": rec_reason,
             "blocker": "",
             "next_action": next_act,
+            "remaining_wall_seconds": round(max(0.0, remaining_wall_seconds(cur)), 3),
+            "budget_consumed": cur["budget_consumed"],
             "acceptance_mode": acceptance_mode,
             "ready_to_merge": False,
             "run": cur,
         }
 
-    # State is ADMITTED or REPAIR_REQUIRED with no active dispatch lease
-    if int(run["consecutive_passes"]) > 0:
-        if (
+    # State is ADMITTED or REPAIR_REQUIRED with no active dispatch lease:
+    # Preserve previously reconciled resume_phase idempotently across repeated calls!
+    persisted_phase = str(run.get("resume_phase") or "")
+    if int(run["consecutive_passes"]) > 0 or persisted_phase == "CONFIRMING_VERIFY_AND_CHECK":
+        if int(run["consecutive_passes"]) > 0 and (
             snap["candidate_sha256"] != run["streak_candidate_sha256"]
             or snap["diff_sha256"] != run["streak_diff_sha256"]
         ):
@@ -3124,8 +3140,35 @@ def reconcile_run(
                 "confirming_pass_candidate_drift",
                 "Candidate drifted between confirming passes before restart",
             )
+        if snap["candidate_sha256"] != run["candidate_sha256"]:
+            return _block_with_reason(
+                "confirming_pass_candidate_drift",
+                "Candidate drifted from persisted checkpoint before restart",
+            )
         resume_phase = "CONFIRMING_VERIFY_AND_CHECK"
-        next_act = f"Run confirming Host verification & independent Checker for round {int(run['round_num']) + 1}"
+        prev_reason = str(run.get("recovery_reason") or "")
+        if prev_reason in ("interrupted_during_verification", "interrupted_during_checker"):
+            rec_reason = prev_reason
+            decision = "RECONCILED_RESUME_SAFE"
+            next_act = str(run.get("next_action") or "") or (
+                f"Re-run idempotent Host verification & independent Checker for round {int(run['round_num']) + 1} (no Maker re-execution)"
+            )
+        else:
+            rec_reason = "clean_checkpoint_resume"
+            decision = "RESUME_SAFE"
+            next_act = f"Run confirming Host verification & independent Checker for round {int(run['round_num']) + 1}"
+    elif persisted_phase == "VERIFY_AND_CHECK":
+        if snap["candidate_sha256"] != run["candidate_sha256"]:
+            return _block_with_reason(
+                "candidate_drift_during_verify_or_check",
+                "Candidate mutated while run was paused for VERIFY_AND_CHECK reconciliation",
+            )
+        resume_phase = "VERIFY_AND_CHECK"
+        rec_reason = str(run.get("recovery_reason") or "") or "interrupted_during_verification"
+        decision = "RECONCILED_RESUME_SAFE"
+        next_act = str(run.get("next_action") or "") or (
+            f"Re-run idempotent Host verification & independent Checker for round {int(run['round_num']) + 1} (no Maker re-execution)"
+        )
     else:
         if snap["candidate_sha256"] != run["candidate_sha256"]:
             return _block_with_reason(
@@ -3133,7 +3176,15 @@ def reconcile_run(
                 "Candidate drifted from last persisted checkpoint",
             )
         resume_phase = "MAKER"
-        next_act = f"Dispatch Maker for round {int(run['round_num']) + 1}"
+        prev_reason = str(run.get("recovery_reason") or "")
+        if prev_reason == "interrupted_before_maker_start":
+            rec_reason = prev_reason
+            decision = "RECONCILED_RESUME_SAFE"
+            next_act = str(run.get("next_action") or "") or f"Safe to dispatch Maker for round {int(run['round_num']) + 1}"
+        else:
+            rec_reason = "clean_checkpoint_resume"
+            decision = "RESUME_SAFE"
+            next_act = f"Dispatch Maker for round {int(run['round_num']) + 1}"
 
     with Journal(journal_path) as j2:
         cur = j2.record_control_event(
@@ -3141,21 +3192,24 @@ def reconcile_run(
             expected_state=state,
             actor_role=actor_role,
             action="reconcile_clean_resume",
-            recovery_reason="clean_checkpoint_resume",
+            recovery_reason=rec_reason,
+            resume_phase=resume_phase,
             blocker="",
             next_action=next_act,
-            detail={"resume_phase": resume_phase, "round_num": run["round_num"]},
+            detail={"resume_phase": resume_phase, "round_num": run["round_num"], "decision": decision},
         )
     return {
         "status": cur["state"],
         "run_id": rid,
         "issue": cur["issue"],
-        "decision": "RESUME_SAFE",
+        "decision": decision,
         "can_resume": True,
         "resume_phase": resume_phase,
-        "recovery_reason": "clean_checkpoint_resume",
+        "recovery_reason": rec_reason,
         "blocker": "",
         "next_action": next_act,
+        "remaining_wall_seconds": round(max(0.0, remaining_wall_seconds(cur)), 3),
+        "budget_consumed": cur["budget_consumed"],
         "acceptance_mode": acceptance_mode,
         "ready_to_merge": False,
         "run": cur,

@@ -1526,14 +1526,21 @@ def session_start(
         elif ctrl_state in ("BLOCKED", "ESCALATED") and status not in ("BLOCKED", "RECOVERY_REQUIRED"):
             blocker = blocker or ctrl_blocker or control_run.get("last_failure_sig", "")
             next_action = ctrl_next or next_action
+        ctrl_policy = control_run.get("policy") if isinstance(control_run.get("policy"), dict) else {}
+        ctrl_consumed = control_run.get("budget_consumed") if isinstance(control_run.get("budget_consumed"), dict) else {}
+        ctrl_rem_wall = max(
+            0.0,
+            round(float(ctrl_policy.get("max_wall_seconds", 0.0)) - float(ctrl_consumed.get("wall_seconds", 0.0)), 3),
+        )
         control_run_summary = {
             "run_id": control_run["run_id"],
             "state": ctrl_state,
             "phase": ctrl_state,
+            "resume_phase": control_run.get("resume_phase", ""),
             "round_num": control_run["round_num"],
             "in_flight_round": control_run.get("in_flight_round", 0),
             "policy_sha256": control_run["policy_sha256"],
-            "owner_approval_status": control_run["policy"].get("owner_approval_status"),
+            "owner_approval_status": ctrl_policy.get("owner_approval_status"),
             "cancel_requested": control_run["cancel_requested"],
             "evidence_dir": control_run.get("evidence_dir", ""),
             "receipt_refs": ctrl_receipt_refs,
@@ -1551,7 +1558,8 @@ def session_start(
             "decision": ctrl_decision,
             "blocker": ctrl_blocker,
             "next_action": ctrl_next,
-            "budget_consumed": control_run.get("budget_consumed", {}),
+            "budget_consumed": ctrl_consumed,
+            "remaining_wall_seconds": ctrl_rem_wall,
         }
 
     return {

@@ -469,6 +469,7 @@ class Journal:
                 last_completed_op TEXT NOT NULL DEFAULT '',
                 completed_ops_json TEXT NOT NULL DEFAULT '[]',
                 recovery_reason TEXT NOT NULL DEFAULT '',
+                resume_phase TEXT NOT NULL DEFAULT '',
                 next_action TEXT NOT NULL DEFAULT '',
                 blocker TEXT NOT NULL DEFAULT '',
                 cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK(cancel_requested IN (0, 1)),
@@ -549,6 +550,7 @@ class Journal:
             "lease_heartbeat_at",
             "last_completed_op",
             "recovery_reason",
+            "resume_phase",
             "next_action",
             "blocker",
         ):
@@ -1372,6 +1374,7 @@ class Journal:
                        lease_acquired_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
                        lease_heartbeat_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
                        in_flight_round=?, last_completed_op=?, completed_ops_json=?,
+                       resume_phase='',
                        updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
                    WHERE run_id=? AND state=? AND dispatch_token='' AND cancel_requested=0""",
                 (
@@ -1445,6 +1448,7 @@ class Journal:
             "last_completed_op",
             "completed_ops_json",
             "recovery_reason",
+            "resume_phase",
             "next_action",
             "blocker",
             "cancel_requested",
@@ -1484,7 +1488,7 @@ class Journal:
             set_clauses = ["state=?", "updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')"]
             params: list[Any] = [next_state]
             for col, val in updates.items():
-                if col in ("last_failure_sig", "cancel_reason", "recovery_reason", "next_action", "blocker", "last_completed_op") and isinstance(val, str):
+                if col in ("last_failure_sig", "cancel_reason", "recovery_reason", "resume_phase", "next_action", "blocker", "last_completed_op") and isinstance(val, str):
                     val = _redact_signal_text(val, max_chars=MAX_FINDING_CHARS)
                 set_clauses.append(f"{col}=?")
                 params.append(val)
@@ -1749,6 +1753,7 @@ class Journal:
         actor_role: str,
         action: str,
         recovery_reason: str | None = None,
+        resume_phase: str | None = None,
         next_action: str | None = None,
         blocker: str | None = None,
         detail: dict[str, Any] | None = None,
@@ -1770,6 +1775,9 @@ class Journal:
             if recovery_reason is not None:
                 set_clauses.append("recovery_reason=?")
                 params.append(_redact_signal_text(recovery_reason, max_chars=MAX_FINDING_CHARS))
+            if resume_phase is not None:
+                set_clauses.append("resume_phase=?")
+                params.append(_redact_signal_text(resume_phase, max_chars=120))
             if next_action is not None:
                 set_clauses.append("next_action=?")
                 params.append(_redact_signal_text(next_action, max_chars=MAX_FINDING_CHARS))

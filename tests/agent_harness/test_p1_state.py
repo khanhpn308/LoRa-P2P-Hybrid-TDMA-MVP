@@ -443,6 +443,7 @@ class JournalTests(unittest.TestCase):
                 "last_completed_op",
                 "completed_ops_json",
                 "recovery_reason",
+                "resume_phase",
                 "next_action",
                 "blocker",
             ):
@@ -467,6 +468,15 @@ class JournalTests(unittest.TestCase):
             )
             self.assertEqual(run["evidence_dir"], "/tmp/ev441")
             self.assertEqual(run["last_completed_op"], "admitted")
+            self.assertEqual(run["resume_phase"], "")
+            ev_run = state.record_control_event(
+                "run-p08c-prog",
+                expected_state="ADMITTED",
+                actor_role="host",
+                action="persist_resume_phase",
+                resume_phase="VERIFY_AND_CHECK",
+            )
+            self.assertEqual(ev_run["resume_phase"], "VERIFY_AND_CHECK")
 
             d = state.acquire_dispatch(
                 "run-p08c-prog",
