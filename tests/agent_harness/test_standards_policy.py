@@ -1095,19 +1095,47 @@ class SupervisedEntrypointTests(PolicyFixture):
         self.write("scripts/verify_structure.py", "assert True\nprint('Synthetic structure assertion PASS')\n")
         self.commit()
         self.base = git(self.root, "rev-parse", "HEAD")
-        git(self.root, "checkout", "-qb", "feature/137-fixture")
+        self.host_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.host_tmp.cleanup)
+        self.wt = Path(self.host_tmp.name) / "wt-137"
+        git(self.root, "worktree", "add", "-b", "feature/137-fixture", str(self.wt), self.base)
+        self.journal_path = Path(self.host_tmp.name) / "state.sqlite"
         self.issue = {"state": "OPEN", "title": "Synthetic docs change", "body":
                       "## Target Directories (allowed paths)\n- `README.md`\n\nSynthetic fixture only. " + "x" * 4000}
         self.args = argparse.Namespace(issue=137, execute=True, accept_isolated_pilot=True,
                     expected_idf_version=None, toolchain_mode="container_only", allow_native_fallback=False,
-                    timeout=30, max_repairs=0)
+                    timeout=30, max_repairs=0, check_profile="quick", journal=self.journal_path)
         self.original_tool = harness.tool
         self.worker_calls = []
         self.audit_calls = []
 
-    def scoped_report(self, kwargs, status="PASS"):
-        return {"status": status, "findings": [], "limitations": [], "reviewed_scope": ["README.md"],
-                "selection_sha256": kwargs["selection_sha256"], "rule_results": []}
+    def scoped_report(self, kwargs, status="PASS", include_rubric=False):
+        rep = {"status": status, "findings": [], "limitations": [], "reviewed_scope": ["README.md"],
+               "selection_sha256": kwargs["selection_sha256"], "rule_results": []}
+        if include_rubric:
+            ev_refs = [
+                {"receipt_path": k, "receipt_sha256": v}
+                for k, v in sorted((kwargs.get("evidence_inventory") or {}).items())
+            ]
+            rep["rubric"] = {
+                "version": "1.0",
+                "decision": "ACCEPT" if status == "PASS" else "REVISE",
+                "hard_gate_passed": status == "PASS",
+                "total_score": 12 if status == "PASS" else 6,
+                "dimensions": {
+                    dim: {
+                        "score": 2 if status == "PASS" else 1,
+                        "rationale": "Fixture evaluation against Host receipts.",
+                        "evidence": ev_refs,
+                        "findings": [],
+                    }
+                    for dim in (
+                        "correctness", "verification", "scope_discipline",
+                        "reliability", "maintainability", "handoff_readiness",
+                    )
+                },
+            }
+        return rep
 
     def tool(self, command, cwd, timeout):
         if command[0] == "gh":
@@ -1117,7 +1145,8 @@ class SupervisedEntrypointTests(PolicyFixture):
     def worker(self, prompt, repo, timeout, **kwargs):
         self.worker_calls.append((prompt, kwargs))
         if len(self.worker_calls) == 1:
-            self.write("README.md", "after\n")
+            target = self.wt / "README.md"
+            target.write_text("after\n", encoding="utf-8")
         return {"exit_code": 0, "stdout_bytes": 0, "stderr_bytes": 0,
                 "report": self.scoped_report(kwargs)}
 
@@ -1129,11 +1158,11 @@ class SupervisedEntrypointTests(PolicyFixture):
         for name in policy.STANDARDS.values():
             self.assertFalse((snapshot / "source" / name).exists())
             self.assertNotIn((self.root / name).read_text(), prompt)
-        return self.scoped_report(kwargs)
+        return self.scoped_report(kwargs, include_rubric=True)
 
     def execute(self, worker=None, auditor=None):
         stream = io.StringIO()
-        with patch.object(harness, "__file__", str(self.root / "scripts/agent_harness/run.py")), \
+        with patch.object(harness, "__file__", str(self.wt / "scripts/agent_harness/run.py")), \
              patch.object(harness.shutil, "which", return_value="fixture-command"), \
              patch.object(harness, "tool", side_effect=self.tool), \
              patch.object(harness.codex, "invoke", side_effect=worker or self.worker), \
@@ -1153,7 +1182,7 @@ class SupervisedEntrypointTests(PolicyFixture):
         self.assertEqual(report["build"], "NOT_APPLICABLE")
         self.assertEqual(len(self.worker_calls), 2)
         self.assertEqual(len(self.audit_calls), 1)
-        self.assertNotIn(self.root, evidence.parents)
+        self.assertNotIn(self.wt, evidence.parents)
         for prompt, kwargs in self.worker_calls:
             self.assertIn("Never expose credentials.", prompt)
             self.assertEqual(kwargs["required_rules"], [])
@@ -1163,7 +1192,7 @@ class SupervisedEntrypointTests(PolicyFixture):
 
     def test_worker_outside_scope_and_read_only_auditor_mutation_block(self):
         def outside(prompt, repo, timeout, **kwargs):
-            self.write("outside.c", "int bad;\n")
+            (self.wt / "outside.c").write_text("int bad;\n", encoding="utf-8")
             return self.worker(prompt, repo, timeout, **kwargs)
         code, report, _ = self.execute(worker=outside)
         self.assertNotEqual(code, 0)
@@ -1173,7 +1202,7 @@ class SupervisedEntrypointTests(PolicyFixture):
     def test_auditor_source_mutation_is_detected_after_return(self):
         def mutate(*args, **kwargs):
             report = self.audit(*args, **kwargs)
-            self.write("README.md", "unauthorized audit mutation\n")
+            (self.wt / "README.md").write_text("unauthorized audit mutation\n", encoding="utf-8")
             return report
         code, report, _ = self.execute(auditor=mutate)
         self.assertNotEqual(code, 0)
@@ -1186,7 +1215,7 @@ class SupervisedEntrypointTests(PolicyFixture):
         def changed_rules(*args, **kwargs):
             nonlocal calls
             calls += 1
-            result = original_select(self.root, ["README.md"], base=self.base)
+            result = original_select(self.wt, ["README.md"], base=self.base)
             if calls >= 3:
                 result["agent_input_sha256"] = "a" * 64
             return result

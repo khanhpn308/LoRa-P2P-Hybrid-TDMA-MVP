@@ -320,7 +320,7 @@ CONTROL_TRANSITIONS: dict[str, frozenset[str]] = {
     "MAKER_RUNNING": frozenset({"VERIFYING", "REPAIR_REQUIRED", "CANCELLED", "BLOCKED", "ESCALATED"}),
     "VERIFYING": frozenset({"CHECKING", "REPAIR_REQUIRED", "CANCELLED", "BLOCKED", "ESCALATED"}),
     "CHECKING": frozenset({"READY_FOR_HUMAN_REVIEW", "REPAIR_REQUIRED", "CANCELLED", "BLOCKED", "ESCALATED"}),
-    "REPAIR_REQUIRED": frozenset({"DISPATCHED", "CANCELLED", "BLOCKED", "ESCALATED"}),
+    "REPAIR_REQUIRED": frozenset({"DISPATCHED", "VERIFYING", "CANCELLED", "BLOCKED", "ESCALATED"}),
     "READY_FOR_HUMAN_REVIEW": frozenset({"CANCELLED"}),
     "BLOCKED": frozenset({"CANCELLED"}),
     "ESCALATED": frozenset({"CANCELLED"}),
@@ -441,6 +441,11 @@ class Journal:
                 no_progress_count INTEGER NOT NULL DEFAULT 0,
                 last_failure_sig TEXT NOT NULL DEFAULT '',
                 last_diff_sha256 TEXT NOT NULL DEFAULT '',
+                streak_candidate_sha256 TEXT NOT NULL DEFAULT '',
+                streak_diff_sha256 TEXT NOT NULL DEFAULT '',
+                streak_policy_sha256 TEXT NOT NULL DEFAULT '',
+                streak_check_plan_sha256 TEXT NOT NULL DEFAULT '',
+                streak_selection_sha256 TEXT NOT NULL DEFAULT '',
                 source_sha TEXT NOT NULL,
                 base_sha TEXT NOT NULL,
                 candidate_sha256 TEXT NOT NULL,
@@ -472,7 +477,62 @@ class Journal:
                 detail_json TEXT NOT NULL DEFAULT '{}',
                 utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             );
+            CREATE TABLE IF NOT EXISTS control_rounds (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL REFERENCES control_runs(run_id),
+                round_num INTEGER NOT NULL CHECK(round_num >= 1),
+                maker_dispatched INTEGER NOT NULL DEFAULT 1 CHECK(maker_dispatched IN (0, 1)),
+                confirming_pass INTEGER NOT NULL DEFAULT 0 CHECK(confirming_pass IN (0, 1)),
+                outcome TEXT NOT NULL,
+                verdict TEXT NOT NULL,
+                source_sha TEXT NOT NULL DEFAULT '',
+                base_sha TEXT NOT NULL DEFAULT '',
+                candidate_sha256 TEXT NOT NULL DEFAULT '',
+                diff_sha256 TEXT NOT NULL DEFAULT '',
+                policy_sha256 TEXT NOT NULL DEFAULT '',
+                check_plan_sha256 TEXT NOT NULL DEFAULT '',
+                selection_sha256 TEXT NOT NULL DEFAULT '',
+                agents_sha256 TEXT NOT NULL DEFAULT '',
+                selected_ids_json TEXT NOT NULL DEFAULT '[]',
+                checks_summary_sha256 TEXT NOT NULL DEFAULT '',
+                manifest_sha256 TEXT NOT NULL DEFAULT '',
+                auditor_report_sha256 TEXT NOT NULL DEFAULT '',
+                host_checks_passed INTEGER NOT NULL CHECK(host_checks_passed IN (0, 1)),
+                checker_passed INTEGER NOT NULL CHECK(checker_passed IN (0, 1)),
+                rubric_decision TEXT NOT NULL DEFAULT 'NOT_VERIFIED',
+                rubric_total_score INTEGER,
+                rubric_hard_gate_passed INTEGER CHECK(rubric_hard_gate_passed IN (0, 1) OR rubric_hard_gate_passed IS NULL),
+                rubric_json TEXT NOT NULL DEFAULT '{}',
+                findings_json TEXT NOT NULL DEFAULT '[]',
+                repair_scope_json TEXT NOT NULL DEFAULT '[]',
+                next_action TEXT NOT NULL DEFAULT '',
+                failure_sig TEXT NOT NULL DEFAULT '',
+                wall_elapsed_s REAL NOT NULL DEFAULT 0.0,
+                cumulative_wall_s REAL NOT NULL DEFAULT 0.0,
+                tokens_used INTEGER,
+                cost_used REAL,
+                consecutive_passes INTEGER NOT NULL DEFAULT 0,
+                no_progress_count INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                UNIQUE(run_id, round_num)
+            );
+            CREATE INDEX IF NOT EXISTS idx_control_rounds_run_round
+              ON control_rounds(run_id, round_num);
         """)
+        existing_ctrl_cols = {
+            r["name"] for r in self.db.execute("PRAGMA table_info(control_runs)").fetchall()
+        }
+        for col_name in (
+            "streak_candidate_sha256",
+            "streak_diff_sha256",
+            "streak_policy_sha256",
+            "streak_check_plan_sha256",
+            "streak_selection_sha256",
+        ):
+            if col_name not in existing_ctrl_cols:
+                self.db.execute(
+                    f"ALTER TABLE control_runs ADD COLUMN {col_name} TEXT NOT NULL DEFAULT ''"
+                )
 
     def close(self) -> None:
         self.db.close()
@@ -1266,6 +1326,7 @@ class Journal:
         clear_dispatch: bool = False,
         update_fields: dict[str, Any] | None = None,
         detail: dict[str, Any] | None = None,
+        round_record: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if expected not in CONTROL_STATES or next_state not in CONTROL_STATES:
             raise StateConflict("Unknown control-plane lifecycle state")
@@ -1278,6 +1339,11 @@ class Journal:
             "no_progress_count",
             "last_failure_sig",
             "last_diff_sha256",
+            "streak_candidate_sha256",
+            "streak_diff_sha256",
+            "streak_policy_sha256",
+            "streak_check_plan_sha256",
+            "streak_selection_sha256",
             "candidate_sha256",
             "budget_consumed_json",
             "cancel_requested",
@@ -1334,12 +1400,94 @@ class Journal:
                     json.dumps(safe_detail, sort_keys=True),
                 ),
             )
+            if round_record is not None:
+                safe_selected = _redact_json_value(list(round_record.get("selected_ids", ())), max_chars=MAX_FINDING_CHARS)
+                safe_rubric = _redact_json_value(round_record.get("rubric") or {}, max_chars=MAX_FINDING_CHARS)
+                safe_findings = _redact_json_value(list(round_record.get("findings") or ()), max_chars=MAX_FINDING_CHARS)
+                safe_repair_scope = _redact_json_value(list(round_record.get("repair_scope") or ()), max_chars=MAX_FINDING_CHARS)
+                rubric_hard_gate = round_record.get("rubric_hard_gate_passed")
+                self.db.execute(
+                    """INSERT INTO control_rounds(
+                           run_id, round_num, maker_dispatched, confirming_pass,
+                           outcome, verdict, source_sha, base_sha, candidate_sha256,
+                           diff_sha256, policy_sha256, check_plan_sha256, selection_sha256,
+                           agents_sha256, selected_ids_json, checks_summary_sha256,
+                           manifest_sha256, auditor_report_sha256,
+                           host_checks_passed, checker_passed,
+                           rubric_decision, rubric_total_score, rubric_hard_gate_passed,
+                           rubric_json, findings_json, repair_scope_json,
+                           next_action, failure_sig, wall_elapsed_s, cumulative_wall_s,
+                           tokens_used, cost_used, consecutive_passes, no_progress_count
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        run_id,
+                        int(round_record["round_num"]),
+                        1 if round_record.get("maker_dispatched", True) else 0,
+                        1 if round_record.get("confirming_pass", False) else 0,
+                        str(round_record["outcome"]),
+                        str(round_record["verdict"]),
+                        str(round_record.get("source_sha", "")),
+                        str(round_record.get("base_sha", "")),
+                        str(round_record.get("candidate_sha256", "")),
+                        str(round_record.get("diff_sha256", "")),
+                        str(round_record.get("policy_sha256", "")),
+                        str(round_record.get("check_plan_sha256", "")),
+                        str(round_record.get("selection_sha256", "")),
+                        str(round_record.get("agents_sha256", "")),
+                        json.dumps(safe_selected, sort_keys=True),
+                        str(round_record.get("checks_summary_sha256", "")),
+                        str(round_record.get("manifest_sha256", "")),
+                        str(round_record.get("auditor_report_sha256", "")),
+                        1 if round_record.get("host_checks_passed") else 0,
+                        1 if round_record.get("checker_passed") else 0,
+                        str(round_record.get("rubric_decision", "NOT_VERIFIED")),
+                        round_record.get("rubric_total_score"),
+                        None if rubric_hard_gate is None else (1 if rubric_hard_gate else 0),
+                        json.dumps(safe_rubric, sort_keys=True),
+                        json.dumps(safe_findings, sort_keys=True),
+                        json.dumps(safe_repair_scope, sort_keys=True),
+                        _redact_signal_text(str(round_record.get("next_action", "")), max_chars=MAX_FINDING_CHARS),
+                        _redact_signal_text(str(round_record.get("failure_sig", "")), max_chars=MAX_FINDING_CHARS),
+                        float(round_record.get("wall_elapsed_s", 0.0)),
+                        float(round_record.get("cumulative_wall_s", 0.0)),
+                        round_record.get("tokens_used"),
+                        round_record.get("cost_used"),
+                        int(round_record.get("consecutive_passes", 0)),
+                        int(round_record.get("no_progress_count", 0)),
+                    ),
+                )
             self.db.execute("COMMIT")
             return self.get_control_run(run_id)
+        except sqlite3.IntegrityError as exc:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise StateConflict(f"Control-plane integrity conflict: {exc}") from exc
         except BaseException:
             if self.db.in_transaction:
                 self.db.execute("ROLLBACK")
             raise
+
+    def list_control_rounds(self, run_id: str) -> list[dict[str, Any]]:
+        self.get_control_run(run_id)
+        rows = self.db.execute(
+            "SELECT * FROM control_rounds WHERE run_id=? ORDER BY round_num",
+            (run_id,),
+        ).fetchall()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            d = dict(r)
+            d["maker_dispatched"] = bool(d["maker_dispatched"])
+            d["confirming_pass"] = bool(d["confirming_pass"])
+            d["host_checks_passed"] = bool(d["host_checks_passed"])
+            d["checker_passed"] = bool(d["checker_passed"])
+            if d["rubric_hard_gate_passed"] is not None:
+                d["rubric_hard_gate_passed"] = bool(d["rubric_hard_gate_passed"])
+            d["selected_ids"] = json.loads(d.pop("selected_ids_json"))
+            d["rubric"] = json.loads(d.pop("rubric_json"))
+            d["findings"] = json.loads(d.pop("findings_json"))
+            d["repair_scope"] = json.loads(d.pop("repair_scope_json"))
+            out.append(d)
+        return out
 
     def request_control_cancel(
         self,

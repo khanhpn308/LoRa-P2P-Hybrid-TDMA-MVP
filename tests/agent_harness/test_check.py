@@ -333,6 +333,22 @@ class CheckMatrixAndExecutionTests(unittest.TestCase):
             loaded = journal.get_feature_snapshot(431)
             self.assertEqual(loaded["doc"]["units"][0]["state"], "PASSING")
 
+    def test_max_total_seconds_bounds_cumulative_check_budget(self):
+        with tempfile.TemporaryDirectory() as ext:
+            ev_dir = pathlib.Path(ext) / "ev"
+            summary = check_mod.run_checks(
+                self.repo,
+                base_sha=self.base,
+                profile="quick",
+                evidence_dir=ev_dir,
+                timeout=30,
+                max_total_seconds=0.0,
+                run_quality_gates=False,
+            )
+            self.assertTrue(summary["timed_out"])
+            self.assertEqual(summary["status"], "FAIL")
+            self.assertEqual(summary["results"][0]["exit_code"], 124)
+
 
 if __name__ == "__main__":
     unittest.main()

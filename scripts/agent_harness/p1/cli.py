@@ -330,7 +330,9 @@ def main() -> int:
                     "run_id": ctrl_row["run_id"],
                     "state": ctrl_row["state"],
                     "round_num": ctrl_row["round_num"],
+                    "consecutive_passes": ctrl_row["consecutive_passes"],
                     "policy_sha256": ctrl_row["policy_sha256"],
+                    "rounds": journal.list_control_rounds(ctrl_row["run_id"]),
                 }
             print(json.dumps(out_payload, indent=2))
             return 0
