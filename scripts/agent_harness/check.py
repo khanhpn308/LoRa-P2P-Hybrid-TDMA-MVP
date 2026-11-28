@@ -88,6 +88,27 @@ def _has_domain(paths: list[str], prefix: str, exact: tuple[str, ...] = ()) -> b
     return False
 
 
+def _has_advanced_pack_impact(paths: list[str]) -> bool:
+    for p in paths:
+        low = p.lower()
+        if (
+            low
+            in (
+                "docs/harness/advanced_pack.md",
+                "docs/quality_score.md",
+                "docs/generated/db-schema.md",
+                "docs/harness/harness_spec.md",
+                "docs/harness/harness_master_plan.md",
+                "scripts/agent_harness/advanced_pack.py",
+                "tests/agent_harness/test_advanced_pack.py",
+                "backend-go/dockerfile",
+            )
+            or low.startswith("backend-go/migrations/")
+        ):
+            return True
+    return False
+
+
 def plan_checks(
     paths: list[str] | tuple[str, ...],
     *,
@@ -119,6 +140,7 @@ def plan_checks(
     )
 
     harness_hit = _has_harness_impact(norm_paths)
+    advanced_pack_hit = _has_advanced_pack_impact(norm_paths)
     fw_hit = _has_domain(norm_paths, "firmware/", ("tests/unit/",)) or _has_domain(norm_paths, "tests/unit/")
     go_hit = _has_domain(norm_paths, "backend-go/", (".go-version",))
     cli_hit = _has_domain(norm_paths, "clients/")
@@ -127,6 +149,19 @@ def plan_checks(
         p.lower().startswith(".env") or "compose" in p.lower() for p in norm_paths
     )
     hil_hit = _has_domain(norm_paths, "tests/hil/") or _has_domain(norm_paths, "hardware/")
+
+    if advanced_pack_hit:
+        add(
+            CheckSpec(
+                check_id="advanced-pack-freshness",
+                domain="harness",
+                level="quick",
+                command=["python3", "scripts/agent_harness/advanced_pack.py", "verify", "--repo", ".", "--json"],
+                cwd_rel=".",
+                gate_rule_id="TOOLING-CHECK",
+                description="Verify Advanced Pack SPEC §5.2 links, QUALITY_SCORE, and DB schema freshness",
+            )
+        )
 
     if harness_hit:
         add(
