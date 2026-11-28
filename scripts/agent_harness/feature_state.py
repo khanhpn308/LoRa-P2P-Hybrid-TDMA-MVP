@@ -26,6 +26,14 @@ if __package__ in (None, ""):
 
 try:
     from .agent_context import ContextGateError, load_context
+    from .observability import (
+        ObservabilityError,
+        cleanup_owned_artifacts,
+        diagnose_failures,
+        ingest_checks_summary,
+        query_signals,
+        record_process_signal,
+    )
     from .p1.state import (
         HostVerificationProof,
         Journal,
@@ -38,6 +46,14 @@ try:
     from .scope import parse_allowed_paths, violations
 except ImportError:
     from agent_context import ContextGateError, load_context
+    from observability import (
+        ObservabilityError,
+        cleanup_owned_artifacts,
+        diagnose_failures,
+        ingest_checks_summary,
+        query_signals,
+        record_process_signal,
+    )
     from p1.state import (
         HostVerificationProof,
         Journal,
@@ -1458,6 +1474,30 @@ def session_start(
         if checkpoint is not None
         else None
     )
+    obs_summary: dict[str, Any] = {
+        "captured_signal_count": 0,
+        "recent_signals": [],
+        "latest_failure": None,
+    }
+    if state_db is not None and state_db.exists():
+        recent_sigs = query_signals(state_db, issue=issue, limit=10)
+        diag = diagnose_failures(state_db, issue=issue, limit=10)
+        obs_summary = {
+            "captured_signal_count": sum(1 for s in recent_sigs if s.get("captured")),
+            "recent_signals": [
+                {
+                    "signal_id": s["signal_id"],
+                    "category": s["category"],
+                    "owning_domain": s["owning_domain"],
+                    "check_id": s["check_id"],
+                    "status": s["status"],
+                    "ended_at": s["ended_at"],
+                }
+                for s in recent_sigs[:5]
+            ],
+            "latest_failure": diag.get("latest_failure"),
+        }
+
     return {
         "status": status,
         "issue": issue,
@@ -1476,6 +1516,7 @@ def session_start(
         "decision_refs": stored_doc["handoff"]["decision_refs"] if stored_doc else list(DEFAULT_DECISION_REFS),
         "last_checkpoint_id": checkpoint["checkpoint_id"] if checkpoint else None,
         "saved_checkpoint": saved_checkpoint,
+        "observability": obs_summary,
         "next_action": next_action,
     }
 
@@ -1625,6 +1666,116 @@ def session_checkpoint(
     }
 
 
+def session_close(
+    *,
+    issue: int,
+    repo: pathlib.Path,
+    state_db: pathlib.Path,
+    next_action: str,
+    blocker: str = "",
+    feature_file: pathlib.Path | None = None,
+    export_path: pathlib.Path | None = None,
+    evidence_dir: pathlib.Path | None = None,
+    cleanup_paths: list[pathlib.Path] | None = None,
+    allowed_temp_roots: list[pathlib.Path] | None = None,
+    owner_run_id: str | None = None,
+    decision_refs: tuple[str, ...] | list[str] = DEFAULT_DECISION_REFS,
+    base_sha: str | None = None,
+    expected_revision: int | None = None,
+    expected_branch: str | None = None,
+) -> dict[str, Any]:
+    """Cleanly close a session: ingest P05 receipts, persist atomic P04 checkpoint,
+    preserve PARTIAL/BLOCKED and dirty worktrees, and clean only owned temp artifacts.
+    """
+    root = repo.resolve()
+    ingested_signals: list[dict[str, Any]] = []
+    retained_evidence: set[pathlib.Path] = {state_db.resolve()}
+    if evidence_dir is not None:
+        if evidence_dir.is_symlink():
+            raise ValidationError("evidence_dir must not be a symlink")
+        ev_resolved = evidence_dir.resolve(strict=True)
+        if ev_resolved.is_relative_to(root):
+            raise ValidationError("Host evidence_dir must remain outside candidate worktree")
+        for child in ev_resolved.iterdir():
+            if child.is_file() and not child.name.endswith(".tmp"):
+                retained_evidence.add(child.resolve())
+        if (ev_resolved / "checks_summary.json").is_file():
+            ingested_signals = ingest_checks_summary(
+                ev_resolved,
+                journal_path=state_db,
+                issue=issue,
+                run_id=owner_run_id,
+            )
+
+    ckpt = session_checkpoint(
+        issue=issue,
+        repo=root,
+        state_db=state_db,
+        next_action=next_action,
+        blocker=blocker,
+        feature_file=feature_file,
+        export_path=export_path,
+        decision_refs=decision_refs,
+        base_sha=base_sha,
+        expected_revision=expected_revision,
+        expected_branch=expected_branch,
+    )
+
+    cleanup_result: dict[str, Any] | None = None
+    if cleanup_paths:
+        cleanup_result = cleanup_owned_artifacts(
+            cleanup_paths,
+            allowed_temp_roots=list(allowed_temp_roots or []),
+            repo=root,
+            owner_issue=issue,
+            owner_run_id=owner_run_id,
+            retained_evidence_paths=retained_evidence,
+        )
+
+    snap_git = compute_candidate_snapshot(root, base_sha=base_sha)
+    with Journal(state_db) as journal:
+        snap = journal.get_feature_snapshot(issue)
+        job = journal.active_job_for_issue(issue) or journal.latest_job_for_issue(issue)
+
+    units_list = snap["doc"]["units"] if snap is not None else []
+    has_blocked_unit = any(u["state"] == "BLOCKED" for u in units_list)
+    all_passing = bool(units_list) and all(u["state"] == "PASSING" for u in units_list)
+    if blocker.strip() or has_blocked_unit or (job and job["state"] == "RECOVERY_REQUIRED"):
+        session_outcome = "BLOCKED"
+    elif all_passing and not snap_git["dirty"]:
+        session_outcome = "DONE_FOR_REVIEW"
+    else:
+        session_outcome = "PARTIAL"
+
+    record_process_signal(
+        journal_path=state_db,
+        signal_type="process",
+        category="session",
+        owning_domain="harness",
+        status=session_outcome,
+        captured=True,
+        issue=issue,
+        unit_id=ckpt.get("active_unit"),
+        run_id=owner_run_id or (job["run_id"] if job else None),
+        check_id="session-close",
+        source_sha=ckpt["source_sha"],
+        candidate_sha256=ckpt["candidate_sha256"],
+        finding=blocker.strip() or ckpt["next_action"],
+        evidence_ref={"checkpoint_id": ckpt["checkpoint_id"], "exported_to": ckpt.get("exported_to") or ""},
+    )
+
+    return {
+        "status": "SESSION_CLOSED",
+        "session_outcome": session_outcome,
+        "issue": issue,
+        "checkpoint": ckpt,
+        "has_uncommitted_work": snap_git["dirty"],
+        "dirty_paths": snap_git["dirty_paths"],
+        "ingested_signals": len(ingested_signals),
+        "cleanup": cleanup_result,
+    }
+
+
 def _load_from_journal_or_file(
     *, issue: int, state_db: pathlib.Path | None, feature_file: pathlib.Path | None
 ) -> tuple[dict[str, Any], int | None]:
@@ -1733,6 +1884,22 @@ def main(argv: list[str] | None = None) -> int:
     p_ckpt.add_argument("--base-sha", default=None)
     p_ckpt.add_argument("--expected-revision", type=int, default=None)
     p_ckpt.add_argument("--expected-branch", default=None)
+
+    p_close = sub.add_parser("session-close", help="Cleanly close session with checkpoint, receipts, and safe temp cleanup")
+    p_close.add_argument("--issue", type=int, required=True)
+    p_close.add_argument("--repo", type=pathlib.Path, default=pathlib.Path.cwd())
+    p_close.add_argument("--state", type=pathlib.Path, required=True)
+    p_close.add_argument("--feature-file", type=pathlib.Path, default=None)
+    p_close.add_argument("--export", type=pathlib.Path, default=None)
+    p_close.add_argument("--evidence-dir", type=pathlib.Path, default=None)
+    p_close.add_argument("--cleanup-path", type=pathlib.Path, action="append", default=[])
+    p_close.add_argument("--allowed-temp-root", type=pathlib.Path, action="append", default=[])
+    p_close.add_argument("--run-id", default=None)
+    p_close.add_argument("--next-action", required=True)
+    p_close.add_argument("--blocker", default="")
+    p_close.add_argument("--base-sha", default=None)
+    p_close.add_argument("--expected-revision", type=int, default=None)
+    p_close.add_argument("--expected-branch", default=None)
 
     p_exp = sub.add_parser("export", help="One-way export from Journal to portable JSON")
     p_exp.add_argument("--issue", type=int, required=True)
@@ -1899,6 +2066,26 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(res, indent=2, ensure_ascii=False))
             return 0
 
+        if args.command == "session-close":
+            res = session_close(
+                issue=args.issue,
+                repo=args.repo,
+                state_db=args.state,
+                next_action=args.next_action,
+                blocker=args.blocker,
+                feature_file=args.feature_file,
+                export_path=args.export,
+                evidence_dir=args.evidence_dir,
+                cleanup_paths=args.cleanup_path or None,
+                allowed_temp_roots=args.allowed_temp_root or None,
+                owner_run_id=args.run_id,
+                base_sha=args.base_sha,
+                expected_revision=args.expected_revision,
+                expected_branch=args.expected_branch,
+            )
+            print(json.dumps(res, indent=2, ensure_ascii=False))
+            return 0
+
         if args.command == "export":
             with Journal(args.state) as journal:
                 snap = journal.get_feature_snapshot(args.issue)
@@ -1947,7 +2134,7 @@ def main(argv: list[str] | None = None) -> int:
                 "stale_units": [u["id"] for u in doc["units"] if u["state"] == "STALE"],
             }, indent=2))
             return 0
-    except (FeatureStateError, StateConflict, WorktreeError, ContextGateError, OSError, ValueError, json.JSONDecodeError) as exc:
+    except (FeatureStateError, ObservabilityError, StateConflict, WorktreeError, ContextGateError, OSError, ValueError, json.JSONDecodeError) as exc:
         print(json.dumps({"status": "BLOCKED", "reason": str(exc)[:260]}, ensure_ascii=False))
         return 2
     return 2

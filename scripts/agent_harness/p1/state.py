@@ -10,9 +10,64 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any
+
+MAX_SIGNAL_ROWS = 500
+MAX_QUERY_LIMIT = 200
+MAX_FINDING_CHARS = 1000
+MAX_EXCERPT_CHARS = 4000
+
+_PRIVATE_KEY_BLOCK_RE = re.compile(
+    r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----[\s\S]*?(?:-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----|$)"
+)
+_GH_TOKEN_RE = re.compile(r"(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{20,}")
+_AWS_KEY_RE = re.compile(r"AKIA[A-Z0-9]{16}")
+_BEARER_RE = re.compile(r"(?i)(authorization\s*[:=]\s*bearer\s+|bearer\s+)[A-Za-z0-9._~+/=-]{12,}")
+_URL_CRED_RE = re.compile(r"((?:postgres(?:ql)?|mqtts?|https?|redis)://[^:\s/@]+:)[^@\s/]+(@)")
+_KV_SECRET_RE = re.compile(
+    r"""(?im)(\b(?:POSTGRES_PASSWORD|MQTT_PASSWORD|password|passwd|api[_-]?key|access[_-]?token|auth[_-]?token|secret|private[_-]?key|authorization)\b\s*[:=]\s*)(["']?)([^"'\s\r\n#]+)\2"""
+)
+
+
+def _redact_signal_text(value: str, *, max_chars: int = MAX_EXCERPT_CHARS) -> str:
+    """Redact credential signatures and bound string size before SQLite persistence."""
+    if not value:
+        return ""
+    text = str(value)
+    text = _PRIVATE_KEY_BLOCK_RE.sub("[REDACTED:PRIVATE_KEY]", text)
+    text = _GH_TOKEN_RE.sub("[REDACTED:TOKEN]", text)
+    text = _AWS_KEY_RE.sub("[REDACTED:AWS_KEY]", text)
+    text = _BEARER_RE.sub(r"\1[REDACTED]", text)
+    text = _URL_CRED_RE.sub(r"\1[REDACTED]\2", text)
+
+    def _kv_sub(match: re.Match[str]) -> str:
+        prefix, quote, secret_val = match.group(1), match.group(2), match.group(3)
+        if secret_val.startswith(("$", "REPLACE_", "<", "[REDACTED")):
+            return match.group(0)
+        return f"{prefix}{quote}[REDACTED]{quote}"
+
+    text = _KV_SECRET_RE.sub(_kv_sub, text)
+    if len(text) > max_chars:
+        suffix = "\n...[TRUNCATED]"
+        keep = max(0, max_chars - len(suffix))
+        text = text[:keep] + suffix
+    return text
+
+
+def _redact_json_value(obj: Any, *, max_chars: int = MAX_FINDING_CHARS) -> Any:
+    if isinstance(obj, str):
+        return _redact_signal_text(obj, max_chars=max_chars)
+    if isinstance(obj, list):
+        return [_redact_json_value(item, max_chars=max_chars) for item in obj[:100]]
+    if isinstance(obj, dict):
+        return {
+            str(k): _redact_json_value(v, max_chars=max_chars)
+            for k, v in list(obj.items())[:50]
+        }
+    return obj
 
 _PROCESS_SEAL = os.urandom(32)
 
@@ -280,6 +335,31 @@ class Journal:
                 handoff_json TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             );
+            CREATE TABLE IF NOT EXISTS signals (
+                signal_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                issue INTEGER,
+                unit_id TEXT,
+                run_id TEXT,
+                signal_type TEXT NOT NULL CHECK(signal_type IN ('process', 'runtime')),
+                category TEXT NOT NULL,
+                owning_domain TEXT NOT NULL,
+                check_id TEXT NOT NULL DEFAULT '',
+                command_sha256 TEXT NOT NULL DEFAULT '',
+                source_sha TEXT NOT NULL DEFAULT '',
+                candidate_sha256 TEXT NOT NULL DEFAULT '',
+                diff_sha256 TEXT NOT NULL DEFAULT '',
+                started_at TEXT NOT NULL DEFAULT '',
+                ended_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                duration_s REAL NOT NULL DEFAULT 0.0,
+                exit_code INTEGER,
+                status TEXT NOT NULL,
+                captured INTEGER NOT NULL CHECK(captured IN (0, 1)),
+                finding TEXT NOT NULL DEFAULT '',
+                evidence_ref_json TEXT NOT NULL DEFAULT '{}',
+                excerpt TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_signals_issue_id
+              ON signals(issue, signal_id);
         """)
 
     def close(self) -> None:
@@ -699,3 +779,172 @@ class Journal:
             data["handoff"] = json.loads(data.pop("handoff_json"))
             results.append(data)
         return results
+
+    def record_signal(
+        self,
+        *,
+        signal_type: str,
+        category: str,
+        owning_domain: str,
+        status: str,
+        captured: bool = True,
+        issue: int | None = None,
+        unit_id: str | None = None,
+        run_id: str | None = None,
+        check_id: str = "",
+        command_sha256: str = "",
+        source_sha: str = "",
+        candidate_sha256: str = "",
+        diff_sha256: str = "",
+        started_at: str = "",
+        ended_at: str = "",
+        duration_s: float = 0.0,
+        exit_code: int | None = None,
+        finding: str = "",
+        evidence_ref: dict[str, Any] | None = None,
+        excerpt: str = "",
+        max_signals: int = MAX_SIGNAL_ROWS,
+    ) -> int:
+        if signal_type not in ("process", "runtime"):
+            raise StateConflict(f"Invalid signal_type: {signal_type!r}")
+        if not str(category).strip() or not str(owning_domain).strip() or not str(status).strip():
+            raise StateConflict("Signal category, owning_domain, and status are required")
+        if issue is not None and issue <= 0:
+            raise StateConflict("Signal issue must be positive")
+        if max_signals < 1:
+            raise StateConflict("max_signals retention bound must be >= 1")
+
+        safe_finding = _redact_signal_text(finding, max_chars=MAX_FINDING_CHARS)
+        safe_excerpt = _redact_signal_text(excerpt, max_chars=MAX_EXCERPT_CHARS)
+        safe_ref = _redact_json_value(evidence_ref or {}, max_chars=MAX_FINDING_CHARS)
+        ref_json = json.dumps(safe_ref, sort_keys=True)
+        ended_expr = ended_at.strip()
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            if ended_expr:
+                cur = self.db.execute(
+                    """INSERT INTO signals(
+                           issue, unit_id, run_id, signal_type, category, owning_domain,
+                           check_id, command_sha256, source_sha, candidate_sha256, diff_sha256,
+                           started_at, ended_at, duration_s, exit_code, status, captured,
+                           finding, evidence_ref_json, excerpt
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        issue, unit_id, run_id, signal_type, category.strip(), owning_domain.strip(),
+                        str(check_id)[:120], str(command_sha256)[:64], str(source_sha)[:64],
+                        str(candidate_sha256)[:64], str(diff_sha256)[:64],
+                        started_at.strip()[:64], ended_expr[:64], float(duration_s),
+                        exit_code, status.strip()[:40], 1 if captured else 0,
+                        safe_finding, ref_json, safe_excerpt,
+                    ),
+                )
+            else:
+                cur = self.db.execute(
+                    """INSERT INTO signals(
+                           issue, unit_id, run_id, signal_type, category, owning_domain,
+                           check_id, command_sha256, source_sha, candidate_sha256, diff_sha256,
+                           started_at, duration_s, exit_code, status, captured,
+                           finding, evidence_ref_json, excerpt
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        issue, unit_id, run_id, signal_type, category.strip(), owning_domain.strip(),
+                        str(check_id)[:120], str(command_sha256)[:64], str(source_sha)[:64],
+                        str(candidate_sha256)[:64], str(diff_sha256)[:64],
+                        started_at.strip()[:64], float(duration_s),
+                        exit_code, status.strip()[:40], 1 if captured else 0,
+                        safe_finding, ref_json, safe_excerpt,
+                    ),
+                )
+            signal_id = int(cur.lastrowid)
+            self.db.execute(
+                """DELETE FROM signals
+                   WHERE signal_id NOT IN (
+                       SELECT signal_id FROM signals ORDER BY signal_id DESC LIMIT ?
+                   )""",
+                (max_signals,),
+            )
+            self.db.execute("COMMIT")
+            return signal_id
+        except BaseException:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise
+
+    def query_signals(
+        self,
+        *,
+        issue: int | None = None,
+        run_id: str | None = None,
+        unit_id: str | None = None,
+        signal_type: str | None = None,
+        category: str | None = None,
+        owning_domain: str | None = None,
+        status: str | None = None,
+        captured: bool | None = None,
+        since: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        bounded_limit = max(1, min(int(limit), MAX_QUERY_LIMIT))
+        clauses: list[str] = []
+        params: list[Any] = []
+        if issue is not None:
+            clauses.append("issue = ?")
+            params.append(issue)
+        if run_id is not None:
+            clauses.append("run_id = ?")
+            params.append(run_id)
+        if unit_id is not None:
+            clauses.append("unit_id = ?")
+            params.append(unit_id)
+        if signal_type is not None:
+            clauses.append("signal_type = ?")
+            params.append(signal_type)
+        if category is not None:
+            clauses.append("category = ?")
+            params.append(category)
+        if owning_domain is not None:
+            clauses.append("owning_domain = ?")
+            params.append(owning_domain)
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status)
+        if captured is not None:
+            clauses.append("captured = ?")
+            params.append(1 if captured else 0)
+        if since is not None:
+            clauses.append("ended_at >= ?")
+            params.append(since)
+        where_sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        sql = f"SELECT * FROM signals {where_sql} ORDER BY signal_id DESC LIMIT ?"
+        params.append(bounded_limit)
+        rows = self.db.execute(sql, tuple(params)).fetchall()
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            data = dict(row)
+            data["captured"] = bool(data["captured"])
+            data["evidence_ref"] = json.loads(data.pop("evidence_ref_json"))
+            results.append(data)
+        return results
+
+    def prune_signals(self, *, keep: int = MAX_SIGNAL_ROWS) -> int:
+        if keep < 0:
+            raise StateConflict("Retention keep count must be >= 0")
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            if keep == 0:
+                cur = self.db.execute("DELETE FROM signals")
+            else:
+                cur = self.db.execute(
+                    """DELETE FROM signals
+                       WHERE signal_id NOT IN (
+                           SELECT signal_id FROM signals ORDER BY signal_id DESC LIMIT ?
+                       )""",
+                    (keep,),
+                )
+            deleted = int(cur.rowcount)
+            self.db.execute("COMMIT")
+            return deleted
+        except BaseException:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise

@@ -55,9 +55,17 @@ python3 scripts/agent_harness/feature_state.py session-start --issue <N> --repo 
 python3 scripts/agent_harness/feature_state.py activate --issue <N> --unit-id <UNIT_ID> --state <host-state.sqlite>
 python3 scripts/agent_harness/feature_state.py verify-unit --issue <N> --unit-id <UNIT_ID> --repo <candidate> --evidence-dir <host-evidence-dir> --manifest manifest.json --trusted-definitions <external-trusted-defs.json> --state <host-state.sqlite>
 python3 scripts/agent_harness/feature_state.py checkpoint --issue <N> --repo <candidate> --state <host-state.sqlite> --next-action "..." --export docs/harness/features/issue-<N>.json
+python3 scripts/agent_harness/feature_state.py session-close --issue <N> --repo <candidate> --state <host-state.sqlite> --evidence-dir <host-evidence-dir> --next-action "..."
 ```
 
-Equivalent `resume` and `checkpoint` wrappers are also exposed via `scripts/agent_harness/p1/cli.py`. Native AGY/Codex UI conversations cannot be mechanically intercepted by CLI alone; Coordinator instructions invoke these commands, and Host CLI enforces schema, WIP=1, CAS, authority, and non-destructive recovery whenever run. Cross-machine recovery is `NOT_VERIFIED` unless actually exercised across distinct hosts.
+Equivalent `resume`, `checkpoint`, `close`, and `signals` wrappers are also exposed via `scripts/agent_harness/p1/cli.py`. Native AGY/Codex UI conversations cannot be mechanically intercepted by CLI alone; Coordinator instructions invoke these commands, and Host CLI enforces schema, WIP=1, CAS, authority, and non-destructive recovery whenever run. Cross-machine recovery is `NOT_VERIFIED` unless actually exercised across distinct hosts.
+
+### Observability, Failure Attribution & Clean Handoff (P06 / H2-FBK-06 / H2-GOV-03)
+
+- **Bounded Redacted Signals (`scripts/agent_harness/observability.py` & `p1/state.py`):** `check.py --journal <host-state.sqlite>`, `run.py --journal`, `pr_review.py --journal`, and `observability.py record-checks` persist bounded (`MAX_EXCERPT_BYTES = 4096`, `MAX_SIGNAL_ROWS = 500`), credential-redacted process and runtime signals without adding external collectors or OpenTelemetry daemons. Immutable checkpoints and unit `evidence_history` are never deleted by signal retention pruning.
+- **Runtime vs Planned Separation:** `observability.py runtime-map` reports captured process/runtime signals separately from planned or unavailable layers (`uart_radio` / HIL bench, Docker `mqtt_broker`, `db_postgres`, `go_api`, `web_ui`). Unavailable layers stay `NOT_VERIFIED`.
+- **Safe Non-Destructive Cleanup:** `feature_state.py session-close` and `observability.py cleanup` remove only explicitly owned temporary scratch directories/files (`.harness-owner.json` or `*.tmp`) under explicit `--allowed-temp-root` outside the candidate repo. Symlinks, dirty worktrees, unowned directories, and required review evidence (`manifest.json`, `checks_summary.json`, `auditor-report.json`, `state.sqlite`, `diff.patch`) are rejected and preserved; `PARTIAL`/`BLOCKED` outcomes are preserved without auto-merge or destructive reset.
+- **Fresh Session 5/5 & Golden Journey:** `observability.py fresh-session-eval` checks the 5 frozen criteria of `HARNESS_SPEC.md §7.2` (system, organization, startup, verification, current state & safe next action), and `observability.py golden-journey` exercises repeatable failure injection, domain attribution, scoped repair, and rerun in a disposable workspace. Distinguish simulated restart, real same-host fresh provider subagent, and cross-machine evidence (`NOT_VERIFIED` when unavailable).
 
 ### Local quality gates, không thêm bước nhập lệnh
 

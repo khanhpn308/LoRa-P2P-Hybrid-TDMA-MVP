@@ -16,7 +16,8 @@ if __package__ in (None, ""):
 from p1.state import Journal, StateConflict
 from p1.worktrees import WorktreeError, make_plan, prepare, git
 from scope import parse_allowed_paths
-from feature_state import session_start, session_checkpoint, FeatureStateError
+from feature_state import session_start, session_checkpoint, session_close, FeatureStateError
+from observability import ObservabilityError, diagnose_failures, query_signals
 
 REPO = "khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP"
 
@@ -90,6 +91,25 @@ def main() -> int:
     ckpt.add_argument("--next-action", required=True)
     ckpt.add_argument("--blocker", default="")
     ckpt.add_argument("--export", type=Path, default=None)
+    close_p = sub.add_parser("close")
+    close_p.add_argument("--issue", type=int, required=True)
+    close_p.add_argument("--repo", type=Path, default=Path.cwd())
+    close_p.add_argument("--state", type=Path, default=None)
+    close_p.add_argument("--next-action", required=True)
+    close_p.add_argument("--blocker", default="")
+    close_p.add_argument("--evidence-dir", type=Path, default=None)
+    close_p.add_argument("--export", type=Path, default=None)
+    close_p.add_argument("--cleanup-path", type=Path, action="append", default=[])
+    close_p.add_argument("--allowed-temp-root", type=Path, action="append", default=[])
+    sig_p = sub.add_parser("signals")
+    sig_p.add_argument("--issue", type=int, default=None)
+    sig_p.add_argument("--run-id", default=None)
+    sig_p.add_argument("--domain", default=None)
+    sig_p.add_argument("--status", default=None)
+    sig_p.add_argument("--source", type=Path, default=Path.cwd())
+    sig_p.add_argument("--state", type=Path, default=None)
+    sig_p.add_argument("--limit", type=int, default=50)
+    sig_p.add_argument("--diagnose", action="store_true")
     args = parser.parse_args()
     if getattr(args, "issue", None) is not None and args.issue < 1:
         parser.error("Issue must be positive")
@@ -169,6 +189,35 @@ def main() -> int:
             )
             print(json.dumps(res, indent=2))
             return 0
+        if args.command == "close":
+            res = session_close(
+                issue=args.issue,
+                repo=args.repo,
+                state_db=state,
+                next_action=args.next_action,
+                blocker=args.blocker,
+                evidence_dir=args.evidence_dir,
+                export_path=args.export,
+                cleanup_paths=args.cleanup_path or None,
+                allowed_temp_roots=args.allowed_temp_root or None,
+            )
+            print(json.dumps(res, indent=2))
+            return 0
+        if args.command == "signals":
+            if args.diagnose:
+                res = diagnose_failures(state, issue=args.issue, run_id=args.run_id, limit=args.limit)
+            else:
+                sigs = query_signals(
+                    state,
+                    issue=args.issue,
+                    run_id=args.run_id,
+                    owning_domain=args.domain,
+                    status=args.status,
+                    limit=args.limit,
+                )
+                res = {"count": len(sigs), "signals": sigs}
+            print(json.dumps(res, indent=2))
+            return 0
         with Journal(state) as journal:
             if args.command == "recover":
                 changed = journal.detect_interruption(args.run_id)
@@ -191,7 +240,7 @@ def main() -> int:
                               "history": journal.events(item["run_id"]),
                               "latest_checkpoint": ckpt_row["handoff"] if ckpt_row else None}, indent=2))
             return 0
-    except (OSError, PreflightError, WorktreeError, StateConflict, FeatureStateError, subprocess.SubprocessError) as exc:
+    except (OSError, PreflightError, WorktreeError, StateConflict, FeatureStateError, ObservabilityError, subprocess.SubprocessError) as exc:
         print(json.dumps({"state": "BLOCKED", "reason": str(exc)[:240]}))
         return 2
 

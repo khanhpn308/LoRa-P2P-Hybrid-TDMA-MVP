@@ -24,6 +24,7 @@ from feature_state import (
     verify_unit_passing,
     validate_feature_doc,
 )
+from observability import ObservabilityError, redact_data, redact_text, record_process_signal
 from p1.state import Journal, StateConflict
 from scope import _git, assert_scoped, parse_allowed_paths
 from snapshot import assemble, unchanged, digest
@@ -63,10 +64,9 @@ def tool(args: list[str], cwd: pathlib.Path, timeout: int) -> tuple[dict, str]:
         raise GateError("Tool output contains credential material; stop and inspect locally")
     diagnostic = (p.stdout if p.returncode == 0 and args[:3] == ["gh", "issue", "view"]
                   else p.stdout + "\n" + p.stderr)
-    sanitized = re.sub(
-        r"(?i)\b(authorization|api[_-]?key|token|password|secret)\s*[:=]\s*\S+",
-        r"\1=[REDACTED]", diagnostic)
     # Keep complete successful Issue JSON; repair prompts apply their own bound.
+    bound = 2_000_000 if (p.returncode == 0 and args[:3] == ["gh", "issue", "view"]) else 100_000
+    sanitized, _, _ = redact_text(diagnostic, max_bytes=bound)
     return {"tool": args[0], "command": args, "exit_code": p.returncode,
             "output_sha256": digest(raw), "output_bytes": len(raw)}, sanitized
 
@@ -101,7 +101,7 @@ def run(args: argparse.Namespace) -> int:
     def finish(state: str, code: int, message: str = "") -> int:
         result["state"] = state
         if message:
-            result["reason"] = message[:240]
+            result["reason"] = redact_text(message, max_bytes=240)[0]
         if getattr(args, "journal", None) is not None:
             try:
                 ckpt = session_checkpoint(
@@ -109,14 +109,36 @@ def run(args: argparse.Namespace) -> int:
                     repo=repo,
                     state_db=args.journal,
                     next_action=f"Inspect run {run_id} outcome ({state})",
-                    blocker=message[:240] if state in ("BLOCKED", "CHECKS_FAILED", "AUDIT_FAILED", "STALLED") else "",
+                    blocker=result.get("reason", "") if state in ("BLOCKED", "CHECKS_FAILED", "AUDIT_FAILED", "STALLED") else "",
                     feature_file=getattr(args, "feature_file", None),
                     base_sha=result.get("base_sha"),
                 )
                 result["checkpoint_id"] = ckpt["checkpoint_id"]
             except (FeatureStateError, StateConflict, OSError, ValueError) as exc:
-                result["checkpoint_error"] = str(exc)[:200]
-        write("manifest.tmp", result)
+                result["checkpoint_error"] = redact_text(str(exc), max_bytes=200)[0]
+            try:
+                sig_status = "PASS" if code == 0 else ("BLOCKED" if state == "BLOCKED" else "FAIL")
+                sig = record_process_signal(
+                    journal_path=args.journal,
+                    signal_type="process",
+                    category="run",
+                    owning_domain="harness",
+                    status=sig_status,
+                    captured=True,
+                    issue=args.issue,
+                    unit_id=getattr(args, "unit_id", None),
+                    run_id=run_id,
+                    check_id=f"run-{state.lower()}",
+                    source_sha=str(result.get("base_sha", "")),
+                    diff_sha256=str(result.get("diff_sha256", "")),
+                    exit_code=code,
+                    finding=result.get("reason", "") or f"Run ended with {state}",
+                    evidence_ref={"manifest_path": "manifest.json", "run_id": run_id},
+                )
+                result["signal_id"] = sig["signal_id"]
+            except (ObservabilityError, StateConflict, OSError, ValueError) as exc:
+                result["signal_error"] = redact_text(str(exc), max_bytes=200)[0]
+        write("manifest.tmp", redact_data(result))
         (artifacts / "manifest.tmp").replace(manifest)
         print(f"{state}: {manifest}")
         return code

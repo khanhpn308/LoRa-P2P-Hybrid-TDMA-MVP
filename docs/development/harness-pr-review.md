@@ -110,3 +110,4 @@ Independent evidence dimensions preserved in report:
 
 - Use `--require-rubric` to enforce the `audit.schema.json` `$defs.rubric` contract (`version: "1.0"`, `decision: ACCEPT | REVISE | BLOCK`, `hard_gate_passed`, `total_score` 0–12, and evidence-backed 0–2 scores for all six dimensions).
 - Use `--calibrate-rubric <dataset.json>` to evaluate 3–5 tuning rounds and blind held-out cases against **approved human labels** and **independent provider** evaluations. Missing approved human labels or unavailable independent providers return `NOT_VERIFIED` (never synthetic calibration).
+- Use `--journal <host-state.sqlite>` to persist bounded, redacted PR evaluation signals (`pr_review`) into the external Host `Journal`; transient `auditor_failure_*.json` artifacts are redacted before disk write.

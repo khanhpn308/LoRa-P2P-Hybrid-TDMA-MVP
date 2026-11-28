@@ -146,7 +146,17 @@ def inspect_worktree(
         raise WorktreeError("Path is not a registered Git worktree")
     branch = git(root, "branch", "--show-current")
     head_sha = git(root, "rev-parse", "HEAD")
-    porcelain = git(root, "status", "--porcelain", "--untracked-files=normal")
+    porcelain_proc = subprocess.run(
+        ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=normal"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=30,
+    )
+    if porcelain_proc.returncode:
+        raise WorktreeError(f"git status failed with exit {porcelain_proc.returncode}")
+    porcelain = porcelain_proc.stdout.rstrip("\r\n")
     dirty_paths = [line[3:] for line in porcelain.splitlines() if len(line) > 3]
     if expected_branch is not None and branch != expected_branch:
         raise WorktreeError(f"Worktree branch mismatch: expected {expected_branch!r}, got {branch!r}")
