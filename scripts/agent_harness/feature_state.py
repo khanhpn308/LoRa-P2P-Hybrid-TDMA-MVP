@@ -1335,6 +1335,7 @@ def session_start(
     stored_doc: dict[str, Any] | None = None
     loaded_revision: int | None = None
     from_journal = False
+    control_run: dict[str, Any] | None = None
     if state_db is not None and state_db.exists():
         with Journal(state_db) as journal:
             job = journal.active_job_for_issue(issue) or journal.latest_job_for_issue(issue)
@@ -1347,6 +1348,7 @@ def session_start(
                 loaded_revision = snap["revision"]
                 from_journal = True
             checkpoint = journal.latest_checkpoint(issue)
+            control_run = journal.latest_control_run_for_issue(issue)
 
     default_export = root / "docs" / "harness" / "features" / f"issue-{issue}.json"
     source_file = feature_file if feature_file is not None else (default_export if default_export.is_file() else None)
@@ -1516,6 +1518,18 @@ def session_start(
         "decision_refs": stored_doc["handoff"]["decision_refs"] if stored_doc else list(DEFAULT_DECISION_REFS),
         "last_checkpoint_id": checkpoint["checkpoint_id"] if checkpoint else None,
         "saved_checkpoint": saved_checkpoint,
+        "control_run": (
+            {
+                "run_id": control_run["run_id"],
+                "state": control_run["state"],
+                "round_num": control_run["round_num"],
+                "policy_sha256": control_run["policy_sha256"],
+                "owner_approval_status": control_run["policy"].get("owner_approval_status"),
+                "cancel_requested": control_run["cancel_requested"],
+            }
+            if control_run is not None
+            else None
+        ),
         "observability": obs_summary,
         "next_action": next_action,
     }

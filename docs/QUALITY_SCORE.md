@@ -1,7 +1,7 @@
 # Repository Quality Score & Deferred Technical Debt
 
-**Assessed Revision:** `059fa45fc05f1e2c54e9c2b2431d600cba5411e0` (`origin/main`, post-P06 PR #434)
-**Last Assessed:** `2026-11-28` · **Scope:** Monorepo Foundation + Harness V2 (`P00–P07` baseline)
+**Assessed Revision:** `ed97ca9e7fb69f359db717e40679cabaee18ae0d` (`origin/main` + P08-A `#437`)
+**Last Assessed:** `2026-11-28` · **Scope:** Monorepo Foundation + Harness V2 (`P00–P08-A`)
 **Owner:** Project Owner (`khanhpn308`) & Component Owners per [CODEOWNERS](../.github/CODEOWNERS)
 **Companion Index:** [docs/harness/ADVANCED_PACK.md](harness/ADVANCED_PACK.md) · **DB Metadata:** [docs/generated/db-schema.md](generated/db-schema.md)
 
@@ -34,7 +34,7 @@
 | **Clients — Mobile Android (`clients/mobile-app/`)** | `NOT_VERIFIED` *(Stub / `N/A` runtime)* | Mobile Owner (`#80` assignee: `hieuvocong15`) | README/design placeholder only (`clients/DESIGN.md`, `#80` `OPEN`). | No Kotlin source implemented; excluded from runtime build/UI checks until `#80` layout approval & implementation. | 2026-11-28 |
 | **Deploy & MQTT Infra (`deploy/`)** | `NOT_VERIFIED` *(Live runtime `NOT_RUN` at `059fa45fc`)* | Infra / Security Owner | **Historical docs:** [issue-404](verification/issue-404-mqtt-tls-auth-verification.md), [issue-405](verification/issue-405-prod-secrets-reverse-proxy-verification.md), [issue-406](verification/issue-406-compose-hardening-migrations-backup-verification.md). | `ci-integration.yml` is a stub; live Docker Compose TLS/ACL/PostgreSQL persistence suite `NOT_RUN` on `059fa45fc`. | 2026-11-28 |
 | **Simulator (`simulator/`)** | `NOT_VERIFIED` *(Placeholder only)* | RF / Simulation Owner | Planning/model documentation only; not a verified digital twin. | No executable closed-loop digital twin verified against physical hardware. | 2026-11-28 |
-| **Agent Harness (`scripts/agent_harness/`, `.agents/`, `docs/harness/`)** | `B` *(Host unit `PASS`; Runtime sandbox `PARTIAL`)* | Harness / Owner | **Current (`#435`):** `verify_structure.py`, `dependency_checks.py`, `harness_doctor.py --profile core`, `advanced_pack.py verify`, and `tests/agent_harness` (`488` unit/regression tests) PASS. | Baseline `#424` `SECRET-SCAN` `OPEN`; Native Fast Lane Full Access is `SUPERVISED_ONLY` (`H2-TOL-02`); `P08–P10` orchestration/meta-loop not yet implemented; evaluator rubric calibration `NOT_VERIFIED`. | 2026-11-28 |
+| **Agent Harness (`scripts/agent_harness/`, `.agents/`, `docs/harness/`)** | `C` *(Baseline `#424` P0 open; Historical P07 `B`; Host unit `PASS`; Runtime sandbox `PARTIAL`)* | Harness / Owner | **Current (`#437` P08-A):** `orchestrator.py` unified admission/Role ACL/frozen policy/sequential `WIP=1`, `verify_structure.py`, `dependency_checks.py`, `harness_doctor.py --profile core`, `advanced_pack.py verify`, and `tests/agent_harness` PASS. **Historical P07 (`#435`):** `B` (`488` unit tests PASS). | Reassessed to `C` per §1 grading rule while P0 baseline `#424` (`SECRET-SCAN` FP) remains `OPEN`; Native Fast Lane Full Access is `SUPERVISED_ONLY` (`H2-TOL-02`); `P08-B..E` multi-round pilot/recovery/experiments & rubric calibration remain `NOT_VERIFIED`. | 2026-11-28 |
 
 ---
 
@@ -46,7 +46,7 @@
 | **Backend Go Modular Monolith (`cmd` / `internal`)** | `B` | `dependency_checks.py` (`check_go_boundaries` via `go.mod` + AST/imports) | `Good` (GOCARS + Go V2) | `GO-BE-002` CI gate pending; `rf_tracker.go` `gofmt` drift | 2026-11-28 |
 | **Web Client Layers (`types` / `lib` / `components` / `app`)** | `B` | `dependency_checks.py` (`check_client_boundaries` via TS imports) | `Good` (`clients/DESIGN.md`) | `node_modules` absent in clean worktrees; `SECRET-SCAN` FP (`#424`) | 2026-11-28 |
 | **Versioned Contracts (`$ref` / Schemas / OpenAPI)** | `B` | `dependency_checks.py` (`check_contract_boundaries`) + `check_contracts.py` | `Good` (`contracts/README.md`) | `D01..D13` open; historical TDMA schemas retained read-only | 2026-11-28 |
-| **Harness Control Plane & Host Gates** | `B` | `agent_context.py`, `scope.py`, `quality_gates.py`, `pr_review.py`, `check.py`, `feature_state.py`, `observability.py`, `advanced_pack.py` | `Good` (`ADVANCED_PACK.md` + `AGENTS.md`) | Native Full Access lacks OS sandbox (`H2-TOL-02`); P08–P10 pending | 2026-11-28 |
+| **Harness Control Plane & Host Gates** | `C` *(Historical P07 `B`; `#424` P0 open)* | `orchestrator.py`, `agent_context.py`, `scope.py`, `quality_gates.py`, `pr_review.py`, `check.py`, `feature_state.py`, `observability.py`, `advanced_pack.py`, `p1/{cli,state}.py` | `Good` (`ADVANCED_PACK.md` + `AGENTS.md`) | Baseline `#424` P0 open; Native Full Access lacks OS sandbox (`H2-TOL-02`); `P08-B..E` & `P09–P10` pending | 2026-11-28 |
 
 ---
 
@@ -90,4 +90,5 @@
 
 | Date | Revision | Trigger / Evidence | Changes Recorded |
 |---|---|---|---|
-| 2026-11-28 | `059fa45fc` + `#435` | P07 Advanced Pack integration (`advanced_pack.py verify`, `check-db-schema`, `tests/agent_harness`) | Established initial evidence-backed domain/layer grades (`NOT_VERIFIED` preserved for RF/HIL/live runtime), added source-derived `docs/generated/db-schema.md`, and projected verified GitHub debt (`#424`..`#80`). Separate 6-dimension evaluator rubric calibration remains `NOT_VERIFIED` (`OD-06`/`OD-09`). |
+| 2026-11-28 | `059fa45fc` + `#435` | P07 Advanced Pack integration (`advanced_pack.py verify`, `check-db-schema`, `tests/agent_harness`) | Established initial evidence-backed domain/layer grades (`NOT_VERIFIED` preserved for RF/HIL/live runtime), added source-derived `docs/generated/db-schema.md`, and projected verified GitHub debt (`#424`..`#80`). Historical P07 Harness grade: `B`. Separate 6-dimension evaluator rubric calibration remains `NOT_VERIFIED` (`OD-06`/`OD-09`). |
+| 2026-11-28 | `ed97ca9e7` + `#437` | P08-A Role & Control-Plane integration (`orchestrator.py`, `p1/state.py`, `run.py`, `p1/cli.py`) | Added unified Host admission/dispatch contract, Role ACLs, sequential `WIP=1`, and frozen per-run policy inputs for P08-B. Reassessed active Harness grade from historical `B` (`#435`) to `C` while P0 baseline `#424` remains `OPEN` (retaining historical `B` in provenance). |
