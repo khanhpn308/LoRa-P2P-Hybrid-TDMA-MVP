@@ -32,6 +32,7 @@ try:
     from .scope import parse_allowed_paths
     from .standards_policy import select_rules, StandardsError
     from .feature_state import load_feature_doc, FeatureStateError
+    from .observability import redact_text, record_process_signal
     try:
         from .adapters import antigravity
     except ImportError:
@@ -47,6 +48,7 @@ except ImportError:
     from scope import parse_allowed_paths
     from standards_policy import select_rules, StandardsError
     from feature_state import load_feature_doc, FeatureStateError
+    from observability import redact_text, record_process_signal
     try:
         from adapters import antigravity
     except ImportError:
@@ -1380,11 +1382,12 @@ def run_auto_audit(
                     ) from exc
                 if is_transient_error(exc) and attempt <= max_retries:
                     fail_file = evidence_dir / f"auditor_failure_{job_id}_attempt_{attempt}.json"
+                    safe_err, _, _ = redact_text(str(exc), max_bytes=2048)
                     fail_file.write_text(
                         json.dumps({
                             "batch_id": job_id,
                             "attempt": attempt,
-                            "error": str(exc),
+                            "error": safe_err,
                             "timestamp": time.time(),
                         }, indent=2),
                         encoding="utf-8",
@@ -2356,6 +2359,37 @@ def run_pr_review(args: argparse.Namespace) -> int:
         out_md_path.parent.mkdir(parents=True, exist_ok=True)
         out_md_path.write_text(report_md, encoding="utf-8")
 
+    if getattr(args, "journal", None):
+        journal_path = Path(args.journal)
+        verdict_val = evaluation["verdict"]
+        sig_status = "PASS" if verdict_val == HostVerdict.READY_FOR_HUMAN_REVIEW.value else (
+            "NOT_VERIFIED" if verdict_val == HostVerdict.NOT_VERIFIED.value else (
+                "BLOCKED" if verdict_val == HostVerdict.BLOCKED.value else "FAIL"
+            )
+        )
+        findings_list = evaluation.get("findings", [])
+        finding_text = "; ".join(
+            f"{f.get('gate', f.get('rule', 'PR'))}:{f.get('message', f.get('explanation', ''))}"
+            for f in findings_list[:5]
+            if isinstance(f, dict)
+        ) or f"PR review verdict={verdict_val}"
+        issue_num = linked_issue.get("number") if isinstance(linked_issue, dict) else None
+        record_process_signal(
+            journal_path=journal_path,
+            signal_type="process",
+            category="pr_review",
+            owning_domain="harness",
+            status=sig_status,
+            captured=True,
+            issue=issue_num,
+            check_id=f"pr-{pr_data.get('number', 'review')}",
+            source_sha=str(head_sha_at_start or ""),
+            diff_sha256=str(overall_diff_hash or ""),
+            exit_code=0 if verdict_val == HostVerdict.READY_FOR_HUMAN_REVIEW.value else 1,
+            finding=finding_text,
+            evidence_ref={"pr_number": pr_data.get("number"), "verdict": verdict_val},
+        )
+
     print(report_md)
 
     # 10. Publish comment if explicitly authorized by operator
@@ -2377,7 +2411,7 @@ def run_pr_review(args: argparse.Namespace) -> int:
     return 2
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Read-only PR Review Harness with scoped Rule IDs, evidence gates, and human merge policy."
     )
@@ -2396,8 +2430,9 @@ def main() -> int:
     parser.add_argument("--output-md", help="Path to write Markdown review report")
     parser.add_argument("--require-rubric", action="store_true", help="Require 6-dimension 0-2 evaluator rubric in Auditor report")
     parser.add_argument("--calibrate-rubric", help="Path to approved human-labeled calibration dataset JSON")
+    parser.add_argument("--journal", help="Optional external Host SQLite journal to record redacted PR review signal")
     parser.add_argument("--publish-comment", action="store_true", help="Publish or update comment on GitHub PR (requires operator authorization)")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     try:
         if args.calibrate_rubric:

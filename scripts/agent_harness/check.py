@@ -28,10 +28,12 @@ if __package__ in (None, ""):
 
 try:
     from .dependency_checks import domains_for_paths
+    from .observability import contains_secret, ingest_checks_summary, redact_text
     from .quality_gates import digest, evaluate as evaluate_quality_gates, inventory, route, secret_line
     from .scope import parse_allowed_paths
 except ImportError:
     from dependency_checks import domains_for_paths
+    from observability import contains_secret, ingest_checks_summary, redact_text
     from quality_gates import digest, evaluate as evaluate_quality_gates, inventory, route, secret_line
     from scope import parse_allowed_paths
 
@@ -559,6 +561,10 @@ def run_checks(
     bench_auth: pathlib.Path | None = None,
     timeout: int = 300,
     run_quality_gates: bool = True,
+    journal_path: pathlib.Path | None = None,
+    issue: int | None = None,
+    unit_id: str | None = None,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     """Execute OD-03 impact-routed checks and emit Host-bound receipts."""
     repo_root = repo.resolve(strict=True)
@@ -717,9 +723,11 @@ def run_checks(
         if not cwd.is_relative_to(repo_root) or not cwd.is_dir():
             raise ValueError(f"Unsafe or missing cwd for check {spec.check_id}: {spec.cwd_rel}")
 
+        started_at = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         started = time.monotonic()
         rc, output = _run_bounded_check(spec.command, cwd, timeout)
         duration_s = round(time.monotonic() - started, 3)
+        ended_at = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         # Special case: `gofmt -d .` exits 0 even when formatting diffs exist!
         if spec.check_id == "go-format" and rc == 0 and output.strip():
@@ -727,8 +735,10 @@ def run_checks(
 
         if not output.strip():
             output = f"[check.py] {spec.check_id} exited {rc} in {duration_s}s\n"
-        if secret_line(output.encode("utf-8", errors="replace")):
-            output = "[check.py] Output redacted due to secret signature match\n"
+        secret_hit = contains_secret(output)
+        output, was_redacted, was_truncated = redact_text(output, max_bytes=MAX_LOG_BYTES)
+        if secret_hit:
+            output = "[check.py] Secret signature detected and redacted; failing check\n" + output
             rc = rc or 1
 
         log_path.write_text(output, encoding="utf-8")
@@ -744,6 +754,12 @@ def run_checks(
             obs["verification_sha256"] = verification_sha256
 
         receipt_status = "PASS" if rc == 0 else "FAIL"
+        finding_text = ""
+        if rc != 0:
+            finding_text, _, _ = redact_text(
+                output[-1000:] if len(output) > 1000 else output,
+                max_bytes=800,
+            )
         receipt = {
             "source_sha": source["source_sha"],
             "candidate_sha256": source["candidate_sha256"],
@@ -792,10 +808,15 @@ def run_checks(
                 "level": spec.level,
                 "status": receipt_status,
                 "exit_code": rc,
+                "started_at": started_at,
+                "ended_at": ended_at,
                 "duration_s": duration_s,
                 "tool_version": tool_ver,
                 "receipt_path": log_name,
                 "receipt_sha256": log_sha,
+                "redacted": bool(was_redacted or secret_hit),
+                "truncated": bool(was_truncated),
+                "finding": finding_text,
             }
         )
 
@@ -856,6 +877,19 @@ def run_checks(
     (ev_root / "checks_summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8"
     )
+    if journal_path is not None:
+        if journal_path.is_symlink():
+            raise ValueError("journal_path must not be a symlink")
+        if journal_path.resolve().is_relative_to(repo_root):
+            raise ValueError("Host journal_path must remain outside candidate worktree")
+        ingested = ingest_checks_summary(
+            ev_root,
+            journal_path=journal_path,
+            issue=issue,
+            unit_id=unit_id,
+            run_id=run_id,
+        )
+        summary["signals_recorded"] = len(ingested)
     if created_temp_ev:
         summary["temporary_evidence_dir"] = True
     return summary
@@ -876,6 +910,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--bench-auth", type=pathlib.Path, default=None)
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument("--no-quality-gates", action="store_true")
+    parser.add_argument("--journal", type=pathlib.Path, default=None, help="Optional external Host SQLite journal for bounded signal logging")
+    parser.add_argument("--issue", type=int, default=None)
+    parser.add_argument("--unit-id", default=None)
+    parser.add_argument("--run-id", default=None)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
@@ -910,6 +948,10 @@ def main(argv: list[str] | None = None) -> int:
             bench_auth=args.bench_auth,
             timeout=args.timeout,
             run_quality_gates=not args.no_quality_gates,
+            journal_path=args.journal,
+            issue=args.issue,
+            unit_id=args.unit_id,
+            run_id=args.run_id,
         )
         if args.json:
             print(json.dumps(res, indent=2, sort_keys=True))

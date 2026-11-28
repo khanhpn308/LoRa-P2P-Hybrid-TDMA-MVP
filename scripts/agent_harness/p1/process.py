@@ -6,6 +6,7 @@ network-restricted container/VM with scoped credentials is mandatory for Codex/A
 """
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import os
 import pathlib
@@ -34,6 +35,8 @@ class Receipt:
     output_sha256: str
     output_bytes: int
     execution_id: str | None = None
+    started_at: str = ""
+    ended_at: str = ""
 
     def json(self) -> dict:
         return vars(self)
@@ -63,6 +66,7 @@ def execute_checked(argv: list[str], cwd: pathlib.Path, *,
     # No secrets, home, SSH/GitHub tokens or credential-bearing environment.
     env = {"PATH": "/usr/bin:/bin", "HOME": "/tmp", "LANG": "C.UTF-8"}
     import time
+    started_at = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     start = time.monotonic()
     try:
         proc = subprocess.Popen(
@@ -89,6 +93,7 @@ def execute_checked(argv: list[str], cwd: pathlib.Path, *,
     else:
         status = "EXIT_SUCCESS" if proc.returncode == 0 else "EXIT_FAILURE"
         code = proc.returncode
+    ended_at = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     combined = out + b"\n" + err
     # This caps *stored* output; do not use with untrusted high-volume jobs
     # without an external memory-limited runner.
@@ -96,4 +101,4 @@ def execute_checked(argv: list[str], cwd: pathlib.Path, *,
         status = "OUTPUT_LIMIT_EXCEEDED"
     return Receipt(argv[0], code, status, round(time.monotonic()-start, 3),
                    hashlib.sha256(combined).hexdigest(), len(combined),
-                   execution_id=execution_id)
+                   execution_id=execution_id, started_at=started_at, ended_at=ended_at)
