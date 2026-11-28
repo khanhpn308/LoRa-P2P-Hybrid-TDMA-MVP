@@ -45,6 +45,13 @@ class AdvancedPackRepoTests(unittest.TestCase):
         self.assertTrue(info["runner"]["sorts_lexicographically"])
         self.assertTrue(info["ops_guide_mentions_golang_migrate"])
 
+    def test_repo_experiment_log_surface_present_and_linked(self):
+        exp_log = REPO_ROOT / "docs" / "harness" / "EXPERIMENT_LOG.md"
+        self.assertTrue(exp_log.is_file())
+        adv_text = (REPO_ROOT / "docs" / "harness" / "ADVANCED_PACK.md").read_text(encoding="utf-8")
+        self.assertIn("EXPERIMENT_LOG.md", adv_text)
+        self.assertEqual(ap.validate_markdown_links(REPO_ROOT, exp_log), [])
+
 
 class AdvancedPackNegativeAndFixtureTests(unittest.TestCase):
     def setUp(self):

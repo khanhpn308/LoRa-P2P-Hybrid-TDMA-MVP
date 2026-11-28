@@ -327,6 +327,34 @@ CONTROL_TRANSITIONS: dict[str, frozenset[str]] = {
     "CANCELLED": frozenset(),
 }
 
+EXPERIMENT_STATES = frozenset({
+    "PLANNED",
+    "BASELINE_RUNNING",
+    "CANDIDATE_RUNNING",
+    "EVALUATING",
+    "DECIDED",
+    "RECOVERED",
+    "ABORTED",
+    "BLOCKED",
+})
+EXPERIMENT_DECISIONS = frozenset({
+    "PENDING",
+    "KEEP",
+    "REJECT",
+    "ABORTED",
+    "BLOCKED",
+})
+EXPERIMENT_TRANSITIONS: dict[str, frozenset[str]] = {
+    "PLANNED": frozenset({"BASELINE_RUNNING", "EVALUATING", "DECIDED", "ABORTED", "BLOCKED"}),
+    "BASELINE_RUNNING": frozenset({"CANDIDATE_RUNNING", "EVALUATING", "DECIDED", "ABORTED", "BLOCKED"}),
+    "CANDIDATE_RUNNING": frozenset({"EVALUATING", "DECIDED", "ABORTED", "BLOCKED"}),
+    "EVALUATING": frozenset({"DECIDED", "ABORTED", "BLOCKED"}),
+    "DECIDED": frozenset({"RECOVERED", "ABORTED", "BLOCKED"}),
+    "RECOVERED": frozenset(),
+    "ABORTED": frozenset({"RECOVERED"}),
+    "BLOCKED": frozenset({"RECOVERED"}),
+}
+
 
 class StateConflict(RuntimeError):
     """State did not match a compare-and-swap request."""
@@ -533,6 +561,56 @@ class Journal:
             );
             CREATE INDEX IF NOT EXISTS idx_control_rounds_run_round
               ON control_rounds(run_id, round_num);
+            CREATE TABLE IF NOT EXISTS improvement_experiments (
+                experiment_id TEXT PRIMARY KEY,
+                issue INTEGER CHECK(issue IS NULL OR issue > 0),
+                run_id TEXT NOT NULL DEFAULT '',
+                state TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                hypothesis TEXT NOT NULL,
+                attributed_subsystem TEXT NOT NULL,
+                attributed_failure_json TEXT NOT NULL DEFAULT '{}',
+                target_metric TEXT NOT NULL,
+                baseline_revision TEXT NOT NULL,
+                candidate_revision TEXT NOT NULL DEFAULT '',
+                candidate_sha256 TEXT NOT NULL DEFAULT '',
+                allowed_paths_json TEXT NOT NULL,
+                plan_sha256 TEXT NOT NULL,
+                oracle_sha256 TEXT NOT NULL,
+                holdout_sha256 TEXT NOT NULL,
+                evaluator_sha256 TEXT NOT NULL,
+                policy_sha256 TEXT NOT NULL,
+                plan_json TEXT NOT NULL,
+                budget_limit_json TEXT NOT NULL,
+                budget_consumed_json TEXT NOT NULL,
+                baseline_metrics_json TEXT NOT NULL DEFAULT '{}',
+                candidate_metrics_json TEXT NOT NULL DEFAULT '{}',
+                metric_delta_json TEXT NOT NULL DEFAULT '{}',
+                decision TEXT NOT NULL DEFAULT 'PENDING',
+                decision_reason TEXT NOT NULL DEFAULT '',
+                independent_eval_status TEXT NOT NULL DEFAULT 'NOT_VERIFIED',
+                holdout_status TEXT NOT NULL DEFAULT 'NOT_VERIFIED',
+                negative_controls_status TEXT NOT NULL DEFAULT 'NOT_VERIFIED',
+                promotion_status TEXT NOT NULL DEFAULT 'NOT_PROMOTED',
+                receipts_json TEXT NOT NULL DEFAULT '{}',
+                recovery_evidence_json TEXT NOT NULL DEFAULT '{}',
+                evidence_dir TEXT NOT NULL DEFAULT '',
+                decision_record_sha256 TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_improvement_experiments_issue
+              ON improvement_experiments(issue, created_at);
+            CREATE TABLE IF NOT EXISTS improvement_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                experiment_id TEXT NOT NULL REFERENCES improvement_experiments(experiment_id),
+                from_state TEXT,
+                to_state TEXT NOT NULL,
+                actor_role TEXT NOT NULL,
+                action TEXT NOT NULL,
+                detail_json TEXT NOT NULL DEFAULT '{}',
+                utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
         """)
         existing_ctrl_cols = {
             r["name"] for r in self.db.execute("PRAGMA table_info(control_runs)").fetchall()
@@ -1799,6 +1877,242 @@ class Journal:
             )
             self.db.execute("COMMIT")
             return self.get_control_run(run_id)
+        except BaseException:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise
+
+    def create_experiment(
+        self,
+        *,
+        experiment_id: str,
+        issue: int | None = None,
+        run_id: str = "",
+        mode: str,
+        hypothesis: str,
+        attributed_subsystem: str,
+        attributed_failure: dict[str, Any] | None = None,
+        target_metric: str,
+        baseline_revision: str,
+        allowed_paths: list[str] | tuple[str, ...],
+        plan_sha256: str,
+        oracle_sha256: str,
+        holdout_sha256: str,
+        evaluator_sha256: str,
+        policy_sha256: str,
+        plan: dict[str, Any],
+        budget_limit: dict[str, Any],
+        budget_consumed: dict[str, Any] | None = None,
+        evidence_dir: str = "",
+        actor_role: str = "host",
+        detail: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if issue is not None and issue < 1:
+            raise StateConflict("Experiment issue must be positive")
+        safe_attr = _redact_json_value(attributed_failure or {}, max_chars=MAX_FINDING_CHARS)
+        safe_plan = _redact_json_value(plan, max_chars=MAX_EXCERPT_CHARS)
+        safe_limit = _redact_json_value(budget_limit, max_chars=MAX_FINDING_CHARS)
+        safe_consumed = _redact_json_value(
+            budget_consumed or {"wall_seconds": 0.0, "rounds": 0, "tokens_used": "NOT_VERIFIED", "cost_usd": "NOT_VERIFIED"},
+            max_chars=MAX_FINDING_CHARS,
+        )
+        safe_detail = _redact_json_value(detail or {}, max_chars=MAX_FINDING_CHARS)
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            self.db.execute(
+                """INSERT INTO improvement_experiments(
+                       experiment_id, issue, run_id, state, mode, hypothesis,
+                       attributed_subsystem, attributed_failure_json, target_metric,
+                       baseline_revision, allowed_paths_json,
+                       plan_sha256, oracle_sha256, holdout_sha256, evaluator_sha256, policy_sha256,
+                       plan_json, budget_limit_json, budget_consumed_json,
+                       decision, promotion_status, evidence_dir
+                   ) VALUES (?, ?, ?, 'PLANNED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 'NOT_PROMOTED', ?)""",
+                (
+                    experiment_id,
+                    issue,
+                    run_id,
+                    mode,
+                    _redact_signal_text(hypothesis, max_chars=MAX_FINDING_CHARS),
+                    _redact_signal_text(attributed_subsystem, max_chars=120),
+                    json.dumps(safe_attr, sort_keys=True),
+                    target_metric,
+                    baseline_revision,
+                    json.dumps(list(allowed_paths), sort_keys=True),
+                    plan_sha256,
+                    oracle_sha256,
+                    holdout_sha256,
+                    evaluator_sha256,
+                    policy_sha256,
+                    json.dumps(safe_plan, sort_keys=True),
+                    json.dumps(safe_limit, sort_keys=True),
+                    json.dumps(safe_consumed, sort_keys=True),
+                    evidence_dir,
+                ),
+            )
+            self.db.execute(
+                """INSERT INTO improvement_events(
+                       experiment_id, from_state, to_state, actor_role, action, detail_json
+                   ) VALUES (?, NULL, 'PLANNED', ?, 'create_experiment', ?)""",
+                (experiment_id, actor_role, json.dumps(safe_detail, sort_keys=True)),
+            )
+            self.db.execute("COMMIT")
+            return self.get_experiment(experiment_id)
+        except sqlite3.IntegrityError as exc:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise StateConflict(f"Experiment already exists or invalid fields: {exc}") from exc
+        except BaseException:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise
+
+    @staticmethod
+    def _decode_experiment_row(row: sqlite3.Row) -> dict[str, Any]:
+        d = dict(row)
+        d["attributed_failure"] = json.loads(d.pop("attributed_failure_json") or "{}")
+        d["allowed_paths"] = json.loads(d.pop("allowed_paths_json") or "[]")
+        d["plan"] = json.loads(d.pop("plan_json") or "{}")
+        d["budget_limit"] = json.loads(d.pop("budget_limit_json") or "{}")
+        d["budget_consumed"] = json.loads(d.pop("budget_consumed_json") or "{}")
+        d["baseline_metrics"] = json.loads(d.pop("baseline_metrics_json") or "{}")
+        d["candidate_metrics"] = json.loads(d.pop("candidate_metrics_json") or "{}")
+        d["metric_delta"] = json.loads(d.pop("metric_delta_json") or "{}")
+        d["receipts"] = json.loads(d.pop("receipts_json") or "{}")
+        d["recovery_evidence"] = json.loads(d.pop("recovery_evidence_json") or "{}")
+        return d
+
+    def get_experiment(self, experiment_id: str) -> dict[str, Any]:
+        row = self.db.execute(
+            "SELECT * FROM improvement_experiments WHERE experiment_id=?",
+            (experiment_id,),
+        ).fetchone()
+        if row is None:
+            raise StateConflict(f"Unknown experiment ID: {experiment_id}")
+        return self._decode_experiment_row(row)
+
+    def list_experiments(
+        self,
+        *,
+        issue: int | None = None,
+        decision: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if issue is not None:
+            clauses.append("issue=?")
+            params.append(issue)
+        if decision is not None:
+            clauses.append("decision=?")
+            params.append(decision)
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        bounded = min(max(1, int(limit)), MAX_QUERY_LIMIT)
+        params.append(bounded)
+        rows = self.db.execute(
+            f"SELECT * FROM improvement_experiments {where_sql} ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            tuple(params),
+        ).fetchall()
+        return [self._decode_experiment_row(r) for r in rows]
+
+    def experiment_events(self, experiment_id: str) -> list[dict[str, Any]]:
+        self.get_experiment(experiment_id)
+        rows = self.db.execute(
+            "SELECT * FROM improvement_events WHERE experiment_id=? ORDER BY event_id",
+            (experiment_id,),
+        ).fetchall()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            d = dict(r)
+            d["detail"] = json.loads(d.pop("detail_json") or "{}")
+            out.append(d)
+        return out
+
+    def update_experiment(
+        self,
+        experiment_id: str,
+        *,
+        expected_state: str,
+        next_state: str,
+        actor_role: str,
+        action: str,
+        update_fields: dict[str, Any] | None = None,
+        detail: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if expected_state not in EXPERIMENT_STATES or next_state not in EXPERIMENT_STATES:
+            raise StateConflict("Unknown experiment lifecycle state")
+        if next_state not in EXPERIMENT_TRANSITIONS.get(expected_state, frozenset()):
+            raise StateConflict(f"Forbidden experiment transition: {expected_state} -> {next_state}")
+        allowed_cols = frozenset({
+            "candidate_revision",
+            "candidate_sha256",
+            "budget_consumed_json",
+            "baseline_metrics_json",
+            "candidate_metrics_json",
+            "metric_delta_json",
+            "decision",
+            "decision_reason",
+            "independent_eval_status",
+            "holdout_status",
+            "negative_controls_status",
+            "promotion_status",
+            "receipts_json",
+            "recovery_evidence_json",
+            "evidence_dir",
+            "decision_record_sha256",
+        })
+        updates = dict(update_fields or {})
+        unknown_cols = set(updates) - allowed_cols
+        if unknown_cols:
+            raise StateConflict(f"Unsupported or immutable experiment columns: {sorted(unknown_cols)}")
+        if "decision" in updates and updates["decision"] not in EXPERIMENT_DECISIONS:
+            raise StateConflict(f"Invalid experiment decision: {updates['decision']!r}")
+        safe_detail = _redact_json_value(detail or {}, max_chars=MAX_FINDING_CHARS)
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            row = self.db.execute(
+                "SELECT * FROM improvement_experiments WHERE experiment_id=?",
+                (experiment_id,),
+            ).fetchone()
+            if row is None:
+                raise StateConflict(f"Unknown experiment ID: {experiment_id}")
+            if row["state"] != expected_state:
+                raise StateConflict(
+                    f"CAS failed on experiment: expected {expected_state}, actual {row['state']}"
+                )
+            set_clauses = ["state=?", "updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')"]
+            params: list[Any] = [next_state]
+            for col, val in updates.items():
+                if col == "decision_reason" and isinstance(val, str):
+                    val = _redact_signal_text(val, max_chars=MAX_FINDING_CHARS)
+                set_clauses.append(f"{col}=?")
+                params.append(val)
+            params.extend([experiment_id, expected_state])
+            upd = self.db.execute(
+                f"UPDATE improvement_experiments SET {', '.join(set_clauses)} WHERE experiment_id=? AND state=?",
+                tuple(params),
+            )
+            if upd.rowcount != 1:
+                raise StateConflict("CAS failed while updating experiment")
+            self.db.execute(
+                """INSERT INTO improvement_events(
+                       experiment_id, from_state, to_state, actor_role, action, detail_json
+                   ) VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    experiment_id,
+                    expected_state,
+                    next_state,
+                    actor_role,
+                    _redact_signal_text(action, max_chars=120),
+                    json.dumps(safe_detail, sort_keys=True),
+                ),
+            )
+            self.db.execute("COMMIT")
+            return self.get_experiment(experiment_id)
+        except sqlite3.IntegrityError as exc:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise StateConflict(f"Experiment integrity conflict: {exc}") from exc
         except BaseException:
             if self.db.in_transaction:
                 self.db.execute("ROLLBACK")

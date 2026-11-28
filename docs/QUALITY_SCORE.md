@@ -57,6 +57,7 @@
 | Date | Revision | Variant | Completion Rate (VCR) | Retries | Verification Gap | Notes |
 |---|---|---|---|---|---|---|
 | 2026-11-27 | `fdbc9a5c` | P01 Baseline | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` | Protocol frozen in [HARNESS_BASELINE_REPORT.md §7](harness/phase-01/HARNESS_BASELINE_REPORT.md#7-wp-f--benchmark-protocol--metric-specifications-harness_specmd-73--od-06); paired trials scheduled in P08/P10. |
+| 2026-11-28 | `500acba0` + `#443` | P08-D Controlled Fixture (`CONTROLLED_FIXTURE` only) | `NOT_VERIFIED` *(live)* | `NOT_VERIFIED` *(live)* | `NOT_VERIFIED` *(live)* | Controlled-fixture demonstration only ([EXPERIMENT_LOG.md](harness/EXPERIMENT_LOG.md)): `EXP-DEMO-KEEP-001` (`instruction_snr` `+0.40`, `KEEP`/`FIXTURE_ONLY_NOT_PROMOTABLE`), `EXP-DEMO-REJECT-002` (`-0.25`, `REJECT`), `EXP-DEMO-GAMING-003` (`REJECT`). Real productivity gain & live provider evaluation remain `NOT_VERIFIED`. |
 
 ### 4.2 Simplification Log (`L12` / `H2-FBK-08`)
 
@@ -92,3 +93,4 @@
 |---|---|---|---|
 | 2026-11-28 | `059fa45fc` + `#435` | P07 Advanced Pack integration (`advanced_pack.py verify`, `check-db-schema`, `tests/agent_harness`) | Established initial evidence-backed domain/layer grades (`NOT_VERIFIED` preserved for RF/HIL/live runtime), added source-derived `docs/generated/db-schema.md`, and projected verified GitHub debt (`#424`..`#80`). Historical P07 Harness grade: `B`. Separate 6-dimension evaluator rubric calibration remains `NOT_VERIFIED` (`OD-06`/`OD-09`). |
 | 2026-11-28 | `ed97ca9e7` + `#437` | P08-A Role & Control-Plane integration (`orchestrator.py`, `p1/state.py`, `run.py`, `p1/cli.py`) | Added unified Host admission/dispatch contract, Role ACLs, sequential `WIP=1`, and frozen per-run policy inputs for P08-B. Reassessed active Harness grade from historical `B` (`#435`) to `C` while P0 baseline `#424` remains `OPEN` (retaining historical `B` in provenance). |
+| 2026-11-28 | `500acba0` + `#443` | P08-D Controlled Improvement Experiment (`improvement.py`, `p1/state.py`, `p1/cli.py`, `EXPERIMENT_LOG.md`, `test_improvement.py`) | Added bounded OD-10 meta-improvement loop with frozen oracle/holdout/negative-control hashes, SHA-bound receipts, safe owned-workspace discard, and controlled-fixture KEEP/REJECT verification. Active Harness grade remains `C` while P0 baseline `#424` stays `OPEN`; live-provider improvement & human calibration stay `NOT_VERIFIED`. |

@@ -542,6 +542,80 @@ class JournalTests(unittest.TestCase):
             self.assertEqual(state.get_control_run("run-p08c-prog")["run_id"], "run-p08c-prog")
             self.assertGreaterEqual(len(state.control_events("run-p08c-prog")), 3)
 
+    def test_improvement_experiment_cas_immutability_and_redaction(self):
+        fake_tok = "ghp_" + "B" * 24
+        with Journal(self.path) as state:
+            created = state.create_experiment(
+                experiment_id="EXP-STATE-01",
+                issue=443,
+                mode="CONTROLLED_FIXTURE",
+                hypothesis=f"Test experiment persistence token={fake_tok}",
+                attributed_subsystem="instructions",
+                target_metric="instruction_snr",
+                baseline_revision="a" * 40,
+                allowed_paths=["docs/routing_note.md"],
+                plan_sha256="1" * 64,
+                oracle_sha256="2" * 64,
+                holdout_sha256="3" * 64,
+                evaluator_sha256="4" * 64,
+                policy_sha256="5" * 64,
+                plan={"experiment_id": "EXP-STATE-01"},
+                budget_limit={"max_wall_seconds": 30, "max_rounds": 1},
+            )
+            self.assertEqual(created["state"], "PLANNED")
+            self.assertNotIn(fake_tok, created["hypothesis"])
+
+            # Frozen digest columns cannot be overwritten after creation
+            with self.assertRaises(StateConflict):
+                state.update_experiment(
+                    "EXP-STATE-01",
+                    expected_state="PLANNED",
+                    next_state="BASELINE_RUNNING",
+                    actor_role="host",
+                    action="tamper_oracle",
+                    update_fields={"oracle_sha256": "9" * 64},
+                )
+
+            # CAS mismatch rejected
+            with self.assertRaises(StateConflict):
+                state.update_experiment(
+                    "EXP-STATE-01",
+                    expected_state="EVALUATING",
+                    next_state="DECIDED",
+                    actor_role="host",
+                    action="bad_cas",
+                )
+
+            # Illegal transition rejected
+            with self.assertRaises(StateConflict):
+                state.update_experiment(
+                    "EXP-STATE-01",
+                    expected_state="PLANNED",
+                    next_state="RECOVERED",
+                    actor_role="host",
+                    action="skip_steps",
+                )
+
+            state.update_experiment(
+                "EXP-STATE-01",
+                expected_state="PLANNED",
+                next_state="DECIDED",
+                actor_role="orchestrator",
+                action="decide",
+                update_fields={"decision": "REJECT", "decision_reason": "No gain"},
+            )
+            rec = state.update_experiment(
+                "EXP-STATE-01",
+                expected_state="DECIDED",
+                next_state="RECOVERED",
+                actor_role="host",
+                action="recover",
+            )
+            self.assertEqual(rec["state"], "RECOVERED")
+            self.assertEqual(rec["decision"], "REJECT")
+            self.assertEqual(len(state.experiment_events("EXP-STATE-01")), 3)
+            self.assertEqual(len(state.list_experiments(issue=443, decision="REJECT")), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
