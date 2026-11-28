@@ -2282,6 +2282,26 @@ class PRReviewCLITests(unittest.TestCase):
             )
             doc = fs.activate_unit(doc, "U-01")
             ver_sha = doc["units"][0]["verification"]["definition_sha256"]
+            cmd_text = "true"
+            cmd_sha = hashlib.sha256(cmd_text.encode("utf-8")).hexdigest()
+            receipt_sha = "b" * 64
+            receipt_record = {
+                "command": cmd_text,
+                "command_sha256": cmd_sha,
+                "exit_code": 0,
+                "receipt_path": "evidence/checks.log",
+                "receipt_sha256": receipt_sha,
+                "source_sha": "1" * 40,
+                "candidate_sha256": "a" * 64,
+                "diff_sha256": "e" * 64,
+                "verification_sha256": ver_sha,
+                "tool_version": "host-test",
+                "actor": "host",
+                "verified_by": "host",
+            }
+            cr_sha = hashlib.sha256(
+                json.dumps([receipt_record], sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
             proof = issue_host_proof(
                 issue=429,
                 unit_id="U-01",
@@ -2291,11 +2311,21 @@ class PRReviewCLITests(unittest.TestCase):
                 manifest_sha256="c" * 64,
                 runner_sha256="d" * 64,
                 receipt_path="evidence/checks.log",
-                receipt_sha256="b" * 64,
+                receipt_sha256=receipt_sha,
                 gate_rule_id="TOOLING-CHECK",
                 auto_check="AUTO_CHECK_PASS",
+                diff_sha256="e" * 64,
+                command_receipts_sha256=cr_sha,
+                tool_version="host-test",
+                trusted_definition_sha256=ver_sha,
             )
-            doc = fs.verify_unit_passing(doc, "U-01", proof=proof)
+            doc = fs.verify_unit_passing(
+                doc,
+                "U-01",
+                proof=proof,
+                command_receipts=[receipt_record],
+                trusted_definitions={"U-01": {"criteria": ["ok"], "commands": ["true"]}},
+            )
             fs.export_feature_doc(doc, feat_dir / "issue-429.json")
 
             pr_data = {
@@ -2310,6 +2340,166 @@ class PRReviewCLITests(unittest.TestCase):
             mismatch = pr_review.inspect_pr_feature_state(repo, pr_data, {"number": 430})
             self.assertEqual(mismatch["status"], "INVALID")
             self.assertTrue(mismatch["issue_mismatch"])
+
+
+class RubricPolicyRoleAndCalibrationTests(unittest.TestCase):
+    def _sample_rubric(self, *, decision="ACCEPT", hard_gate=True, score_override=None):
+        dims = {}
+        scores = {
+            "correctness": 2,
+            "verification": 2,
+            "scope_discipline": 2,
+            "reliability": 2,
+            "maintainability": 2,
+            "handoff_readiness": 2,
+        }
+        if score_override:
+            scores.update(score_override)
+        for k, sc in scores.items():
+            dims[k] = {
+                "score": sc,
+                "rationale": f"{k} checked",
+                "evidence": [{"receipt_path": "diff.patch", "receipt_sha256": "a" * 64}] if sc == 2 else [],
+                "findings": [] if sc == 2 else [f"{k} needs work"],
+            }
+        return {
+            "version": "1.0",
+            "decision": decision,
+            "hard_gate_passed": hard_gate,
+            "total_score": sum(scores.values()),
+            "dimensions": dims,
+        }
+
+    def test_role_separation_and_hard_gate_non_averaging_in_policy(self):
+        pr_data = {
+            "number": 431,
+            "body": "Closes #431",
+            "author": "dev-maker",
+            "maker_id": "worker-1",
+            "head_ref": "feature/431-test",
+            "base_sha": "1" * 40,
+            "head_sha": "2" * 40,
+            "files": [{"filename": "README.md", "status": "modified", "patch": "@@ -1 +1 @@\n-a\n+b\n"}],
+            "reviews": [],
+            "review_comments": [],
+            "comments": [],
+        }
+        issue = {"number": 431, "state": "OPEN", "body": "## Target Directories (allowed paths)\n- `README.md`\n"}
+        rule_sel = {"selected_ids": [], "source": "verified_host"}
+        check_runs = [{"name": "ci", "status": "completed", "conclusion": "success"}]
+
+        # 1. Maker acting as Auditor is rejected
+        self_audit = {
+            "status": "PASS",
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["README.md"],
+            "base_sha": "1" * 40,
+            "head_sha": "2" * 40,
+            "auditor_id": "worker-1",
+            "rubric": self._sample_rubric(),
+        }
+        ev_self = policy.evaluate_pr_policy(
+            pr_data, issue, ["README.md"], "", rule_sel, self_audit, check_runs, None, "2" * 40, "2" * 40
+        )
+        self.assertEqual(ev_self["verdict"], "BLOCKED")
+        self.assertEqual(ev_self["dimensions"]["AI_REVIEW_PASS"], "FAIL")
+
+        # 2. REVISE rubric decision blocks READY_FOR_HUMAN_REVIEW
+        revise_audit = {
+            "status": "FAIL",
+            "findings": [{"severity": "MEDIUM", "file": "README.md", "line": 1, "rule": "DOC-1", "explanation": "gap", "fix": "fix"}],
+            "limitations": [],
+            "reviewed_scope": ["README.md"],
+            "base_sha": "1" * 40,
+            "head_sha": "2" * 40,
+            "auditor_id": "fresh-auditor",
+            "rubric": self._sample_rubric(decision="REVISE", hard_gate=True, score_override={"maintainability": 1}),
+        }
+        ev_revise = policy.evaluate_pr_policy(
+            pr_data, issue, ["README.md"], "", rule_sel, revise_audit, check_runs, None, "2" * 40, "2" * 40
+        )
+        self.assertEqual(ev_revise["verdict"], "BLOCKED")
+        self.assertEqual(ev_revise["dimensions"]["RUBRIC_DECISION"], "REVISE")
+
+        # 3. Failing hard gate (PR-06 CI FAIL) cannot be overridden by 12/12 ACCEPT rubric
+        pass_audit = {
+            "status": "PASS",
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": ["README.md"],
+            "base_sha": "1" * 40,
+            "head_sha": "2" * 40,
+            "auditor_id": "fresh-auditor",
+            "rubric": self._sample_rubric(decision="ACCEPT", hard_gate=True),
+        }
+        fail_ci = [{"name": "ci", "status": "completed", "conclusion": "failure"}]
+        ev_fail_ci = policy.evaluate_pr_policy(
+            pr_data, issue, ["README.md"], "", rule_sel, pass_audit, fail_ci, None, "2" * 40, "2" * 40
+        )
+        self.assertNotEqual(ev_fail_ci["verdict"], "READY_FOR_HUMAN_REVIEW")
+        self.assertFalse(ev_fail_ci["dimensions"]["AUTO_CHECK_PASS"])
+
+    def _cal_case(self, cid, decision, hard_gate=True, approved=True, independent=True):
+        scores = {d: (2 if decision == "ACCEPT" else (1 if decision == "REVISE" else 0)) for d in (
+            "correctness", "verification", "scope_discipline", "reliability", "maintainability", "handoff_readiness"
+        )}
+        return {
+            "case_id": cid,
+            "author": "maker-a",
+            "human_label": {
+                "approval_status": "APPROVED" if approved else "DRAFT",
+                "approved_by": "owner-khanh" if approved else "",
+                "decision": decision,
+                "hard_gate_passed": hard_gate,
+                "dimensions": scores,
+            },
+            "evaluator_report": {
+                "independent_provider": independent,
+                "provider": "independent-reviewer" if independent else "",
+                "evaluator_id": "auditor-b",
+                "status": "PASS" if decision == "ACCEPT" else "FAIL",
+                "findings": [] if decision == "ACCEPT" else [{"severity": "HIGH", "file": "a.py", "line": 1, "rule": "R-1", "explanation": "bad", "fix": "fix"}],
+                "limitations": [],
+                "reviewed_scope": ["a.py"],
+                "rubric": self._sample_rubric(decision=decision, hard_gate=hard_gate, score_override=scores),
+            },
+        }
+
+    def test_calibration_requires_approved_human_labels_and_independent_provider(self):
+        # Missing independent provider => NOT_VERIFIED
+        no_prov = {
+            "independent_provider_available": False,
+            "tuning_rounds": [{"cases": [self._cal_case("c1", "ACCEPT")]}],
+            "held_out": [self._cal_case("h1", "ACCEPT")],
+        }
+        self.assertEqual(pr_review.calibrate_rubric(no_prov)["status"], "NOT_VERIFIED")
+
+        # Unapproved human label => NOT_VERIFIED
+        unapproved = {
+            "independent_provider_available": True,
+            "tuning_rounds": [{"cases": [self._cal_case("c1", "ACCEPT", approved=False)]}],
+            "held_out": [self._cal_case("h1", "ACCEPT")],
+        }
+        self.assertEqual(pr_review.calibrate_rubric(unapproved)["status"], "NOT_VERIFIED")
+
+        # Valid 3 tuning rounds + held-out => CALIBRATED
+        valid = {
+            "independent_provider_available": True,
+            "tuning_rounds": [
+                {"cases": [self._cal_case("t1", "ACCEPT"), self._cal_case("t2", "BLOCK", hard_gate=False)]},
+                {"cases": [self._cal_case("t3", "REVISE")]},
+                {"cases": [self._cal_case("t4", "ACCEPT")]},
+            ],
+            "held_out": [
+                self._cal_case("h1", "ACCEPT"),
+                self._cal_case("h2", "BLOCK", hard_gate=False),
+            ],
+        }
+        cal_res = pr_review.calibrate_rubric(valid)
+        self.assertEqual(cal_res["status"], "CALIBRATED")
+        self.assertEqual(cal_res["tuning_rounds"], 3)
+        self.assertEqual(cal_res["held_out"]["decision_agreement"], 1.0)
 
 
 if __name__ == "__main__":

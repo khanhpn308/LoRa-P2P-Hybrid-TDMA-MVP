@@ -206,9 +206,15 @@ def inventory(repo, base):
         line = secret_line(git(repo, "cat-file", "blob", blob))
         if line:
             findings.append((name, line))
+    diff_bytes = git(repo, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", base)
+    untracked_hashes = {name: hashes[name] for name in sorted(extra)}
+    diff_sha256 = digest(
+        diff_bytes + b"\n" + json.dumps(untracked_hashes, sort_keys=True).encode("utf-8")
+    )
     payload = {"source_sha": head, "base_sha": base, "index_sha256": digest(staged),
                "files": hashes, "changed_paths": paths}
     return {"source_sha": head, "base_sha": base,
+            "diff_sha256": diff_sha256,
             "candidate_sha256": digest(json.dumps(payload, sort_keys=True).encode()),
             "changed_paths": paths}, findings
 
@@ -305,6 +311,12 @@ def receipt_check(rule, entry, evidence_root, source):
         if (entry["source_sha"] != source["source_sha"]
                 or entry["candidate_sha256"] != source["candidate_sha256"]):
             return "NOT_VERIFIED", "Stale source/index/worktree receipt", {}
+        obs_raw = entry.get("observations")
+        if any(entry.get(k) for k in ("waived", "owner_waived", "commit_only", "skipped")) or (
+            isinstance(obs_raw, dict)
+            and any(obs_raw.get(k) for k in ("waived", "owner_waived", "commit_only", "skipped"))
+        ):
+            return "NOT_VERIFIED", "Waived, skipped, or commit-only receipt cannot pass Host gate", {}
         if (not isinstance(entry["command"], list) or not entry["command"]
                 or not all(isinstance(arg, str) and arg for arg in entry["command"])
                 or not isinstance(entry["tool_version"], str) or not entry["tool_version"].strip()
@@ -313,6 +325,14 @@ def receipt_check(rule, entry, evidence_root, source):
                 or "\n" in entry["tool_version"]
                 or secret_line(entry["tool_version"].encode())):
             raise ValueError("Invalid command, tool version or exit code")
+        cmd_sha256 = digest(json.dumps(entry["command"]).encode())
+        if entry.get("command_sha256") is not None and entry["command_sha256"] != cmd_sha256:
+            return "NOT_VERIFIED", "Receipt command_sha256 mismatch", {}
+        entry_diff_sha = entry.get("diff_sha256")
+        if entry_diff_sha is None and isinstance(obs_raw, dict):
+            entry_diff_sha = obs_raw.get("diff_sha256")
+        if entry_diff_sha is not None and source.get("diff_sha256") and entry_diff_sha != source["diff_sha256"]:
+            return "NOT_VERIFIED", "Stale diff_sha256 receipt", {}
         raw = safe_read(evidence_root, entry["receipt_path"])
         if digest(raw) != entry["receipt_sha256"]:
             return "NOT_VERIFIED", "Receipt hash mismatch", {}
@@ -320,9 +340,22 @@ def receipt_check(rule, entry, evidence_root, source):
         if not log.strip() or secret_line(raw):
             return "NOT_VERIFIED", "Empty or credential-bearing receipt rejected", {}
         # Commands are hashed to avoid echoing passwords embedded in arguments.
-        metadata = {"command": "sha256:" + digest(json.dumps(entry["command"]).encode()),
+        metadata = {"command": "sha256:" + cmd_sha256,
+                    "command_sha256": cmd_sha256,
                     "exit_code": entry["exit_code"], "receipt_path": entry["receipt_path"],
                     "tool_version": entry["tool_version"], "receipt_sha256": digest(raw)}
+        if entry_diff_sha is not None:
+            metadata["diff_sha256"] = entry_diff_sha
+        entry_status = str(entry.get("status", "") or "").upper()
+        obs_status = str(obs_raw.get("status", "") or "").upper() if isinstance(obs_raw, dict) else ""
+        if entry_status == "NOT_RUN" or obs_status == "NOT_RUN":
+            return "NOT_RUN", "Mandatory check marked NOT_RUN", metadata
+        if entry_status == "NOT_VERIFIED" or obs_status == "NOT_VERIFIED" or (
+            isinstance(obs_raw, dict) and obs_raw.get("prerequisite_missing")
+        ):
+            prereq = obs_raw.get("prerequisite_missing") if isinstance(obs_raw, dict) else ""
+            msg = f"Missing prerequisite: {prereq}" if prereq else "Mandatory check marked NOT_VERIFIED"
+            return "NOT_VERIFIED", msg, metadata
         if entry["exit_code"] != 0:
             return "FAIL", "Host command exited unsuccessfully", metadata
         facts = entry["observations"]
@@ -497,6 +530,7 @@ def evaluate(repo, base, manifest=None, evidence_root=None):
     entries = {}
     standards_payload = None
     manifest_hash = None
+    document = None
     if manifest is not None:
         manifest_bytes = safe_read(evidence_root, manifest)
         manifest_hash = digest(manifest_bytes)
@@ -507,6 +541,9 @@ def evaluate(repo, base, manifest=None, evidence_root=None):
                 or set(entries) - set(REGISTRY)
                 or any(not isinstance(v, dict) for v in entries.values() if v is not None)):
             raise ValueError("Unknown rule or invalid checks object")
+        for list_key in ("command_receipts", "mandatory_checks", "planned_checks"):
+            if list_key in document and document[list_key] is not None and not isinstance(document[list_key], list):
+                raise ValueError(f"Invalid manifest {list_key} field")
     selection, rule_results, standard_status, standard_reason = standards_check(
         repo, source["base_sha"], source, standards_payload, evidence_root)
     if standard_status != "NOT_RUN" or (selection is not None and selection["selected_ids"]):
@@ -539,13 +576,85 @@ def evaluate(repo, base, manifest=None, evidence_root=None):
             status, reason, metadata = receipt_check(rule, entries.get(rule), evidence_root, source)
             result.update(metadata, status=status, limitation=reason)
         results.append(result)
+
+    mandatory_blockers = []
+    if document is not None:
+        results_by_rule = {r["rule_id"]: r for r in results}
+        # Severity precedence for blocking: FAIL (4) > NOT_VERIFIED (3) > NOT_RUN (2) > PASS (1)
+        prio = {"PASS": 1, "NOT_RUN": 2, "NOT_VERIFIED": 3, "FAIL": 4}
+
+        def escalate(rule_id, new_status, reason, meta=None):
+            if rule_id in results_by_rule:
+                cur = results_by_rule[rule_id]
+                cur_status = cur["status"]
+                if cur_status == "PASS" or prio.get(new_status, 0) > prio.get(cur_status, 0):
+                    if meta:
+                        cur.update(meta)
+                    cur["status"] = new_status
+                    cur["limitation"] = reason
+            mandatory_blockers.append(f"{rule_id or 'MANDATORY'}:{new_status}:{reason}")
+
+        cmd_receipts_doc = document.get("command_receipts") or []
+        seen_checks = set()
+        receipt_check_ids = set()
+        for entry in cmd_receipts_doc:
+            if not isinstance(entry, dict):
+                raise ValueError("command_receipts entry must be an object")
+            obs = entry.get("observations") if isinstance(entry.get("observations"), dict) else {}
+            if obs.get("check_id"):
+                cid_cr = str(obs["check_id"])
+                seen_checks.add(cid_cr)
+                receipt_check_ids.add(cid_cr)
+            gid = entry.get("gate_rule_id")
+            st, rsn, meta = receipt_check(gid if gid in REGISTRY else "TOOLING-CHECK", entry, evidence_root, source)
+            if st != "PASS":
+                escalate(gid, st, rsn, meta)
+
+        mandatory_doc = document.get("mandatory_checks") or []
+        for mc in mandatory_doc:
+            if not isinstance(mc, dict):
+                raise ValueError("mandatory_checks entry must be an object")
+            cid = str(mc.get("check_id", "") or "")
+            if cid:
+                seen_checks.add(cid)
+            gid = mc.get("gate_rule_id")
+            mc_src = mc.get("source_sha")
+            mc_cand = mc.get("candidate_sha256")
+            mc_diff = mc.get("diff_sha256")
+            if (mc_src is not None and mc_src != source["source_sha"]) or (
+                mc_cand is not None and mc_cand != source["candidate_sha256"]
+            ) or (mc_diff is not None and source.get("diff_sha256") and mc_diff != source["diff_sha256"]):
+                escalate(gid, "NOT_VERIFIED", f"Stale mandatory check snapshot for {cid or 'unknown'}")
+                continue
+            mc_status = str(mc.get("status", "") or "").upper()
+            mc_exit = mc.get("exit_code")
+            prereq_missing = bool(mc.get("prerequisite_missing"))
+            if prereq_missing or mc_status == "NOT_VERIFIED":
+                reason = str(mc.get("reason") or f"Mandatory check {cid} missing prerequisite or NOT_VERIFIED")
+                escalate(gid, "NOT_VERIFIED", reason)
+            elif mc_status == "NOT_RUN":
+                escalate(gid, "NOT_RUN", f"Mandatory check {cid} is NOT_RUN")
+            elif mc_status in ("FAIL", "BLOCKED") or mc_exit not in (0, None):
+                escalate(gid, "FAIL", f"Mandatory check {cid} failed (exit={mc_exit})")
+            elif mc_status != "PASS":
+                escalate(gid, "NOT_VERIFIED", f"Mandatory check {cid} has invalid status {mc_status!r}")
+            elif "command_receipts" in document and cid and cid not in receipt_check_ids:
+                escalate(gid, "NOT_VERIFIED", f"Mandatory check {cid} declared PASS without command receipt")
+
+        planned_doc = document.get("planned_checks") or []
+        for planned_id in planned_doc:
+            if not isinstance(planned_id, str) or not planned_id:
+                raise ValueError("planned_checks entry must be a non-empty string")
+            if planned_id not in seen_checks:
+                mandatory_blockers.append(f"PLANNED:NOT_RUN:Mandatory planned check {planned_id!r} did not execute")
+
     after, _ = inventory(repo, base)
     if after != source:
         raise ValueError("Candidate changed during checks")
     if manifest is not None and digest(safe_read(evidence_root, manifest)) != manifest_hash:
         raise ValueError("Manifest changed during checks")
     selected = [r for r in results if REGISTRY[r["rule_id"]][1] in risks]
-    auto_pass = all(r["status"] == "PASS" for r in selected)
+    auto_pass = all(r["status"] == "PASS" for r in selected) and not mandatory_blockers
     security = bool(risks & {"mqtt", "security", "firmware"})
     return {**source, "manifest_sha256": manifest_hash,
             "runner_sha256": digest(Path(__file__).read_bytes()),

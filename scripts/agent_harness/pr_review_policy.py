@@ -81,11 +81,23 @@ HASH_REGEX = re.compile(r"^[0-9a-f]{64}$")
 
 try:
     from .standards_policy import GROUPS as _STANDARDS_GROUPS
+    from .adapters.antigravity import AuditError, RUBRIC_DIMENSIONS, validate_rubric
 except (ImportError, Exception):
     try:
         from standards_policy import GROUPS as _STANDARDS_GROUPS
+        from adapters.antigravity import AuditError, RUBRIC_DIMENSIONS, validate_rubric
     except (ImportError, Exception):
         _STANDARDS_GROUPS = {}
+        AuditError = ValueError
+        RUBRIC_DIMENSIONS = (
+            "correctness",
+            "verification",
+            "scope_discipline",
+            "reliability",
+            "maintainability",
+            "handoff_readiness",
+        )
+        validate_rubric = None
 
 # Synchronized from standards_policy.py (C Coding Standard v2 and Go Backend Standard v2)
 # C groups: GOV, C, MEM, ERR, RTOS, ARCH, SEC, RAD, MAC, TDMA, QA
@@ -581,6 +593,23 @@ def eval_pr04_correctness(
             if missing:
                 blockers.append(f"Auditor report missing per-rule results for Rule IDs: {', '.join(sorted(missing)[:5])}.")
 
+        # Structured 6-dimension 0-2 rubric validation (H2-ORC-04 / H2-FBK-03)
+        if "rubric" in auditor_report:
+            if validate_rubric is not None:
+                try:
+                    rubric = validate_rubric(auditor_report)
+                except AuditError as exc:
+                    blockers.append(f"Auditor rubric validation failed: {exc}")
+                    rubric = None
+            else:
+                rubric = auditor_report.get("rubric")
+            if isinstance(rubric, dict):
+                decision = rubric.get("decision")
+                if rubric.get("hard_gate_passed") is False:
+                    blockers.append("Auditor rubric hard_gate_passed=false (cannot be averaged away).")
+                if decision in ("REVISE", "BLOCK"):
+                    blockers.append(f"Auditor rubric decision is {decision} (score {rubric.get('total_score')}/12).")
+
     status = GateStatus.BLOCKED if blockers else GateStatus.PASS
     summary = "; ".join(blockers) if blockers else "No git conflict markers; diff structure valid; correctness checks pass."
     return {"gate": "PR-04 CORRECTNESS", "status": status.value, "summary": summary, "blockers": blockers}
@@ -846,13 +875,20 @@ def evaluate_pr_policy(
             if any((f.startswith("contracts/") or "crypto" in f.lower()) and not is_synthetic_fixture_path(f) for f in changed_files):
                 all_blockers.append("Independent security review receipt or specialist sign-off absent for security-sensitive paths.")
 
-    # R-02: Auditor evaluation
+    # R-02 & H2-ORC-02: Role separation & Auditor evaluation
     ai_review_pass = "NOT_VERIFIED"
+    rubric_summary: dict[str, Any] | None = None
+    maker_ids = {x for x in (author, pr_data.get("maker_id"), pr_data.get("worker_id")) if x}
+    if pr_data.get("host_actor") in ("worker", "maker"):
+        all_blockers.append("Role separation violated: Maker/Worker cannot act as trusted Host verifier.")
     if auditor_report:
-        # Check author self-audit
-        auditor_id = auditor_report.get("auditor_id")
-        if auditor_id and auditor_id == author:
-            all_blockers.append(f"Auditor self-review rejected: author '@{author}' cannot act as independent Auditor.")
+        # Check author/maker self-audit & checker read-only boundary
+        auditor_id = auditor_report.get("auditor_id") or auditor_report.get("checker_id")
+        if auditor_id and auditor_id in maker_ids:
+            all_blockers.append(f"Auditor self-review rejected: maker/author '{auditor_id}' cannot act as independent Checker/Auditor.")
+            ai_review_pass = "FAIL"
+        elif auditor_report.get("auditor_modified_candidate"):
+            all_blockers.append("Role separation violated: Checker/Auditor modified candidate.")
             ai_review_pass = "FAIL"
         else:
             # Check secret leaks in auditor report
@@ -868,11 +904,32 @@ def evaluate_pr_policy(
                 else:
                     ai_review_pass = "FAIL"
 
+        raw_rubric = auditor_report.get("rubric")
+        if isinstance(raw_rubric, dict):
+            dims_obj = raw_rubric.get("dimensions", {})
+            rubric_summary = {
+                "version": raw_rubric.get("version"),
+                "decision": raw_rubric.get("decision"),
+                "hard_gate_passed": raw_rubric.get("hard_gate_passed"),
+                "total_score": raw_rubric.get("total_score"),
+                "dimension_scores": {
+                    k: dims_obj[k].get("score")
+                    for k in RUBRIC_DIMENSIONS
+                    if isinstance(dims_obj, dict) and isinstance(dims_obj.get(k), dict)
+                },
+            }
+            if raw_rubric.get("decision") == "ACCEPT" and (
+                not auto_check_pass or any(g["status"] in ("BLOCKED", "FAIL") for g in gates)
+            ):
+                all_blockers.append(
+                    "Rubric ACCEPT cannot override failed or blocked hard gates."
+                )
+
     # Human approval status
     valid_approvals = [
         r.get("user", {}).get("login") or r.get("author", "")
         for r in pr_data.get("reviews", [])
-        if r.get("state", "").upper() == "APPROVED" and (r.get("user", {}).get("login") or r.get("author", "")) != author
+        if r.get("state", "").upper() == "APPROVED" and (r.get("user", {}).get("login") or r.get("author", "")) not in maker_ids
     ]
     human_approved = "APPROVED" if len(valid_approvals) >= policy_rec["required_approvals"] else "PENDING"
     hil_rf_pass = g7["status"]
@@ -901,11 +958,13 @@ def evaluate_pr_policy(
         "policy_recommendation": policy_rec,
         "gates": gates,
         "blockers": all_blockers,
+        "rubric": rubric_summary,
         "dimensions": {
             "AUTO_CHECK_PASS": auto_check_pass,
             "SECRET_SCAN_PASS": secret_scan_pass,
             "SECURITY_REVIEW_PASS": security_review_pass,
             "AI_REVIEW_PASS": ai_review_pass,
+            "RUBRIC_DECISION": rubric_summary["decision"] if rubric_summary else "NOT_VERIFIED",
             "HUMAN_APPROVED": human_approved,
             "HIL_RF_PASS": hil_rf_pass,
             "MERGE_ENFORCEMENT_ACTIVE": merge_active,

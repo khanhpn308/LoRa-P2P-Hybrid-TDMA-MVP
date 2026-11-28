@@ -193,6 +193,7 @@ class JournalTests(unittest.TestCase):
                 receipt_sha256="d" * 64,
                 gate_rule_id="TOOLING-CHECK",
                 auto_check="AUTO_CHECK_PASS",
+                trusted_definition_sha256="b" * 64,
             )
             units_skip = [
                 {"id": "U1", "state": "ACTIVE", "verification": {"definition_sha256": "a" * 64}},
@@ -265,6 +266,40 @@ class JournalTests(unittest.TestCase):
             )
             self.assertGreaterEqual(ckpt_id, 1)
             self.assertEqual(state.latest_checkpoint(429)["active_unit"], "U1")
+
+            # Journal doc and unit projection disagreement MUST fail closed
+            state.db.execute("UPDATE feature_units SET state='PASSING' WHERE issue=429 AND unit_id='U1'")
+            with self.assertRaises(StateConflict):
+                state.get_feature_snapshot(429)
+
+            # verify_host_proof rejects missing or mismatched trusted_definition_sha256
+            proof_missing_td = issue_host_proof(
+                issue=429,
+                unit_id="U1",
+                verification_sha256="a" * 64,
+                source_sha="0" * 40,
+                candidate_sha256="c" * 64,
+                manifest_sha256="e" * 64,
+                runner_sha256="f" * 64,
+                receipt_path="unit.log",
+                receipt_sha256="d" * 64,
+                gate_rule_id="TOOLING-CHECK",
+                auto_check="AUTO_CHECK_PASS",
+            )
+            unit_u1 = {
+                "id": "U1",
+                "verification": {"definition_sha256": "a" * 64},
+                "evidence": {
+                    "source_sha": "0" * 40,
+                    "candidate_sha256": "c" * 64,
+                    "receipt_path": "unit.log",
+                    "receipt_sha256": "d" * 64,
+                    "verification_sha256": "a" * 64,
+                },
+            }
+            from p1.state import verify_host_proof
+            with self.assertRaises(StateConflict):
+                verify_host_proof(proof_missing_td, issue=429, unit=unit_u1)
 
 
 if __name__ == "__main__":

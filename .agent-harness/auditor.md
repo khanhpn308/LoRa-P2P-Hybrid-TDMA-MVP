@@ -16,4 +16,5 @@ Return only this JSON object (no Markdown):
   "limitations": ["missing evidence, unresolved conditions"],
   "reviewed_scope": ["paths or modules actually inspected"]
 }
+When rubric evaluation is requested (`--require-rubric` or scoped rubric schema), also include `"rubric"` (`version: "1.0"`, `decision: "ACCEPT | REVISE | BLOCK"`, `hard_gate_passed`, `total_score` 0–12, and all 6 `dimensions` scored 0–2: `correctness`, `verification`, `scope_discipline`, `reliability`, `maintainability`, `handoff_readiness` with evidence refs). Hard failures cannot be averaged away.
 `reviewed_scope` must list exactly the changed paths you actually inspected. `PASS` requires zero findings and zero limitations with complete changed-file coverage within the stated *software-review scope*. If evidence for that review is incomplete, return `INCONCLUSIVE`. HIL/RF remain independently `NOT_VERIFIED`.

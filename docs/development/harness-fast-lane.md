@@ -37,7 +37,7 @@ Coordinator tự xử lý theo bảng dưới. Không yêu cầu một prompt d�
 | G0 Intake | Host kiểm toàn bộ AGENTS.md bằng `agent_context.py`, inject exact content trước Worker; đọc Issue OPEN, AC, allowlist, relevant C/Go Standard và ADR/contracts | Issue URL, source SHA, AGENTS SHA-256, Host receipt, scope |
 | G1 Workspace | Kiểm tra source sạch; tạo branch/worktree riêng; không đụng `main` hoặc xóa thay đổi tồn tại | Branch, worktree, base SHA |
 | G2 Worker | Native Worker nếu có; nếu không thì Coordinator tự code và công bố fallback. Chỉ thay đổi file trong allowed paths | Changed files, diff, explanation |
-| G3 Host checks | Chạy [quality gates](harness-quality-gates.md) theo changed files với receipts thực tế, trước Auditor; kiểm tra scope, secrets/symlinks, `git diff --check`; chạy test theo module và compiler/contract checks phù hợp. Firmware: ESP-IDF v6.1 với bản sao build disposable, pinned Docker image khi thực thi được | Lệnh, exit code, tool version, log/receipts |
+| G3 Host checks | Chạy `check.py` (OD-03 matrix: `quick`/`software`/`integration`/`bench` + `dependency_checks.py`) và [quality gates](harness-quality-gates.md) theo changed files với receipts thực tế, trước Auditor; kiểm tra scope, secrets/symlinks, `git diff --check`; chạy test theo module và compiler/contract checks phù hợp. Firmware: ESP-IDF v6.1 với bản sao build disposable, pinned Docker image khi thực thi được; Bench/HIL/RF giữ `NOT_VERIFIED` nếu thiếu `--allow-bench` + thiết bị thật (`OD-07`) | Lệnh, exit code, tool version, log/receipts |
 | G4 Auditor | Fresh native Auditor (nếu hỗ trợ) đọc AC và diff; không được thay đổi candidate trong audit; Host/Coordinator chạy lại quality gates, so fingerprint/diff/source SHA, manifest và receipt hashes sau review. Không có Auditor thì ghi `AUDIT_NOT_VERIFIED` | Findings, limitations, provenance trung thực |
 | G5 Delivery | Nếu gates thích hợp pass: commit Conventional Commits vào feature branch, push, tạo **Draft PR** link Issue; tuyệt đối không auto-merge | Commit SHA, PR URL |
 | G6 Human review | Người dùng và reviewer xử lý PR; RF/ISR/timer/security/protocol cần technical sign-off khi liên quan | AWAIT_HUMAN / BLOCKED / PARTIAL |
@@ -53,7 +53,7 @@ Coordinator tự xử lý theo bảng dưới. Không yêu cầu một prompt d�
 ```bash
 python3 scripts/agent_harness/feature_state.py session-start --issue <N> --repo <candidate> --state <host-state.sqlite>
 python3 scripts/agent_harness/feature_state.py activate --issue <N> --unit-id <UNIT_ID> --state <host-state.sqlite>
-python3 scripts/agent_harness/feature_state.py verify-unit --issue <N> --unit-id <UNIT_ID> --repo <candidate> --evidence-dir <host-evidence-dir> --manifest manifest.json --state <host-state.sqlite>
+python3 scripts/agent_harness/feature_state.py verify-unit --issue <N> --unit-id <UNIT_ID> --repo <candidate> --evidence-dir <host-evidence-dir> --manifest manifest.json --trusted-definitions <external-trusted-defs.json> --state <host-state.sqlite>
 python3 scripts/agent_harness/feature_state.py checkpoint --issue <N> --repo <candidate> --state <host-state.sqlite> --next-action "..." --export docs/harness/features/issue-<N>.json
 ```
 

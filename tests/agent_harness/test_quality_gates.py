@@ -639,6 +639,104 @@ class StandardsCheckV2Tests(unittest.TestCase):
         _, _, status, _ = gates.standards_check(self.root, self.base, self.source, self.payload, self.evidence)
         self.assertEqual(status, "NOT_VERIFIED")
 
+    def test_receipt_check_rejects_stale_diff_sha_and_waived_or_skipped_flags(self):
+        source = {**self.source, "diff_sha256": "d" * 64}
+        entry = {**self.receipt, "diff_sha256": "e" * 64}
+        status, reason, _ = gates.receipt_check("TOOLING-CHECK", entry, self.evidence, source)
+        self.assertEqual(status, "NOT_VERIFIED")
+        self.assertIn("diff_sha256", reason)
+        for flag in ("waived", "owner_waived", "commit_only", "skipped"):
+            flagged = {**self.receipt, flag: True}
+            status_f, _, _ = gates.receipt_check("TOOLING-CHECK", flagged, self.evidence, source)
+            self.assertEqual(status_f, "NOT_VERIFIED")
+
+    def test_mandatory_fail_missing_prereq_and_not_run_in_manifest_block_acceptance(self):
+        # Change scripts/agent_harness/ so TOOLING-CHECK and SECURITY-CHECK are selected.
+        (self.root / "scripts/agent_harness").mkdir(parents=True, exist_ok=True)
+        (self.root / "scripts/agent_harness/mod.py").write_text("X = 1\n", encoding="utf-8")
+        snap = gates.inventory(self.root, self.base)[0]
+        good_log = b"ok log\n"
+        (self.evidence / "ok.log").write_bytes(good_log)
+        base_rec = {
+            "source_sha": snap["source_sha"],
+            "candidate_sha256": snap["candidate_sha256"],
+            "diff_sha256": snap["diff_sha256"],
+            "command": ["python3", "-m", "unittest"],
+            "command_sha256": gates.digest(json.dumps(["python3", "-m", "unittest"]).encode("utf-8")),
+            "exit_code": 0,
+            "status": "PASS",
+            "tool_version": "Python 3.12",
+            "receipt_path": "ok.log",
+            "receipt_sha256": gates.digest(good_log),
+            "gate_rule_id": "TOOLING-CHECK",
+            "observations": {"checks_complete": True, "check_id": "check-a", "diff_sha256": snap["diff_sha256"]},
+        }
+        sec_rec = {**base_rec, "gate_rule_id": "SECURITY-CHECK"}
+
+        # 1. Missing prerequisite in command_receipts/mandatory_checks overrides PASS in checks["TOOLING-CHECK"]
+        prereq_rec = {
+            **base_rec,
+            "exit_code": 2,
+            "status": "NOT_VERIFIED",
+            "observations": {
+                "checks_complete": False,
+                "check_id": "check-b",
+                "diff_sha256": snap["diff_sha256"],
+                "prerequisite_missing": "node_web",
+                "reason": "node missing",
+            },
+        }
+        m1 = {
+            "checks": {"TOOLING-CHECK": base_rec, "SECURITY-CHECK": sec_rec},
+            "command_receipts": [base_rec, prereq_rec, sec_rec],
+            "mandatory_checks": [
+                {"check_id": "check-a", "gate_rule_id": "TOOLING-CHECK", "status": "PASS", "exit_code": 0, "prerequisite_missing": False},
+                {"check_id": "check-b", "gate_rule_id": "TOOLING-CHECK", "status": "NOT_VERIFIED", "exit_code": 2, "prerequisite_missing": True, "reason": "node missing"},
+            ],
+            "planned_checks": ["check-a", "check-b"],
+        }
+        (self.evidence / "m1.json").write_text(json.dumps(m1), encoding="utf-8")
+        rep1 = gates.evaluate(self.root, self.base, "m1.json", self.evidence)
+        self.assertEqual(rep1["auto_check"], "BLOCKED")
+        tooling1 = next(r for r in rep1["results"] if r["rule_id"] == "TOOLING-CHECK")
+        self.assertEqual(tooling1["status"], "NOT_VERIFIED")
+
+        # 2. Failing mandatory check in command_receipts blocks even when checks["TOOLING-CHECK"] is PASS
+        fail_log = b"FAILED (failures=1)\n"
+        (self.evidence / "fail.log").write_bytes(fail_log)
+        fail_rec = {
+            **base_rec,
+            "exit_code": 1,
+            "status": "FAIL",
+            "receipt_path": "fail.log",
+            "receipt_sha256": gates.digest(fail_log),
+            "observations": {"checks_complete": False, "check_id": "check-c", "diff_sha256": snap["diff_sha256"]},
+        }
+        m2 = {
+            "checks": {"TOOLING-CHECK": base_rec, "SECURITY-CHECK": sec_rec},
+            "command_receipts": [base_rec, fail_rec, sec_rec],
+            "planned_checks": ["check-a", "check-c"],
+        }
+        (self.evidence / "m2.json").write_text(json.dumps(m2), encoding="utf-8")
+        rep2 = gates.evaluate(self.root, self.base, "m2.json", self.evidence)
+        self.assertEqual(rep2["auto_check"], "BLOCKED")
+        self.assertEqual(next(r for r in rep2["results"] if r["rule_id"] == "TOOLING-CHECK")["status"], "FAIL")
+
+        # 3. NOT_RUN mandatory check or missing planned check blocks acceptance
+        m3 = {
+            "checks": {"TOOLING-CHECK": base_rec, "SECURITY-CHECK": sec_rec},
+            "command_receipts": [base_rec, sec_rec],
+            "mandatory_checks": [
+                {"check_id": "check-a", "gate_rule_id": "TOOLING-CHECK", "status": "PASS", "exit_code": 0},
+                {"check_id": "check-missing", "gate_rule_id": "TOOLING-CHECK", "status": "NOT_RUN", "exit_code": None},
+            ],
+            "planned_checks": ["check-a", "check-missing", "check-unreported"],
+        }
+        (self.evidence / "m3.json").write_text(json.dumps(m3), encoding="utf-8")
+        rep3 = gates.evaluate(self.root, self.base, "m3.json", self.evidence)
+        self.assertEqual(rep3["auto_check"], "BLOCKED")
+        self.assertEqual(next(r for r in rep3["results"] if r["rule_id"] == "TOOLING-CHECK")["status"], "NOT_RUN")
+
 
 if __name__ == "__main__":
     unittest.main()

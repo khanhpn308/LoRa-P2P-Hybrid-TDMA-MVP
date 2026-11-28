@@ -19,7 +19,11 @@ _PROCESS_SEAL = os.urandom(32)
 
 @dataclass(frozen=True)
 class HostVerificationProof:
-    """In-process sealed proof issued only after trusted Host gate verification."""
+    """In-process sealed proof issued only after trusted Host gate verification.
+
+    Note: An in-process HMAC seal is an API integrity/type guard, NOT independent
+    cryptographic trust or OS process isolation under operator Full Access.
+    """
 
     issue: int
     unit_id: str
@@ -33,6 +37,10 @@ class HostVerificationProof:
     gate_rule_id: str
     auto_check: str
     _seal: bytes
+    diff_sha256: str = ""
+    command_receipts_sha256: str = ""
+    tool_version: str = ""
+    trusted_definition_sha256: str = ""
 
 
 def _proof_mac(
@@ -48,6 +56,10 @@ def _proof_mac(
     receipt_sha256: str,
     gate_rule_id: str,
     auto_check: str,
+    diff_sha256: str = "",
+    command_receipts_sha256: str = "",
+    tool_version: str = "",
+    trusted_definition_sha256: str = "",
 ) -> bytes:
     payload = json.dumps(
         {
@@ -62,6 +74,10 @@ def _proof_mac(
             "receipt_sha256": receipt_sha256,
             "gate_rule_id": gate_rule_id,
             "auto_check": auto_check,
+            "diff_sha256": diff_sha256,
+            "command_receipts_sha256": command_receipts_sha256,
+            "tool_version": tool_version,
+            "trusted_definition_sha256": trusted_definition_sha256,
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -82,6 +98,10 @@ def issue_host_proof(
     receipt_sha256: str,
     gate_rule_id: str,
     auto_check: str,
+    diff_sha256: str = "",
+    command_receipts_sha256: str = "",
+    tool_version: str = "",
+    trusted_definition_sha256: str = "",
 ) -> HostVerificationProof:
     if auto_check != "AUTO_CHECK_PASS":
         raise StateConflict("HostVerificationProof requires AUTO_CHECK_PASS")
@@ -97,6 +117,10 @@ def issue_host_proof(
         receipt_sha256=receipt_sha256,
         gate_rule_id=gate_rule_id,
         auto_check=auto_check,
+        diff_sha256=diff_sha256,
+        command_receipts_sha256=command_receipts_sha256,
+        tool_version=tool_version,
+        trusted_definition_sha256=trusted_definition_sha256,
     )
     return HostVerificationProof(
         issue=issue,
@@ -111,6 +135,10 @@ def issue_host_proof(
         gate_rule_id=gate_rule_id,
         auto_check=auto_check,
         _seal=seal,
+        diff_sha256=diff_sha256,
+        command_receipts_sha256=command_receipts_sha256,
+        tool_version=tool_version,
+        trusted_definition_sha256=trusted_definition_sha256,
     )
 
 
@@ -128,6 +156,12 @@ def verify_host_proof(
         raise StateConflict("HostVerificationProof issue/unit mismatch")
     if proof.verification_sha256 != unit["verification"]["definition_sha256"]:
         raise StateConflict("HostVerificationProof verification_sha256 mismatch")
+    if (
+        not isinstance(proof.trusted_definition_sha256, str)
+        or len(proof.trusted_definition_sha256) != 64
+        or proof.trusted_definition_sha256 != proof.verification_sha256
+    ):
+        raise StateConflict("HostVerificationProof missing or mismatched frozen trusted_definition_sha256")
     ev = unit.get("evidence")
     if not isinstance(ev, dict):
         raise StateConflict("PASSING unit missing evidence dict")
@@ -137,8 +171,13 @@ def verify_host_proof(
         or ev.get("receipt_path") != proof.receipt_path
         or ev.get("receipt_sha256") != proof.receipt_sha256
         or ev.get("verification_sha256") != proof.verification_sha256
+        or ev.get("trusted_definition_sha256") != proof.trusted_definition_sha256
     ):
         raise StateConflict("HostVerificationProof does not match unit evidence")
+    if proof.diff_sha256 and ev.get("diff_sha256") != proof.diff_sha256:
+        raise StateConflict("HostVerificationProof diff_sha256 mismatch")
+    if proof.command_receipts_sha256 and ev.get("command_receipts_sha256") != proof.command_receipts_sha256:
+        raise StateConflict("HostVerificationProof command_receipts_sha256 mismatch")
     expected_seal = _proof_mac(
         issue=proof.issue,
         unit_id=proof.unit_id,
@@ -151,6 +190,10 @@ def verify_host_proof(
         receipt_sha256=proof.receipt_sha256,
         gate_rule_id=proof.gate_rule_id,
         auto_check=proof.auto_check,
+        diff_sha256=proof.diff_sha256,
+        command_receipts_sha256=proof.command_receipts_sha256,
+        tool_version=proof.tool_version,
+        trusted_definition_sha256=proof.trusted_definition_sha256,
     )
     if not hmac.compare_digest(proof._seal, expected_seal):
         raise StateConflict("HostVerificationProof seal verification failed")
@@ -344,10 +387,36 @@ class Journal:
         ).fetchone()
         if row is None:
             return None
+        doc = json.loads(row["doc_json"])
+        proj_rows = self.db.execute(
+            "SELECT unit_id, state, verification_sha256, blocker, evidence_json FROM feature_units WHERE issue=?",
+            (issue,),
+        ).fetchall()
+        proj_by_id = {r["unit_id"]: dict(r) for r in proj_rows}
+        doc_units = doc.get("units", [])
+        if len(proj_by_id) != len(doc_units):
+            raise StateConflict("Journal feature_docs and feature_units projection count mismatch")
+        for u in doc_units:
+            uid = u.get("id")
+            proj = proj_by_id.get(uid)
+            if proj is None:
+                raise StateConflict(f"Journal unit projection missing unit {uid!r}")
+            if proj["state"] != u.get("state"):
+                raise StateConflict(f"Journal doc vs unit projection state mismatch on {uid!r}")
+            if proj["verification_sha256"] != u.get("verification", {}).get("definition_sha256"):
+                raise StateConflict(f"Journal doc vs unit projection verification hash mismatch on {uid!r}")
+            doc_ev = json.dumps(u.get("evidence"), sort_keys=True) if u.get("evidence") is not None else None
+            proj_ev = (
+                json.dumps(json.loads(proj["evidence_json"]), sort_keys=True)
+                if proj["evidence_json"] is not None
+                else None
+            )
+            if doc_ev != proj_ev:
+                raise StateConflict(f"Journal doc vs unit projection evidence mismatch on {uid!r}")
         return {
             "issue": row["issue"],
             "revision": row["revision"],
-            "doc": json.loads(row["doc_json"]),
+            "doc": doc,
             "updated_by": row["updated_by"],
             "updated_at": row["updated_at"],
         }

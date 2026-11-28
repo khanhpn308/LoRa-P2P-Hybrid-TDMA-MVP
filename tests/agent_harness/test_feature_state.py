@@ -116,16 +116,20 @@ class FeatureStateUnitTests(unittest.TestCase):
         log_sha = "f" * 64 if tamper_receipt_sha else _sha256(log_bytes)
         unit = next(u for u in doc["units"] if u["id"] == unit_id)
         cmd = command or ["python3", "-m", "unittest", "tests/agent_harness/test_feature_state.py"]
+        snap_now = fs.compute_candidate_snapshot(self.repo, base_sha=doc["git"]["base_sha"])
         entry = {
             "source_sha": doc["git"]["head_sha"],
             "candidate_sha256": doc["git"]["candidate_sha256"],
+            "diff_sha256": snap_now["diff_sha256"],
             "command": cmd,
+            "command_sha256": _sha256(json.dumps(cmd).encode("utf-8")),
             "exit_code": exit_code,
             "tool_version": "Python 3.12.3",
             "receipt_path": "unit.log",
             "receipt_sha256": log_sha,
             "observations": {
                 "checks_complete": checks_complete,
+                "diff_sha256": snap_now["diff_sha256"],
                 "verification_sha256": unit["verification"]["definition_sha256"],
             },
         }
@@ -135,16 +139,24 @@ class FeatureStateUnitTests(unittest.TestCase):
         (ev_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         return ev_dir
 
+    def _write_trusted_defs(self, doc: dict, filename: str = "trusted_defs.json") -> pathlib.Path:
+        tpath = self.root / filename
+        payload = {u["id"]: u["verification"] for u in doc["units"]}
+        tpath.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return tpath
+
     def _verify_real(self, doc: dict, unit_id: str, *, dirname: str = "ev") -> tuple[dict, HostVerificationProof]:
         ev_dir = self._write_host_evidence(doc, unit_id, dirname=dirname)
+        tdefs = self._write_trusted_defs(doc, filename=f"tdefs_{dirname}.json")
         proof = fs.verify_host_gate_evidence(
             doc,
             unit_id,
             repo=self.repo,
             base_sha=doc["git"]["base_sha"],
             evidence_dir=ev_dir,
+            trusted_definitions=tdefs,
         )
-        return fs.verify_unit_passing(doc, unit_id, proof=proof), proof
+        return fs.verify_unit_passing(doc, unit_id, proof=proof, trusted_definitions=tdefs, repo=self.repo), proof
 
     def test_schema_validation_rejects_malformed_duplicate_cycle_and_hygiene_violations(self):
         doc = self._new_doc()
@@ -254,6 +266,7 @@ class FeatureStateUnitTests(unittest.TestCase):
             fs.verify_unit_passing(doc, "U-01", proof={"verified_by": "host_verifier", "status": "PASS"})  # type: ignore[arg-type]
 
         # Forged HostVerificationProof with invalid seal rejected
+        tdefs = self._write_trusted_defs(doc, "tdefs_sec.json")
         forged_proof = HostVerificationProof(
             issue=429,
             unit_id="U-01",
@@ -267,16 +280,21 @@ class FeatureStateUnitTests(unittest.TestCase):
             gate_rule_id="TOOLING-CHECK",
             auto_check="AUTO_CHECK_PASS",
             _seal=b"forged" * 5 + b"xx",
+            diff_sha256=self.snap["diff_sha256"],
+            command_receipts_sha256="d" * 64,
+            tool_version="Python 3.12.3",
+            trusted_definition_sha256=doc["units"][0]["verification"]["definition_sha256"],
         )
         with self.assertRaises(StateConflict):
-            fs.verify_unit_passing(doc, "U-01", proof=forged_proof)
+            fs.verify_unit_passing(doc, "U-01", proof=forged_proof, trusted_definitions=tdefs, repo=self.repo)
 
         # Evidence inside candidate repo rejected
         inside_dir = self.repo / "inside_ev"
         inside_dir.mkdir()
         with self.assertRaises(fs.ValidationError):
             fs.verify_host_gate_evidence(
-                doc, "U-01", repo=self.repo, base_sha=self.base_sha, evidence_dir=inside_dir
+                doc, "U-01", repo=self.repo, base_sha=self.base_sha, evidence_dir=inside_dir,
+                trusted_definitions=tdefs,
             )
 
         # Waiver / commit_only / nonzero exit / incomplete checks / tampered receipt hash rejected
@@ -291,31 +309,52 @@ class FeatureStateUnitTests(unittest.TestCase):
             ev = self._write_host_evidence(doc, "U-01", **kwargs)
             with self.assertRaises(fs.UnauthorizedTransition):
                 fs.verify_host_gate_evidence(
-                    doc, "U-01", repo=self.repo, base_sha=self.base_sha, evidence_dir=ev
+                    doc, "U-01", repo=self.repo, base_sha=self.base_sha, evidence_dir=ev,
+                    trusted_definitions=tdefs,
                 )
 
-        # Unrelated command without matching verification definition rejected
+        # Unrelated command (even with matching verification_sha256) and missing verification_sha256 rejected
         ev_wrong_cmd = self._write_host_evidence(doc, "U-01", dirname="ev_cmd", command=["echo", "fake"])
+        with self.assertRaises(fs.ValidationError):
+            fs.verify_host_gate_evidence(
+                doc, "U-01", repo=self.repo, base_sha=self.base_sha, evidence_dir=ev_wrong_cmd,
+                trusted_definitions=tdefs,
+            )
         manifest_obj = json.loads((ev_wrong_cmd / "manifest.json").read_text())
         for c in manifest_obj["checks"].values():
             c["observations"].pop("verification_sha256", None)
         (ev_wrong_cmd / "manifest.json").write_text(json.dumps(manifest_obj))
-        with self.assertRaises(fs.ValidationError):
+        with self.assertRaises(fs.VerificationTamperError):
             fs.verify_host_gate_evidence(
-                doc, "U-01", repo=self.repo, base_sha=self.base_sha, evidence_dir=ev_wrong_cmd
+                doc, "U-01", repo=self.repo, base_sha=self.base_sha, evidence_dir=ev_wrong_cmd,
+                trusted_definitions=tdefs,
             )
 
-        # Real trusted Host quality_gates evaluation succeeds
+        # Omitting frozen trusted_definitions MUST fail closed on verify_host_gate_evidence and verify_unit_passing
         ev_ok = self._write_host_evidence(doc, "U-01", dirname="ev_ok")
+        with self.assertRaises(fs.VerificationTamperError):
+            fs.verify_host_gate_evidence(
+                doc, "U-01", repo=self.repo, base_sha=self.base_sha, evidence_dir=ev_ok
+            )
+
+        # Real trusted Host quality_gates evaluation succeeds when frozen trusted_definitions matches
         proof = fs.verify_host_gate_evidence(
-            doc, "U-01", repo=self.repo, base_sha=self.base_sha, evidence_dir=ev_ok
+            doc, "U-01", repo=self.repo, base_sha=self.base_sha, evidence_dir=ev_ok,
+            trusted_definitions=tdefs,
         )
+
+        with self.assertRaises(fs.VerificationTamperError):
+            fs.verify_unit_passing(doc, "U-01", proof=proof, expected_revision=2)
 
         # Stale CAS revision rejected
         with self.assertRaises(fs.RevisionConflict):
-            fs.verify_unit_passing(doc, "U-01", proof=proof, expected_revision=1)
+            fs.verify_unit_passing(
+                doc, "U-01", proof=proof, expected_revision=1, trusted_definitions=tdefs, repo=self.repo
+            )
 
-        passed = fs.verify_unit_passing(doc, "U-01", proof=proof, expected_revision=2)
+        passed = fs.verify_unit_passing(
+            doc, "U-01", proof=proof, expected_revision=2, trusted_definitions=tdefs, repo=self.repo
+        )
         u1 = passed["units"][0]
         self.assertEqual(u1["state"], "PASSING")
         self.assertEqual(len(u1["evidence_history"]), 1)
@@ -640,14 +679,27 @@ class FeatureStateUnitTests(unittest.TestCase):
         self.assertEqual(rc, 2)
         self.assertEqual(res["status"], "BLOCKED")
 
-        # Host quality_gates verification via CLI succeeds (no --actor or self-declared --receipt)
+        # Host quality_gates verification via CLI requires external --trusted-definitions
         with Journal(db) as journal:
             doc = journal.get_feature_snapshot(429)["doc"]
         ev_dir = self._write_host_evidence(doc, "U-01", dirname="cli_ev")
+        tdefs = self._write_trusted_defs(doc, "cli_tdefs.json")
+
+        with self.assertRaises(SystemExit) as sys_exc, contextlib.redirect_stderr(io.StringIO()):
+            with patch.object(
+                sys,
+                "argv",
+                ["feature_state.py", "verify-unit", "--issue", "429", "--unit-id", "U-01",
+                 "--repo", str(self.repo), "--base-sha", self.base_sha,
+                 "--evidence-dir", str(ev_dir), "--state", str(db)],
+            ):
+                fs.main()
+        self.assertEqual(sys_exc.exception.code, 2)
 
         rc, res = run_cli("verify-unit", "--issue", "429", "--unit-id", "U-01",
                           "--repo", str(self.repo), "--base-sha", self.base_sha,
-                          "--evidence-dir", str(ev_dir), "--state", str(db))
+                          "--evidence-dir", str(ev_dir), "--trusted-definitions", str(tdefs),
+                          "--state", str(db))
         self.assertEqual(rc, 0)
         self.assertEqual(res["status"], "PASSING")
 
@@ -669,6 +721,158 @@ class FeatureStateUnitTests(unittest.TestCase):
         self.assertEqual(res["status"], "READY_TO_RESUME")
         self.assertEqual(res["units"]["passing"], ["U-01"])
         self.assertEqual(res["next_action"], "Activate U-02")
+
+    def test_partial_receipts_self_asserted_diff_mismatch_and_external_trusted_defs(self):
+        units = [
+            {
+                "id": "U-MULTI",
+                "behavior": "Unit requiring two distinct verification commands",
+                "verification": {
+                    "criteria": ["Both checks pass"],
+                    "commands": [
+                        "python3 scripts/verify_structure.py",
+                        "python3 -m unittest tests/agent_harness/test_feature_state.py",
+                    ],
+                },
+                "dependencies": [],
+                "scope": ["scripts/agent_harness/"],
+                "state": "PENDING",
+            }
+        ]
+        doc = fs.create_feature_doc(
+            431,
+            units=units,
+            approved_scope=["scripts/agent_harness/"],
+            base_sha=self.base_sha,
+            head_sha=self.snap["source_sha"],
+            branch=self.snap["branch"],
+            candidate_sha256=self.snap["candidate_sha256"],
+        )
+        doc = fs.activate_unit(doc, "U-MULTI")
+
+        tdefs_multi = self._write_trusted_defs(doc, "tdefs_multi.json")
+
+        # 1. Partial acceptance (only 1 of 2 required commands has a receipt) MUST fail
+        ev_partial = self._write_host_evidence(
+            doc, "U-MULTI", dirname="ev_partial", command=["python3", "scripts/verify_structure.py"]
+        )
+        with self.assertRaises(fs.ValidationError):
+            fs.verify_host_gate_evidence(
+                doc, "U-MULTI", repo=self.repo, base_sha=self.base_sha, evidence_dir=ev_partial,
+                trusted_definitions=tdefs_multi,
+            )
+
+        # 2. Both required commands via command_receipts PASS when frozen trusted_definitions matches
+        manifest_partial = json.loads((ev_partial / "manifest.json").read_text())
+        first_rec = dict(manifest_partial["checks"]["TOOLING-CHECK"])
+        second_cmd = ["python3", "-m", "unittest", "tests/agent_harness/test_feature_state.py"]
+        second_rec = {
+            **first_rec,
+            "command": second_cmd,
+            "command_sha256": _sha256(json.dumps(second_cmd).encode("utf-8")),
+        }
+        manifest_partial["command_receipts"] = [first_rec, second_rec]
+        (ev_partial / "manifest.json").write_text(json.dumps(manifest_partial, indent=2))
+        proof = fs.verify_host_gate_evidence(
+            doc, "U-MULTI", repo=self.repo, base_sha=self.base_sha, evidence_dir=ev_partial,
+            trusted_definitions=tdefs_multi,
+        )
+        passed = fs.verify_unit_passing(
+            doc, "U-MULTI", proof=proof, command_receipts=manifest_partial["command_receipts"],
+            trusted_definitions=tdefs_multi, repo=self.repo,
+        )
+        self.assertEqual(passed["units"][0]["state"], "PASSING")
+        self.assertEqual(len(passed["units"][0]["evidence"]["command_receipts"]), 2)
+        self.assertEqual(
+            passed["units"][0]["evidence"]["trusted_definition_sha256"],
+            doc["units"][0]["verification"]["definition_sha256"],
+        )
+
+        # Portable import without frozen trusted_definitions downgrades PASSING -> STALE;
+        # import WITH matching trusted_definitions preserves PASSING.
+        san_no_td, proofs_no_td = fs.sanitize_imported_doc(
+            passed, repo=self.repo, base_sha=self.base_sha, evidence_dir=ev_partial,
+        )
+        self.assertEqual(proofs_no_td, {})
+        self.assertEqual(san_no_td["units"][0]["state"], "STALE")
+        san_with_td, proofs_with_td = fs.sanitize_imported_doc(
+            passed, repo=self.repo, base_sha=self.base_sha, evidence_dir=ev_partial,
+            trusted_definitions=tdefs_multi,
+        )
+        self.assertEqual(sorted(proofs_with_td.keys()), ["U-MULTI"])
+        self.assertEqual(san_with_td["units"][0]["state"], "PASSING")
+
+        # 3. Self-asserted worker observations / missing diff_sha256 / skipped rejected
+        for bad_name, mut in (
+            ("self_asserted", {"self_asserted": True}),
+            ("worker_actor", {"actor": "worker"}),
+            ("skipped", {"skipped": True}),
+        ):
+            ev_bad = self._write_host_evidence(doc, "U-MULTI", dirname=f"ev_{bad_name}", extra_flags=mut)
+            with self.assertRaises(fs.UnauthorizedTransition):
+                fs.verify_host_gate_evidence(
+                    doc, "U-MULTI", repo=self.repo, base_sha=self.base_sha, evidence_dir=ev_bad,
+                    trusted_definitions=tdefs_multi,
+                )
+
+        ev_nodiff = self._write_host_evidence(doc, "U-MULTI", dirname="ev_nodiff")
+        m_nodiff = json.loads((ev_nodiff / "manifest.json").read_text())
+        for c in m_nodiff["checks"].values():
+            c.pop("diff_sha256", None)
+            c["observations"].pop("diff_sha256", None)
+        (ev_nodiff / "manifest.json").write_text(json.dumps(m_nodiff))
+        with self.assertRaises(fs.RevisionConflict):
+            fs.verify_host_gate_evidence(
+                doc, "U-MULTI", repo=self.repo, base_sha=self.base_sha, evidence_dir=ev_nodiff,
+                trusted_definitions=tdefs_multi,
+            )
+
+        # 4. External trusted definitions protect against candidate tampering (even at verify_unit_passing)
+        inside_defs = self.repo / "trusted_defs.json"
+        inside_defs.write_text(json.dumps({"U-MULTI": units[0]["verification"]}), encoding="utf-8")
+        with self.assertRaises(fs.VerificationTamperError):
+            fs.load_trusted_definitions(inside_defs, repo=self.repo)
+
+        ext_defs = self.root / "trusted_defs.json"
+        ext_defs.write_text(
+            json.dumps({"U-MULTI": {"criteria": ["Original"], "commands": ["python3 -m unittest original.py"]}}),
+            encoding="utf-8",
+        )
+        with self.assertRaises(fs.VerificationTamperError):
+            fs.verify_host_gate_evidence(
+                doc,
+                "U-MULTI",
+                repo=self.repo,
+                base_sha=self.base_sha,
+                evidence_dir=ev_partial,
+                trusted_definitions=ext_defs,
+            )
+        with self.assertRaises(fs.VerificationTamperError):
+            fs.verify_unit_passing(
+                doc,
+                "U-MULTI",
+                proof=proof,
+                command_receipts=manifest_partial["command_receipts"],
+                trusted_definitions=ext_defs,
+                repo=self.repo,
+            )
+
+    def test_run_entrypoint_blocks_journal_unit_without_trusted_definitions(self):
+        import run as run_mod
+
+        ev_tmp = self.root / "run_ev"
+        ev_tmp.mkdir()
+        journal_db = self.root / "run_journal.sqlite"
+        with patch.object(
+            sys,
+            "argv",
+            ["run.py", "--issue", "431", "--journal", str(journal_db), "--unit-id", "U-01"],
+        ), patch("tempfile.mkdtemp", return_value=str(ev_tmp)), contextlib.redirect_stdout(io.StringIO()):
+            rc = run_mod.main()
+        self.assertEqual(rc, 2)
+        manifest = json.loads((ev_tmp / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["state"], "BLOCKED")
+        self.assertIn("--trusted-definitions required", manifest["reason"])
 
 
 if __name__ == "__main__":

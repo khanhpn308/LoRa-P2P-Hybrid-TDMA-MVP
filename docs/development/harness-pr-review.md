@@ -101,6 +101,12 @@ Independent evidence dimensions preserved in report:
 - `SECRET_SCAN_PASS`: `PASS` or `FAIL` (basic diff pattern scan).
 - `SECURITY_REVIEW_PASS`: `PASS`, `NOT_APPLICABLE`, or `NOT_VERIFIED` (independent specialist sign-off; never inferred from regex scan alone).
 - `AI_REVIEW_PASS`: `PASS`, `FAIL`, or `NOT_VERIFIED` (fresh read-only Auditor; author self-audits are rejected).
+- `RUBRIC_DECISION`: `ACCEPT`, `REVISE`, `BLOCK`, or `NOT_VERIFIED` (structured 6-dimension 0–2 rubric covering `correctness`, `verification`, `scope_discipline`, `reliability`, `maintainability`, and `handoff_readiness`; hard failures cannot be averaged away by a high total score).
 - `HUMAN_APPROVED`: `APPROVED` or `PENDING` based on valid approvals.
 - `HIL_RF_PASS`: `PASS`, `FAIL`, `NOT_APPLICABLE`, or `NOT_RUN`.
 - `MERGE_ENFORCEMENT_ACTIVE`: `ENFORCED` or `NOT_VERIFIED`.
+
+## 6. Evaluator Rubric & Calibration (`--require-rubric`, `--calibrate-rubric`)
+
+- Use `--require-rubric` to enforce the `audit.schema.json` `$defs.rubric` contract (`version: "1.0"`, `decision: ACCEPT | REVISE | BLOCK`, `hard_gate_passed`, `total_score` 0–12, and evidence-backed 0–2 scores for all six dimensions).
+- Use `--calibrate-rubric <dataset.json>` to evaluate 3–5 tuning rounds and blind held-out cases against **approved human labels** and **independent provider** evaluations. Missing approved human labels or unavailable independent providers return `NOT_VERIFIED` (never synthetic calibration).
