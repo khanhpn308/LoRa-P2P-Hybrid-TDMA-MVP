@@ -108,6 +108,38 @@ class AdvancedPackNegativeAndFixtureTests(unittest.TestCase):
         self.assertIn("stale", res_stale["reason"])
         self.assertEqual(ap.verify_advanced_pack(self.repo)["status"], "FAIL")
 
+    def test_shallow_checkout_reproducible_without_disabling_stale_check(self):
+        schema_path = self.repo / "docs" / "generated" / "db-schema.md"
+        subprocess.run(["git", "-C", str(self.repo), "config", "user.name", "Tester"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "config", "user.email", "t@example.invalid"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "commit", "-qm", "migrations and schema"], check=True)
+        (self.repo / "README.md").write_text("unrelated later commit\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.repo), "add", "README.md"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "commit", "-qm", "later commit"], check=True)
+
+        shallow_repo = pathlib.Path(self.temp.name) / "shallow"
+        subprocess.run(
+            ["git", "clone", "--quiet", "--depth=1", f"file://{self.repo}", str(shallow_repo)],
+            check=True,
+        )
+        shallow_info = ap.inspect_migrations(shallow_repo)
+        self.assertEqual(shallow_info["migrations_source_commit"], "SHALLOW_CHECKOUT_NO_FULL_HISTORY")
+        self.assertEqual(
+            ap.check_db_schema_freshness(shallow_repo, shallow_repo / "docs" / "generated" / "db-schema.md")["status"],
+            "PASS",
+        )
+        self.assertEqual(ap.verify_advanced_pack(shallow_repo)["status"], "PASS")
+
+        # Stale content check MUST still fail on a shallow checkout
+        (shallow_repo / "backend-go" / "migrations" / "000002_extra.up.sql").write_text(
+            "CREATE TABLE extra (id INT PRIMARY KEY);\n",
+            encoding="utf-8",
+        )
+        stale_shallow = ap.check_db_schema_freshness(shallow_repo, shallow_repo / "docs" / "generated" / "db-schema.md")
+        self.assertEqual(stale_shallow["status"], "FAIL")
+        self.assertIn("stale", stale_shallow["reason"])
+
     def test_broken_link_and_missing_surface_rejected(self):
         adv = self.repo / "docs" / "harness" / "ADVANCED_PACK.md"
         adv.write_text(adv.read_text(encoding="utf-8") + "\n[Missing](does-not-exist.md)\n", encoding="utf-8")

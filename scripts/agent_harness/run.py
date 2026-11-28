@@ -270,6 +270,7 @@ def run(args: argparse.Namespace) -> int:
                 "codex_path": shutil.which("codex"),
                 "agy_path": shutil.which("agy"),
             },
+            evidence_dir=artifacts,
         )
         control_admitted = True
         frozen_plan_path = artifacts / "frozen-check-plan.json"
@@ -634,7 +635,12 @@ def run(args: argparse.Namespace) -> int:
             write_round(round_ev, "checks.json", receipts)
             round_refs["checks"] = f"{round_rel}/checks.json"
             checks_log_text = (round_ev / "checks.log").read_text(encoding="utf-8")
-            record_common = {"agent_input_sha256": selection["agent_input_sha256"],
+            record_common = {"run_id": run_id,
+                             "round_num": iteration + 1,
+                             "source_sha": source["source_sha"],
+                             "candidate_sha256": source["candidate_sha256"],
+                             "diff_sha256": source["diff_sha256"],
+                             "agent_input_sha256": selection["agent_input_sha256"],
                              "selection_sha256": selection["selection_sha256"],
                              "selected_ids": selection["selected_ids"],
                              "rule_hashes": {r["rule_id"]: r["rule_sha256"] for r in selection["rules"]},

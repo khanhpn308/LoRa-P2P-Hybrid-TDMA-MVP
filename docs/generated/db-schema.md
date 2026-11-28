@@ -6,7 +6,7 @@
 ## Provenance & Freshness
 
 - **Generated from:** `backend-go/migrations/*.up.sql` + `backend-go/Dockerfile` (`/app/migrate.sh`)
-- **Migrations source commit:** `25d16622de5afdfd4dd34931c28ff7c4ceb7d6da`
+- **Provenance mode:** Content-addressed from migration SQL and runner sources (shallow-checkout-reproducible)
 - **Migrations tree SHA-256:** `4960b9e9de881dbdfc89ffd002515d1c806b2011f1854b829de64b29ef76c0dd`
 - **Generation command:** `python3 scripts/agent_harness/advanced_pack.py generate-db-schema --repo . --output docs/generated/db-schema.md`
 - **Freshness check command:** `python3 scripts/agent_harness/advanced_pack.py check-db-schema --repo . --schema docs/generated/db-schema.md`
@@ -68,4 +68,4 @@
 - **Static source derivation only:** Derived offline from `backend-go/migrations/*.up.sql` and `backend-go/Dockerfile`; no live or production PostgreSQL database was accessed (`LIVE_DB_INTROSPECTION: NOT_RUN`).
 - **Does not prove migration runtime success:** Applying migrations against PostgreSQL 16 (including constraints, seeds, and rollback `.down.sql` parity) requires an authorized integration test run (`MIGRATION_EXECUTION: NOT_VERIFIED` by this generator).
 - **Column summary scope:** Parses top-level `CREATE TABLE` / `ALTER TABLE` / `DROP TABLE` DDL; constraints, triggers, and seed rows live in the authoritative `.up.sql` files.
-<!-- GENERATED_BODY_SHA256: 77200fb20a4cb259d74a5b55220208bc61d4d5c1e9a92de954d02e8b1978638a -->
+<!-- GENERATED_BODY_SHA256: 0895db89178b2a6219724b8cffb79621f057f1bcfc7874a3170a93e744f26f49 -->

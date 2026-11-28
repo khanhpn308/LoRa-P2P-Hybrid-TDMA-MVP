@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "scripts" / "agent_harness"))
 
@@ -291,6 +292,29 @@ class ObservabilityAndHandoffTests(unittest.TestCase):
         self.assertEqual(res["diagnosis_top"]["owning_domain"], "foundation")
         self.assertEqual(res["resumed_status"], "ALL_UNITS_PASSING_LOCAL")
         self.assertEqual(res["hil_rf"], "NOT_VERIFIED")
+
+    def test_golden_journey_reproducible_under_headless_ci_runner_env(self) -> None:
+        # Simulate CI runner without agy/codex or GitHub auth tokens while keeping python3/git/gh available.
+        runner_bin = self.host_dir / "ci_runner_bin"
+        runner_bin.mkdir()
+        for tool_name in ("python3", "git", "gh", "sh"):
+            found = shutil.which(tool_name)
+            if found:
+                (runner_bin / tool_name).symlink_to(found)
+        empty_home = self.host_dir / "ci_home"
+        empty_home.mkdir()
+        clean_env = {
+            "PATH": str(runner_bin),
+            "HOME": str(empty_home),
+        }
+        with mock.patch.dict(os.environ, clean_env, clear=False):
+            for secret_var in ("GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR"):
+                os.environ.pop(secret_var, None)
+            res = obs.run_golden_journey(source_repo=pathlib.Path(__file__).resolve().parents[2], issue=433)
+        self.assertEqual(res["status"], "PASS", res)
+        self.assertEqual(res["before_status"], "PASS")
+        self.assertEqual(res["injected_failure_status"], "FAIL")
+        self.assertEqual(res["after_repair_status"], "PASS")
 
     def test_session_close_preserves_partial_blocked_dirty_and_safe_idempotent_cleanup(self) -> None:
         # Dirty uncommitted edit in repo must be preserved by session_close!

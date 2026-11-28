@@ -430,6 +430,108 @@ class JournalTests(unittest.TestCase):
             self.assertEqual(rounds[0]["evidence_refs"]["auditor_report"], "round-01/audit_report.json")
             self.assertEqual(json.loads(json.dumps(rounds[0]["findings"])), [])
 
+    def test_p08c_durable_progress_lease_columns_and_signal_prune_separation(self):
+        with Journal(self.path) as state:
+            cols = {r["name"] for r in state.db.execute("PRAGMA table_info(control_runs)").fetchall()}
+            for expected_col in (
+                "evidence_dir",
+                "frozen_plan_json",
+                "lease_owner_pid",
+                "lease_owner_start_ticks",
+                "lease_owner_host",
+                "in_flight_round",
+                "last_completed_op",
+                "completed_ops_json",
+                "recovery_reason",
+                "next_action",
+                "blocker",
+            ):
+                self.assertIn(expected_col, cols)
+
+            run = state.create_control_run(
+                run_id="run-p08c-prog",
+                issue=441,
+                source_sha="0" * 40,
+                base_sha="0" * 40,
+                candidate_sha256="1" * 64,
+                branch="feature/441-prog",
+                worktree="/tmp/wt441",
+                agents_sha256="2" * 64,
+                selection_sha256="3" * 64,
+                check_plan_sha256="4" * 64,
+                policy_sha256="5" * 64,
+                policy={"max_rounds": 3, "max_wall_seconds": 60},
+                admission={"issue": 441},
+                evidence_dir="/tmp/ev441",
+                frozen_plan={"plan_sha256": "4" * 64, "checks": []},
+            )
+            self.assertEqual(run["evidence_dir"], "/tmp/ev441")
+            self.assertEqual(run["last_completed_op"], "admitted")
+
+            d = state.acquire_dispatch(
+                "run-p08c-prog",
+                expected_state="ADMITTED",
+                role="maker",
+                actor_role="host",
+                dispatch_token="tok-p08c",
+                lease_owner_pid=12345,
+                lease_owner_start_ticks="99999",
+                lease_owner_host="host-a",
+                in_flight_round=1,
+            )
+            self.assertEqual(d["lease_owner_pid"], 12345)
+            self.assertEqual(d["lease_owner_start_ticks"], "99999")
+            self.assertEqual(d["in_flight_round"], 1)
+
+            state.transition_control_run(
+                "run-p08c-prog",
+                expected="DISPATCHED",
+                next_state="MAKER_RUNNING",
+                actor_role="host",
+                action="maker_started",
+                expected_dispatch_token="tok-p08c",
+            )
+            prog = state.record_control_progress(
+                "run-p08c-prog",
+                expected_state="MAKER_RUNNING",
+                actor_role="host",
+                op="maker_completed",
+                expected_dispatch_token="tok-p08c",
+                wall_elapsed_delta_s=12.5,
+                in_flight_round=1,
+                candidate_sha256="a" * 64,
+            )
+            self.assertEqual(prog["budget_consumed"]["wall_seconds"], 12.5)
+            self.assertEqual(prog["last_completed_op"], "maker_completed")
+            self.assertEqual(prog["candidate_sha256"], "a" * 64)
+
+            with self.assertRaises(StateConflict):
+                state.record_control_progress(
+                    "run-p08c-prog",
+                    expected_state="MAKER_RUNNING",
+                    actor_role="host",
+                    op="stale",
+                    expected_dispatch_token="wrong-tok",
+                    wall_elapsed_delta_s=5.0,
+                )
+
+            for idx in range(5):
+                state.record_signal(
+                    signal_type="process",
+                    category="control_plane",
+                    owning_domain="harness",
+                    status="PASS",
+                    captured=True,
+                    issue=441,
+                    run_id="run-p08c-prog",
+                    check_id=f"sig-{idx}",
+                )
+            deleted = state.prune_signals(keep=2)
+            self.assertEqual(deleted, 3)
+            # Pruning telemetry NEVER removes control_runs or control_events
+            self.assertEqual(state.get_control_run("run-p08c-prog")["run_id"], "run-p08c-prog")
+            self.assertGreaterEqual(len(state.control_events("run-p08c-prog")), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -21,9 +21,11 @@ from observability import ObservabilityError, diagnose_failures, query_signals, 
 from orchestrator import (
     ControlPlaneError,
     admit_run,
+    build_run_observability_status,
     build_run_policy,
     cancel_run,
     probe_role_capabilities,
+    reconcile_run,
 )
 
 REPO = "khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP"
@@ -142,6 +144,13 @@ def main() -> int:
     cap_p.add_argument("--source", type=Path, default=Path.cwd())
     cap_p.add_argument("--maker-provider", default="auto")
     cap_p.add_argument("--checker-provider", default="auto")
+    rec_p = sub.add_parser("reconcile", help="Reconcile interrupted or terminal P08 control run with CAS")
+    rec_p.add_argument("--run-id", default=None)
+    rec_p.add_argument("--issue", type=int, default=None)
+    rec_p.add_argument("--repo", type=Path, default=Path.cwd())
+    rec_p.add_argument("--state", type=Path, default=None)
+    rec_p.add_argument("--evidence-dir", type=Path, default=None)
+    rec_p.add_argument("--offline", action="store_true")
     args = parser.parse_args()
     if getattr(args, "issue", None) is not None and args.issue < 1:
         parser.error("Issue must be positive")
@@ -248,7 +257,32 @@ def main() -> int:
                     limit=args.limit,
                 )
                 res = {"count": len(sigs), "signals": sigs}
-            print(json.dumps(res, indent=2))
+                if (args.run_id or args.issue is not None) and state.exists():
+                    try:
+                        obs_st = build_run_observability_status(
+                            journal_path=state,
+                            run_id=args.run_id,
+                            issue=args.issue,
+                            signal_limit=min(args.limit, 20),
+                        )
+                        res["orchestration"] = {
+                            "run_id": obs_st["run_id"],
+                            "issue": obs_st["issue"],
+                            "state": obs_st["state"],
+                            "phase": obs_st["phase"],
+                            "round_num": obs_st["round_num"],
+                            "in_flight_round": obs_st["in_flight_round"],
+                            "lease": obs_st["lease"],
+                            "receipt_refs": obs_st["receipt_refs"],
+                            "recovery_reason": obs_st["recovery_reason"],
+                            "decision": obs_st["decision"],
+                            "blocker": obs_st["blocker"],
+                            "next_action": obs_st["next_action"],
+                            "acceptance_mode": obs_st["acceptance_mode"],
+                        }
+                    except ControlPlaneError:
+                        pass
+            print(json.dumps(redact_data(res), indent=2))
             return 0
         if args.command == "capabilities":
             res = probe_role_capabilities(
@@ -298,6 +332,17 @@ def main() -> int:
             )
             print(json.dumps(res, indent=2, sort_keys=True))
             return 0
+        if args.command == "reconcile":
+            res = reconcile_run(
+                repo=args.repo,
+                journal_path=state,
+                run_id=args.run_id,
+                issue=args.issue,
+                evidence_dir=args.evidence_dir,
+                offline=args.offline,
+            )
+            print(json.dumps(redact_data(res), indent=2, sort_keys=True))
+            return 2 if res["status"] in ("BLOCKED", "ESCALATED") or res["decision"] == "REFUSED_AMBIGUOUS_OWNERSHIP" else 0
         with Journal(state) as journal:
             if args.command == "recover":
                 changed = journal.detect_interruption(args.run_id)
@@ -305,16 +350,32 @@ def main() -> int:
                                   "marked_recovery": changed,
                                   "state": journal.get(args.run_id)["state"]}, indent=2))
                 return 0
+            item = None
+            ctrl_row = None
             if args.run_id:
-                item = journal.get(args.run_id)
+                try:
+                    item = journal.get(args.run_id)
+                except StateConflict:
+                    ctrl_row = journal.get_control_run(args.run_id)
             elif args.issue is not None:
                 item = journal.active_job_for_issue(args.issue) or journal.latest_job_for_issue(args.issue)
-                if item is None:
-                    raise StateConflict("No job found for Issue")
+                ctrl_row = journal.latest_control_run_for_issue(args.issue)
+                if item is None and ctrl_row is None:
+                    raise StateConflict("No job or control run found for Issue")
             else:
                 raise PreflightError("status requires --run-id or --issue")
+
+            if item is None and ctrl_row is not None:
+                obs_status = build_run_observability_status(
+                    journal_path=state,
+                    run_id=ctrl_row["run_id"],
+                )
+                print(json.dumps(obs_status, indent=2))
+                return 0
+
             ckpt_row = journal.latest_checkpoint(item["issue"])
-            ctrl_row = journal.latest_control_run_for_issue(item["issue"])
+            if ctrl_row is None:
+                ctrl_row = journal.latest_control_run_for_issue(item["issue"])
             out_payload = {
                 "run_id": item["run_id"],
                 "issue": item["issue"],
@@ -326,15 +387,18 @@ def main() -> int:
                 "latest_checkpoint": ckpt_row["handoff"] if ckpt_row else None,
             }
             if ctrl_row is not None:
+                obs_status = build_run_observability_status(
+                    journal_path=state,
+                    run_id=ctrl_row["run_id"],
+                )
                 out_payload["control_run"] = {
-                    "run_id": ctrl_row["run_id"],
-                    "state": ctrl_row["state"],
-                    "round_num": ctrl_row["round_num"],
-                    "consecutive_passes": ctrl_row["consecutive_passes"],
+                    **obs_status,
                     "policy_sha256": ctrl_row["policy_sha256"],
                     "rounds": journal.list_control_rounds(ctrl_row["run_id"]),
                 }
-            print(json.dumps(out_payload, indent=2))
+                for obs_key in ("phase", "lease", "receipt_refs", "recovery_reason", "decision", "blocker", "next_action", "recent_signals"):
+                    out_payload[obs_key] = obs_status[obs_key]
+            print(json.dumps(redact_data(out_payload), indent=2))
             return 0
     except (OSError, PreflightError, WorktreeError, StateConflict, FeatureStateError, ObservabilityError, ControlPlaneError, subprocess.SubprocessError) as exc:
         print(json.dumps({"state": "BLOCKED", "reason": str(exc)[:240]}))

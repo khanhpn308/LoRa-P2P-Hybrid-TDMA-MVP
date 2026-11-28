@@ -321,7 +321,7 @@ CONTROL_TRANSITIONS: dict[str, frozenset[str]] = {
     "VERIFYING": frozenset({"CHECKING", "REPAIR_REQUIRED", "CANCELLED", "BLOCKED", "ESCALATED"}),
     "CHECKING": frozenset({"READY_FOR_HUMAN_REVIEW", "REPAIR_REQUIRED", "CANCELLED", "BLOCKED", "ESCALATED"}),
     "REPAIR_REQUIRED": frozenset({"DISPATCHED", "VERIFYING", "CANCELLED", "BLOCKED", "ESCALATED"}),
-    "READY_FOR_HUMAN_REVIEW": frozenset({"CANCELLED"}),
+    "READY_FOR_HUMAN_REVIEW": frozenset({"CANCELLED", "BLOCKED"}),
     "BLOCKED": frozenset({"CANCELLED"}),
     "ESCALATED": frozenset({"CANCELLED"}),
     "CANCELLED": frozenset(),
@@ -458,6 +458,19 @@ class Journal:
                 policy_json TEXT NOT NULL,
                 admission_json TEXT NOT NULL,
                 budget_consumed_json TEXT NOT NULL,
+                evidence_dir TEXT NOT NULL DEFAULT '',
+                frozen_plan_json TEXT NOT NULL DEFAULT '{}',
+                lease_owner_pid INTEGER,
+                lease_owner_start_ticks TEXT NOT NULL DEFAULT '',
+                lease_owner_host TEXT NOT NULL DEFAULT '',
+                lease_acquired_at TEXT NOT NULL DEFAULT '',
+                lease_heartbeat_at TEXT NOT NULL DEFAULT '',
+                in_flight_round INTEGER NOT NULL DEFAULT 0,
+                last_completed_op TEXT NOT NULL DEFAULT '',
+                completed_ops_json TEXT NOT NULL DEFAULT '[]',
+                recovery_reason TEXT NOT NULL DEFAULT '',
+                next_action TEXT NOT NULL DEFAULT '',
+                blocker TEXT NOT NULL DEFAULT '',
                 cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK(cancel_requested IN (0, 1)),
                 cancel_reason TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
@@ -529,11 +542,36 @@ class Journal:
             "streak_policy_sha256",
             "streak_check_plan_sha256",
             "streak_selection_sha256",
+            "evidence_dir",
+            "lease_owner_start_ticks",
+            "lease_owner_host",
+            "lease_acquired_at",
+            "lease_heartbeat_at",
+            "last_completed_op",
+            "recovery_reason",
+            "next_action",
+            "blocker",
         ):
             if col_name not in existing_ctrl_cols:
                 self.db.execute(
                     f"ALTER TABLE control_runs ADD COLUMN {col_name} TEXT NOT NULL DEFAULT ''"
                 )
+        if "frozen_plan_json" not in existing_ctrl_cols:
+            self.db.execute(
+                "ALTER TABLE control_runs ADD COLUMN frozen_plan_json TEXT NOT NULL DEFAULT '{}'"
+            )
+        if "completed_ops_json" not in existing_ctrl_cols:
+            self.db.execute(
+                "ALTER TABLE control_runs ADD COLUMN completed_ops_json TEXT NOT NULL DEFAULT '[]'"
+            )
+        if "lease_owner_pid" not in existing_ctrl_cols:
+            self.db.execute(
+                "ALTER TABLE control_runs ADD COLUMN lease_owner_pid INTEGER"
+            )
+        if "in_flight_round" not in existing_ctrl_cols:
+            self.db.execute(
+                "ALTER TABLE control_runs ADD COLUMN in_flight_round INTEGER NOT NULL DEFAULT 0"
+            )
         existing_round_cols = {
             r["name"] for r in self.db.execute("PRAGMA table_info(control_rounds)").fetchall()
         }
@@ -1135,6 +1173,10 @@ class Journal:
         data["policy"] = json.loads(data.pop("policy_json"))
         data["admission"] = json.loads(data.pop("admission_json"))
         data["budget_consumed"] = json.loads(data.pop("budget_consumed_json"))
+        raw_plan = data.pop("frozen_plan_json", "{}") or "{}"
+        data["frozen_plan"] = json.loads(raw_plan)
+        raw_ops = data.pop("completed_ops_json", "[]") or "[]"
+        data["completed_ops"] = json.loads(raw_ops)
         data["cancel_requested"] = bool(data["cancel_requested"])
         return data
 
@@ -1154,11 +1196,20 @@ class Journal:
         policy_sha256: str,
         policy: dict[str, Any],
         admission: dict[str, Any],
+        evidence_dir: str = "",
+        frozen_plan: dict[str, Any] | None = None,
+        next_action: str = "",
         sequential_only: bool = True,
         actor_role: str = "host",
     ) -> dict[str, Any]:
         safe_policy = _redact_json_value(policy, max_chars=MAX_FINDING_CHARS)
         safe_admission = _redact_json_value(admission, max_chars=MAX_FINDING_CHARS)
+        safe_plan = _redact_json_value(frozen_plan or {}, max_chars=MAX_FINDING_CHARS)
+        safe_next_action = _redact_signal_text(
+            next_action or f"Dispatch Maker within frozen policy {policy_sha256[:12]}",
+            max_chars=MAX_FINDING_CHARS,
+        )
+        initial_ops = [{"op": "admitted", "round_num": 0, "candidate_sha256": candidate_sha256}]
         initial_budget = {
             "rounds": 0,
             "wall_seconds": 0.0,
@@ -1187,8 +1238,10 @@ class Journal:
                        last_failure_sig, last_diff_sha256,
                        source_sha, base_sha, candidate_sha256, branch, worktree,
                        agents_sha256, selection_sha256, check_plan_sha256, policy_sha256,
-                       policy_json, admission_json, budget_consumed_json
-                   ) VALUES (?, ?, 'ADMITTED', NULL, 0, '', 0, 0, 0, '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       policy_json, admission_json, budget_consumed_json,
+                       evidence_dir, frozen_plan_json, in_flight_round,
+                       last_completed_op, completed_ops_json, next_action
+                   ) VALUES (?, ?, 'ADMITTED', NULL, 0, '', 0, 0, 0, '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'admitted', ?, ?)""",
                 (
                     run_id,
                     issue,
@@ -1204,6 +1257,10 @@ class Journal:
                     json.dumps(safe_policy, sort_keys=True),
                     json.dumps(safe_admission, sort_keys=True),
                     json.dumps(initial_budget, sort_keys=True),
+                    str(evidence_dir),
+                    json.dumps(safe_plan, sort_keys=True),
+                    json.dumps(initial_ops, sort_keys=True),
+                    safe_next_action,
                 ),
             )
             self.db.execute(
@@ -1278,6 +1335,10 @@ class Journal:
         actor_role: str,
         dispatch_token: str,
         detail: dict[str, Any] | None = None,
+        lease_owner_pid: int | None = None,
+        lease_owner_start_ticks: str = "",
+        lease_owner_host: str = "",
+        in_flight_round: int | None = None,
     ) -> dict[str, Any]:
         if expected_state not in ("ADMITTED", "REPAIR_REQUIRED"):
             raise StateConflict(f"Cannot dispatch from state {expected_state!r}")
@@ -1300,12 +1361,32 @@ class Journal:
                     f"CAS failed on dispatch: expected {expected_state}, actual {row['state']}"
                 )
             new_seq = int(row["dispatch_seq"]) + 1
+            eff_round = int(in_flight_round) if in_flight_round is not None else (int(row["round_num"]) + 1)
+            ops = json.loads(row["completed_ops_json"] or "[]")
+            ops.append({"op": f"dispatched_{role}", "round_num": eff_round, "dispatch_seq": new_seq})
+            ops = ops[-40:]
             upd = self.db.execute(
                 """UPDATE control_runs
                    SET state='DISPATCHED', active_role=?, dispatch_seq=?, dispatch_token=?,
+                       lease_owner_pid=?, lease_owner_start_ticks=?, lease_owner_host=?,
+                       lease_acquired_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+                       lease_heartbeat_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+                       in_flight_round=?, last_completed_op=?, completed_ops_json=?,
                        updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
                    WHERE run_id=? AND state=? AND dispatch_token='' AND cancel_requested=0""",
-                (role, new_seq, dispatch_token, run_id, expected_state),
+                (
+                    role,
+                    new_seq,
+                    dispatch_token,
+                    lease_owner_pid,
+                    str(lease_owner_start_ticks or ""),
+                    str(lease_owner_host or ""),
+                    eff_round,
+                    f"dispatched_{role}",
+                    json.dumps(ops, sort_keys=True),
+                    run_id,
+                    expected_state,
+                ),
             )
             if upd.rowcount != 1:
                 raise StateConflict("CAS failed while acquiring dispatch lease")
@@ -1354,6 +1435,18 @@ class Journal:
             "streak_selection_sha256",
             "candidate_sha256",
             "budget_consumed_json",
+            "evidence_dir",
+            "lease_owner_pid",
+            "lease_owner_start_ticks",
+            "lease_owner_host",
+            "lease_acquired_at",
+            "lease_heartbeat_at",
+            "in_flight_round",
+            "last_completed_op",
+            "completed_ops_json",
+            "recovery_reason",
+            "next_action",
+            "blocker",
             "cancel_requested",
             "cancel_reason",
         })
@@ -1364,6 +1457,11 @@ class Journal:
         if clear_dispatch:
             updates["dispatch_token"] = ""
             updates["active_role"] = None
+            updates["lease_owner_pid"] = None
+            updates["lease_owner_start_ticks"] = ""
+            updates["lease_owner_host"] = ""
+            updates["lease_acquired_at"] = ""
+            updates["lease_heartbeat_at"] = ""
         safe_detail = _redact_json_value(detail or {}, max_chars=MAX_FINDING_CHARS)
         try:
             self.db.execute("BEGIN IMMEDIATE")
@@ -1376,10 +1474,17 @@ class Journal:
                 )
             if expected_dispatch_token is not None and row["dispatch_token"] != expected_dispatch_token:
                 raise StateConflict("Dispatch token mismatch on control-plane transition")
+            if "last_completed_op" not in updates:
+                updates["last_completed_op"] = action
+            if "completed_ops_json" not in updates:
+                ops = json.loads(row["completed_ops_json"] or "[]")
+                eff_round = updates.get("round_num", row["in_flight_round"] or row["round_num"])
+                ops.append({"op": action, "round_num": int(eff_round), "state": next_state})
+                updates["completed_ops_json"] = json.dumps(ops[-40:], sort_keys=True)
             set_clauses = ["state=?", "updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')"]
             params: list[Any] = [next_state]
             for col, val in updates.items():
-                if col in ("last_failure_sig", "cancel_reason") and isinstance(val, str):
+                if col in ("last_failure_sig", "cancel_reason", "recovery_reason", "next_action", "blocker", "last_completed_op") and isinstance(val, str):
                     val = _redact_signal_text(val, max_chars=MAX_FINDING_CHARS)
                 set_clauses.append(f"{col}=?")
                 params.append(val)
@@ -1520,6 +1625,173 @@ class Journal:
             update_fields={
                 "cancel_requested": 1,
                 "cancel_reason": _redact_signal_text(reason, max_chars=MAX_FINDING_CHARS),
+                "recovery_reason": "cancelled_by_operator",
+                "next_action": "Run cancelled; preserve worktree without reset",
             },
             detail={"reason": _redact_signal_text(reason, max_chars=MAX_FINDING_CHARS)},
         )
+
+    def record_control_progress(
+        self,
+        run_id: str,
+        *,
+        expected_state: str,
+        actor_role: str,
+        op: str,
+        expected_dispatch_token: str | None = None,
+        wall_elapsed_delta_s: float = 0.0,
+        tokens_delta: int | None = None,
+        cost_delta: float | None = None,
+        in_flight_round: int | None = None,
+        candidate_sha256: str | None = None,
+        last_diff_sha256: str | None = None,
+        next_action: str | None = None,
+        blocker: str | None = None,
+        recovery_reason: str | None = None,
+        detail: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Atomically persist mid-round completed op, heartbeat, and elapsed budget under CAS."""
+        safe_op = _redact_signal_text(op, max_chars=120)
+        safe_detail = _redact_json_value(detail or {}, max_chars=MAX_FINDING_CHARS)
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            row = self.db.execute("SELECT * FROM control_runs WHERE run_id=?", (run_id,)).fetchone()
+            if row is None:
+                raise StateConflict(f"Unknown control run ID: {run_id}")
+            if row["state"] != expected_state:
+                raise StateConflict(
+                    f"CAS failed on progress update: expected {expected_state}, actual {row['state']}"
+                )
+            if expected_dispatch_token is not None and row["dispatch_token"] != expected_dispatch_token:
+                raise StateConflict("Dispatch token mismatch on progress update")
+
+            consumed = json.loads(row["budget_consumed_json"])
+            consumed["wall_seconds"] = round(
+                float(consumed.get("wall_seconds", 0.0)) + max(0.0, float(wall_elapsed_delta_s)), 3
+            )
+            if tokens_delta is not None:
+                consumed["tokens_used"] = int(consumed.get("tokens_used") or 0) + int(tokens_delta)
+            if cost_delta is not None:
+                consumed["cost_usd"] = round(float(consumed.get("cost_usd") or 0.0) + float(cost_delta), 6)
+
+            eff_round = int(in_flight_round) if in_flight_round is not None else int(row["in_flight_round"] or row["round_num"])
+            ops = json.loads(row["completed_ops_json"] or "[]")
+            ops.append({"op": safe_op, "round_num": eff_round, "state": expected_state})
+            ops = ops[-40:]
+
+            set_clauses = [
+                "budget_consumed_json=?",
+                "last_completed_op=?",
+                "completed_ops_json=?",
+                "in_flight_round=?",
+                "lease_heartbeat_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+                "updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+            ]
+            params: list[Any] = [
+                json.dumps(consumed, sort_keys=True),
+                safe_op,
+                json.dumps(ops, sort_keys=True),
+                eff_round,
+            ]
+            if candidate_sha256 is not None:
+                set_clauses.append("candidate_sha256=?")
+                params.append(candidate_sha256)
+            if last_diff_sha256 is not None:
+                set_clauses.append("last_diff_sha256=?")
+                params.append(last_diff_sha256)
+            if next_action is not None:
+                set_clauses.append("next_action=?")
+                params.append(_redact_signal_text(next_action, max_chars=MAX_FINDING_CHARS))
+            if blocker is not None:
+                set_clauses.append("blocker=?")
+                params.append(_redact_signal_text(blocker, max_chars=MAX_FINDING_CHARS))
+            if recovery_reason is not None:
+                set_clauses.append("recovery_reason=?")
+                params.append(_redact_signal_text(recovery_reason, max_chars=MAX_FINDING_CHARS))
+
+            where_sql = "run_id=? AND state=?"
+            params.extend([run_id, expected_state])
+            if expected_dispatch_token is not None:
+                where_sql += " AND dispatch_token=?"
+                params.append(expected_dispatch_token)
+            upd = self.db.execute(
+                f"UPDATE control_runs SET {', '.join(set_clauses)} WHERE {where_sql}",
+                tuple(params),
+            )
+            if upd.rowcount != 1:
+                raise StateConflict("CAS failed while recording control progress")
+            self.db.execute(
+                """INSERT INTO control_events(
+                       run_id, from_state, to_state, actor_role, action, dispatch_token, detail_json
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    run_id,
+                    expected_state,
+                    expected_state,
+                    actor_role,
+                    safe_op,
+                    expected_dispatch_token if expected_dispatch_token is not None else row["dispatch_token"],
+                    json.dumps(safe_detail, sort_keys=True),
+                ),
+            )
+            self.db.execute("COMMIT")
+            return self.get_control_run(run_id)
+        except BaseException:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise
+
+    def record_control_event(
+        self,
+        run_id: str,
+        *,
+        expected_state: str,
+        actor_role: str,
+        action: str,
+        recovery_reason: str | None = None,
+        next_action: str | None = None,
+        blocker: str | None = None,
+        detail: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Record a non-transition CAS audit/reconciliation event on a control run."""
+        safe_action = _redact_signal_text(action, max_chars=120)
+        safe_detail = _redact_json_value(detail or {}, max_chars=MAX_FINDING_CHARS)
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            row = self.db.execute("SELECT * FROM control_runs WHERE run_id=?", (run_id,)).fetchone()
+            if row is None:
+                raise StateConflict(f"Unknown control run ID: {run_id}")
+            if row["state"] != expected_state:
+                raise StateConflict(
+                    f"CAS failed on event: expected {expected_state}, actual {row['state']}"
+                )
+            set_clauses = ["updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')"]
+            params: list[Any] = []
+            if recovery_reason is not None:
+                set_clauses.append("recovery_reason=?")
+                params.append(_redact_signal_text(recovery_reason, max_chars=MAX_FINDING_CHARS))
+            if next_action is not None:
+                set_clauses.append("next_action=?")
+                params.append(_redact_signal_text(next_action, max_chars=MAX_FINDING_CHARS))
+            if blocker is not None:
+                set_clauses.append("blocker=?")
+                params.append(_redact_signal_text(blocker, max_chars=MAX_FINDING_CHARS))
+            params.extend([run_id, expected_state])
+            upd = self.db.execute(
+                f"UPDATE control_runs SET {', '.join(set_clauses)} WHERE run_id=? AND state=?",
+                tuple(params),
+            )
+            if upd.rowcount != 1:
+                raise StateConflict("CAS failed while recording control event")
+            self.db.execute(
+                """INSERT INTO control_events(
+                       run_id, from_state, to_state, actor_role, action, dispatch_token, detail_json
+                   ) VALUES (?, ?, ?, ?, ?, '', ?)""",
+                (run_id, expected_state, expected_state, actor_role, safe_action, json.dumps(safe_detail, sort_keys=True)),
+            )
+            self.db.execute("COMMIT")
+            return self.get_control_run(run_id)
+        except BaseException:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise
