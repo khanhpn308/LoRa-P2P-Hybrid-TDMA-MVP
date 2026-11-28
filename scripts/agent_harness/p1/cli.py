@@ -27,6 +27,12 @@ from orchestrator import (
     probe_role_capabilities,
     reconcile_run,
 )
+from improvement import (
+    ImprovementError,
+    attribute_failure_from_journal,
+    run_controlled_experiment_demo,
+    verify_experiment_evidence,
+)
 
 REPO = "khanhpn308/LoRa-P2P-Hybrid-TDMA-MVP"
 
@@ -158,6 +164,17 @@ def main() -> int:
     rec_p.add_argument("--state", type=Path, default=None)
     rec_p.add_argument("--evidence-dir", type=Path, default=None)
     rec_p.add_argument("--offline", action="store_true")
+    exp_p = sub.add_parser("experiment", help="P08-D controlled meta-improvement experiment operations")
+    exp_p.add_argument("--action", choices=("demo", "status", "list", "verify", "attribute"), required=True)
+    exp_p.add_argument("--state", type=Path, default=None)
+    exp_p.add_argument("--source", type=Path, default=Path.cwd())
+    exp_p.add_argument("--evidence-dir", type=Path, default=None)
+    exp_p.add_argument("--workspace-root", type=Path, default=None)
+    exp_p.add_argument("--experiment-id", default=None)
+    exp_p.add_argument("--issue", type=int, default=None)
+    exp_p.add_argument("--run-id", default=None)
+    exp_p.add_argument("--decision", default=None)
+    exp_p.add_argument("--limit", type=int, default=50)
     args = parser.parse_args()
     if getattr(args, "issue", None) is not None and args.issue < 1:
         parser.error("Issue must be positive")
@@ -394,6 +411,44 @@ def main() -> int:
             )
             print(json.dumps(redact_data(res), indent=2, sort_keys=True))
             return 2 if res["status"] in ("BLOCKED", "ESCALATED") or res["decision"] == "REFUSED_AMBIGUOUS_OWNERSHIP" else 0
+        if args.command == "experiment":
+            if args.action == "demo":
+                if args.evidence_dir is None or args.workspace_root is None:
+                    raise ImprovementError("experiment --action demo requires --evidence-dir and --workspace-root")
+                res = run_controlled_experiment_demo(
+                    journal_path=state,
+                    evidence_dir=args.evidence_dir,
+                    workspace_root=args.workspace_root,
+                )
+                print(json.dumps(redact_data(res), indent=2, sort_keys=True))
+                return 0
+            if args.action == "status":
+                if not args.experiment_id:
+                    raise ImprovementError("experiment --action status requires --experiment-id")
+                with Journal(state) as journal:
+                    exp = journal.get_experiment(args.experiment_id)
+                    events = journal.experiment_events(args.experiment_id)
+                print(json.dumps(redact_data({"experiment": exp, "events": events}), indent=2, sort_keys=True))
+                return 0
+            if args.action == "list":
+                with Journal(state) as journal:
+                    rows = journal.list_experiments(issue=args.issue, decision=args.decision, limit=args.limit)
+                print(json.dumps(redact_data({"count": len(rows), "experiments": rows}), indent=2, sort_keys=True))
+                return 0
+            if args.action == "verify":
+                if not args.experiment_id:
+                    raise ImprovementError("experiment --action verify requires --experiment-id")
+                res = verify_experiment_evidence(
+                    journal_path=state,
+                    experiment_id=args.experiment_id,
+                    evidence_dir=args.evidence_dir,
+                )
+                print(json.dumps(redact_data(res), indent=2, sort_keys=True))
+                return 0
+            if args.action == "attribute":
+                res = attribute_failure_from_journal(state, issue=args.issue, run_id=args.run_id)
+                print(json.dumps(redact_data(res), indent=2, sort_keys=True))
+                return 0
         with Journal(state) as journal:
             if args.command == "recover":
                 changed = journal.detect_interruption(args.run_id)
@@ -451,7 +506,7 @@ def main() -> int:
                     out_payload[obs_key] = obs_status[obs_key]
             print(json.dumps(redact_data(out_payload), indent=2))
             return 0
-    except (OSError, PreflightError, WorktreeError, StateConflict, FeatureStateError, ObservabilityError, ControlPlaneError, subprocess.SubprocessError) as exc:
+    except (OSError, PreflightError, WorktreeError, StateConflict, FeatureStateError, ObservabilityError, ControlPlaneError, ImprovementError, subprocess.SubprocessError) as exc:
         print(json.dumps({"state": "BLOCKED", "reason": str(exc)[:240]}))
         return 2
 

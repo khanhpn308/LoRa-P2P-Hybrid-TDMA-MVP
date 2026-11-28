@@ -667,6 +667,15 @@ def verify_advanced_pack(repo: pathlib.Path) -> dict[str, Any]:
     if db_check["status"] != "PASS":
         failures.append(f"DB schema freshness failed: {db_check['reason']}")
 
+    exp_log_path = repo_root / "docs" / "harness" / "EXPERIMENT_LOG.md"
+    _reject_symlink(exp_log_path, exp_log_path.name)
+    if exp_log_path.is_file():
+        exp_text = exp_log_path.read_text(encoding="utf-8")
+        for required_exp_marker in ("OD-10", "KEEP", "REJECT", "NOT_VERIFIED"):
+            if required_exp_marker not in exp_text:
+                failures.append(f"EXPERIMENT_LOG.md missing required marker: {required_exp_marker}")
+        failures.extend(validate_markdown_links(repo_root, exp_log_path))
+
     return {
         "status": "PASS" if not failures else "FAIL",
         "exit_code": 0 if not failures else 1,

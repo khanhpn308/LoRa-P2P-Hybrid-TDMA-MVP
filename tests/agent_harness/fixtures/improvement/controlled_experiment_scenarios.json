@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0",
+  "mode": "CONTROLLED_FIXTURE",
+  "real_productivity_gain_claimed": false,
+  "live_provider_evaluation": "NOT_VERIFIED",
+  "human_rubric_calibration": "NOT_VERIFIED",
+  "od10_protocol": {
+    "one_change_per_experiment": true,
+    "isolated_disposable_workspace": true,
+    "frozen_oracle_holdout": true,
+    "zero_mandatory_regression": true,
+    "keep_is_recommendation_only": true,
+    "no_auto_merge_to_main": true
+  },
+  "scenarios": [
+    {
+      "experiment_id": "EXP-FIXTURE-KEEP-001",
+      "label": "Qualifying KEEP on controlled instruction SNR fixture",
+      "hypothesis": "Replacing noisy lines in docs/routing_note.md with one focused routing rule raises instruction_snr >= 0.20 without regression.",
+      "one_change_summary": "Update docs/routing_note.md with focused routing rule",
+      "attributed_subsystem": "instructions",
+      "target_metric": "instruction_snr",
+      "direction": "higher_is_better",
+      "min_delta": 0.2,
+      "allowed_paths": ["docs/routing_note.md"],
+      "expected_decision": "KEEP",
+      "expected_reason_code": "QUALIFYING_IMPROVEMENT",
+      "expected_promotion_status": "FIXTURE_ONLY_NOT_PROMOTABLE"
+    },
+    {
+      "experiment_id": "EXP-FIXTURE-REJECT-002",
+      "label": "REJECT on metric regression with safe disposable workspace discard",
+      "hypothesis": "Candidate regression fixture in docs/routing_note.md drops instruction_snr and triggers REJECT + discard.",
+      "one_change_summary": "Candidate regression fixture in docs/routing_note.md",
+      "attributed_subsystem": "instructions",
+      "target_metric": "instruction_snr",
+      "direction": "higher_is_better",
+      "min_delta": 0.2,
+      "allowed_paths": ["docs/routing_note.md"],
+      "expected_decision": "REJECT",
+      "expected_reason_code": "INSUFFICIENT_IMPROVEMENT_OR_REGRESSION",
+      "expected_promotion_status": "NOT_PROMOTED"
+    },
+    {
+      "experiment_id": "EXP-FIXTURE-GAMING-003",
+      "label": "REJECT on seeded metric-gaming / unauthorized protected path modification",
+      "hypothesis": "Seeded metric-gaming negative case attempting unauthorized AGENTS.md modification.",
+      "one_change_summary": "Attempt out-of-scope edit caught by Host",
+      "attributed_subsystem": "security",
+      "target_metric": "instruction_snr",
+      "direction": "higher_is_better",
+      "min_delta": 0.1,
+      "allowed_paths": ["docs/routing_note.md"],
+      "expected_decision": "REJECT",
+      "expected_reason_code": "TAMPERING_OR_METRIC_GAMING",
+      "expected_promotion_status": "NOT_PROMOTED"
+    }
+  ]
+}

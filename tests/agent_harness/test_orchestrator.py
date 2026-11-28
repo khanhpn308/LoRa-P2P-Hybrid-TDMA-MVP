@@ -2435,6 +2435,25 @@ time.sleep(60)
         self.assertIn(rid, fwd_cmd)
         self.assertIn(str(self.journal_path), fwd_cmd)
 
+    def test_p08d_experiment_role_acl_boundaries(self):
+        self.assertTrue(orchestrator.authorize_role_action("planner", "propose_experiment")["allowed"])
+        self.assertTrue(orchestrator.authorize_role_action("orchestrator", "request_experiment_run")["allowed"])
+        self.assertTrue(orchestrator.authorize_role_action("host", "evaluate_experiment")["allowed"])
+        self.assertTrue(orchestrator.authorize_role_action("host", "discard_experiment_workspace")["allowed"])
+        self.assertTrue(orchestrator.authorize_role_action("checker", "audit_experiment")["allowed"])
+        self.assertTrue(orchestrator.authorize_role_action("owner", "approve_experiment_promotion")["allowed"])
+
+        for role, action in (
+            ("maker", "edit_oracle"),
+            ("maker", "weaken_guardrail"),
+            ("maker", "auto_promote_experiment"),
+            ("orchestrator", "auto_promote_experiment"),
+            ("host", "edit_oracle"),
+            ("checker", "edit_oracle"),
+            ("planner", "approve_experiment_promotion"),
+        ):
+            with self.assertRaises(orchestrator.RoleAccessDenied):
+                orchestrator.authorize_role_action(role, action)
 
 
 if __name__ == "__main__":

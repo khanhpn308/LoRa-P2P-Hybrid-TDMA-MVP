@@ -547,7 +547,7 @@ def diagnose_failures(
                     ),
                 }
             )
-    priority = {"runtime_probe": 0, "check": 1, "worker": 2, "auditor": 2, "pr_review": 2, "gate": 3, "session": 4}
+    priority = {"runtime_probe": 0, "check": 1, "worker": 2, "auditor": 2, "pr_review": 2, "experiment": 2, "gate": 3, "session": 4}
     prioritized = sorted(failures, key=lambda f: (priority.get(f["category"], 3), -int(f["signal_id"])))
     return {
         "schema_version": SCHEMA_VERSION,
