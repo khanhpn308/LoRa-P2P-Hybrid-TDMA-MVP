@@ -399,6 +399,11 @@ class JournalTests(unittest.TestCase):
                     "verdict": "ACCEPT",
                     "candidate_sha256": "1" * 64,
                     "policy_sha256": "5" * 64,
+                    "evidence_refs": {
+                        "round_dir": "round-01",
+                        "checks_summary": "round-01/checks_summary.json",
+                        "auditor_report": "round-01/audit_report.json",
+                    },
                     "host_checks_passed": True,
                     "checker_passed": True,
                     "rubric_decision": "ACCEPT",
@@ -421,6 +426,8 @@ class JournalTests(unittest.TestCase):
             self.assertEqual(len(rounds), 1)
             self.assertEqual(rounds[0]["verdict"], "ACCEPT")
             self.assertEqual(rounds[0]["rubric_total_score"], 12)
+            self.assertEqual(rounds[0]["evidence_refs"]["checks_summary"], "round-01/checks_summary.json")
+            self.assertEqual(rounds[0]["evidence_refs"]["auditor_report"], "round-01/audit_report.json")
             self.assertEqual(json.loads(json.dumps(rounds[0]["findings"])), [])
 
 

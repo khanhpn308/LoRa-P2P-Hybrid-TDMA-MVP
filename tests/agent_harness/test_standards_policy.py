@@ -1186,8 +1186,9 @@ class SupervisedEntrypointTests(PolicyFixture):
         for prompt, kwargs in self.worker_calls:
             self.assertIn("Never expose credentials.", prompt)
             self.assertEqual(kwargs["required_rules"], [])
-        for name in ("g0-context.json", "initial-rules.json", "worker-edit-input-0.json",
-                     "worker-report.json", "auditor-report.json", "pre-audit-gates.json", "post-audit-gates.json"):
+        for name in ("g0-context.json", "initial-rules.json", "round-01/worker-edit-input.json",
+                     "round-01/worker-report.json", "round-01/auditor-report.json",
+                     "round-01/pre-audit-gates.json", "round-01/post-audit-gates.json"):
             self.assertTrue((evidence / name).is_file(), name)
 
     def test_worker_outside_scope_and_read_only_auditor_mutation_block(self):

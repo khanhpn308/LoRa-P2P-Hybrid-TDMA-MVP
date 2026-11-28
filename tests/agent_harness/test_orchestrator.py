@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import io
 import json
 import pathlib
@@ -99,6 +100,59 @@ class OrchestratorControlPlaneTests(unittest.TestCase):
         (repo_path / "scripts" / "verify_structure.py").write_text("print('OK')\n", encoding="utf-8")
         _git(repo_path, "add", ".")
         _git(repo_path, "commit", "-qm", "harness fixture files")
+
+    def _make_pass_evidence(
+        self,
+        round_label: str,
+        *,
+        admitted: dict,
+        candidate_sha256: str = "a" * 64,
+        diff_sha256: str = "b" * 64,
+        decision: str = "ACCEPT",
+        hard_gate_passed: bool = True,
+        checks_status: str = "PASS",
+        audit_status: str = "PASS",
+    ) -> dict:
+        ev_root = self.base_dir / "pass_ev" / admitted["run"]["run_id"]
+        round_rel = round_label
+        round_dir = ev_root / round_rel
+        checks_doc = {
+            "status": checks_status,
+            "candidate_sha256": candidate_sha256,
+            "diff_sha256": diff_sha256,
+            "source_sha": admitted["run"]["source_sha"],
+        }
+        checks_sha = orchestrator.write_immutable_json(round_dir / "checks_summary.json", checks_doc)
+        ev_refs = [{"receipt_path": f"{round_rel}/checks_summary.json", "receipt_sha256": checks_sha}]
+        rubric = orchestrator.build_rubric_report(
+            decision=decision, hard_gate_passed=hard_gate_passed, evidence_refs=ev_refs
+        )
+        audit_doc = {
+            "status": audit_status,
+            "findings": [],
+            "limitations": [],
+            "reviewed_scope": list(admitted["admission"]["scope"]),
+            "selection_sha256": admitted["selection"]["selection_sha256"],
+            "rule_results": [],
+            "rubric": rubric,
+        }
+        audit_sha = orchestrator.write_immutable_json(round_dir / "audit_report.json", audit_doc)
+        return {
+            "candidate_sha256": candidate_sha256,
+            "diff_sha256": diff_sha256,
+            "policy_sha256": admitted["policy"]["policy_sha256"],
+            "check_plan_sha256": admitted["check_plan"]["plan_sha256"],
+            "selection_sha256": admitted["selection"]["selection_sha256"],
+            "checks_summary_sha256": checks_sha,
+            "auditor_report_sha256": audit_sha,
+            "evidence_dir": ev_root,
+            "evidence_refs": {
+                "round_dir": round_rel,
+                "checks_summary": f"{round_rel}/checks_summary.json",
+                "auditor_report": f"{round_rel}/audit_report.json",
+            },
+            "rubric": rubric,
+        }
 
     def test_admission_happy_path_and_frozen_policy_pending_approval(self):
         res = self._admit()
@@ -328,7 +382,8 @@ class OrchestratorControlPlaneTests(unittest.TestCase):
         pol3 = orchestrator.build_run_policy(
             consecutive_passes_required=2, max_rounds=3, max_wall_seconds=120, no_progress_threshold=3
         )
-        run3 = self._admit(policy=pol3)["run"]["run_id"]
+        adm3 = self._admit(policy=pol3)
+        run3 = adm3["run"]["run_id"]
         d4 = orchestrator.dispatch_role(repo=self.repo, journal_path=self.journal_path, run_id=run3, role="checker")
         orchestrator.transition_state(
             journal_path=self.journal_path,
@@ -339,6 +394,7 @@ class OrchestratorControlPlaneTests(unittest.TestCase):
             action="checker_started",
             dispatch_token=d4["dispatch_token"],
         )
+        pass_ev1 = self._make_pass_evidence("round-01", admitted=adm3)
         r4 = orchestrator.record_round_result(
             journal_path=self.journal_path,
             run_id=run3,
@@ -346,6 +402,7 @@ class OrchestratorControlPlaneTests(unittest.TestCase):
             outcome="PASS",
             host_checks_passed=True,
             checker_passed=True,
+            **pass_ev1,
         )
         self.assertEqual(r4["state"], "REPAIR_REQUIRED")
         self.assertEqual(r4["consecutive_passes"], 1)
@@ -359,6 +416,7 @@ class OrchestratorControlPlaneTests(unittest.TestCase):
             action="checker_started",
             dispatch_token=d5["dispatch_token"],
         )
+        pass_ev2 = self._make_pass_evidence("round-02", admitted=adm3)
         r5 = orchestrator.record_round_result(
             journal_path=self.journal_path,
             run_id=run3,
@@ -366,6 +424,8 @@ class OrchestratorControlPlaneTests(unittest.TestCase):
             outcome="PASS",
             host_checks_passed=True,
             checker_passed=True,
+            confirming_pass=True,
+            **pass_ev2,
         )
         self.assertEqual(r5["state"], "READY_FOR_HUMAN_REVIEW")
         self.assertEqual(r5["consecutive_passes"], 2)
@@ -391,11 +451,14 @@ class OrchestratorControlPlaneTests(unittest.TestCase):
         for name in (
             "admission.json",
             "policy.json",
-            "checks_summary.json",
-            "audit_report.json",
+            "round-01/checks_summary.json",
+            "round-01/audit_report.json",
             "control_plane_summary.json",
         ):
             self.assertTrue((self.evidence_dir / name).is_file(), name)
+        r0 = summary["rounds"][0]
+        self.assertEqual(r0["evidence_refs"]["checks_summary"], "round-01/checks_summary.json")
+        self.assertEqual(r0["evidence_refs"]["auditor_report"], "round-01/audit_report.json")
 
         # Mutating snapshot inside Checker fails closed
         ev2 = self.base_dir / "evidence_mut"
@@ -859,17 +922,19 @@ class OrchestratorControlPlaneTests(unittest.TestCase):
         pol = orchestrator.build_run_policy(
             consecutive_passes_required=2, max_rounds=3, max_wall_seconds=120, no_progress_threshold=3
         )
-        run_id = self._admit(policy=pol)["run"]["run_id"]
+        adm = self._admit(policy=pol)
+        run_id = adm["run"]["run_id"]
         # Round 1: Candidate A passes -> consecutive_passes = 1
         d1 = orchestrator.dispatch_role(repo=self.repo, journal_path=self.journal_path, run_id=run_id, role="checker")
         orchestrator.transition_state(
             journal_path=self.journal_path, run_id=run_id, expected="DISPATCHED",
             next_state="CHECKING", actor_role="host", action="checker_started", dispatch_token=d1["dispatch_token"],
         )
+        ev1 = self._make_pass_evidence("round-01", admitted=adm, candidate_sha256="1" * 64, diff_sha256="2" * 64)
         r1 = orchestrator.record_round_result(
             journal_path=self.journal_path, run_id=run_id, dispatch_token=d1["dispatch_token"],
             outcome="PASS", host_checks_passed=True, checker_passed=True,
-            candidate_sha256="1" * 64, diff_sha256="2" * 64,
+            **ev1,
         )
         self.assertEqual(r1["consecutive_passes"], 1)
         self.assertEqual(r1["state"], "REPAIR_REQUIRED")
@@ -884,10 +949,11 @@ class OrchestratorControlPlaneTests(unittest.TestCase):
             journal_path=self.journal_path, run_id=run_id, expected="DISPATCHED",
             next_state="CHECKING", actor_role="host", action="checker_started", dispatch_token=d2["dispatch_token"],
         )
+        ev2 = self._make_pass_evidence("round-02", admitted=adm, candidate_sha256="9" * 64, diff_sha256="8" * 64)
         r2 = orchestrator.record_round_result(
             journal_path=self.journal_path, run_id=run_id, dispatch_token=d2["dispatch_token"],
             outcome="PASS", host_checks_passed=True, checker_passed=True,
-            candidate_sha256="9" * 64, diff_sha256="8" * 64, confirming_pass=True,
+            confirming_pass=True, **ev2,
         )
         self.assertEqual(r2["consecutive_passes"], 0)
         self.assertEqual(r2["state"], "REPAIR_REQUIRED")
@@ -898,10 +964,11 @@ class OrchestratorControlPlaneTests(unittest.TestCase):
             journal_path=self.journal_path, run_id=run_id, expected="DISPATCHED",
             next_state="CHECKING", actor_role="host", action="checker_started", dispatch_token=d3["dispatch_token"],
         )
+        ev3 = self._make_pass_evidence("round-03", admitted=adm, candidate_sha256="7" * 64, diff_sha256="6" * 64)
         r3 = orchestrator.record_round_result(
             journal_path=self.journal_path, run_id=run_id, dispatch_token=d3["dispatch_token"],
             outcome="PASS", host_checks_passed=True, checker_passed=True,
-            candidate_sha256="7" * 64, diff_sha256="6" * 64, confirming_pass=False,
+            confirming_pass=False, **ev3,
         )
         self.assertEqual(r3["consecutive_passes"], 1)
         self.assertEqual(r3["state"], "ESCALATED")
@@ -1013,10 +1080,296 @@ class OrchestratorControlPlaneTests(unittest.TestCase):
         self.assertEqual(by_name["hard_gate_impossible_scope_blocked"]["state"], "BLOCKED")
         self.assertEqual(by_name["cancellation_preserves_work"]["state"], "CANCELLED")
         self.assertTrue(by_name["cancellation_preserves_work"]["worktree_preserved"])
+        scenario_dirs = {
+            "seeded_fail_repair_accept": pilot_ev / "scenario_1_seeded_fail_repair_accept",
+            "checker_revise_then_n2_same_candidate_accept": pilot_ev / "scenario_2_revise_and_n2_same_candidate",
+            "repeated_failure_no_progress_escalated": pilot_ev / "scenario_3_no_progress_escalated",
+            "hard_gate_impossible_scope_blocked": pilot_ev / "scenario_4_hard_gate_block",
+            "cancellation_preserves_work": pilot_ev / "scenario_5_cancellation",
+        }
         with Journal(pilot_db) as journal:
             for sc in summary["scenarios"]:
                 rounds = journal.list_control_rounds(sc["run_id"])
                 self.assertEqual(len(rounds), sc["rounds"])
+                ev_dir = scenario_dirs[sc["scenario"]]
+                self.assertFalse((ev_dir / "audit_report.json").exists())
+                for rnd in rounds:
+                    refs = rnd["evidence_refs"]
+                    expected_prefix = f"round-{rnd['round_num']:02d}/"
+                    for hash_col, ref_key in (
+                        ("checks_summary_sha256", "checks_summary"),
+                        ("manifest_sha256", "manifest"),
+                        ("auditor_report_sha256", "auditor_report"),
+                    ):
+                        digest_val = rnd[hash_col]
+                        if digest_val:
+                            self.assertIn(ref_key, refs)
+                            self.assertTrue(refs[ref_key].startswith(expected_prefix))
+                            artifact = ev_dir / refs[ref_key]
+                            self.assertTrue(artifact.is_file(), refs[ref_key])
+                            self.assertEqual(stat_mode := (artifact.stat().st_mode & 0o777), 0o444, (refs[ref_key], oct(stat_mode)))
+                            self.assertEqual(hashlib.sha256(artifact.read_bytes()).hexdigest(), digest_val)
+
+    def test_p08b_record_round_result_rejects_boolean_only_and_incomplete_pass_evidence(self):
+        adm = self._admit(
+            policy=orchestrator.build_run_policy(
+                consecutive_passes_required=1, max_rounds=8, max_wall_seconds=120, no_progress_threshold=8
+            )
+        )
+        run_id = adm["run"]["run_id"]
+        valid_ev = self._make_pass_evidence("round-good", admitted=adm)
+
+        def _dispatch_to_checking() -> str:
+            d = orchestrator.dispatch_role(repo=self.repo, journal_path=self.journal_path, run_id=run_id, role="checker")
+            orchestrator.transition_state(
+                journal_path=self.journal_path,
+                run_id=run_id,
+                expected="DISPATCHED",
+                next_state="CHECKING",
+                actor_role="host",
+                action="checker_started",
+                dispatch_token=d["dispatch_token"],
+            )
+            return d["dispatch_token"]
+
+        tok = _dispatch_to_checking()
+
+        # 1. Self-declared booleans alone without receipts/bindings/rubric MUST fail closed
+        with self.assertRaises(orchestrator.RoleAccessDenied):
+            orchestrator.record_round_result(
+                journal_path=self.journal_path,
+                run_id=run_id,
+                dispatch_token=tok,
+                outcome="PASS",
+                host_checks_passed=True,
+                checker_passed=True,
+            )
+
+        # 2. Missing explicit candidate/diff/selection/policy/check_plan binding MUST fail closed
+        for drop_key in ("candidate_sha256", "diff_sha256", "policy_sha256", "check_plan_sha256", "selection_sha256"):
+            partial = dict(valid_ev)
+            partial[drop_key] = ""
+            with self.subTest(missing_binding=drop_key):
+                with self.assertRaises(orchestrator.RoleAccessDenied):
+                    orchestrator.record_round_result(
+                        journal_path=self.journal_path,
+                        run_id=run_id,
+                        dispatch_token=tok,
+                        outcome="PASS",
+                        host_checks_passed=True,
+                        checker_passed=True,
+                        **partial,
+                    )
+
+        # 3. Missing trusted receipt hashes or evidence_dir/evidence_refs MUST fail closed
+        for drop_key in ("checks_summary_sha256", "auditor_report_sha256"):
+            no_rec = dict(valid_ev)
+            no_rec[drop_key] = ""
+            with self.subTest(missing_receipt=drop_key):
+                with self.assertRaises(orchestrator.RoleAccessDenied):
+                    orchestrator.record_round_result(
+                        journal_path=self.journal_path,
+                        run_id=run_id,
+                        dispatch_token=tok,
+                        outcome="PASS",
+                        host_checks_passed=True,
+                        checker_passed=True,
+                        **no_rec,
+                    )
+
+        no_dir = dict(valid_ev)
+        no_dir["evidence_dir"] = None
+        with self.assertRaises(orchestrator.RoleAccessDenied):
+            orchestrator.record_round_result(
+                journal_path=self.journal_path,
+                run_id=run_id,
+                dispatch_token=tok,
+                outcome="PASS",
+                host_checks_passed=True,
+                checker_passed=True,
+                **no_dir,
+            )
+
+        # 4. Missing or non-ACCEPT / mismatched rubric MUST fail closed
+        no_rubric = dict(valid_ev)
+        no_rubric["rubric"] = None
+        with self.assertRaises(orchestrator.RoleAccessDenied):
+            orchestrator.record_round_result(
+                journal_path=self.journal_path,
+                run_id=run_id,
+                dispatch_token=tok,
+                outcome="PASS",
+                host_checks_passed=True,
+                checker_passed=True,
+                **no_rubric,
+            )
+        revise_ev = self._make_pass_evidence("round-revise", admitted=adm, decision="REVISE", audit_status="FAIL")
+        with self.assertRaises(orchestrator.RoleAccessDenied):
+            orchestrator.record_round_result(
+                journal_path=self.journal_path,
+                run_id=run_id,
+                dispatch_token=tok,
+                outcome="PASS",
+                host_checks_passed=True,
+                checker_passed=True,
+                **revise_ev,
+            )
+
+        # 5. Tampered / candidate-mismatched / non-PASS on-disk checks_summary MUST fail closed
+        bad_checks_ev = self._make_pass_evidence("round-fail-checks", admitted=adm, checks_status="FAIL")
+        with self.assertRaises(orchestrator.RoleAccessDenied):
+            orchestrator.record_round_result(
+                journal_path=self.journal_path,
+                run_id=run_id,
+                dispatch_token=tok,
+                outcome="PASS",
+                host_checks_passed=True,
+                checker_passed=True,
+                **bad_checks_ev,
+            )
+
+        mismatch_ev = dict(valid_ev)
+        mismatch_ev["checks_summary_sha256"] = "f" * 64
+        with self.assertRaises(orchestrator.RoleAccessDenied):
+            orchestrator.record_round_result(
+                journal_path=self.journal_path,
+                run_id=run_id,
+                dispatch_token=tok,
+                outcome="PASS",
+                host_checks_passed=True,
+                checker_passed=True,
+                **mismatch_ev,
+            )
+
+        # Journal state must remain CHECKING with 0 rounds after all rejected PASS attempts
+        with Journal(self.journal_path) as journal:
+            self.assertEqual(journal.get_control_run(run_id)["state"], "CHECKING")
+            self.assertEqual(journal.list_control_rounds(run_id), [])
+
+        # 6. Complete trusted receipts + candidate binding + ACCEPT rubric succeeds
+        accepted = orchestrator.record_round_result(
+            journal_path=self.journal_path,
+            run_id=run_id,
+            dispatch_token=tok,
+            outcome="PASS",
+            host_checks_passed=True,
+            checker_passed=True,
+            **valid_ev,
+        )
+        self.assertEqual(accepted["state"], "READY_FOR_HUMAN_REVIEW")
+        with Journal(self.journal_path) as journal:
+            rounds = journal.list_control_rounds(run_id)
+            self.assertEqual(len(rounds), 1)
+            self.assertEqual(rounds[0]["checks_summary_sha256"], valid_ev["checks_summary_sha256"])
+            self.assertEqual(rounds[0]["auditor_report_sha256"], valid_ev["auditor_report_sha256"])
+
+    def test_p08b_immutable_per_round_evidence_never_overwritten_across_rounds(self):
+        wt = self._make_linked_worktree(issue=437, suffix="immut")
+        self._seed_harness_files(wt)
+
+        # Direct write_immutable_artifact refusal on overwrite
+        immut_file = self.base_dir / "immut_check.json"
+        h0 = orchestrator.write_immutable_artifact(immut_file, b'{"round":1}\n')
+        self.assertEqual(immut_file.stat().st_mode & 0o777, 0o444)
+        self.assertEqual(hashlib.sha256(immut_file.read_bytes()).hexdigest(), h0)
+        with self.assertRaises(orchestrator.ControlPlaneError):
+            orchestrator.write_immutable_artifact(immut_file, b'{"round":2}\n')
+
+        # Multi-round run.py execution (FAIL -> REVISE -> PASS) keeps distinct immutable per-round dirs
+        def _fake_tool(cmd, cwd, timeout):
+            if cmd[0] == "gh":
+                return {"tool": "gh", "command": cmd, "exit_code": 0, "output_sha256": "0" * 64, "output_bytes": 10}, json.dumps(self.issue_data)
+            return {"tool": cmd[0], "command": cmd, "exit_code": 0, "output_sha256": "0" * 64, "output_bytes": 2}, "OK"
+
+        round_n = {"n": 0}
+
+        def _fake_worker(prompt, repo, timeout, **kwargs):
+            if "Read-only final Worker report" not in prompt:
+                round_n["n"] += 1
+                (wt / "README.md").write_text(f"round {round_n['n']} edit\n", encoding="utf-8")
+            return {
+                "exit_code": 0, "stdout_bytes": 0, "stderr_bytes": 0,
+                "report": {
+                    "status": "PASS", "findings": [], "limitations": [],
+                    "reviewed_scope": ["README.md"], "selection_sha256": kwargs["selection_sha256"], "rule_results": [],
+                },
+            }
+
+        def _fake_audit(prompt, snapshot, schema, timeout, required_paths, **kwargs):
+            status = "FAIL" if round_n["n"] == 1 else "PASS"
+            ev_refs = [
+                {"receipt_path": k, "receipt_sha256": v}
+                for k, v in sorted((kwargs.get("evidence_inventory") or {}).items())
+            ]
+            return {
+                "status": status,
+                "findings": [] if status == "PASS" else [{"severity": "MEDIUM", "file": "README.md", "line": 1, "rule": "DOC-001", "explanation": "revise", "fix": "edit"}],
+                "limitations": [],
+                "reviewed_scope": ["README.md"],
+                "selection_sha256": kwargs["selection_sha256"],
+                "rule_results": [],
+                "rubric": orchestrator.build_rubric_report(
+                    decision="ACCEPT" if status == "PASS" else "REVISE",
+                    hard_gate_passed=True,
+                    evidence_refs=ev_refs,
+                    findings_notes=None if status == "PASS" else {"correctness": ["revise"]},
+                ),
+            }
+
+        args = argparse.Namespace(
+            issue=437, execute=True, accept_isolated_pilot=True,
+            expected_idf_version=None, toolchain_mode="container_only", allow_native_fallback=False,
+            timeout=30, max_repairs=2, check_profile="quick", max_wall_seconds=300, consecutive_passes=2,
+            no_progress_threshold=3, require_token_budget=False, require_cost_budget=False,
+            approved_by="", journal=self.journal_path, feature_file=None, unit_id=None, trusted_definitions=None,
+        )
+        stream = io.StringIO()
+        with patch.object(harness_run, "__file__", str(wt / "scripts/agent_harness/run.py")), \
+             patch.object(harness_run.shutil, "which", return_value="fixture-bin"), \
+             patch.object(harness_run, "tool", side_effect=_fake_tool), \
+             patch.object(harness_run.codex, "invoke", side_effect=_fake_worker), \
+             patch.object(harness_run.antigravity, "invoke", side_effect=_fake_audit), \
+             contextlib.redirect_stdout(stream):
+            rc = harness_run.run(args)
+        manifest_path = pathlib.Path(stream.getvalue().strip().split(": ", 1)[1])
+        ev_root = manifest_path.parent
+        self.addCleanup(shutil.rmtree, ev_root)
+        self.assertEqual(rc, 0)
+        doc = json.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(doc["state"], "READY_FOR_HUMAN_REVIEW")
+
+        # No shared overwriting top-level per-round files
+        for shared_name in ("auditor-report.json", "worker-report.json", "selected-rules.json", "checks.log", "quality-manifest.json"):
+            self.assertFalse((ev_root / shared_name).exists(), shared_name)
+
+        with Journal(self.journal_path) as journal:
+            rounds = journal.list_control_rounds(doc["run_id"])
+            self.assertEqual(len(rounds), 3)
+            seen_audits: set[str] = set()
+            for rnd in rounds:
+                prefix = f"round-{rnd['round_num']:02d}/"
+                refs = rnd["evidence_refs"]
+                self.assertEqual(refs["round_dir"], f"round-{rnd['round_num']:02d}")
+                for hash_col, ref_key in (
+                    ("checks_summary_sha256", "checks_summary"),
+                    ("manifest_sha256", "manifest"),
+                    ("auditor_report_sha256", "auditor_report"),
+                ):
+                    h = rnd[hash_col]
+                    self.assertTrue(h, (rnd["round_num"], hash_col))
+                    rel = refs[ref_key]
+                    self.assertTrue(rel.startswith(prefix), (rnd["round_num"], rel))
+                    fpath = ev_root / rel
+                    self.assertTrue(fpath.is_file(), rel)
+                    self.assertEqual(fpath.stat().st_mode & 0o777, 0o444, rel)
+                    self.assertEqual(hashlib.sha256(fpath.read_bytes()).hexdigest(), h)
+                seen_audits.add(rnd["auditor_report_sha256"])
+            # Each round preserves its own distinct immutable auditor report artifact
+            self.assertEqual(len(seen_audits), 3)
+            r1_audit = json.loads((ev_root / "round-01/auditor-report.json").read_text(encoding="utf-8"))
+            r2_audit = json.loads((ev_root / "round-02/auditor-report.json").read_text(encoding="utf-8"))
+            self.assertEqual(r1_audit["report"]["status"], "FAIL")
+            self.assertEqual(r2_audit["report"]["status"], "PASS")
 
 
 if __name__ == "__main__":

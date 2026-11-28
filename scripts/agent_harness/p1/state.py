@@ -497,6 +497,7 @@ class Journal:
                 checks_summary_sha256 TEXT NOT NULL DEFAULT '',
                 manifest_sha256 TEXT NOT NULL DEFAULT '',
                 auditor_report_sha256 TEXT NOT NULL DEFAULT '',
+                evidence_refs_json TEXT NOT NULL DEFAULT '{}',
                 host_checks_passed INTEGER NOT NULL CHECK(host_checks_passed IN (0, 1)),
                 checker_passed INTEGER NOT NULL CHECK(checker_passed IN (0, 1)),
                 rubric_decision TEXT NOT NULL DEFAULT 'NOT_VERIFIED',
@@ -533,6 +534,13 @@ class Journal:
                 self.db.execute(
                     f"ALTER TABLE control_runs ADD COLUMN {col_name} TEXT NOT NULL DEFAULT ''"
                 )
+        existing_round_cols = {
+            r["name"] for r in self.db.execute("PRAGMA table_info(control_rounds)").fetchall()
+        }
+        if "evidence_refs_json" not in existing_round_cols:
+            self.db.execute(
+                "ALTER TABLE control_rounds ADD COLUMN evidence_refs_json TEXT NOT NULL DEFAULT '{}'"
+            )
 
     def close(self) -> None:
         self.db.close()
@@ -1402,6 +1410,7 @@ class Journal:
             )
             if round_record is not None:
                 safe_selected = _redact_json_value(list(round_record.get("selected_ids", ())), max_chars=MAX_FINDING_CHARS)
+                safe_evidence_refs = _redact_json_value(dict(round_record.get("evidence_refs") or {}), max_chars=MAX_FINDING_CHARS)
                 safe_rubric = _redact_json_value(round_record.get("rubric") or {}, max_chars=MAX_FINDING_CHARS)
                 safe_findings = _redact_json_value(list(round_record.get("findings") or ()), max_chars=MAX_FINDING_CHARS)
                 safe_repair_scope = _redact_json_value(list(round_record.get("repair_scope") or ()), max_chars=MAX_FINDING_CHARS)
@@ -1412,13 +1421,13 @@ class Journal:
                            outcome, verdict, source_sha, base_sha, candidate_sha256,
                            diff_sha256, policy_sha256, check_plan_sha256, selection_sha256,
                            agents_sha256, selected_ids_json, checks_summary_sha256,
-                           manifest_sha256, auditor_report_sha256,
+                           manifest_sha256, auditor_report_sha256, evidence_refs_json,
                            host_checks_passed, checker_passed,
                            rubric_decision, rubric_total_score, rubric_hard_gate_passed,
                            rubric_json, findings_json, repair_scope_json,
                            next_action, failure_sig, wall_elapsed_s, cumulative_wall_s,
                            tokens_used, cost_used, consecutive_passes, no_progress_count
-                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         run_id,
                         int(round_record["round_num"]),
@@ -1438,6 +1447,7 @@ class Journal:
                         str(round_record.get("checks_summary_sha256", "")),
                         str(round_record.get("manifest_sha256", "")),
                         str(round_record.get("auditor_report_sha256", "")),
+                        json.dumps(safe_evidence_refs, sort_keys=True),
                         1 if round_record.get("host_checks_passed") else 0,
                         1 if round_record.get("checker_passed") else 0,
                         str(round_record.get("rubric_decision", "NOT_VERIFIED")),
@@ -1483,6 +1493,7 @@ class Journal:
             if d["rubric_hard_gate_passed"] is not None:
                 d["rubric_hard_gate_passed"] = bool(d["rubric_hard_gate_passed"])
             d["selected_ids"] = json.loads(d.pop("selected_ids_json"))
+            d["evidence_refs"] = json.loads(d.pop("evidence_refs_json") or "{}")
             d["rubric"] = json.loads(d.pop("rubric_json"))
             d["findings"] = json.loads(d.pop("findings_json"))
             d["repair_scope"] = json.loads(d.pop("repair_scope_json"))

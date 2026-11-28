@@ -57,6 +57,7 @@ except ImportError:
     import harness_doctor
 
 BRANCH_ISSUE_RE = re.compile(r"^(?:feature|fix|chore|research|docs)/([1-9][0-9]*)-[A-Za-z0-9_.-]+$")
+SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 PROTECTED_PATH_PREFIXES = (
     "contracts/",
     "docs/adr/",
@@ -284,6 +285,97 @@ def _utc_now() -> str:
 def _canonical_sha256(obj: Any) -> str:
     raw = json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
+
+
+def _reject_symlink_ancestors(path: pathlib.Path, *, stop_at: pathlib.Path | None = None) -> None:
+    cur = path
+    while True:
+        if cur.is_symlink():
+            raise RoleAccessDenied(f"Symlink path not permitted in evidence tree: {cur}")
+        if stop_at is not None and cur == stop_at:
+            break
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+
+
+def _validate_safe_rel_path(rel_path: str) -> pathlib.PurePosixPath:
+    if not isinstance(rel_path, str) or not rel_path.strip():
+        raise RoleAccessDenied("Evidence path reference must be a non-empty relative path")
+    if rel_path.startswith("/") or "\\" in rel_path or "\x00" in rel_path:
+        raise RoleAccessDenied(f"Invalid evidence path reference: {rel_path!r}")
+    pure = pathlib.PurePosixPath(rel_path)
+    if pure.is_absolute() or ".." in pure.parts or "." in pure.parts:
+        raise RoleAccessDenied(f"Traversing or non-canonical evidence path reference: {rel_path!r}")
+    return pure
+
+
+def write_immutable_artifact(path: pathlib.Path, data: bytes) -> str:
+    """Write a single-write immutable (0o444) artifact; fail closed on overwrite or symlink."""
+    _reject_symlink_ancestors(path.parent)
+    if path.is_symlink() or path.exists():
+        raise ControlPlaneError(f"Refusing to overwrite immutable evidence artifact: {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _reject_symlink_ancestors(path.parent)
+    path.write_bytes(data)
+    path.chmod(0o444)
+    return hashlib.sha256(data).hexdigest()
+
+
+def write_immutable_json(
+    path: pathlib.Path,
+    payload: Any,
+    *,
+    sort_keys: bool = True,
+    ensure_ascii: bool = False,
+) -> str:
+    raw = json.dumps(payload, indent=2, sort_keys=sort_keys, ensure_ascii=ensure_ascii).encode("utf-8")
+    return write_immutable_artifact(path, raw)
+
+
+def freeze_round_directory_files(round_dir: pathlib.Path) -> None:
+    """Lock regular artifacts created inside a round evidence directory to read-only (0o444)."""
+    _reject_symlink_ancestors(round_dir)
+    if not round_dir.is_dir():
+        return
+    for item in round_dir.iterdir():
+        if item.is_symlink():
+            raise RoleAccessDenied(f"Symlink artifact forbidden inside round evidence: {item}")
+        if item.is_file():
+            item.chmod(0o444)
+
+
+def _read_safe_evidence_bytes(evidence_dir: pathlib.Path, rel_path: str) -> bytes:
+    if evidence_dir.is_symlink() or not evidence_dir.is_dir():
+        raise RoleAccessDenied("Evidence directory missing or is a symlink")
+    pure = _validate_safe_rel_path(rel_path)
+    cur = evidence_dir
+    for part in pure.parts:
+        cur = cur / part
+        if cur.is_symlink():
+            raise RoleAccessDenied(f"Symlink component forbidden in evidence artifact: {rel_path}")
+    ev_root = evidence_dir.resolve(strict=True)
+    try:
+        target = cur.resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise RoleAccessDenied(f"Evidence artifact missing: {rel_path}") from exc
+    if not target.is_relative_to(ev_root) or not target.is_file():
+        raise RoleAccessDenied(f"Evidence artifact escapes evidence directory or is not a file: {rel_path}")
+    return target.read_bytes()
+
+
+def _normalize_evidence_refs(evidence_refs: dict[str, Any] | None) -> dict[str, str]:
+    if evidence_refs is None:
+        return {}
+    if not isinstance(evidence_refs, dict):
+        raise RoleAccessDenied("evidence_refs must be a dictionary")
+    normalized: dict[str, str] = {}
+    for k, v in evidence_refs.items():
+        if not isinstance(k, str) or not k.strip():
+            raise RoleAccessDenied("evidence_refs keys must be non-empty strings")
+        pure = _validate_safe_rel_path(str(v))
+        normalized[k] = pure.as_posix()
+    return normalized
 
 
 def _is_protected_path(path: str) -> bool:
@@ -956,6 +1048,8 @@ def record_round_result(
     checks_summary_sha256: str = "",
     manifest_sha256: str = "",
     auditor_report_sha256: str = "",
+    evidence_dir: pathlib.Path | None = None,
+    evidence_refs: dict[str, str] | None = None,
     rubric: dict[str, Any] | None = None,
     findings: list[dict[str, Any]] | None = None,
     repair_scope: list[str] | tuple[str, ...] = (),
@@ -975,6 +1069,22 @@ def record_round_result(
     authorize_role_action(actor_role, "enforce_budget")
     if outcome not in ("PASS", "REVISE", "FAIL", "TIMEOUT", "BLOCK"):
         raise ControlPlaneError(f"Invalid round outcome: {outcome!r}")
+
+    norm_refs = _normalize_evidence_refs(evidence_refs)
+    if evidence_dir is not None:
+        for hash_label, ref_key, hash_val in (
+            ("checks_summary_sha256", "checks_summary", checks_summary_sha256),
+            ("manifest_sha256", "manifest", manifest_sha256),
+            ("auditor_report_sha256", "auditor_report", auditor_report_sha256),
+        ):
+            if hash_val:
+                if not SHA256_HEX_RE.fullmatch(str(hash_val)):
+                    raise RoleAccessDenied(f"Invalid {hash_label}: expected 64-hex sha256")
+                if ref_key not in norm_refs:
+                    raise RoleAccessDenied(f"Recorded {hash_label} requires matching evidence_refs[{ref_key!r}]")
+                raw_ev = _read_safe_evidence_bytes(evidence_dir, norm_refs[ref_key])
+                if hashlib.sha256(raw_ev).hexdigest() != hash_val:
+                    raise RoleAccessDenied(f"Evidence hash mismatch for {norm_refs[ref_key]}")
 
     with Journal(journal_path) as journal:
         run = journal.get_control_run(run_id)
@@ -1069,19 +1179,106 @@ def record_round_result(
         elif outcome == "PASS":
             if not (host_checks_passed and checker_passed and checks_complete):
                 raise RoleAccessDenied("Cannot record PASS without complete Host checks and Checker PASS")
-            if rubric is not None:
-                try:
-                    validate_rubric(
-                        {
-                            "status": "PASS",
-                            "findings": list(findings or ()),
-                            "limitations": [],
-                            "rule_results": [],
-                            "rubric": rubric,
-                        }
-                    )
-                except AuditError as exc:
-                    raise RoleAccessDenied(f"Cannot record PASS with invalid/non-ACCEPT rubric: {exc}") from exc
+            missing_bindings = [
+                name
+                for name, val in (
+                    ("candidate_sha256", candidate_sha256),
+                    ("diff_sha256", diff_sha256),
+                    ("policy_sha256", policy_sha256),
+                    ("check_plan_sha256", check_plan_sha256),
+                    ("selection_sha256", selection_sha256),
+                )
+                if not SHA256_HEX_RE.fullmatch(str(val or ""))
+            ]
+            if missing_bindings:
+                raise RoleAccessDenied(
+                    "Cannot record PASS without explicit 64-hex candidate/control-plane bindings: "
+                    + ", ".join(missing_bindings)
+                )
+            missing_receipts = [
+                name
+                for name, val in (
+                    ("checks_summary_sha256", checks_summary_sha256),
+                    ("auditor_report_sha256", auditor_report_sha256),
+                )
+                if not SHA256_HEX_RE.fullmatch(str(val or ""))
+            ]
+            if missing_receipts:
+                raise RoleAccessDenied(
+                    "Cannot record PASS without trusted receipt hashes: " + ", ".join(missing_receipts)
+                )
+            if manifest_sha256 and not SHA256_HEX_RE.fullmatch(str(manifest_sha256)):
+                raise RoleAccessDenied("Cannot record PASS with invalid manifest_sha256")
+            if not isinstance(rubric, dict) or not rubric:
+                raise RoleAccessDenied("Cannot record PASS without a valid 6-dimension ACCEPT rubric")
+            try:
+                validate_rubric(
+                    {
+                        "status": "PASS",
+                        "findings": list(findings or ()),
+                        "limitations": [],
+                        "rule_results": [],
+                        "rubric": rubric,
+                    }
+                )
+            except AuditError as exc:
+                raise RoleAccessDenied(f"Cannot record PASS with invalid/non-ACCEPT rubric: {exc}") from exc
+            if rubric.get("decision") != "ACCEPT" or rubric.get("hard_gate_passed") is not True:
+                raise RoleAccessDenied("Cannot record PASS unless rubric decision is ACCEPT with hard_gate_passed=True")
+            if evidence_dir is None:
+                raise RoleAccessDenied("Cannot record PASS without external evidence_dir for receipt verification")
+            for req_ref in ("checks_summary", "auditor_report"):
+                if req_ref not in norm_refs:
+                    raise RoleAccessDenied(f"Cannot record PASS without evidence_refs[{req_ref!r}]")
+            if manifest_sha256 and "manifest" not in norm_refs:
+                raise RoleAccessDenied("Cannot record PASS with manifest_sha256 missing evidence_refs['manifest']")
+            try:
+                summary_doc = json.loads(
+                    _read_safe_evidence_bytes(evidence_dir, norm_refs["checks_summary"]).decode("utf-8")
+                )
+            except (ValueError, UnicodeDecodeError) as exc:
+                raise RoleAccessDenied(f"Malformed checks_summary artifact for PASS: {exc}") from exc
+            if not isinstance(summary_doc, dict) or summary_doc.get("status") != "PASS":
+                raise RoleAccessDenied("Cannot record PASS unless checks_summary artifact status is PASS")
+            if (
+                str(summary_doc.get("candidate_sha256", "")) != candidate_sha256
+                or str(summary_doc.get("diff_sha256", "")) != diff_sha256
+            ):
+                raise RoleAccessDenied("Cannot record PASS: checks_summary candidate/diff binding mismatch")
+            try:
+                audit_doc = json.loads(
+                    _read_safe_evidence_bytes(evidence_dir, norm_refs["auditor_report"]).decode("utf-8")
+                )
+            except (ValueError, UnicodeDecodeError) as exc:
+                raise RoleAccessDenied(f"Malformed auditor_report artifact for PASS: {exc}") from exc
+            if not isinstance(audit_doc, dict):
+                raise RoleAccessDenied("Malformed auditor_report JSON object")
+            if isinstance(audit_doc.get("partition_reports"), list):
+                part_reps = audit_doc["partition_reports"]
+                if not part_reps:
+                    raise RoleAccessDenied("Cannot record PASS with empty partition_reports")
+                for pr in part_reps:
+                    rep = pr.get("report") if isinstance(pr, dict) else None
+                    if not isinstance(rep, dict) or rep.get("status") != "PASS":
+                        raise RoleAccessDenied("Cannot record PASS unless all partition auditor reports PASS")
+                    pr_rub = rep.get("rubric")
+                    if (
+                        not isinstance(pr_rub, dict)
+                        or pr_rub.get("decision") != "ACCEPT"
+                        or pr_rub.get("hard_gate_passed") is not True
+                    ):
+                        raise RoleAccessDenied("Cannot record PASS unless all partition rubrics ACCEPT")
+                if not any(
+                    isinstance(pr.get("report"), dict) and pr["report"].get("rubric") == rubric
+                    for pr in part_reps
+                ):
+                    raise RoleAccessDenied("Cannot record PASS: rubric does not match partition auditor report")
+            else:
+                inner_audit = audit_doc["report"] if isinstance(audit_doc.get("report"), dict) else audit_doc
+                if inner_audit.get("status") != "PASS":
+                    raise RoleAccessDenied("Cannot record PASS unless auditor_report artifact status is PASS")
+                if inner_audit.get("rubric") != rubric:
+                    raise RoleAccessDenied("Cannot record PASS: rubric does not match auditor_report artifact")
             drift_against_streak = consec > 0 and (
                 (bool(streak_cand) and eff_cand != streak_cand)
                 or (bool(streak_diff) and eff_diff != streak_diff)
@@ -1183,6 +1380,7 @@ def record_round_result(
             "checks_summary_sha256": checks_summary_sha256,
             "manifest_sha256": manifest_sha256,
             "auditor_report_sha256": auditor_report_sha256,
+            "evidence_refs": norm_refs,
             "host_checks_passed": bool(host_checks_passed),
             "checker_passed": bool(checker_passed),
             "rubric_decision": str((rubric or {}).get("decision", "NOT_VERIFIED")),
@@ -1811,8 +2009,13 @@ def run_maker_checker_loop(
 
         confirming_pass = int(cur_run["consecutive_passes"]) > 0
         next_round_num = int(cur_run["round_num"]) + 1
-        round_ev = evidence_dir / f"round-{next_round_num:02d}"
+        round_rel = f"round-{next_round_num:02d}"
+        round_ev = evidence_dir / round_rel
+        _reject_symlink_ancestors(round_ev)
+        if round_ev.exists() and any(round_ev.iterdir()):
+            raise ControlPlaneError(f"Immutable round evidence directory already populated: {round_rel}")
         round_ev.mkdir(parents=True, exist_ok=True)
+        round_refs: dict[str, str] = {"round_dir": round_rel}
         maker_token = ""
         maker_dispatched = False
         tokens_this_round: int | None = None
@@ -1859,6 +2062,8 @@ def run_maker_checker_loop(
             if snap["changed_paths"]:
                 errs = violations(root, scope, snap["changed_paths"])
                 if errs:
+                    write_immutable_json(round_ev / "selected_rules.json", selection)
+                    round_refs["selected_rules"] = f"{round_rel}/selected_rules.json"
                     last_round_run = record_round_result(
                         journal_path=journal_path,
                         run_id=run_id,
@@ -1874,6 +2079,8 @@ def run_maker_checker_loop(
                         check_plan_sha256=admitted["check_plan"]["plan_sha256"],
                         selection_sha256=selection["selection_sha256"],
                         selected_ids=selection["selected_ids"],
+                        evidence_dir=evidence_dir,
+                        evidence_refs=round_refs,
                         repair_scope=[],
                         next_action="Out-of-scope edit blocked; preserve worktree for human inspection",
                         maker_dispatched=True,
@@ -1894,6 +2101,8 @@ def run_maker_checker_loop(
             )
             newly_triggered = refreshed["agent_input_sha256"] != selection["agent_input_sha256"]
             selection = refreshed
+            write_immutable_json(round_ev / "selected_rules.json", selection)
+            round_refs["selected_rules"] = f"{round_rel}/selected_rules.json"
             if newly_triggered:
                 last_round_run = record_round_result(
                     journal_path=journal_path,
@@ -1910,6 +2119,8 @@ def run_maker_checker_loop(
                     check_plan_sha256=admitted["check_plan"]["plan_sha256"],
                     selection_sha256=selection["selection_sha256"],
                     selected_ids=selection["selected_ids"],
+                    evidence_dir=evidence_dir,
+                    evidence_refs=round_refs,
                     repair_scope=list(snap["changed_paths"] or scope),
                     next_action="Inject newly applicable rules and re-run Maker repair",
                     maker_dispatched=True,
@@ -1934,6 +2145,8 @@ def run_maker_checker_loop(
             )
         else:
             # Confirming pass: NO Maker dispatch or edit allowed; verify same immutable candidate!
+            write_immutable_json(round_ev / "selected_rules.json", selection)
+            round_refs["selected_rules"] = f"{round_rel}/selected_rules.json"
             snap = compute_candidate_snapshot(root, base_sha=admitted["run"]["base_sha"])
             if (
                 snap["candidate_sha256"] != cur_run["streak_candidate_sha256"]
@@ -1963,6 +2176,8 @@ def run_maker_checker_loop(
                     check_plan_sha256=admitted["check_plan"]["plan_sha256"],
                     selection_sha256=selection["selection_sha256"],
                     selected_ids=selection["selected_ids"],
+                    evidence_dir=evidence_dir,
+                    evidence_refs=round_refs,
                     repair_scope=list(scope),
                     next_action="Candidate drifted between confirming passes; streak reset",
                     maker_dispatched=False,
@@ -2002,6 +2217,8 @@ def run_maker_checker_loop(
                 check_plan_sha256=admitted["check_plan"]["plan_sha256"],
                 selection_sha256=selection["selection_sha256"],
                 selected_ids=selection["selected_ids"],
+                evidence_dir=evidence_dir,
+                evidence_refs=round_refs,
                 next_action=str(exc),
                 maker_dispatched=maker_dispatched,
                 confirming_pass=confirming_pass,
@@ -2032,10 +2249,14 @@ def run_maker_checker_loop(
         summary_bytes = json.dumps(checks_summary, indent=2, sort_keys=True).encode("utf-8")
         summary_path = round_ev / "checks_summary.json"
         if not summary_path.is_file():
-            summary_path.write_bytes(summary_bytes)
+            write_immutable_artifact(summary_path, summary_bytes)
+        freeze_round_directory_files(round_ev)
         checks_summary_sha = hashlib.sha256(summary_path.read_bytes()).hexdigest()
+        round_refs["checks_summary"] = f"{round_rel}/checks_summary.json"
         manifest_path_round = round_ev / "manifest.json"
         manifest_sha = hashlib.sha256(manifest_path_round.read_bytes()).hexdigest() if manifest_path_round.is_file() else ""
+        if manifest_sha:
+            round_refs["manifest"] = f"{round_rel}/manifest.json"
         evidence_inv = {"checks_summary.json": checks_summary_sha}
         if manifest_sha:
             evidence_inv["manifest.json"] = manifest_sha
@@ -2071,6 +2292,8 @@ def run_maker_checker_loop(
                     selected_ids=selection["selected_ids"],
                     checks_summary_sha256=checks_summary_sha,
                     manifest_sha256=manifest_sha,
+                    evidence_dir=evidence_dir,
+                    evidence_refs=round_refs,
                     repair_scope=pre_cls["repair_scope"],
                     next_action=pre_cls["next_action"],
                     maker_dispatched=maker_dispatched,
@@ -2207,6 +2430,8 @@ def run_maker_checker_loop(
                 selected_ids=selection["selected_ids"],
                 checks_summary_sha256=checks_summary_sha,
                 manifest_sha256=manifest_sha,
+                evidence_dir=evidence_dir,
+                evidence_refs=round_refs,
                 next_action=str(exc),
                 maker_dispatched=maker_dispatched,
                 confirming_pass=confirming_pass,
@@ -2220,9 +2445,8 @@ def run_maker_checker_loop(
             integrity_err = f"audit_validation_failed:{exc}"
 
         audit_bytes = json.dumps(audit_report or {"error": integrity_err}, indent=2, sort_keys=True).encode("utf-8")
-        (round_ev / "audit_report.json").write_bytes(audit_bytes)
-        (evidence_dir / "audit_report.json").write_bytes(audit_bytes)
-        audit_sha = hashlib.sha256(audit_bytes).hexdigest()
+        audit_sha = write_immutable_artifact(round_ev / "audit_report.json", audit_bytes)
+        round_refs["auditor_report"] = f"{round_rel}/audit_report.json"
 
         final_cls = classify_round_outcome(
             approved_scope=scope,
@@ -2255,6 +2479,8 @@ def run_maker_checker_loop(
                 checks_summary_sha256=checks_summary_sha,
                 manifest_sha256=manifest_sha,
                 auditor_report_sha256=audit_sha,
+                evidence_dir=evidence_dir,
+                evidence_refs=round_refs,
                 rubric=(audit_report or {}).get("rubric"),
                 findings=findings_list,
                 repair_scope=final_cls["repair_scope"],
@@ -2401,9 +2627,14 @@ def run_controlled_dispatch(
         "fixture_receipt": proc_receipt.json(),
         "status": "PASS" if proc_receipt.exit_code == 0 else "FAIL",
     }
+    round_rel = "round-01"
+    round_ev = evidence_dir / round_rel
+    _reject_symlink_ancestors(round_ev)
+    if round_ev.exists() and any(round_ev.iterdir()):
+        raise ControlPlaneError(f"Immutable round evidence directory already populated: {round_rel}")
+    round_ev.mkdir(parents=True, exist_ok=True)
     checks_bytes = json.dumps(checks_summary, indent=2, sort_keys=True).encode("utf-8")
-    (evidence_dir / "checks_summary.json").write_bytes(checks_bytes)
-    checks_sha = hashlib.sha256(checks_bytes).hexdigest()
+    checks_sha = write_immutable_artifact(round_ev / "checks_summary.json", checks_bytes)
     evidence_inv = {"checks_summary.json": checks_sha}
 
     # Release maker dispatch into REPAIR_REQUIRED so checker can acquire fresh dispatch
@@ -2442,7 +2673,7 @@ def run_controlled_dispatch(
         check=False,
         timeout=20,
     )
-    snapshot_dir = evidence_dir / "frozen_snapshot"
+    snapshot_dir = round_ev / "frozen_snapshot"
     hashes = _assemble_review_snapshot(root, snapshot_dir, list(snap["changed_paths"]), diff_proc.stdout, [proc_receipt.json()])
     if checker_fn is not None:
         audit_report = checker_fn(snapshot_dir, evidence_inv, admitted)
@@ -2461,8 +2692,12 @@ def run_controlled_dispatch(
         raise RoleAccessDenied("Checker mutated frozen review snapshot")
 
     audit_bytes = json.dumps(audit_report, indent=2, sort_keys=True).encode("utf-8")
-    (evidence_dir / "audit_report.json").write_bytes(audit_bytes)
-    audit_sha = hashlib.sha256(audit_bytes).hexdigest()
+    audit_sha = write_immutable_artifact(round_ev / "audit_report.json", audit_bytes)
+    round_refs = {
+        "round_dir": round_rel,
+        "checks_summary": f"{round_rel}/checks_summary.json",
+        "auditor_report": f"{round_rel}/audit_report.json",
+    }
 
     checker_ok = audit_report.get("status") == "PASS"
     final_run = record_round_result(
@@ -2480,6 +2715,8 @@ def run_controlled_dispatch(
         selected_ids=admitted["selection"]["selected_ids"],
         checks_summary_sha256=checks_sha,
         auditor_report_sha256=audit_sha,
+        evidence_dir=evidence_dir,
+        evidence_refs=round_refs,
         rubric=audit_report.get("rubric"),
         findings=audit_report.get("findings") or [],
         failure_sig="" if checker_ok else "checker_revise",
