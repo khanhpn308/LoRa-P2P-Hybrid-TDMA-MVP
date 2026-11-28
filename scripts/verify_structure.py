@@ -28,6 +28,17 @@ for path in required:
     if not exists:
         failures.append(path)
 
+if (root / "scripts/agent_harness/advanced_pack.py").is_file():
+    for path in (
+        "docs/harness/ADVANCED_PACK.md",
+        "docs/QUALITY_SCORE.md",
+        "docs/generated/db-schema.md",
+    ):
+        exists = (root / path).is_file()
+        print(f"{'OK' if exists else 'MISSING'} {path}")
+        if not exists:
+            failures.append(path)
+
 cmake_line = 'set(EXTRA_COMPONENT_DIRS "../components")'
 for target in ("gateway_master", "sensor_node"):
     path = f"firmware/{target}/CMakeLists.txt"

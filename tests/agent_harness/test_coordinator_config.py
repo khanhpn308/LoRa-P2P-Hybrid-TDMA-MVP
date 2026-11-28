@@ -205,6 +205,17 @@ class HarnessCoordinatorConfigTests(unittest.TestCase):
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
         self.assertEqual(schema["properties"]["schema_version"]["const"], "1.0")
 
+    def test_p07_advanced_pack_routing_and_links_valid(self):
+        coord = self.coordinator_path.read_text(encoding="utf-8")
+        fast_lane = (self.repo_root / "docs" / "development" / "harness-fast-lane.md").read_text(encoding="utf-8")
+        qg = (self.repo_root / "docs" / "development" / "harness-quality-gates.md").read_text(encoding="utf-8")
+        pr = (self.repo_root / "docs" / "development" / "harness-pr-review.md").read_text(encoding="utf-8")
+        self.assertIn("advanced_pack.py verify", coord)
+        self.assertIn("QUALITY_SCORE.md", fast_lane)
+        self.assertIn("ADVANCED_PACK.md", fast_lane)
+        self.assertIn("advanced-pack-freshness", qg)
+        self.assertIn("QUALITY_SCORE.md", pr)
+
 
 if __name__ == "__main__":
     unittest.main()

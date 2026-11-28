@@ -69,6 +69,13 @@ class CheckMatrixAndExecutionTests(unittest.TestCase):
         self.assertIn("firmware-gateway-build", fw_checks)
         self.assertNotIn("go-test", fw_checks)
 
+        adv_checks = [s.check_id for s in check_mod.plan_checks(["docs/QUALITY_SCORE.md"], profile="quick")]
+        self.assertEqual(adv_checks, ["verify-structure", "advanced-pack-freshness"])
+
+        mig_checks = [s.check_id for s in check_mod.plan_checks(["backend-go/migrations/000010_demo.up.sql"], profile="quick")]
+        self.assertIn("advanced-pack-freshness", mig_checks)
+        self.assertNotIn("harness-unit", mig_checks)
+
     def test_freeze_and_recompute_on_full_diff_plus_real_execution(self):
         frozen_path = self.root / "frozen_plan.json"
         plan = check_mod.freeze_checks(

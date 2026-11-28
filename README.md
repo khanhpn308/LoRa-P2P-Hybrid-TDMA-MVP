@@ -18,6 +18,7 @@ Scheduled Maintenance Superframes between DATA Superframes target a **300 s** sy
 - `clients` — placeholders until web/mobile work begins
 - [Acceptance gates](docs/verification/acceptance-gates.md), [coding standards](docs/development/coding-standards.md) and [Vietnamese Monorepo Handbook](docs/development/monorepo-guide.md)
 - [Pre-Task-Breakdown Readiness](docs/development/task-breakdown-readiness.md) — Gate field, CODEOWNERS and Path-Scoped Issues
+- [Harness V2 Advanced Pack Index](docs/harness/ADVANCED_PACK.md), [Quality Score & Debt](docs/QUALITY_SCORE.md), and [Generated DB Schema Metadata](docs/generated/db-schema.md) (`SOURCE_DERIVED_ONLY`)
 
 ## ESP-IDF toolchain baseline — v6.1
 
