@@ -43,6 +43,7 @@ class CheckMatrixAndExecutionTests(unittest.TestCase):
         self._write("AGENTS.md", "# Agents\nTest\n")
         self._write("README.md", "baseline\n")
         self._write("scripts/verify_structure.py", "print('PASS: structure ok')\n")
+        self._write("scripts/agent_harness/dependency_checks.py", "import json; print(json.dumps({'status': 'PASS'}))\n")
         _git(self.repo, "add", ".")
         _git(self.repo, "commit", "-qm", "base")
         self.base = _git(self.repo, "rev-parse", "HEAD")
@@ -126,6 +127,10 @@ class CheckMatrixAndExecutionTests(unittest.TestCase):
         self.assertEqual(res["status"], "FAIL")
         self.assertEqual(res["exit_code"], 1)
         self.assertEqual(res["results"][0]["status"], "FAIL")
+        self.assertEqual(res["quality_gates"]["auto_check"], "BLOCKED")
+        manifest = json.loads((ev_dir / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["checks"]["TOOLING-CHECK"]["status"], "FAIL")
+        self.assertEqual(manifest["mandatory_checks"][0]["status"], "FAIL")
 
     def test_missing_prerequisite_fails_nonzero_not_verified(self):
         self._write("clients/web-dashboard/package.json", json.dumps({"name": "web"}))
@@ -139,9 +144,42 @@ class CheckMatrixAndExecutionTests(unittest.TestCase):
         )
         self.assertEqual(res["status"], "NOT_VERIFIED")
         self.assertEqual(res["exit_code"], 2)
+        self.assertEqual(res["quality_gates"]["auto_check"], "BLOCKED")
         web_res = [r for r in res["results"] if r["check_id"] == "web-unit"]
         self.assertEqual(len(web_res), 1)
         self.assertEqual(web_res[0]["status"], "NOT_VERIFIED")
+        manifest = json.loads((ev_dir / "manifest.json").read_text(encoding="utf-8"))
+        # Missing prerequisite MUST NOT be masked by verify-structure PASS on the same gate rule!
+        self.assertEqual(manifest["checks"]["TOOLING-CHECK"]["status"], "NOT_VERIFIED")
+        self.assertEqual(manifest["checks"]["TOOLING-CHECK"]["observations"]["prerequisite_missing"], "node_web")
+        mc_by_id = {m["check_id"]: m for m in manifest["mandatory_checks"]}
+        self.assertEqual(mc_by_id["web-unit"]["status"], "NOT_VERIFIED")
+        self.assertTrue(mc_by_id["web-unit"]["prerequisite_missing"])
+        tooling_qg = next(r for r in res["quality_gates"]["results"] if r["rule_id"] == "TOOLING-CHECK")
+        self.assertEqual(tooling_qg["status"], "NOT_VERIFIED")
+
+    def test_firmware_unit_pass_does_not_mask_missing_esp_idf_prerequisite_in_manifest(self):
+        self._write("firmware/components/lora_mac/src/mac.c", "int mac_init(void) { return 0; }\n")
+        self._write("tests/unit/test_stub.py", "import unittest\nclass T(unittest.TestCase):\n    def test_ok(self): pass\n")
+        ev_dir = self.root / "ev_fw_prereq"
+        with patch("check.shutil.which", return_value=None):
+            res = check_mod.run_checks(
+                self.repo,
+                base_sha=self.base,
+                profile="software",
+                evidence_dir=ev_dir,
+            )
+        self.assertEqual(res["status"], "NOT_VERIFIED")
+        self.assertEqual(res["exit_code"], 2)
+        self.assertEqual(res["quality_gates"]["auto_check"], "BLOCKED")
+        manifest = json.loads((ev_dir / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["checks"]["FIRMWARE-CHECK"]["status"], "NOT_VERIFIED")
+        self.assertEqual(manifest["checks"]["FIRMWARE-CHECK"]["observations"]["prerequisite_missing"], "esp_idf_v6_1")
+        mc_by_id = {m["check_id"]: m for m in manifest["mandatory_checks"]}
+        self.assertEqual(mc_by_id["firmware-unit"]["status"], "PASS")
+        self.assertEqual(mc_by_id["firmware-gateway-build"]["status"], "NOT_VERIFIED")
+        fw_qg = next(r for r in res["quality_gates"]["results"] if r["rule_id"] == "FIRMWARE-CHECK")
+        self.assertEqual(fw_qg["status"], "NOT_VERIFIED")
 
     def test_bench_profile_blocked_without_explicit_authorization_and_equipment(self):
         self._write("tests/hil/test_dummy.py", "import unittest\n")
@@ -244,14 +282,27 @@ class CheckMatrixAndExecutionTests(unittest.TestCase):
         self.assertIn("SECURITY-CHECK", manifest["checks"])
         self.assertEqual(manifest["checks"]["SECURITY-CHECK"]["observations"]["check_id"], "harness-security-gates")
 
+        tdefs_path = self.root / "trusted_defs.json"
+        tdefs_path.write_text(json.dumps({"U-01": doc["units"][0]["verification"]}), encoding="utf-8")
+        with self.assertRaises(fs.VerificationTamperError):
+            fs.verify_host_gate_evidence(
+                doc,
+                "U-01",
+                repo=self.repo,
+                base_sha=self.base,
+                evidence_dir=ev_dir,
+            )
         proof = fs.verify_host_gate_evidence(
             doc,
             "U-01",
             repo=self.repo,
             base_sha=self.base,
             evidence_dir=ev_dir,
+            trusted_definitions=tdefs_path,
         )
-        passed = fs.verify_unit_passing(doc, "U-01", proof=proof)
+        with self.assertRaises(fs.VerificationTamperError):
+            fs.verify_unit_passing(doc, "U-01", proof=proof)
+        passed = fs.verify_unit_passing(doc, "U-01", proof=proof, trusted_definitions=tdefs_path, repo=self.repo)
         self.assertEqual(passed["units"][0]["state"], "PASSING")
         db = self.root / "host" / "state.sqlite"
         with Journal(db) as journal:

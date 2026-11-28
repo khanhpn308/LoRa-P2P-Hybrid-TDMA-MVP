@@ -129,6 +129,9 @@ def run(args: argparse.Namespace) -> int:
             raise GateError("Scoped source changed during checks or read-only review")
 
     try:
+        if getattr(args, "journal", None) is not None and getattr(args, "unit_id", None):
+            if getattr(args, "trusted_definitions", None) is None:
+                return finish("BLOCKED", 2, "--trusted-definitions required when verifying --unit-id via --journal")
         source, secrets = inventory(repo, "HEAD")
         if secrets:
             return finish("BLOCKED", 2, "Source secret/path scan failed")
@@ -474,12 +477,15 @@ def run(args: argparse.Namespace) -> int:
                                     base_sha=result["base_sha"],
                                     evidence_dir=artifacts,
                                     manifest_name="quality-manifest.json",
+                                    trusted_definitions=args.trusted_definitions,
                                 )
                                 updated_doc = verify_unit_passing(
                                     doc,
                                     args.unit_id,
                                     proof=proof,
                                     expected_revision=snap["revision"],
+                                    trusted_definitions=args.trusted_definitions,
+                                    repo=repo,
                                 )
                                 journal.save_feature_snapshot(
                                     issue=args.issue,
@@ -520,6 +526,8 @@ def main() -> int:
                    help="Optional versioned feature state JSON for continuity")
     p.add_argument("--unit-id", default=None,
                    help="Optional active feature unit ID to verify via host_verifier on PASS")
+    p.add_argument("--trusted-definitions", type=pathlib.Path, default=None,
+                   help="External frozen trusted verification definitions JSON outside candidate repo (required with --unit-id)")
     args = p.parse_args()
     if args.issue < 1 or not 30 <= args.timeout <= 3600 or not 0 <= args.max_repairs <= 2:
         p.error("Invalid Issue, timeout or repair count (0..2)")

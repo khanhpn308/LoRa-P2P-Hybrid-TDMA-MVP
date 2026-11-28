@@ -53,7 +53,7 @@ Coordinator tự xử lý theo bảng dưới. Không yêu cầu một prompt d�
 ```bash
 python3 scripts/agent_harness/feature_state.py session-start --issue <N> --repo <candidate> --state <host-state.sqlite>
 python3 scripts/agent_harness/feature_state.py activate --issue <N> --unit-id <UNIT_ID> --state <host-state.sqlite>
-python3 scripts/agent_harness/feature_state.py verify-unit --issue <N> --unit-id <UNIT_ID> --repo <candidate> --evidence-dir <host-evidence-dir> --manifest manifest.json --state <host-state.sqlite>
+python3 scripts/agent_harness/feature_state.py verify-unit --issue <N> --unit-id <UNIT_ID> --repo <candidate> --evidence-dir <host-evidence-dir> --manifest manifest.json --trusted-definitions <external-trusted-defs.json> --state <host-state.sqlite>
 python3 scripts/agent_harness/feature_state.py checkpoint --issue <N> --repo <candidate> --state <host-state.sqlite> --next-action "..." --export docs/harness/features/issue-<N>.json
 ```
 

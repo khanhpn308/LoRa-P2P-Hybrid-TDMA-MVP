@@ -40,6 +40,7 @@ class HostVerificationProof:
     diff_sha256: str = ""
     command_receipts_sha256: str = ""
     tool_version: str = ""
+    trusted_definition_sha256: str = ""
 
 
 def _proof_mac(
@@ -58,6 +59,7 @@ def _proof_mac(
     diff_sha256: str = "",
     command_receipts_sha256: str = "",
     tool_version: str = "",
+    trusted_definition_sha256: str = "",
 ) -> bytes:
     payload = json.dumps(
         {
@@ -75,6 +77,7 @@ def _proof_mac(
             "diff_sha256": diff_sha256,
             "command_receipts_sha256": command_receipts_sha256,
             "tool_version": tool_version,
+            "trusted_definition_sha256": trusted_definition_sha256,
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -98,6 +101,7 @@ def issue_host_proof(
     diff_sha256: str = "",
     command_receipts_sha256: str = "",
     tool_version: str = "",
+    trusted_definition_sha256: str = "",
 ) -> HostVerificationProof:
     if auto_check != "AUTO_CHECK_PASS":
         raise StateConflict("HostVerificationProof requires AUTO_CHECK_PASS")
@@ -116,6 +120,7 @@ def issue_host_proof(
         diff_sha256=diff_sha256,
         command_receipts_sha256=command_receipts_sha256,
         tool_version=tool_version,
+        trusted_definition_sha256=trusted_definition_sha256,
     )
     return HostVerificationProof(
         issue=issue,
@@ -133,6 +138,7 @@ def issue_host_proof(
         diff_sha256=diff_sha256,
         command_receipts_sha256=command_receipts_sha256,
         tool_version=tool_version,
+        trusted_definition_sha256=trusted_definition_sha256,
     )
 
 
@@ -150,6 +156,12 @@ def verify_host_proof(
         raise StateConflict("HostVerificationProof issue/unit mismatch")
     if proof.verification_sha256 != unit["verification"]["definition_sha256"]:
         raise StateConflict("HostVerificationProof verification_sha256 mismatch")
+    if (
+        not isinstance(proof.trusted_definition_sha256, str)
+        or len(proof.trusted_definition_sha256) != 64
+        or proof.trusted_definition_sha256 != proof.verification_sha256
+    ):
+        raise StateConflict("HostVerificationProof missing or mismatched frozen trusted_definition_sha256")
     ev = unit.get("evidence")
     if not isinstance(ev, dict):
         raise StateConflict("PASSING unit missing evidence dict")
@@ -159,6 +171,7 @@ def verify_host_proof(
         or ev.get("receipt_path") != proof.receipt_path
         or ev.get("receipt_sha256") != proof.receipt_sha256
         or ev.get("verification_sha256") != proof.verification_sha256
+        or ev.get("trusted_definition_sha256") != proof.trusted_definition_sha256
     ):
         raise StateConflict("HostVerificationProof does not match unit evidence")
     if proof.diff_sha256 and ev.get("diff_sha256") != proof.diff_sha256:
@@ -180,6 +193,7 @@ def verify_host_proof(
         diff_sha256=proof.diff_sha256,
         command_receipts_sha256=proof.command_receipts_sha256,
         tool_version=proof.tool_version,
+        trusted_definition_sha256=proof.trusted_definition_sha256,
     )
     if not hmac.compare_digest(proof._seal, expected_seal):
         raise StateConflict("HostVerificationProof seal verification failed")

@@ -2317,12 +2317,14 @@ class PRReviewCLITests(unittest.TestCase):
                 diff_sha256="e" * 64,
                 command_receipts_sha256=cr_sha,
                 tool_version="host-test",
+                trusted_definition_sha256=ver_sha,
             )
             doc = fs.verify_unit_passing(
                 doc,
                 "U-01",
                 proof=proof,
                 command_receipts=[receipt_record],
+                trusted_definitions={"U-01": {"criteria": ["ok"], "commands": ["true"]}},
             )
             fs.export_feature_doc(doc, feat_dir / "issue-429.json")
 

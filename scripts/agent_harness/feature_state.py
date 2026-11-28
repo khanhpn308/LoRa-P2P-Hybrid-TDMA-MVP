@@ -202,6 +202,9 @@ def _validate_evidence(
         raise ValidationError(f"{label}.candidate_sha256 must be a 64-char SHA-256")
     if evidence.get("verification_sha256") != expected_verification_sha256:
         raise VerificationTamperError(f"{label}.verification_sha256 does not match unit definition")
+    trusted_sha = evidence.get("trusted_definition_sha256")
+    if trusted_sha is not None and trusted_sha != expected_verification_sha256:
+        raise VerificationTamperError(f"{label}.trusted_definition_sha256 does not match unit definition")
     if not SHA256_RE.fullmatch(str(evidence.get("receipt_sha256", ""))):
         raise ValidationError(f"{label}.receipt_sha256 must be a 64-char SHA-256")
     validate_relative_path(str(evidence.get("receipt_path", "")), label=f"{label}.receipt_path")
@@ -608,6 +611,55 @@ def load_trusted_definitions(
     return by_id
 
 
+def _resolve_trusted_definitions(
+    trusted_definitions: dict[str, Any] | pathlib.Path | None,
+    *,
+    repo: pathlib.Path | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Resolve and validate mandatory frozen trusted verification definitions."""
+    if trusted_definitions is None:
+        raise VerificationTamperError("Transition to PASSING requires frozen trusted_definitions")
+    if isinstance(trusted_definitions, pathlib.Path):
+        if repo is None:
+            raise VerificationTamperError("repo is required when loading trusted_definitions from Path")
+        return load_trusted_definitions(trusted_definitions, repo=repo)
+    if not isinstance(trusted_definitions, dict):
+        raise VerificationTamperError("trusted_definitions must be a mapping or external JSON Path")
+
+    by_id: dict[str, dict[str, Any]] = {}
+    if isinstance(trusted_definitions.get("units"), list):
+        for item in trusted_definitions["units"]:
+            if isinstance(item, dict) and isinstance(item.get("id"), str) and isinstance(item.get("verification"), dict):
+                v = copy.deepcopy(item["verification"])
+                v["definition_sha256"] = compute_verification_sha256(v)
+                by_id[item["id"]] = v
+    else:
+        for uid, verif in trusted_definitions.items():
+            if isinstance(uid, str) and isinstance(verif, dict):
+                v = copy.deepcopy(verif)
+                v["definition_sha256"] = compute_verification_sha256(v)
+                by_id[uid] = v
+    if not by_id:
+        raise VerificationTamperError("Trusted definitions contain no unit entries")
+    return by_id
+
+
+def _assert_matches_trusted_definition(
+    unit: dict[str, Any],
+    def_map: dict[str, dict[str, Any]],
+) -> str:
+    uid = unit["id"]
+    expected_def = def_map.get(uid)
+    if expected_def is None:
+        raise VerificationTamperError(f"Unit {uid!r} missing from external trusted definitions")
+    expected_def_sha = compute_verification_sha256(expected_def)
+    if unit["verification"]["definition_sha256"] != expected_def_sha:
+        raise VerificationTamperError(
+            f"Unit {uid!r} verification definition differs from external trusted definition"
+        )
+    return expected_def_sha
+
+
 def _validate_command_receipt_entry(
     entry: Any,
     *,
@@ -722,19 +774,8 @@ def verify_host_gate_evidence(
     if ev_root.is_relative_to(repo_root):
         raise ValidationError("Host evidence_dir must remain outside candidate worktree")
 
-    if trusted_definitions is not None:
-        if isinstance(trusted_definitions, pathlib.Path):
-            def_map = load_trusted_definitions(trusted_definitions, repo=repo_root)
-        else:
-            def_map = trusted_definitions
-        expected_def = def_map.get(unit_id)
-        if expected_def is None:
-            raise VerificationTamperError(f"Unit {unit_id!r} missing from external trusted definitions")
-        expected_def_sha = compute_verification_sha256(expected_def)
-        if target["verification"]["definition_sha256"] != expected_def_sha:
-            raise VerificationTamperError(
-                f"Unit {unit_id!r} verification definition differs from external trusted definition"
-            )
+    def_map = _resolve_trusted_definitions(trusted_definitions, repo=repo_root)
+    expected_def_sha = _assert_matches_trusted_definition(target, def_map)
 
     try:
         eval_result = evaluate_quality_gates(repo_root, base_sha, manifest_name, ev_root)
@@ -845,6 +886,7 @@ def verify_host_gate_evidence(
         diff_sha256=actual_diff_sha,
         command_receipts_sha256=command_receipts_sha,
         tool_version=primary["tool_version"],
+        trusted_definition_sha256=expected_def_sha,
     )
 
 
@@ -855,6 +897,8 @@ def verify_unit_passing(
     proof: HostVerificationProof,
     expected_revision: int | None = None,
     command_receipts: list[dict[str, Any]] | None = None,
+    trusted_definitions: dict[str, Any] | pathlib.Path | None = None,
+    repo: pathlib.Path | None = None,
 ) -> dict[str, Any]:
     if not isinstance(proof, HostVerificationProof):
         raise UnauthorizedTransition(
@@ -865,6 +909,7 @@ def verify_unit_passing(
     ):
         raise ValidationError("HostVerificationProof must bind diff_sha256 and complete command_receipts_sha256")
 
+    def_map = _resolve_trusted_definitions(trusted_definitions, repo=repo)
     updated = validate_feature_doc(copy.deepcopy(doc))
     _check_cas(updated, expected_revision)
 
@@ -872,6 +917,11 @@ def verify_unit_passing(
     if target["state"] != "ACTIVE":
         raise ValidationError(
             f"Unit {unit_id!r} must be ACTIVE before PASSING (current state={target['state']})"
+        )
+    expected_def_sha = _assert_matches_trusted_definition(target, def_map)
+    if proof.verification_sha256 != expected_def_sha or proof.trusted_definition_sha256 != expected_def_sha:
+        raise VerificationTamperError(
+            f"HostVerificationProof for unit {unit_id!r} does not match frozen trusted definition"
         )
 
     expected_source_sha = updated["git"].get("head_sha") or updated["git"].get("base_sha")
@@ -889,6 +939,7 @@ def verify_unit_passing(
         "candidate_sha256": proof.candidate_sha256,
         "diff_sha256": proof.diff_sha256,
         "verification_sha256": proof.verification_sha256,
+        "trusted_definition_sha256": expected_def_sha,
         "command_receipts_sha256": proof.command_receipts_sha256,
         "tool_version": proof.tool_version,
         "receipt_path": proof.receipt_path,
@@ -1051,6 +1102,7 @@ def sanitize_imported_doc(
     base_sha: str | None = None,
     evidence_dir: pathlib.Path | None = None,
     manifest_name: str = "manifest.json",
+    trusted_definitions: dict[str, Any] | pathlib.Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, HostVerificationProof]]:
     """Never trust imported PASSING claims without live Host verification."""
     cleaned = validate_feature_doc(copy.deepcopy(doc))
@@ -1077,6 +1129,7 @@ def sanitize_imported_doc(
                     base_sha=eval_base,
                     evidence_dir=evidence_dir,
                     manifest_name=manifest_name,
+                    trusted_definitions=trusted_definitions,
                 )
             except (FeatureStateError, StateConflict, OSError, ValueError):
                 verified_proof = None
@@ -1655,7 +1708,7 @@ def main(argv: list[str] | None = None) -> int:
     p_ver.add_argument("--base-sha", default=None)
     p_ver.add_argument("--evidence-dir", type=pathlib.Path, required=True)
     p_ver.add_argument("--manifest", default="manifest.json")
-    p_ver.add_argument("--trusted-definitions", type=pathlib.Path, default=None)
+    p_ver.add_argument("--trusted-definitions", type=pathlib.Path, required=True)
     p_ver.add_argument("--expected-revision", type=int, default=None)
     p_ver.add_argument("--state", type=pathlib.Path, default=None)
     p_ver.add_argument("--feature-file", type=pathlib.Path, default=None)
@@ -1693,6 +1746,7 @@ def main(argv: list[str] | None = None) -> int:
     p_imp.add_argument("--base-sha", default=None)
     p_imp.add_argument("--evidence-dir", type=pathlib.Path, default=None)
     p_imp.add_argument("--manifest", default="manifest.json")
+    p_imp.add_argument("--trusted-definitions", type=pathlib.Path, default=None)
 
     args = parser.parse_args(argv)
     os.umask(0o077)
@@ -1802,6 +1856,8 @@ def main(argv: list[str] | None = None) -> int:
                 args.unit_id,
                 proof=proof,
                 expected_revision=args.expected_revision,
+                trusted_definitions=args.trusted_definitions,
+                repo=args.repo,
             )
             _save_to_journal_and_optional_file(
                 updated,
@@ -1868,6 +1924,7 @@ def main(argv: list[str] | None = None) -> int:
                 base_sha=args.base_sha,
                 evidence_dir=args.evidence_dir,
                 manifest_name=args.manifest,
+                trusted_definitions=args.trusted_definitions,
             )
             with Journal(args.state) as journal:
                 existing = journal.get_feature_snapshot(doc["issue"])

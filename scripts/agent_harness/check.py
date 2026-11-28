@@ -629,9 +629,18 @@ def run_checks(
     ordered_specs = list(spec_by_id.values())
     check_results: list[dict[str, Any]] = []
     command_receipts: list[dict[str, Any]] = []
+    mandatory_checks: list[dict[str, Any]] = []
     gate_checks_map: dict[str, dict[str, Any]] = {}
+    gate_priority: dict[str, int] = {}
     overall_failed = False
     prereq_blocked = False
+
+    def _record_gate(gate_rule_id: str, receipt_obj: dict[str, Any], prio: int) -> None:
+        # Precedence: FAIL (3) > NOT_VERIFIED / NOT_RUN / prerequisite_missing (2) > PASS (1)
+        prev = gate_priority.get(gate_rule_id, 0)
+        if prio > prev or prev == 0:
+            gate_checks_map[gate_rule_id] = receipt_obj
+            gate_priority[gate_rule_id] = prio
 
     for spec in ordered_specs:
         prereq_ok, tool_ver, prereq_err = _check_prerequisite(
@@ -641,10 +650,54 @@ def run_checks(
         log_path = ev_root / log_name
         if not prereq_ok:
             prereq_blocked = True
-            overall_failed = True
             msg = f"PREREQUISITE_MISSING ({spec.prerequisite}): {prereq_err}\n"
             log_path.write_text(msg, encoding="utf-8")
             log_bytes = log_path.read_bytes()
+            log_sha = digest(log_bytes)
+            obs_missing: dict[str, Any] = {
+                "checks_complete": False,
+                "check_id": spec.check_id,
+                "diff_sha256": source["diff_sha256"],
+                "prerequisite_missing": spec.prerequisite,
+                "reason": prereq_err,
+            }
+            if verification_sha256:
+                obs_missing["verification_sha256"] = verification_sha256
+            missing_receipt = {
+                "source_sha": source["source_sha"],
+                "candidate_sha256": source["candidate_sha256"],
+                "diff_sha256": source["diff_sha256"],
+                "command": list(spec.command),
+                "command_sha256": spec.command_sha256(),
+                "exit_code": 2,
+                "status": "NOT_VERIFIED",
+                "tool_version": tool_ver,
+                "receipt_path": log_name,
+                "receipt_sha256": log_sha,
+                "gate_rule_id": spec.gate_rule_id,
+                "observations": obs_missing,
+            }
+            command_receipts.append(missing_receipt)
+            _record_gate(spec.gate_rule_id, missing_receipt, 2)
+            mandatory_checks.append(
+                {
+                    "check_id": spec.check_id,
+                    "domain": spec.domain,
+                    "level": spec.level,
+                    "gate_rule_id": spec.gate_rule_id,
+                    "status": "NOT_VERIFIED",
+                    "exit_code": 2,
+                    "prerequisite": spec.prerequisite,
+                    "prerequisite_missing": True,
+                    "reason": prereq_err,
+                    "source_sha": source["source_sha"],
+                    "candidate_sha256": source["candidate_sha256"],
+                    "diff_sha256": source["diff_sha256"],
+                    "command_sha256": spec.command_sha256(),
+                    "receipt_path": log_name,
+                    "receipt_sha256": log_sha,
+                }
+            )
             check_results.append(
                 {
                     "check_id": spec.check_id,
@@ -654,7 +707,7 @@ def run_checks(
                     "exit_code": 2,
                     "tool_version": tool_ver,
                     "receipt_path": log_name,
-                    "receipt_sha256": digest(log_bytes),
+                    "receipt_sha256": log_sha,
                     "reason": prereq_err,
                 }
             )
@@ -690,6 +743,7 @@ def run_checks(
         if verification_sha256:
             obs["verification_sha256"] = verification_sha256
 
+        receipt_status = "PASS" if rc == 0 else "FAIL"
         receipt = {
             "source_sha": source["source_sha"],
             "candidate_sha256": source["candidate_sha256"],
@@ -697,6 +751,7 @@ def run_checks(
             "command": list(spec.command),
             "command_sha256": spec.command_sha256(),
             "exit_code": rc,
+            "status": receipt_status,
             "tool_version": tool_ver,
             "receipt_path": log_name,
             "receipt_sha256": log_sha,
@@ -706,19 +761,36 @@ def run_checks(
         command_receipts.append(receipt)
 
         if rc == 0:
-            # Prefer storing a passing receipt per gate rule when multiple checks map to the same rule,
-            # while command_receipts holds EVERY individual executed command receipt.
-            gate_checks_map.setdefault(spec.gate_rule_id, receipt)
+            _record_gate(spec.gate_rule_id, receipt, 1)
         else:
             overall_failed = True
-            gate_checks_map[spec.gate_rule_id] = receipt
+            _record_gate(spec.gate_rule_id, receipt, 3)
+
+        mandatory_checks.append(
+            {
+                "check_id": spec.check_id,
+                "domain": spec.domain,
+                "level": spec.level,
+                "gate_rule_id": spec.gate_rule_id,
+                "status": receipt_status,
+                "exit_code": rc,
+                "prerequisite": spec.prerequisite,
+                "prerequisite_missing": False,
+                "source_sha": source["source_sha"],
+                "candidate_sha256": source["candidate_sha256"],
+                "diff_sha256": source["diff_sha256"],
+                "command_sha256": spec.command_sha256(),
+                "receipt_path": log_name,
+                "receipt_sha256": log_sha,
+            }
+        )
 
         check_results.append(
             {
                 "check_id": spec.check_id,
                 "domain": spec.domain,
                 "level": spec.level,
-                "status": "PASS" if rc == 0 else "FAIL",
+                "status": receipt_status,
                 "exit_code": rc,
                 "duration_s": duration_s,
                 "tool_version": tool_ver,
@@ -730,6 +802,8 @@ def run_checks(
     manifest_doc = {
         "checks": gate_checks_map,
         "command_receipts": command_receipts,
+        "mandatory_checks": mandatory_checks,
+        "planned_checks": [s.check_id for s in ordered_specs],
     }
     manifest_path = ev_root / "manifest.json"
     manifest_path.write_text(json.dumps(manifest_doc, indent=2, sort_keys=True), encoding="utf-8")
@@ -743,10 +817,13 @@ def run_checks(
     if after_source != source:
         raise ValueError("Candidate source changed during check execution")
 
-    if prereq_blocked:
+    if overall_failed:
+        final_status = "FAIL"
+        exit_code = 1
+    elif prereq_blocked:
         final_status = "NOT_VERIFIED"
         exit_code = 2
-    elif overall_failed or (qg_report is not None and qg_report.get("auto_check") != "AUTO_CHECK_PASS"):
+    elif qg_report is not None and qg_report.get("auto_check") != "AUTO_CHECK_PASS":
         final_status = "FAIL"
         exit_code = 1
     else:
